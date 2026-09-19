@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { attestedMode } from "../src/watch-follow.ts";
+import { attestedMode, openFollow } from "../src/watch-follow.ts";
 import { runWatchLoop } from "../src/watch-loop.ts";
 import { fakePeerPush } from "./fake-peer-push.ts";
 import {
@@ -15,6 +15,41 @@ import {
 } from "./harness.ts";
 
 const entry = (createdAt: string) => ({ created_at: createdAt });
+
+describe("pi follow transport", () => {
+  it("opens a bare pi receiver without Claude Code attestation", async () => {
+    const push = fakePeerPush();
+    const notes: string[] = [];
+    let receiver: string | undefined;
+    const follow = await openFollow<string>({
+      transport: "uds",
+      label: "todou issue watch 43",
+      subject: "43",
+      following: "43",
+      baseline: "c0",
+      intervalSec: 2,
+      wait: undefined,
+      render: (items) => items.join("\n"),
+      emit: () => {},
+      messaging: { peer: "pi", socket: "/run/todou/pi.sock", token: "token" },
+      session: () => {
+        throw new Error("pi must not ask for Claude Code permission mode");
+      },
+      clock: virtualClock(),
+      note: (line) => notes.push(line),
+      open: (opts) => {
+        receiver = opts.receiver;
+        return push.open(opts);
+      },
+    });
+    expect(receiver).toBe("pi");
+    expect(follow.silent).toBe(true);
+    expect(push.fromName).toBeUndefined();
+    expect(notes.join("\n")).not.toContain("attests");
+    follow.finish();
+    expect(push.closed()).toBe(true);
+  });
+});
 
 describe("runWatchLoop standing mode (T-252)", () => {
   it("keeps waiting after a batch until afterItems says stop", async () => {

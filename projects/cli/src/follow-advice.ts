@@ -8,11 +8,13 @@ import { HARNESS_LABELS } from "./harness/index.ts";
  */
 export const OMP_WATCH_TOOL = "todou_watch";
 
-/** Which of the seven answers this environment gets. */
+/** The answer this environment gets. */
 export type FollowSituation =
   | "uds"
   | "uds-opted-out"
   | "omp-tool"
+  | "pi-tool"
+  | "pi-no-tool"
   | "claude-code-no-peer"
   | "omp-no-peer"
   | "known-harness"
@@ -116,6 +118,17 @@ function ompToolParagraphs(): string[] {
     TOOL_ALONE,
   ];
 }
+
+/** pi exposes ordinary tools and delivers steering after the current tool batch. */
+const PI_TOOL = [
+  "running under pi, and the todou extension registers a `todou_watch` tool. Call it directly with JSON arguments.",
+  '`{"action": "start", "issue": "T-16"}` follows one card; `{"action": "start"}` follows a project. `{"action": "list"}` reports running watches, and `{"action": "stop", "id": "w1"}` ends one. `project` and `server` default to the current directory. If you are working on a card, start a watch on it now.',
+  "The tool owns the background process. Activity starts a turn when pi is idle, or arrives after the current tool batch finishes. pi has no background bash; use this tool to follow activity while you work.",
+  TOOL_CARRIES,
+];
+
+const PI_POLL =
+  "Use `todou issue watch` or `todou watch` with `--poll` to check once, then resume from the printed cursor. pi's bash tool cannot monitor a background stream while you work.";
 /** The same question, with omp's own way of keeping the command running. */
 const OMP_STREAM = [
   ...streamOrPoll(UNKNOWN_LEAD, UNKNOWN_FALLBACK, BACKGROUNDED.omp),
@@ -162,7 +175,7 @@ export function followAdvice(input: {
   harness: HarnessId | null;
   socket: string | undefined;
   /**
-   * The tool names the omp extension published, if any. An extension that
+   * The tool names the extension published, if any. An extension that
    * has not been restarted after an update publishes the old list, and the
    * advice follows it — the tool genuinely is not there in that session.
    */
@@ -229,6 +242,24 @@ export function followAdvice(input: {
       return advice("omp-tool", ompToolParagraphs());
     }
     return advice("uds", udsParagraphs("omp"));
+  }
+
+  if (harness === "pi") {
+    if (socket && optedOut) {
+      return advice("uds-opted-out", [
+        "running under pi, but `--follow=uds` is opted out on this machine.",
+        PI_POLL,
+        CLOSING,
+      ]);
+    }
+    if (socket && tools?.includes(OMP_WATCH_TOOL)) {
+      return advice("pi-tool", PI_TOOL);
+    }
+    return advice("pi-no-tool", [
+      "running under pi, but no pi session above this process has published a todou watch tool and push socket.",
+      PI_POLL,
+      CLOSING,
+    ]);
   }
 
   if (harness !== null) {

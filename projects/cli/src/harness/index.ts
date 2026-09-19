@@ -6,7 +6,7 @@ import { codex } from "./codex.ts";
 import { hermesAgent } from "./hermes-agent.ts";
 import { omp } from "./omp.ts";
 import { publishedState } from "./omp-state.ts";
-import { pi } from "./pi.ts";
+import { pi, piHostAncestor } from "./pi.ts";
 import {
   type Ancestor,
   ancestorPids,
@@ -94,7 +94,10 @@ function select(
   const chain = ancestors();
   let best: { harness: Harness; depth: number } | undefined;
   for (const harness of candidates) {
-    const depth = hostIndex((e) => harness.matches(e), chain);
+    const piHost = harness.id === "pi" ? piHostAncestor(chain) : undefined;
+    const depth = piHost
+      ? chain.indexOf(piHost)
+      : hostIndex((e) => harness.matches(e), chain);
     // Strictly nearer, so an equal depth leaves the registry order in charge.
     if (depth !== undefined && (best === undefined || depth < best.depth)) {
       best = { harness, depth };
@@ -144,10 +147,12 @@ function hostResolver(
   return () => {
     if (resolved) return host;
     resolved = true;
+    const chain = ancestors();
     const found =
-      selection.hostPid === undefined
-        ? nearestUnmarked(selection.harness, ancestors())
-        : ancestors().find((a) => a.pid === selection.hostPid);
+      (selection.harness.id === "pi" ? piHostAncestor(chain) : undefined) ??
+      (selection.hostPid === undefined
+        ? nearestUnmarked(selection.harness, chain)
+        : chain.find((a) => a.pid === selection.hostPid));
     if (found) {
       const procRoot = io?.procRoot ?? "/proc";
       host = {
@@ -166,6 +171,10 @@ function nearestUnmarked(
   harness: Harness,
   chain: readonly Ancestor[],
 ): Ancestor | undefined {
+  if (harness.id === "pi") {
+    const found = piHostAncestor(chain);
+    if (found) return found;
+  }
   const depth = hostIndex((e) => harness.matches(e), chain);
   return depth === undefined ? undefined : chain[depth];
 }
@@ -187,12 +196,31 @@ export function detectAgentContext(
     const pids = () => (pidChain ??= ancestorPids(io));
     const selection = select(env, ancestors, pids);
     if (selection === null) return null;
+    const host = hostResolver(selection, ancestors, io);
+    if (selection.harness.id === "pi" && env.PI_SESSION_ID) {
+      const pid = host()?.pid;
+      const inherited = ancestors().find(
+        (ancestor) => ancestor.pid === pid,
+      )?.env;
+      // Native pi refreshes these for each bash invocation. If the host was
+      // itself launched with this id, an enclosing session supplied it; old
+      // pi and inherited `!` shells must not promote it to their own identity.
+      if (inherited?.PI_SESSION_ID === env.PI_SESSION_ID) {
+        env = {
+          ...env,
+          PI_SESSION_ID: undefined,
+          PI_SESSION_FILE: undefined,
+          PI_PROVIDER: undefined,
+          PI_MODEL: undefined,
+        };
+      }
+    }
 
     return selection.harness.context({
       env,
       home,
       cwd,
-      host: hostResolver(selection, ancestors, io),
+      host,
       ancestorPids: pids,
     });
   } catch {

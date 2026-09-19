@@ -21,6 +21,11 @@ import { runCli } from "../harness.ts";
  */
 const V = integration("omp")?.version;
 
+// Fail during collection if Pi disappears from the registry; never skip its cases.
+const piIntegration = integration("pi");
+expect(piIntegration, "Pi must be registered").toBeDefined();
+expect(piIntegration?.version).toBe(1);
+
 const scratch: string[] = [];
 afterAll(() => {
   for (const dir of scratch) rmSync(dir, { recursive: true, force: true });
@@ -35,6 +40,8 @@ function fresh(prefix: string): string {
 /** The file the omp integration takes, under a given agent directory. */
 const target = (agentDir: string) =>
   join(agentDir, "extensions", "todou-omp-session.ts");
+const piTarget = (agentDir: string) =>
+  join(agentDir, "extensions", "todou-pi-session.ts");
 
 /**
  * A home with `~/.omp/agent` already in it, which is the "omp lives here"
@@ -242,6 +249,7 @@ describe("todou integration status", () => {
     const result = await run(["integration", "status"], home);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("omp: not installed");
+    expect(result.stdout).toContain("pi: not installed");
     await run(["integration", "install", "omp"], home);
     expect((await run(["integration", "status"], home)).stdout).toContain(
       `omp: installed v${V}`,
@@ -300,5 +308,265 @@ describe("todou integration install-all", () => {
     const result = await run(["integration", "uninstall-all"], home);
     expect(result.exitCode).toBe(0);
     expect(existsSync(target(join(home, ".omp", "agent")))).toBe(false);
+  });
+});
+
+describe("todou integration install pi", () => {
+  it("writes the native Pi asset and ownership marker at the default path", async () => {
+    const home = fresh("todou-integ-pi-");
+    const result = await run(["integration", "install", "pi"], home);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: install v1");
+    const text = readFileSync(piTarget(join(home, ".pi", "agent")), "utf8");
+    expect(text).toContain("// TODOU_INTEGRATION_ID=pi");
+    expect(text).toContain("// TODOU_INTEGRATION_VERSION=1");
+    expect(text).toContain("TODOU_PI_STATE");
+    expect(text).toContain("TODOU_PI_TOOLS");
+    expect(text).not.toContain("// TODOU_INTEGRATION_ID=omp");
+    expect(existsSync(join(home, ".omp"))).toBe(false);
+  });
+
+  it("follows a custom agent directory despite omp profile and config variables", async () => {
+    const home = fresh("todou-integ-pi-");
+    const dir = join(home, "custom", "agent");
+    const result = await run(["integration", "install", "pi"], home, {
+      PI_CODING_AGENT_DIR: dir,
+      OMP_PROFILE: "work",
+      PI_PROFILE: "other",
+      PI_CONFIG_DIR: ".omp-alt",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(piTarget(dir))).toBe(true);
+    expect(existsSync(join(home, ".pi"))).toBe(false);
+    expect(existsSync(join(home, ".omp"))).toBe(false);
+    expect(existsSync(join(home, ".omp-alt"))).toBe(false);
+  });
+
+  it.each([
+    ["~/custom-agent", "custom-agent"],
+    ["~", ""],
+    ["", ".pi/agent"],
+  ])("resolves PI_CODING_AGENT_DIR=%j", async (override, relative) => {
+    const home = fresh("todou-integ-pi-");
+    const result = await run(["integration", "install", "pi"], home, {
+      PI_CODING_AGENT_DIR: override,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(piTarget(join(home, relative)))).toBe(true);
+    if (relative !== ".pi/agent") {
+      expect(existsSync(join(home, ".pi"))).toBe(false);
+    }
+  });
+
+  it("rejects unknown agents before installing Pi and lists Pi as known", async () => {
+    const home = fresh("todou-integ-pi-");
+    const result = await run(["integration", "install", "pi", "nope"], home);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unknown integration "nope"');
+    expect(result.stderr).toContain("known: omp, pi");
+    expect(readdirSync(home)).toEqual([]);
+  });
+
+  it("does not create even directories during a dry run", async () => {
+    const home = fresh("todou-integ-pi-");
+    const before = readdirSync(home, { recursive: true }).sort();
+    const result = await run(
+      ["integration", "install", "pi", "--dry-run"],
+      home,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: would install v1");
+    expect(result.stdout).toContain(
+      "~/.pi/agent/extensions/todou-pi-session.ts",
+    );
+    expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
+  });
+
+  it("leaves an edited owned file untouched during a dry reinstall", async () => {
+    const home = fresh("todou-integ-pi-");
+    expect((await run(["integration", "install", "pi"], home)).exitCode).toBe(
+      0,
+    );
+    const path = piTarget(join(home, ".pi", "agent"));
+    const text = `${readFileSync(path, "utf8")}\n// edited by hand\n`;
+    writeFileSync(path, text);
+    const before = readdirSync(home, { recursive: true }).sort();
+    const result = await run(
+      ["integration", "install", "pi", "--dry-run"],
+      home,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: would reinstall v1");
+    expect(readFileSync(path, "utf8")).toBe(text);
+    expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
+  });
+});
+
+describe("todou integration install-all with Pi", () => {
+  // run() injects HOME only; no active-agent marker or process ancestry.
+  it.each(["pi", "omp", "both"])(
+    "detects %s independently from config roots alone in an ordinary shell",
+    async (agent) => {
+      const home = fresh("todou-integ-pi-");
+      if (agent !== "omp") mkdirSync(join(home, ".pi"));
+      if (agent !== "pi") mkdirSync(join(home, ".omp"));
+      expect(existsSync(join(home, ".pi", "agent"))).toBe(false);
+      expect(existsSync(join(home, ".omp", "agent"))).toBe(false);
+      const result = await run(["integration", "install-all"], home);
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(piTarget(join(home, ".pi", "agent")))).toBe(
+        agent !== "omp",
+      );
+      expect(existsSync(target(join(home, ".omp", "agent")))).toBe(
+        agent !== "pi",
+      );
+      if (agent !== "omp") expect(result.stdout).toContain("pi: install v1");
+      else expect(result.stdout).not.toContain("pi:");
+      if (agent !== "pi") expect(result.stdout).toContain(`omp: install v${V}`);
+      else expect(result.stdout).not.toContain("omp:");
+    },
+  );
+
+  it("finds an existing custom Pi directory without a default config root", async () => {
+    const home = fresh("todou-integ-pi-");
+    const dir = join(home, "custom-agent");
+    mkdirSync(dir);
+    const result = await run(["integration", "install-all"], home, {
+      PI_CODING_AGENT_DIR: dir,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: install v1");
+    expect(existsSync(piTarget(dir))).toBe(true);
+    expect(existsSync(join(home, ".pi"))).toBe(false);
+  });
+
+  it("reports both roots in a dry run without creating agent directories", async () => {
+    const home = fresh("todou-integ-pi-");
+    mkdirSync(join(home, ".pi"));
+    mkdirSync(join(home, ".omp"));
+    const before = readdirSync(home, { recursive: true }).sort();
+    const result = await run(["integration", "install-all", "--dry-run"], home);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: would install v1");
+    expect(result.stdout).toContain(`omp: would install v${V}`);
+    expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
+  });
+});
+
+describe("todou integration uninstall pi", () => {
+  it("removes its owned file and preserves neighboring user extensions", async () => {
+    const home = fresh("todou-integ-pi-");
+    expect((await run(["integration", "install", "pi"], home)).exitCode).toBe(
+      0,
+    );
+    const dir = join(home, ".pi", "agent");
+    const neighbor = join(dir, "extensions", "mine.ts");
+    const userText = "export default function mine() {}\n";
+    writeFileSync(neighbor, userText);
+    const result = await run(["integration", "uninstall", "pi"], home);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: removed");
+    expect(existsSync(piTarget(dir))).toBe(false);
+    expect(readFileSync(neighbor, "utf8")).toBe(userText);
+  });
+
+  it.each([
+    ["unowned", "export default function mine() {}\n"],
+    [
+      "omp-marked",
+      "// TODOU_INTEGRATION_ID=omp\n// TODOU_INTEGRATION_VERSION=5\n",
+    ],
+  ])("refuses to remove or overwrite an %s file", async (_kind, text) => {
+    const home = fresh("todou-integ-pi-");
+    const dir = join(home, ".pi", "agent");
+    mkdirSync(join(dir, "extensions"), { recursive: true });
+    const path = piTarget(dir);
+    writeFileSync(path, text);
+    const before = readdirSync(home, { recursive: true }).sort();
+    for (const action of ["uninstall", "install"]) {
+      const result = await run(["integration", action, "pi"], home);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain("pi: refused");
+      expect(readFileSync(path, "utf8")).toBe(text);
+    }
+    const status = await run(["integration", "status", "pi"], home);
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout).toContain("pi: a file todou did not write");
+    expect(readFileSync(path, "utf8")).toBe(text);
+    expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
+  });
+
+  it("preserves the owned file during a dry uninstall", async () => {
+    const home = fresh("todou-integ-pi-");
+    expect((await run(["integration", "install", "pi"], home)).exitCode).toBe(
+      0,
+    );
+    const path = piTarget(join(home, ".pi", "agent"));
+    const text = readFileSync(path, "utf8");
+    const before = readdirSync(home, { recursive: true }).sort();
+    const result = await run(
+      ["integration", "uninstall", "pi", "--dry-run"],
+      home,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: would remove");
+    expect(readFileSync(path, "utf8")).toBe(text);
+    expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
+  });
+});
+
+describe("todou integration status pi", () => {
+  it("reports missing Pi without creating a directory", async () => {
+    const home = fresh("todou-integ-pi-");
+    const result = await run(["integration", "status", "pi"], home);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: not installed");
+    expect(result.stdout).toContain(
+      "~/.pi/agent/extensions/todou-pi-session.ts",
+    );
+    expect(result.stdout).toContain("no sign of this agent on this machine");
+    expect(readdirSync(home)).toEqual([]);
+  });
+
+  it("recognizes a root-only trace without creating an agent directory", async () => {
+    const home = fresh("todou-integ-pi-");
+    mkdirSync(join(home, ".pi"));
+    const before = readdirSync(home, { recursive: true }).sort();
+    const result = await run(["integration", "status", "pi"], home);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pi: not installed");
+    expect(result.stdout).not.toContain("no sign of this agent");
+    expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
+  });
+
+  it("reports installed and stale versions at the custom destination without changing them", async () => {
+    const home = fresh("todou-integ-pi-");
+    const dir = join(home, "custom-agent");
+    const env = { PI_CODING_AGENT_DIR: "~/custom-agent" };
+    expect(
+      (await run(["integration", "install", "pi"], home, env)).exitCode,
+    ).toBe(0);
+    const path = piTarget(dir);
+    const text = readFileSync(path, "utf8");
+    const before = readdirSync(home, { recursive: true }).sort();
+    const installed = await run(["integration", "status", "pi"], home, env);
+    expect(installed.exitCode).toBe(0);
+    expect(installed.stdout).toContain("pi: installed v1");
+    expect(installed.stdout).toContain(
+      "~/custom-agent/extensions/todou-pi-session.ts",
+    );
+    expect(readFileSync(path, "utf8")).toBe(text);
+    const stale = text.replace(
+      "TODOU_INTEGRATION_VERSION=1",
+      "TODOU_INTEGRATION_VERSION=0",
+    );
+    writeFileSync(path, stale);
+    const result = await run(["integration", "status", "pi"], home, env);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "pi: installed v0, current is v1 — reinstall",
+    );
+    expect(readFileSync(path, "utf8")).toBe(stale);
+    expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
   });
 });

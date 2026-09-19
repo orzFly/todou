@@ -4,6 +4,8 @@
  * copy in `extension.generated.ts` is what the shipped CLI carries, because a
  * single-file bundle and four `deno compile` executables can take no resource
  * file along beside them.
+ * Native Pi bundles this same machinery with its schema and host profile from
+ * `../pi/extension.ts`; omp keeps the default profile and verbatim asset.
  *
  * It runs inside omp, never inside this CLI: nothing here may import from the
  * rest of `src/`, and only Node built-ins are available. It lives under `src/`
@@ -32,7 +34,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { connect, createServer } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
@@ -68,21 +70,21 @@ const TOOL_NAME = "todou_watch";
 /** Enough that guessing it is not a way in; the socket's mode is the fence. */
 const TOKEN_BYTES = 24;
 
-type Pi = {
+export type ExtensionHost = {
   on(event: string, handler: (event: unknown, ctx: PiContext) => void): void;
   sendMessage(
     message: {
       customType: string;
       content: string;
       display: boolean;
-      attribution: string;
+      attribution?: string;
     },
     options: { deliverAs: string; triggerTurn: boolean },
   ): void;
   registerTool(tool: RegisteredTool): void;
   registerCommand(name: string, command: RegisteredCommand): void;
   /** omp hangs arktype on the context; extensions cannot import it. */
-  arktype: (definition: unknown) => unknown;
+  arktype?: (definition: unknown) => unknown;
 };
 
 type PiContext = {
@@ -146,6 +148,25 @@ type RegisteredCommand = {
   getArgumentCompletions?: (input: string) => CompletionItem[];
 };
 
+/** Host differences; the watch, command, widget and wire protocol stay shared. */
+export type ExtensionProfile = {
+  agent: "omp" | "pi";
+  stateEnv: string;
+  toolsEnv: string;
+  childEnv: Record<string, string | undefined>;
+  attribution?: string;
+  reclaimOnStart: boolean;
+};
+
+const OMP_PROFILE: ExtensionProfile = {
+  agent: "omp",
+  stateEnv: "TODOU_OMP_STATE",
+  toolsEnv: "TODOU_OMP_TOOLS",
+  childEnv: { OMPCODE: "1" },
+  attribution: "user",
+  reclaimOnStart: false,
+};
+
 /**
  * One arktype field with its `.describe` text, through the builder the host
  * hands over — the only source of arktype an extension has.
@@ -159,7 +180,13 @@ function described(
   return built.describe === undefined ? built : built.describe(text);
 }
 
-export default function todou(pi: Pi): void {
+export default function todou(
+  pi: ExtensionHost,
+  profile: ExtensionProfile = OMP_PROFILE,
+  parameters?: unknown,
+): void {
+  // Only omp evaluates this builder; Pi supplies native JSON Schema.
+  const arktype = pi.arktype as (definition: unknown) => unknown;
   /**
    * Whether this instance is the one that publishes. `task` runs a sub-agent
    * through a second copy of this extension in the same process, with a
@@ -176,6 +203,7 @@ export default function todou(pi: Pi): void {
   let socketPath: string | undefined;
   let token: string | undefined;
   let server: ReturnType<typeof createServer> | undefined;
+  const connections = new Set<Socket>();
   let closed = false;
 
   /** Where this process's pair of files live, created on first use. */
@@ -229,7 +257,7 @@ export default function todou(pi: Pi): void {
       `${JSON.stringify({
         v: STATE_VERSION,
         pid: process.pid,
-        agent: "omp",
+        agent: profile.agent,
         session_id: here.id,
         ...(here.file === undefined ? {} : { session_file: here.file }),
         // The push channel, published rather than left to be derived: omp
@@ -267,13 +295,13 @@ export default function todou(pi: Pi): void {
           customType: "todou",
           content,
           display: true,
-          attribution: "user",
+          ...(profile.attribution === undefined
+            ? {}
+            : { attribution: profile.attribution }),
         },
-        // A batch has to be read in the turn it arrives in rather than wait for
-        // that turn to end, so it cuts into the running one: omp makes room by
-        // backgrounding the foreground bash command early, and that command
-        // goes on running. `triggerTurn` answers the other question, whether an
-        // idle session starts a turn at all.
+        // Both hosts accept steering. omp can background a foreground bash
+        // command; native Pi queues until the current tool calls finish.
+        // `triggerTurn` starts a turn when the session is idle.
         { deliverAs: "steer", triggerTurn: true },
       );
       return true;
@@ -379,7 +407,8 @@ export default function todou(pi: Pi): void {
     if (frame.type !== "user") return "go";
     const content = frame.message?.content;
     if (typeof content !== "string") return "go";
-    if (!deliver(content)) refuse(frame, "the omp session could not take it");
+    if (!deliver(content))
+      refuse(frame, `the ${profile.agent} session could not take it`);
     return "go";
   }
 
@@ -389,6 +418,8 @@ export default function todou(pi: Pi): void {
     // A crash leaves the node behind and the bind would fail EADDRINUSE.
     rmSync(path, { force: true });
     const created = createServer((socket) => {
+      connections.add(socket);
+      socket.on("close", () => connections.delete(socket));
       socket.setEncoding("utf8");
       let buffer = "";
       const authed = { ok: false };
@@ -444,6 +475,10 @@ export default function todou(pi: Pi): void {
 
   function shutdown(): void {
     closed = true;
+    if (profile.reclaimOnStart) {
+      for (const connection of connections) connection.destroy();
+      connections.clear();
+    }
     try {
       server?.close();
     } catch {
@@ -452,6 +487,20 @@ export default function todou(pi: Pi): void {
     server = undefined;
     if (statePath !== undefined) rmSync(statePath, { force: true });
     if (socketPath !== undefined) rmSync(socketPath, { force: true });
+    if (profile.reclaimOnStart) {
+      // Remove only the environment values this instance published.
+      if (process.env[profile.stateEnv] === statePath)
+        delete process.env[profile.stateEnv];
+      if (process.env.TODOU_MESSAGING_TOKEN === token) {
+        delete process.env.TODOU_MESSAGING_SOCKET;
+        delete process.env.TODOU_MESSAGING_TOKEN;
+        delete process.env[profile.toolsEnv];
+      }
+      owner = false;
+      statePath = undefined;
+      socketPath = undefined;
+      token = undefined;
+    }
   }
 
   /**
@@ -462,16 +511,17 @@ export default function todou(pi: Pi): void {
    * would be a stale value that looks precise.
    */
   function claim(ctx: PiContext): void {
+    closed = false;
     const { state, socket } = paths();
     statePath = state;
     socketPath = socket;
     token = randomBytes(TOKEN_BYTES).toString("hex");
-    process.env.TODOU_OMP_STATE = state;
+    process.env[profile.stateEnv] = state;
     process.env.TODOU_MESSAGING_SOCKET = socket;
     process.env.TODOU_MESSAGING_TOKEN = token;
     // The bash tool's cheap copy of the record's `tools` line, exactly as
     // the pair above is: one export instead of a record read.
-    process.env.TODOU_OMP_TOOLS = TOOL_NAME;
+    process.env[profile.toolsEnv] = TOOL_NAME;
     owner = true;
     publish(ctx);
     listen();
@@ -565,18 +615,12 @@ export default function todou(pi: Pi): void {
     return argv;
   }
 
-  /**
-   * The child's environment: ours plus the four that make the child a todou
-   * under this omp. `OMPCODE` above all — the harness detector reads that
-   * variable alone, and this process's own environment may lack it, which
-   * would send the child's pushes at a Claude Code session that never
-   * waited for them.
-   */
+  /** Explicit host markers keep nested agents' inherited env out of watches. */
   function childEnv(): NodeJS.ProcessEnv {
     return {
       ...process.env,
-      OMPCODE: "1",
-      ...(statePath === undefined ? {} : { TODOU_OMP_STATE: statePath }),
+      ...profile.childEnv,
+      ...(statePath === undefined ? {} : { [profile.stateEnv]: statePath }),
       ...(socketPath === undefined
         ? {}
         : { TODOU_MESSAGING_SOCKET: socketPath }),
@@ -895,7 +939,7 @@ export default function todou(pi: Pi): void {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ENOENT" || error === undefined) {
       return [
-        `could not start — \`${binary()}\` is not on PATH in this omp session. omp inherits the PATH of the shell it was started from, so either start omp from a shell where \`${binary()}\` resolves, or export \`TODOU_BIN=<path to ${binary()}>\` before starting it.`,
+        `could not start — \`${binary()}\` is not on PATH in this ${profile.agent} session. ${profile.agent} inherits the PATH of the shell it was started from, so either start ${profile.agent} from a shell where \`${binary()}\` resolves, or export \`TODOU_BIN=<path to ${binary()}>\` before starting it.`,
       ].join("\n");
     }
     return [
@@ -906,11 +950,21 @@ export default function todou(pi: Pi): void {
   pi.on("session_start", (_event, ctx) => {
     uiContext = ctx;
     try {
+      if (profile.reclaimOnStart) {
+        // Native Pi emits start after rebinding contexts, including reloads
+        // in the same pid. An inherited path is never a sub-agent guard.
+        for (const watch of watches.values()) stop(watch, "shutdown");
+        watches.clear();
+        if (owner) shutdown();
+        claim(ctx);
+        paintWidget();
+        return;
+      }
       if (owner) {
         publish(ctx);
         return;
       }
-      const existing = process.env.TODOU_OMP_STATE;
+      const existing = process.env[profile.stateEnv];
       if (existing !== undefined && ours(existing)) return;
       claim(ctx);
     } catch {
@@ -918,16 +972,16 @@ export default function todou(pi: Pi): void {
     }
   });
 
-  // `/new` and `/resume` swap the session inside a running process, and the
-  // session manager has already switched by the time this arrives — so the
-  // current value is simply read, with nothing to wait for or retry.
-  pi.on("session_switch", (_event, ctx) => {
-    try {
-      if (owner) publish(ctx);
-    } catch {
-      // Leaves the previous record in place, which the reader will believe.
-    }
-  });
+  // omp switches the manager in place; native Pi uses shutdown/start instead.
+  if (!profile.reclaimOnStart) {
+    pi.on("session_switch", (_event, ctx) => {
+      try {
+        if (owner) publish(ctx);
+      } catch {
+        // Leaves the previous record in place, which the reader will believe.
+      }
+    });
+  }
 
   // Re-sync rather than a claim: a reload can replace this extension mid-run
   // without another session_start, and a turn is the moment the answer is
@@ -949,6 +1003,10 @@ export default function todou(pi: Pi): void {
       // worth resuming from is printed by `list`'s records too.
       for (const watch of watches.values()) stop(watch, "shutdown");
       if (owner) shutdown();
+      if (profile.reclaimOnStart) {
+        watches.clear();
+        paintWidget();
+      }
     } catch {
       // Leaves a stale record, which the reader rejects on the dead pid.
     }
@@ -1058,7 +1116,7 @@ export default function todou(pi: Pi): void {
     name: TOOL_NAME,
     label: "todou watch",
     description: [
-      "Follow a todou tracker card, or a whole project, from this omp session. Activity arrives as a message in your session as it happens, so you do not have to re-open a watch, or remember to.",
+      `Follow a todou tracker card, or a whole project, from this ${profile.agent} session. Activity arrives as a message in your session as it happens, so you do not have to re-open a watch, or remember to.`,
       "",
       "```",
       '{"action": "start", "issue": "T-16"}   follow one card',
@@ -1069,7 +1127,7 @@ export default function todou(pi: Pi): void {
       "",
       "`issue` takes any spelling todou accepts — `T-16`, `16`, `proj/16`, or a full URL. Left out, the watch covers the whole project.",
       "",
-      "`project` and `server` are optional. Left out, each is resolved from the directory this omp session is running in, exactly as every other todou command resolves it; `todou config show` prints what that directory settles. A directory that settles neither fails the call and says so — nothing here guesses. `project` also takes a comma-separated list, which follows several projects as one stream.",
+      `\`project\` and \`server\` are optional. Left out, each is resolved from the directory this ${profile.agent} session is running in, exactly as every other todou command resolves it; \`todou config show\` prints what that directory settles. A directory that settles neither fails the call and says so — nothing here guesses. \`project\` also takes a comma-separated list, which follows several projects as one stream.`,
       "",
       '`since` resumes from a cursor an earlier command printed, and is how a watch started after a `spec push` or a `comment add` catches the answer to it. Without it the watch starts at "now" and anything already on the card is skipped.',
       "",
@@ -1077,48 +1135,50 @@ export default function todou(pi: Pi): void {
       "",
       "The same arguments twice do not start a second watch: the second call returns the first one's id. But two calls that differ only in whether `project` was spelled out count as two watches even when they resolve to the same project — this tool does not resolve them, the todou CLI does, inside the child process, and nothing here can see that the two agreed.",
       "",
-      "A watch that ends for any reason other than `stop` delivers what it had not handed over, and the cursor to resume from, as a message. Every watch ends with this omp session.",
+      `A watch that ends for any reason other than \`stop\` delivers what it had not handed over, and the cursor to resume from, as a message. Every watch ends with this ${profile.agent} session.`,
     ].join("\n"),
     // arktype's object form takes a definition per key and no description
     // element — `["string", "…"]` is a load error (measured, v18.1.21) —
     // so each field is built, described, and composed in one expression.
-    parameters: (pi.arktype as unknown as (definition: unknown) => unknown)({
-      action: described(
-        pi.arktype,
-        "string",
-        "start a watch, stop one, or list what is running",
-      ),
-      "issue?": described(
-        pi.arktype,
-        "string",
-        'the card to follow — "T-16", "16", "proj/16", or a full URL. Leave it out to follow the whole project',
-      ),
-      "project?": described(
-        pi.arktype,
-        "string",
-        "project slug, or a comma-separated list of them. Left out, it is resolved from the directory omp is running in",
-      ),
-      "server?": described(
-        pi.arktype,
-        "string",
-        "server origin. Left out, it is resolved the same way",
-      ),
-      "since?": described(
-        pi.arktype,
-        "string",
-        'cursor to resume from. Without it the watch starts at "now"',
-      ),
-      "debounce?": described(
-        pi.arktype,
-        "string",
-        "batching window in seconds; 60 by default, 0 delivers each entry as it lands",
-      ),
-      "id?": described(
-        pi.arktype,
-        "string",
-        "which watch to stop, from a start or a list",
-      ),
-    }),
+    parameters:
+      parameters ??
+      arktype({
+        action: described(
+          arktype,
+          "string",
+          "start a watch, stop one, or list what is running",
+        ),
+        "issue?": described(
+          arktype,
+          "string",
+          'the card to follow — "T-16", "16", "proj/16", or a full URL. Leave it out to follow the whole project',
+        ),
+        "project?": described(
+          arktype,
+          "string",
+          `project slug, or a comma-separated list of them. Left out, it is resolved from the directory ${profile.agent} is running in`,
+        ),
+        "server?": described(
+          arktype,
+          "string",
+          "server origin. Left out, it is resolved the same way",
+        ),
+        "since?": described(
+          arktype,
+          "string",
+          'cursor to resume from. Without it the watch starts at "now"',
+        ),
+        "debounce?": described(
+          arktype,
+          "string",
+          "batching window in seconds; 60 by default, 0 delivers each entry as it lands",
+        ),
+        "id?": described(
+          arktype,
+          "string",
+          "which watch to stop, from a start or a list",
+        ),
+      }),
     async execute(_toolCallId, argsRaw, _signal, _onUpdate, ctx) {
       try {
         const args =

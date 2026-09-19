@@ -2,10 +2,12 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Env } from "../config.ts";
 import { ompAgentDir } from "../harness/omp.ts";
+import { piAgentDir } from "../harness/pi.ts";
 import { OMP_EXTENSION_SOURCE } from "./omp/extension.generated.ts";
+import { PI_EXTENSION_SOURCE } from "./pi/extension.generated.ts";
 
 /**
- * One agent this CLI can install itself into. Adding a second is adding a
+ * One agent this CLI can install itself into. Adding another is adding a
  * record here and an asset beside it; nothing in `commands/integration.ts`
  * knows any agent by name.
  */
@@ -24,7 +26,7 @@ export type Integration = {
    * Whether this agent looks installed on this machine.
    *
    * Deliberately *not* `Harness.matches`. That answers "is this command
-   * running inside omp right now", which is a different question with a
+   * running inside an agent right now", which is a different question with a
    * different answer: `install-all` is typed into an ordinary shell, where
    * `matches` is false for every harness. Reusing it would make install-all
    * a command that can never install anything, reporting the plausible-
@@ -39,6 +41,7 @@ export type Integration = {
 
 /** The file name we take inside the agent's own extensions directory. */
 const OMP_FILE = "todou-omp-session.ts";
+const PI_FILE = "todou-pi-session.ts";
 
 export const INTEGRATIONS: readonly Integration[] = [
   {
@@ -57,6 +60,20 @@ export const INTEGRATIONS: readonly Integration[] = [
       return join(ompAgentDir(env, home).dir, "extensions", OMP_FILE);
     },
     asset: OMP_EXTENSION_SOURCE,
+  },
+  {
+    id: "pi",
+    label: "Pi",
+    version: 1,
+    tracesOnThisMachine(env, home) {
+      const { dir, configRoot } = piAgentDir(env, home);
+      // A configured Pi may have a root before its first agent session.
+      return existsSync(dir) || existsSync(configRoot);
+    },
+    targetPath(env, home) {
+      return join(piAgentDir(env, home).dir, "extensions", PI_FILE);
+    },
+    asset: PI_EXTENSION_SOURCE,
   },
 ];
 

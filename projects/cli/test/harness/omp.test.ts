@@ -572,6 +572,7 @@ describe("omp detection", () => {
 
 /** A process tree in which omp itself is our host, carrying argv and cwd. */
 function ompHost(opts: {
+  pid?: number;
   argv?: string[];
   cwd?: string;
   /**
@@ -626,8 +627,9 @@ function ompHost(opts: {
     opts.stdin === undefined && opts.openLogs === undefined ? undefined : fds;
   // The shell omp spawned carries both markers; omp itself carries neither,
   // which is what identifies it as the one that introduced them.
-  write(100, 101, { OMPCODE: "1", CLAUDECODE: "1" }, ["sh", "-c", "todou"]);
-  write(101, 0, {}, opts.argv ?? ["omp"], opts.cwd, table);
+  const pid = opts.pid ?? 101;
+  write(100, pid, { OMPCODE: "1", CLAUDECODE: "1" }, ["sh", "-c", "todou"]);
+  write(pid, 0, {}, opts.argv ?? ["omp"], opts.cwd, table);
   return { platform: "linux" as const, procRoot: root, startPid: 100 };
 }
 
@@ -1542,6 +1544,7 @@ describe("the session omp filed against its terminal", () => {
     openLogs?: string[];
     env?: Record<string, string>;
     dir?: string;
+    hostPid?: number;
   }) {
     const dir = opts.dir ?? agentDir();
     if (opts.breadcrumb) breadcrumb(dir, opts.breadcrumb);
@@ -1550,6 +1553,7 @@ describe("the session omp filed against its terminal", () => {
       home,
       project,
       ompHost({
+        pid: opts.hostPid,
         cwd: project,
         stdin: opts.stdin ?? TTY,
         ...(opts.openLogs === undefined ? {} : { openLogs: opts.openLogs }),
@@ -1596,7 +1600,11 @@ describe("the session omp filed against its terminal", () => {
       }),
     );
     expect(
-      read({ breadcrumb: {}, env: { TODOU_OMP_STATE: statePath } }),
+      read({
+        breadcrumb: {},
+        env: { TODOU_OMP_STATE: statePath },
+        hostPid: process.pid,
+      }),
     ).toEqual({ agent: "omp", session_id: OTHER_SID });
   });
 

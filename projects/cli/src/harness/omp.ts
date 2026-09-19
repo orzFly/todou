@@ -12,13 +12,17 @@ import type { Env } from "../config.ts";
 import { findInJsonlTail } from "./jsonl-tail.ts";
 import {
   isSessionId,
-  publishedState,
+  type OmpState,
   publishedStateAttempt,
-  readOmpState,
   readOmpStateAt,
 } from "./omp-state.ts";
 import { contains, currentSessionFile, flagValue } from "./session-log.ts";
-import type { Harness, HostProcess, LiveSession } from "./types.ts";
+import type {
+  Harness,
+  HarnessContext,
+  HostProcess,
+  LiveSession,
+} from "./types.ts";
 
 /**
  * omp, "Oh My Pi" (can1357/oh-my-pi), a fork of pi that kept pi's session
@@ -46,7 +50,8 @@ import type { Harness, HostProcess, LiveSession } from "./types.ts";
 export const omp = {
   id: "omp",
   matches: (env) => env.OMPCODE === "1",
-  context({ env, home, cwd, host, ancestorPids }) {
+  context(ctx) {
+    const { env, home, cwd, host } = ctx;
     const context: AgentContext = { agent: "omp" };
     // omp's own answer beats every heuristic below it, and costs one small
     // read where the scan costs a directory listing and a header read per
@@ -59,7 +64,7 @@ export const omp = {
     // invisible for as long as the descriptor below could cover it, and omp
     // creates the log lazily at the first turn, so early in a session neither
     // could answer and a live session reported none at all (T-312).
-    const state = publishedState(env, ancestorPids) ?? readOmpState(env);
+    const state = ompStateAttempt(ctx).state;
     if (state) {
       context.session_id = state.sessionId;
       // The extension deliberately publishes no model: it changes every turn,
@@ -109,22 +114,53 @@ export const omp = {
     if (breadcrumb) context.session_id = breadcrumb;
     return context;
   },
-  liveSessionId({ env, ancestorPids }): LiveSession {
-    // Same order as `context`, and for the same reason: a resident reader in
-    // any context but omp's bash tool never sees the variable.
-    const attempt = publishedStateAttempt(env, ancestorPids);
+  liveSessionId(ctx): LiveSession {
+    const attempt = ompStateAttempt(ctx);
     if (attempt.state) return { id: attempt.state.sessionId };
-    const path = env.TODOU_OMP_STATE ?? attempt.unreadable;
-    // Nothing published: the extension is not installed, and there is no
-    // re-readable answer to have failed at. Silence is the whole report.
-    if (path === undefined) return {};
-    const state = readOmpStateAt(path);
-    // Named a file and then could not believe it — the one case worth saying
-    // out loud, because falling back quietly restores exactly the startup
-    // snapshot this probe exists to replace (T-289).
-    return state ? { id: state.sessionId } : { unreadable: path };
+    return attempt.unreadable ? { unreadable: attempt.unreadable } : {};
   },
 } satisfies Harness;
+
+/** Shared namespace records belong to their publisher, not every descendant. */
+function ompStateAttempt({
+  env,
+  host,
+  ancestorPids,
+}: Pick<HarnessContext, "env" | "host" | "ancestorPids">): {
+  state?: OmpState;
+  unreadable?: string;
+} {
+  const hostProcess = host();
+  const pids = () => {
+    const chain = ancestorPids();
+    if (!hostProcess) return chain;
+    const boundary = chain.indexOf(hostProcess.pid);
+    // Nested omp may inherit the marker; its nearer publisher still wins.
+    return boundary < 0 ? [hostProcess.pid] : chain.slice(0, boundary + 1);
+  };
+  const attempt = publishedStateAttempt(env, pids);
+  if (
+    attempt.state &&
+    (attempt.state.agent === undefined || attempt.state.agent === "omp")
+  ) {
+    return attempt;
+  }
+  if (attempt.state) return {};
+  const path = env.TODOU_OMP_STATE;
+  if (path) {
+    const owners = pids();
+    if (
+      owners.length === 0 ||
+      owners.some((pid) => basename(path) === `${pid}.json`)
+    ) {
+      const state = readOmpStateAt(path);
+      if (!state) return { unreadable: path };
+      // Records predating the agent field were all written by omp.
+      if (state.agent === undefined || state.agent === "omp") return { state };
+    }
+  }
+  return attempt.unreadable ? { unreadable: attempt.unreadable } : {};
+}
 
 /**
  * The session file `--resume` was handed, when it was handed one at all: the

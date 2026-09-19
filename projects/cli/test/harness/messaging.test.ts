@@ -76,6 +76,127 @@ describe("harnessMessaging", () => {
   });
 });
 
+describe("pi messaging", () => {
+  function environment(agent: string, extra: object = {}) {
+    const runtime = scratchDir("todou-pi-msg-");
+    const dir = join(runtime, "todou-omp");
+    mkdirSync(dir, { recursive: true });
+    const state = join(dir, `${process.pid}.json`);
+    writeFileSync(
+      state,
+      JSON.stringify({
+        v: 1,
+        pid: process.pid,
+        agent,
+        session_id: "pi-session",
+        socket: "/run/todou/pi.sock",
+        token: "pi-token",
+        tools: ["todou_watch"],
+        ...extra,
+      }),
+    );
+    return {
+      env: { PI_CODING_AGENT: "true", XDG_RUNTIME_DIR: runtime },
+      io: procTree([
+        { pid: 1000, ppid: process.pid, env: { PI_CODING_AGENT: "true" } },
+        { pid: process.pid, ppid: 1, argv: ["pi"] },
+      ]),
+    };
+  }
+
+  it("finds pi's published channel and tool by ancestry", () => {
+    const { env, io } = environment("pi");
+    expect(harnessMessaging(env, io)).toEqual({
+      socket: "/run/todou/pi.sock",
+      token: "pi-token",
+      peer: "pi",
+      tools: ["todou_watch"],
+    });
+  });
+
+  it("rejects inherited omp and Claude Code endpoints", () => {
+    const { env, io } = environment("omp");
+    expect(
+      harnessMessaging(
+        {
+          ...env,
+          TODOU_MESSAGING_SOCKET: OMP,
+          TODOU_MESSAGING_TOKEN: "outer-token",
+          TODOU_OMP_TOOLS: "todou_watch",
+          CLAUDE_CODE_MESSAGING_SOCKET: CC,
+        },
+        io,
+      ),
+    ).toEqual({});
+  });
+
+  it("rejects incomplete published channel pairs", () => {
+    const { env, io } = environment("pi", { token: "" });
+    expect(harnessMessaging(env, io)).toEqual({});
+  });
+
+  it.each(["pi", "omp"])(
+    "does not route an unextended inner %s to its pi parent",
+    (inner) => {
+      const { env } = environment("pi");
+      const inherited = {
+        ...env,
+        TODOU_PI_STATE: join(
+          env.XDG_RUNTIME_DIR,
+          "todou-omp",
+          `${process.pid}.json`,
+        ),
+        TODOU_MESSAGING_SOCKET: "/run/todou/pi.sock",
+        TODOU_MESSAGING_TOKEN: "pi-token",
+        TODOU_PI_TOOLS: "todou_watch",
+        PI_SESSION_ID: "outer-session",
+      };
+      const child =
+        inner === "omp" ? { ...inherited, OMPCODE: "1" } : inherited;
+      const io = procTree([
+        { pid: 1000, ppid: 1001, env: child },
+        {
+          pid: 1001,
+          ppid: process.pid,
+          env: inherited,
+          argv: [inner, "--no-extensions"],
+        },
+        { pid: process.pid, ppid: 1, argv: ["pi"] },
+      ]);
+      expect(harnessMessaging(child, io)).toEqual({});
+    },
+  );
+
+  it("keeps an omp-owned channel when pi state is also inherited", () => {
+    const { env } = environment("omp", { socket: OMP, token: "own-token" });
+    const own = join(env.XDG_RUNTIME_DIR, "todou-omp", `${process.pid}.json`);
+    const child = {
+      ...env,
+      OMPCODE: "1",
+      TODOU_PI_STATE: "/nonexistent/outer.json",
+      TODOU_OMP_STATE: own,
+      TODOU_MESSAGING_SOCKET: OMP,
+      TODOU_MESSAGING_TOKEN: "own-token",
+      TODOU_OMP_TOOLS: "todou_watch",
+    };
+    const io = procTree([
+      { pid: 1000, ppid: process.pid, env: child },
+      {
+        pid: process.pid,
+        ppid: 1,
+        env: { PI_CODING_AGENT: "true" },
+        argv: ["omp"],
+      },
+    ]);
+    expect(harnessMessaging(child, io)).toEqual({
+      socket: OMP,
+      token: "own-token",
+      peer: "omp",
+      tools: ["todou_watch"],
+    });
+  });
+});
+
 /*
  * omp exports the pair into its own bash tool's environment and nowhere else,
  * so every other context it spawns — the `!` shell above all, which is where a

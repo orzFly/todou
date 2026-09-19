@@ -258,61 +258,64 @@ describe("openPeerPush wire format (T-252)", () => {
   });
 });
 
-describe("openPeerPush to an omp receiver (T-357)", () => {
-  it("sends the body bare, with no envelope around it", async () => {
-    const peer = await fakePeer("omp-bare");
-    const push = await openPeerPush<string>({
-      target: peer.target,
-      render,
-      receiver: "omp",
-      clock: virtualClock(),
+describe.each(["omp", "pi"] as const)(
+  "openPeerPush to a %s receiver",
+  (receiver) => {
+    it("sends the body bare, with no envelope around it", async () => {
+      const peer = await fakePeer(`${receiver}-bare`);
+      const push = await openPeerPush<string>({
+        target: peer.target,
+        render,
+        receiver,
+        clock: virtualClock(),
+      });
+      await push.send(["entry one"], "c0", "c1");
+      await peer.received(1);
+      const frame = peer.frames[0] as Frame;
+
+      // The omp extension hands `frame.message.content` to the session
+      // untouched, so any envelope bytes here would reach the agent as two
+      // lines of markup in every batch. Byte for byte against `render`'s own
+      // output, which is the whole of what the receiver should see.
+      expect(frame.message.content).toBe("entry one\nsince: c0\ncursor: c1");
+      expect(frame.message.content).not.toContain("<cross-session-message");
+      // The receipt address stays: it is the frame's own `from`, not a
+      // property of the envelope.
+      expect(frame.from).toMatch(/^uds:\/.*\.sock$/);
+
+      push.close();
+      await peer.close();
     });
-    await push.send(["entry one"], "c0", "c1");
-    await peer.received(1);
-    const frame = peer.frames[0] as Frame;
 
-    // The omp extension hands `frame.message.content` to the session
-    // untouched, so any envelope bytes here would reach the agent as two
-    // lines of markup in every batch. Byte for byte against `render`'s own
-    // output, which is the whole of what the receiver should see.
-    expect(frame.message.content).toBe("entry one\nsince: c0\ncursor: c1");
-    expect(frame.message.content).not.toContain("<cross-session-message");
-    // The receipt address stays: it is the frame's own `from`, not a
-    // property of the envelope.
-    expect(frame.from).toMatch(/^uds:\/.*\.sock$/);
+    it("never asks for a permission mode", async () => {
+      const peer = await fakePeer(`${receiver}-unasked`);
+      let asked = 0;
+      const push = await openPeerPush<string>({
+        target: peer.target,
+        render,
+        receiver,
+        clock: virtualClock(),
+        // Passing `fromMode` is a type error on the omp branch; that a
+        // correctly-typed call never consults one is what the counter says.
+        // The cast stands in for an omp caller compiled against an older
+        // shape, which is the one way this could regress silently.
+        ...({
+          fromMode: () => {
+            asked += 1;
+            return "bypass";
+          },
+        } as object),
+      });
+      await push.send(["entry one"], "c0", "c1");
+      await peer.received(1);
 
-    push.close();
-    await peer.close();
-  });
+      expect(asked).toBe(0);
 
-  it("never asks for a permission mode", async () => {
-    const peer = await fakePeer("omp-unasked");
-    let asked = 0;
-    const push = await openPeerPush<string>({
-      target: peer.target,
-      render,
-      receiver: "omp",
-      clock: virtualClock(),
-      // Passing `fromMode` is a type error on the omp branch; that a
-      // correctly-typed call never consults one is what the counter says.
-      // The cast stands in for an omp caller compiled against an older
-      // shape, which is the one way this could regress silently.
-      ...({
-        fromMode: () => {
-          asked += 1;
-          return "bypass";
-        },
-      } as object),
+      push.close();
+      await peer.close();
     });
-    await push.send(["entry one"], "c0", "c1");
-    await peer.received(1);
-
-    expect(asked).toBe(0);
-
-    push.close();
-    await peer.close();
-  });
-});
+  },
+);
 
 describe("openPeerPush auth line (T-255)", () => {
   it("opens every connection with the auth frame", async () => {

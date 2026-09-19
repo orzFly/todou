@@ -1,7 +1,12 @@
 import type { Env } from "../config.ts";
 import { detectHarnessId } from "./index.ts";
-import { publishedState } from "./omp-state.ts";
-import { ancestorPids, type ProcessTreeIo } from "./process-tree.ts";
+import { publishedState, readOmpState } from "./omp-state.ts";
+import { piHostAncestor, piState } from "./pi.ts";
+import {
+  ancestorPids,
+  type ProcessTreeIo,
+  readAncestors,
+} from "./process-tree.ts";
 
 /**
  * Where a push transport delivers, and what it authenticates with — the pair
@@ -15,9 +20,9 @@ export type HarnessMessaging = {
   socket?: string;
   token?: string;
   /** Which side is receiving, deciding whether a push wraps an envelope. */
-  peer?: "claude-code" | "omp";
+  peer?: "claude-code" | "omp" | "pi";
   /**
-   * The tool names the omp extension registered, when it published any.
+   * The tool names the extension registered, when it published any.
    * Advice reads them to know the watch tool is available (T-357).
    */
   tools?: readonly string[];
@@ -72,10 +77,16 @@ export function harnessMessaging(
   // /proc is one a test cannot state.
   switch (detectHarnessId(env, io)) {
     case "omp": {
-      // Exported by the extension `todou integration install omp` writes —
-      // into omp's own bash tool, and nowhere else. Preferred where it is
-      // there, because reading it costs nothing.
-      if (env.TODOU_MESSAGING_SOCKET) {
+      // Older omp extensions export only this pair. A pi parent can now
+      // export it too, so an inherited pi state requires positive omp ownership.
+      const own = env.TODOU_PI_STATE ? readOmpState(env) : undefined;
+      if (
+        env.TODOU_MESSAGING_SOCKET &&
+        (!env.TODOU_PI_STATE ||
+          ((own?.agent === "omp" || own?.agent === undefined) &&
+            own?.socket === env.TODOU_MESSAGING_SOCKET &&
+            own?.token === env.TODOU_MESSAGING_TOKEN))
+      ) {
         return {
           socket: env.TODOU_MESSAGING_SOCKET,
           token: env.TODOU_MESSAGING_TOKEN,
@@ -94,12 +105,30 @@ export function harnessMessaging(
       // failed `readdir` and never walks the tree. The record's pair is
       // believed or dropped whole, so a socket here always has its token.
       const state = publishedState(env, () => ancestorPids(io));
-      return state?.socket === undefined
+      return state?.socket === undefined ||
+        (state.agent !== undefined && state.agent !== "omp")
         ? {}
         : {
             socket: state.socket,
             token: state.token,
             peer: "omp",
+            ...(state.tools === undefined ? {} : { tools: state.tools }),
+          };
+    }
+    case "pi": {
+      // The shared socket variables can belong to an outer omp or pi.
+      // Resolve the publisher by ancestry and verify its harness instead.
+      const state = piState({
+        env,
+        host: () => piHostAncestor(readAncestors(io)),
+        ancestorPids: () => ancestorPids(io),
+      });
+      return state?.agent !== "pi" || state.socket === undefined
+        ? {}
+        : {
+            socket: state.socket,
+            token: state.token,
+            peer: "pi",
             ...(state.tools === undefined ? {} : { tools: state.tools }),
           };
     }
@@ -111,7 +140,7 @@ export function harnessMessaging(
         peer: "claude-code",
       };
     default:
-      // codex, pi, hermes: none of them publishes anything to push into, and
+      // codex and hermes publish nothing to push into, and
       // the claude-code socket some of them inherit is not theirs to use.
       return {};
   }

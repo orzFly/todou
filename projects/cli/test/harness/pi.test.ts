@@ -9,15 +9,18 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { detectAgentContext } from "../../src/harness/index.ts";
+import {
+  detectAgentContext,
+  liveSessionIdReader,
+} from "../../src/harness/index.ts";
+import { piAgentDir, piHostAncestor } from "../../src/harness/pi.ts";
 import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
+import { procTree, scratchDir } from "./proc-fixture.ts";
 
 /*
- * pi is the one detector that asks for its host process, so every case here
- * would otherwise read the real process tree and take the cwd and argv of
- * whatever ran the suite as pi's own. An unreadable tree pins these tests to
- * what the environment alone can say; the host-driven paths are exercised
- * with a fixture tree in process-tree.test.ts (T-128).
+ * An unreadable tree pins these tests to what the environment alone can say.
+ * Otherwise the detector would read the real cwd and argv of whatever ran the
+ * suite. The host-driven paths below use fixture process trees.
  */
 const NO_TREE = {
   platform: "linux" as const,
@@ -106,10 +109,565 @@ afterAll(() => {
 
 /** A fresh empty $PI_CODING_AGENT_DIR, so tests never see each other. */
 function agentDir(): string {
-  return mkdtempSync(join(tmpdir(), "todou-pi-agent-"));
+  return scratchDir("todou-pi-agent-");
 }
 
 const ENV = { PI_CODING_AGENT: "true" };
+
+describe("pi agent directory", () => {
+  it.each([undefined, ""])(
+    "defaults for an unset or empty override (%s)",
+    (value) => {
+      expect(piAgentDir({ PI_CODING_AGENT_DIR: value }, home)).toEqual({
+        dir: join(home, ".pi", "agent"),
+        configRoot: join(home, ".pi"),
+      });
+    },
+  );
+
+  it.each([
+    ["/custom/agent", "/custom/agent"],
+    ["relative/agent", "relative/agent"],
+    ["~", home],
+    ["~/custom/agent", join(home, "custom", "agent")],
+    ["~other/agent", "~other/agent"],
+  ])("resolves native override %s", (value, dir) => {
+    expect(piAgentDir({ PI_CODING_AGENT_DIR: value }, home)).toEqual({
+      dir,
+      configRoot: join(home, ".pi"),
+    });
+  });
+
+  it("uses the expanded directory for session discovery", () => {
+    const isolatedHome = scratchDir("todou-pi-home-");
+    writeSession({
+      agentDir: join(isolatedHome, "custom"),
+      cwd: project,
+      id: SID,
+    });
+    expect(
+      detect(
+        { ...ENV, PI_CODING_AGENT_DIR: "~/custom" },
+        isolatedHome,
+        project,
+      ),
+    ).toEqual({ agent: "pi", session_id: SID });
+  });
+});
+
+describe("pi authoritative session identity", () => {
+  function published(agent: string | undefined = "pi") {
+    const runtime = scratchDir("todou-pi-runtime-");
+    const dir = join(runtime, "todou-omp");
+    mkdirSync(dir);
+    const path = join(dir, `${process.pid}.json`);
+    const record = (id: string, file?: string) =>
+      writeFileSync(
+        path,
+        JSON.stringify({
+          v: 1,
+          pid: process.pid,
+          agent,
+          session_id: id,
+          session_file: file,
+        }),
+      );
+    record(SID);
+    return { path, record, env: { XDG_RUNTIME_DIR: runtime } };
+  }
+
+  it("lets the published session beat a newer neighboring log and native snapshot", () => {
+    const dir = agentDir();
+    const ours = writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("provider", "ours")],
+      mtime: recently(2),
+    });
+    writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("provider", "neighbor")],
+      mtime: recently(1),
+    });
+    const state = published();
+    state.record(SID, ours);
+    expect(
+      detect(
+        {
+          ...ENV,
+          ...state.env,
+          TODOU_PI_STATE: state.path,
+          PI_CODING_AGENT_DIR: dir,
+          PI_SESSION_ID: OTHER_SID,
+          PI_PROVIDER: "provider",
+          PI_MODEL: "stale",
+        },
+        home,
+        project,
+      ),
+    ).toEqual({
+      agent: "pi",
+      session_id: SID,
+      model: "provider/ours",
+    });
+  });
+
+  it("keeps a published id when its log is absent without borrowing another model", () => {
+    const state = published();
+    state.record(SID, join(home, "absent.jsonl"));
+    expect(
+      detect(
+        {
+          ...ENV,
+          TODOU_PI_STATE: state.path,
+          PI_SESSION_ID: OTHER_SID,
+          PI_MODEL: "stale",
+        },
+        home,
+        project,
+      ),
+    ).toEqual({ agent: "pi", session_id: SID });
+  });
+
+  it("retains the native model for a published ephemeral session with the same id", () => {
+    const state = published();
+    expect(
+      detect(
+        {
+          ...ENV,
+          TODOU_PI_STATE: state.path,
+          PI_SESSION_ID: SID,
+          PI_PROVIDER: "provider",
+          PI_MODEL: "ephemeral",
+        },
+        home,
+        project,
+      ),
+    ).toEqual({
+      agent: "pi",
+      session_id: SID,
+      model: "provider/ephemeral",
+    });
+  });
+
+  it("uses native session and model variables before a log exists", () => {
+    expect(
+      detect(
+        {
+          ...ENV,
+          PI_SESSION_ID: SID,
+          PI_SESSION_FILE: join(home, `absent_${SID}.jsonl`),
+          PI_PROVIDER: "provider",
+          PI_MODEL: "native",
+        },
+        home,
+        project,
+      ),
+    ).toEqual({
+      agent: "pi",
+      session_id: SID,
+      model: "provider/native",
+    });
+  });
+
+  it("recognizes native model switches within the same session on each invocation", () => {
+    const env = {
+      ...ENV,
+      PI_SESSION_ID: SID,
+      PI_PROVIDER: "provider",
+      PI_CODING_AGENT_DIR: agentDir(),
+    };
+    for (const model of ["first", "second", "first"]) {
+      expect(detect({ ...env, PI_MODEL: model }, home, project)).toEqual({
+        agent: "pi",
+        session_id: SID,
+        model: `provider/${model}`,
+      });
+    }
+  });
+
+  it("re-reads model switches from the published session's updated log", () => {
+    const dir = agentDir();
+    const file = writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("provider", "first")],
+    });
+    const state = published();
+    state.record(SID, file);
+    const env = {
+      ...ENV,
+      TODOU_PI_STATE: state.path,
+      PI_CODING_AGENT_DIR: dir,
+      PI_SESSION_ID: SID,
+      PI_PROVIDER: "provider",
+      PI_MODEL: "first",
+    };
+    expect(detect(env, home, project)).toEqual({
+      agent: "pi",
+      session_id: SID,
+      model: "provider/first",
+    });
+    for (const model of ["second", "first"]) {
+      writeSession({
+        agentDir: dir,
+        cwd: project,
+        id: SID,
+        lines: [
+          modelChange("provider", "first"),
+          assistant("provider", "first"),
+          modelChange("provider", model),
+        ],
+      });
+      expect(detect(env, home, project)).toEqual({
+        agent: "pi",
+        session_id: SID,
+        model: `provider/${model}`,
+      });
+    }
+  });
+
+  it("uses an ephemeral native session instead of an adjacent persisted log", () => {
+    const dir = agentDir();
+    writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("provider", "neighbor")],
+    });
+    const env = {
+      ...ENV,
+      PI_CODING_AGENT_DIR: dir,
+      PI_SESSION_ID: SID,
+      PI_SESSION_FILE: "",
+      PI_PROVIDER: "provider",
+      PI_MODEL: "ephemeral",
+    };
+    const io = procTree([
+      { pid: 424242, ppid: 424243, env },
+      { pid: 424243, ppid: 0, argv: ["pi", "--no-session"], cwd: project },
+    ]);
+    expect(detectAgentContext(env, home, project, io)).toEqual({
+      agent: "pi",
+      session_id: SID,
+      model: "provider/ephemeral",
+    });
+  });
+
+  it("reads the native session file for a missing model without scanning neighbors", () => {
+    const file = writeSession({
+      agentDir: agentDir(),
+      cwd: project,
+      id: SID,
+      lines: [modelChange("provider", "from-file")],
+    });
+    expect(
+      detect(
+        {
+          ...ENV,
+          PI_SESSION_ID: SID,
+          PI_SESSION_FILE: file,
+        },
+        home,
+        project,
+      ),
+    ).toEqual({
+      agent: "pi",
+      session_id: SID,
+      model: "provider/from-file",
+    });
+    expect(
+      detect(
+        {
+          ...ENV,
+          PI_SESSION_ID: OTHER_SID,
+          PI_SESSION_FILE: file,
+        },
+        home,
+        project,
+      ),
+    ).toEqual({ agent: "pi", session_id: OTHER_SID });
+  });
+
+  it("preserves legacy log recovery when native variables or state are unusable", () => {
+    const dir = agentDir();
+    writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("provider", "legacy")],
+    });
+    const state = published();
+    writeFileSync(state.path, "{");
+    expect(
+      detect(
+        {
+          ...ENV,
+          PI_CODING_AGENT_DIR: dir,
+          PI_SESSION_ID: "../invalid",
+          TODOU_PI_STATE: state.path,
+        },
+        home,
+        project,
+      ),
+    ).toEqual({
+      agent: "pi",
+      session_id: SID,
+      model: "provider/legacy",
+    });
+  });
+
+  it.each(["../bad", "bad/id", "x".repeat(201)])(
+    "rejects native id %s",
+    (id) => {
+      expect(
+        detect(
+          {
+            ...ENV,
+            PI_CODING_AGENT_DIR: agentDir(),
+            PI_SESSION_ID: id,
+            PI_PROVIDER: "provider",
+            PI_MODEL: "bad",
+          },
+          home,
+          project,
+        ),
+      ).toEqual({ agent: "pi" });
+    },
+  );
+
+  it("re-reads live state after switches and reports an unreadable file", () => {
+    const state = published();
+    const reader = liveSessionIdReader({
+      env: { ...ENV, TODOU_PI_STATE: state.path, PI_SESSION_ID: SID },
+      home,
+      cwd: project,
+      io: NO_TREE,
+    });
+    expect(reader()).toEqual({ id: SID });
+    state.record(OTHER_SID);
+    expect(reader()).toEqual({ id: OTHER_SID });
+    writeFileSync(state.path, "{");
+    expect(reader()).toEqual({ unreadable: state.path });
+    rmSync(state.path);
+    expect(reader()).toEqual({ unreadable: state.path });
+  });
+
+  it("never offers the native startup snapshot as a live session", () => {
+    const reader = liveSessionIdReader({
+      env: { ...ENV, PI_SESSION_ID: SID },
+      home,
+      cwd: project,
+      io: NO_TREE,
+    });
+    expect(reader()).toEqual({});
+  });
+
+  it.each(["omp", undefined])("rejects a %s record as pi state", (agent) => {
+    const state = published(agent);
+    // Passing undefined to the fixture uses its default; explicitly omit the field.
+    if (agent === undefined) {
+      writeFileSync(
+        state.path,
+        JSON.stringify({
+          v: 1,
+          pid: process.pid,
+          session_id: SID,
+        }),
+      );
+    }
+    const env = { ...ENV, TODOU_PI_STATE: state.path };
+    expect(detect(env, home, project)).toEqual({ agent: "pi" });
+    expect(liveSessionIdReader({ env, home, io: NO_TREE })()).toEqual({});
+  });
+
+  it("selects pi from an ancestor's published agent without any marker", () => {
+    const state = published();
+    const io = procTree([
+      { pid: 424242, ppid: process.pid },
+      { pid: process.pid, ppid: 0, argv: ["pi"] },
+    ]);
+    expect(detectAgentContext(state.env, home, project, io)).toEqual({
+      agent: "pi",
+      session_id: SID,
+    });
+    const reader = liveSessionIdReader({ env: state.env, home, io });
+    expect(reader()).toEqual({ id: SID });
+    state.record(OTHER_SID);
+    expect(reader()).toEqual({ id: OTHER_SID });
+    writeFileSync(state.path, "{");
+    expect(reader()).toEqual({ unreadable: state.path });
+  });
+
+  it("accepts a nearer nested pi publisher inside the inherited marker boundary", () => {
+    const state = published();
+    const env = { ...ENV, ...state.env };
+    const io = procTree([
+      { pid: 424242, ppid: process.pid, env },
+      { pid: process.pid, ppid: 424243, env: ENV, argv: ["pi"] },
+      { pid: 424243, ppid: 0, argv: ["pi"] },
+    ]);
+    expect(detectAgentContext(env, home, project, io)).toEqual({
+      agent: "pi",
+      session_id: SID,
+    });
+    expect(liveSessionIdReader({ env, home, io })()).toEqual({ id: SID });
+  });
+
+  it.each([
+    ["pi", "--no-extensions"],
+    ["/opt/bin/pi", "--no-extensions"],
+    ["node", "/opt/pi/cli.js", "--no-extensions"],
+    ["node", "/opt/pi-coding-agent/dist/cli.js", "--no-extensions"],
+    ["node", "/opt/pi-coding-agent/dist/bundle/cli.js", "--no-extensions"],
+    ["bun", "/opt/bin/pi", "--no-extensions"],
+  ])("bounds nested pi state at the executable invocation %j", (...argv) => {
+    const state = published();
+    const inherited = {
+      ...ENV,
+      ...state.env,
+      TODOU_PI_STATE: state.path,
+      PI_SESSION_ID: SID,
+      PI_PROVIDER: "provider",
+      PI_MODEL: "outer",
+    };
+    const env = {
+      ...inherited,
+      PI_SESSION_ID: OTHER_SID,
+      PI_MODEL: "inner",
+      PI_CODING_AGENT_DIR: agentDir(),
+    };
+    const io = procTree([
+      { pid: 424242, ppid: 424243, env },
+      { pid: 424243, ppid: process.pid, env: inherited, argv },
+      { pid: process.pid, ppid: 0, argv: ["pi"] },
+    ]);
+    expect(detectAgentContext(env, home, project, io)).toEqual({
+      agent: "pi",
+      session_id: OTHER_SID,
+      model: "provider/inner",
+    });
+    expect(liveSessionIdReader({ env, home, io })()).toEqual({});
+  });
+
+  it("lets an older nested pi use its log instead of inherited native identity", () => {
+    const state = published();
+    const dir = agentDir();
+    writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("provider", "legacy-inner")],
+    });
+    const env = {
+      ...ENV,
+      ...state.env,
+      TODOU_PI_STATE: state.path,
+      PI_CODING_AGENT_DIR: dir,
+      PI_SESSION_ID: SID,
+      PI_PROVIDER: "provider",
+      PI_MODEL: "outer",
+    };
+    const io = procTree([
+      { pid: 424242, ppid: 424243, env },
+      { pid: 424243, ppid: process.pid, env, argv: ["pi", "--no-extensions"] },
+      { pid: process.pid, ppid: 0, argv: ["pi"] },
+    ]);
+    expect(detectAgentContext(env, home, project, io)).toEqual({
+      agent: "pi",
+      session_id: OTHER_SID,
+      model: "provider/legacy-inner",
+    });
+    expect(liveSessionIdReader({ env, home, io })()).toEqual({});
+  });
+
+  it("does not mistake shell command text or unrelated scripts for the pi executable", () => {
+    for (const argv of [
+      ["sh", "-c", "pi --no-extensions"],
+      ["node", "/opt/unrelated/cli.js", "pi"],
+      ["node", "-e", "pi"],
+    ]) {
+      const outer = { pid: 424243, uid: 1000, env: {}, argv: ["pi"] };
+      expect(
+        piHostAncestor([{ pid: 424242, uid: 1000, env: ENV, argv }, outer]),
+      ).toBe(outer);
+    }
+  });
+
+  it("prevents omp from reading a pi record even without a process tree", () => {
+    const state = published();
+    const env = { OMPCODE: "1", TODOU_OMP_STATE: state.path };
+    expect(detect(env, home, project)).toEqual({ agent: "omp" });
+    expect(liveSessionIdReader({ env, home, io: NO_TREE })()).toEqual({});
+  });
+
+  it("does not claim an outer pi record when omp is the actual host", () => {
+    const state = published();
+    const env = {
+      ...ENV,
+      ...state.env,
+      OMPCODE: "1",
+      TODOU_OMP_STATE: state.path,
+      PI_SESSION_ID: SID,
+      PI_CODING_AGENT_DIR: agentDir(),
+    };
+    const io = procTree([
+      { pid: 424242, ppid: 424243, env },
+      { pid: 424243, ppid: process.pid, env: ENV, argv: ["omp"] },
+      { pid: process.pid, ppid: 0, argv: ["pi"] },
+    ]);
+    expect(detectAgentContext(env, home, project, io)).toEqual({
+      agent: "omp",
+    });
+    expect(liveSessionIdReader({ env, home, io })()).toEqual({});
+  });
+
+  it("does not claim an outer omp record or inherited native variables from inner pi", () => {
+    const state = published("omp");
+    const inherited = {
+      OMPCODE: "1",
+      PI_SESSION_ID: SID,
+      PI_SESSION_FILE: join(home, `outer_${SID}.jsonl`),
+      PI_PROVIDER: "provider",
+      PI_MODEL: "outer",
+    };
+    const env = {
+      ...ENV,
+      ...inherited,
+      ...state.env,
+      TODOU_PI_STATE: state.path,
+      TODOU_OMP_STATE: state.path,
+      PI_CODING_AGENT_DIR: agentDir(),
+    };
+    const io = procTree([
+      { pid: 424242, ppid: 424243, env },
+      { pid: 424243, ppid: process.pid, env: inherited, argv: ["pi"] },
+      { pid: process.pid, ppid: 0, argv: ["omp"] },
+    ]);
+    expect(detectAgentContext(env, home, project, io)).toEqual({ agent: "pi" });
+    expect(liveSessionIdReader({ env, home, io })()).toEqual({});
+    expect(
+      detectAgentContext(
+        {
+          ...env,
+          PI_SESSION_ID: OTHER_SID,
+          PI_MODEL: "inner",
+        },
+        home,
+        project,
+        io,
+      ),
+    ).toEqual({
+      agent: "pi",
+      session_id: OTHER_SID,
+      model: "provider/inner",
+    });
+  });
+});
 
 describe("pi detection", () => {
   it("returns null without the pi marker", () => {

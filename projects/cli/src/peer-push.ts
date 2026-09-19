@@ -147,7 +147,7 @@ export function wrapEnvelope(opts: {
 }
 
 /**
- * What kind of session is on the other end. The omp receiver reads the body
+ * What kind of session is on the other end. The omp and pi receivers read the body
  * as-is, so the envelope is a Claude Code side's contract and asking for a
  * `fromName` to put inside it there would be a silently ignored field — the
  * union keeps such an option from being passed at all.
@@ -166,7 +166,8 @@ type PeerPushReceiver =
        */
       fromMode?: () => "bypass" | "prompting" | undefined;
     }
-  | { receiver: "omp" };
+  | { receiver: "omp" }
+  | { receiver: "pi" };
 
 export type PeerPushOptions<T> = {
   /** The target session's socket, from CLAUDE_CODE_MESSAGING_SOCKET. */
@@ -524,8 +525,9 @@ export async function openPeerPush<T>(
       // Asked here rather than inside `build`, which runs a second time on
       // the oversize path below: a batch's two renderings must not be able
       // to disagree about who sent them. Only the Claude Code receiver has
-      // the field at all — the union leaves omp callers nowhere to pass one.
-      const claudeCode = opts.receiver === "omp" ? undefined : opts;
+      // the field at all — extension receivers need no envelope.
+      const claudeCode =
+        opts.receiver === "omp" || opts.receiver === "pi" ? undefined : opts;
       const fromMode = claudeCode?.fromMode?.();
       const build = (body: string) =>
         JSON.stringify({

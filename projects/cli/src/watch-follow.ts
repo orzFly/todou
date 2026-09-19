@@ -301,12 +301,12 @@ export async function openFollow<T>(opts: {
   let opened: PeerPush<T> | null = null;
   if (opts.transport === "uds") {
     const open = opts.open ?? openPeerPush;
-    // omp's receiver reads the body as-is, so it takes no envelope and has
+    // Extension receivers read the body as-is, so they take no envelope and have
     // no `fromName` to pass; the union on `PeerPushOptions` makes the same
     // decision at the type level.
     const receiver =
-      opts.messaging.peer === "omp"
-        ? ({ receiver: "omp" } as const)
+      opts.messaging.peer === "omp" || opts.messaging.peer === "pi"
+        ? ({ receiver: opts.messaging.peer } as const)
         : ({
             receiver: "claude-code",
             fromName: `${FROM_PREFIX}-${opts.subject}`,

@@ -259,6 +259,56 @@ describe("followAdvice", () => {
   });
 });
 
+describe("pi follow advice", () => {
+  it("offers the native tool with pi's actual delivery semantics", () => {
+    const advice = followAdvice({
+      harness: "pi",
+      socket: SOCKET,
+      tools: ["todou_watch"],
+      optedOut: false,
+    });
+    expect(advice.situation).toBe("pi-tool");
+    expect(advice.paragraphs).toEqual([
+      "running under pi, and the todou extension registers a `todou_watch` tool. Call it directly with JSON arguments.",
+      '`{"action": "start", "issue": "T-16"}` follows one card; `{"action": "start"}` follows a project. `{"action": "list"}` reports running watches, and `{"action": "stop", "id": "w1"}` ends one. `project` and `server` default to the current directory. If you are working on a card, start a watch on it now.',
+      "The tool owns the background process. Activity starts a turn when pi is idle, or arrives after the current tool batch finishes. pi has no background bash; use this tool to follow activity while you work.",
+      "The watch carries spec and question activity too: a review verdict and a question answer each arrive on it as their own line, so you do not need a separate `spec wait` or `question wait` running beside it.",
+    ]);
+    expect(advice.paragraphs.join("\n")).not.toMatch(
+      /xd:\/\/|async:|timeout: 0/,
+    );
+  });
+
+  it.each([
+    { socket: undefined, tools: ["todou_watch"] },
+    { socket: "", tools: ["todou_watch"] },
+    { socket: SOCKET, tools: [] },
+  ])("requires both the socket and native tool: %j", (availability) => {
+    const advice = followAdvice({
+      harness: "pi",
+      ...availability,
+      optedOut: false,
+    });
+    expect(advice.situation).toBe("pi-no-tool");
+    expect(advice.paragraphs.join("\n")).toContain("--poll");
+    expect(advice.paragraphs.join("\n")).not.toContain("Call it directly");
+  });
+
+  it("honors opt-out before suggesting the native tool", () => {
+    const advice = followAdvice({
+      harness: "pi",
+      socket: SOCKET,
+      tools: ["todou_watch"],
+      optedOut: true,
+    });
+    expect(advice.situation).toBe("uds-opted-out");
+    expect(advice.paragraphs.join("\n")).toContain("--poll");
+    expect(advice.paragraphs.join("\n")).not.toMatch(
+      /Call it directly|opt-in-uds/,
+    );
+  });
+});
+
 /** The four paragraphs of the omp-with-tool answer, pinned whole. */
 const OMP_TOOL = [
   "running under omp, and the todou extension registers a `todou_watch` tool. It is mounted as a device rather than listed among your tools: write a call's JSON arguments to `xd://todou_watch` to run it, and read `xd://todou_watch` for its full documentation.",
