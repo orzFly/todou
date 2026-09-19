@@ -356,6 +356,55 @@ describe("issue view", () => {
     expect(result.stdout).toContain("opened by Claude");
   });
 
+  it.each([null, "reworking scope"])(
+    "shows a withdrawn spec and its versioned history with reason %j",
+    async (reason) => {
+      const withdrawn = {
+        ...issue,
+        spec_version: 3,
+        spec_review_status: "withdrawn",
+        spec_unresolved_comments: 2,
+      };
+      const event = {
+        type: "event",
+        id: 12,
+        event_type: "spec_withdrawn",
+        actor: { ...me, login: "user", display_name: "User" },
+        payload: { version: 2, reason },
+        created_at: "2026-08-11T10:45:00Z",
+      };
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/projects/todou/issues/3", withdrawn],
+        [
+          "GET",
+          "/api/projects/todou/issues/3/timeline",
+          { items: [event], prev_cursor: null, next_cursor: null },
+        ],
+      ]);
+      const human = await runCli(["issue", "view", "3"], {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(human.exitCode).toBe(0);
+      expect(human.stdout).toContain(
+        "spec: v3 · withdrawn · reworking · 2 unresolved comment(s)",
+      );
+      expect(human.stdout).toContain(
+        `User spec_withdrawn (v2${reason === null ? "" : ` — ${reason}`})`,
+      );
+      expect(human.stdout).not.toContain("awaiting review");
+      const json = await runCli(["issue", "view", "3", "--json"], {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(json.exitCode).toBe(0);
+      expect(JSON.parse(json.stdout)).toMatchObject({
+        issue: withdrawn,
+        timeline: [event],
+      });
+    },
+  );
+
   it("names people by display name, falling back to the login (T-149)", async () => {
     const nameless = { ...me, id: 4, login: "newcomer", display_name: "   " };
     const { fetchImpl } = fakeFetch([

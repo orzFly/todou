@@ -16,6 +16,7 @@ import {
   useIsVersionPusher,
 } from "@/api/spec.ts";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { diffstatCells, type SpecFileStat } from "@/lib/spec-version-stats.ts";
 import { cn } from "@/lib/utils.ts";
@@ -87,6 +88,11 @@ function SpecVersionCardBody({
   // Review call to action (T-103). The card exists because a push happened,
   // so the spec provably exists — no 404 probe to gate here.
   const info = useQuery(specQuery(slug, issueNumber)).data;
+  const withdrawal = info?.versions.find(
+    (v) => v.number === version,
+  )?.withdrawal;
+  const currentlyWithdrawn =
+    info?.current_version === version && info.review_status === "withdrawn";
   // The account that pushed a version can never sign it off (the server
   // answers 403), so its own view gets the state without the button.
   const isPusher = useIsVersionPusher(slug, issueNumber, version);
@@ -139,6 +145,13 @@ function SpecVersionCardBody({
         >
           Spec v{version}
         </Link>
+        {(currentlyWithdrawn || withdrawal) && (
+          <span className="text-xs text-muted-foreground">
+            {currentlyWithdrawn
+              ? "withdrawn · reworking"
+              : "previously withdrawn"}
+          </span>
+        )}
         {payload.message !== null && (
           <span className="truncate text-xs text-muted-foreground">
             {payload.message}
@@ -285,6 +298,27 @@ function SpecVersionCardBody({
               {outdatedHere.length} outdated by later pushes
             </span>
           )}
+        </div>
+      )}
+      {withdrawal && (
+        <div className="flex items-center gap-2 border-t bg-muted/30 px-2.5 py-1 text-xs text-muted-foreground">
+          <span>
+            {"Withdrawn by "}
+            <UserChip user={withdrawal.actor} nameClassName="text-xs" />
+            {" · "}
+            <time
+              dateTime={withdrawal.created_at}
+              title={withdrawal.created_at}
+            >
+              {new Date(withdrawal.created_at).toLocaleString()}
+            </time>
+            {withdrawal.reason !== null && (
+              <>
+                {" — "}
+                {withdrawal.reason}
+              </>
+            )}
+          </span>
         </div>
       )}
 

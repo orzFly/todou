@@ -623,3 +623,620 @@ describe("spec push --wait", () => {
     });
   });
 });
+
+describe("spec wait: withdrawal and replacement versions", () => {
+  const sessionEnv = {
+    ...loggedInEnv("proj"),
+    CLAUDECODE: "1",
+    CLAUDE_CODE_SESSION_ID: "waiting-session",
+  };
+
+  it.each([false, true])(
+    "returns an existing withdrawal before carried comments (json=%s)",
+    async (json) => {
+      const { fetchImpl, calls } = fakeFetch([
+        [
+          "GET",
+          SPEC_PATH,
+          specInfo({
+            review_status: "withdrawn",
+            unresolved_comments: 3,
+            unresolved_carried_comments: 2,
+          }),
+        ],
+      ]);
+      const run = await runCli(
+        ["spec", "wait", "23", ...(json ? ["--json"] : [])],
+        { fetchImpl, env: sessionEnv },
+      );
+      expect(run.exitCode).toBe(0);
+      expect(timelineDrains(calls)).toHaveLength(0);
+      if (json) {
+        const records = run.stdout
+          .trim()
+          .split("\n")
+          .map((s) => JSON.parse(s));
+        expect(records.map((r) => r.type)).toEqual(["cursor", "outcome"]);
+        expect(records[0]).toMatchObject({ next_cursor: "cv2" });
+        expect(records[1]).toMatchObject({
+          outcome: "withdrawn",
+          review_status: "withdrawn",
+          version: 2,
+          unresolved_comments: 3,
+          carried_comments: 2,
+        });
+      } else {
+        expect(outcomeOf(run.stdout)).toBe("withdrawn · spec v2 · reworking");
+        expect(run.stdout).toContain("cursor: cv2");
+        expect(run.stdout).not.toContain("changes requested");
+        expect(run.stdout).not.toContain("approved");
+      }
+    },
+  );
+
+  it.each(["poll", "sse", "disconnect"])(
+    "observes a same-session withdrawal with an empty timeline via %s",
+    async (transport) => {
+      const sse = sseStub();
+      const clock = virtualClock();
+      let drains = 0;
+      const changedAt = transport === "disconnect" ? 3 : 2;
+      const { fetchImpl, calls } = fakeFetch([
+        ["GET", "/api/me", ME],
+        [
+          "GET",
+          SPEC_PATH,
+          () =>
+            specInfo({
+              review_status: drains >= changedAt ? "withdrawn" : "unreviewed",
+            }),
+        ],
+        [
+          "GET",
+          "/api/events",
+          () =>
+            transport === "poll"
+              ? new Response(null, { status: 404 })
+              : sse.reply(),
+        ],
+        [
+          "GET",
+          TIMELINE_PATH,
+          () => {
+            drains += 1;
+            if (drains > 4)
+              throw new Error("same-session state was never observed");
+            if (drains === 1 && transport === "disconnect") sse.drop();
+            return page([], null);
+          },
+        ],
+      ]);
+      if (transport === "sse") {
+        sse.push("change", {
+          entity: "spec",
+          id: 23,
+          action: "updated",
+          project: "proj",
+          issue_number: 23,
+        });
+      }
+      const run = await runCli(
+        ["spec", "wait", "23", "--json", "--interval", "2", "--debounce", "30"],
+        { fetchImpl, env: sessionEnv, clock },
+      );
+      expect(
+        drains,
+        "state-only withdrawal must stop after its confirming drain",
+      ).toBe(changedAt + 1);
+      expect(run.exitCode, `${run.stderr}\n${run.stdout}`).toBe(0);
+      const records = run.stdout
+        .trim()
+        .split("\n")
+        .map((s) => JSON.parse(s));
+      expect(records.map((r) => r.type)).toEqual(["cursor", "outcome"]);
+      expect(records[0]).toMatchObject({ next_cursor: "cv2" });
+      expect(records[1]).toMatchObject({
+        outcome: "withdrawn",
+        review_status: "withdrawn",
+        version: 2,
+      });
+      for (const url of timelineDrains(calls)) {
+        expect(url.searchParams.get("after")).toBe("cv2");
+        expect(url.searchParams.get("exclude_agent_session")).toBe(
+          "waiting-session",
+        );
+        expect(url.searchParams.get("exclude_actor")).toBe("2");
+      }
+      if (transport === "poll") expect(clock.elapsed()).toBe(2000);
+      if (transport === "disconnect") {
+        expect(clock.elapsed()).toBeGreaterThanOrEqual(2000);
+      }
+      if (transport === "sse") {
+        expect(clock.elapsed()).toBe(0);
+        expect(sse.opens()).toBe(1);
+      }
+    },
+  );
+
+  it.each([ME, AUTHOR])(
+    "delivers withdrawal activity from $login before cursor and outcome",
+    async (actor) => {
+      const clock = virtualClock();
+      let drains = 0;
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/me", ME],
+        [
+          "GET",
+          SPEC_PATH,
+          () =>
+            specInfo({ review_status: drains ? "withdrawn" : "unreviewed" }),
+        ],
+        [
+          "GET",
+          TIMELINE_PATH,
+          () => {
+            drains += 1;
+            if (drains > 5)
+              throw new Error("withdrawal bypassed debounce deadline");
+            if (drains === 1) {
+              return page(
+                [
+                  {
+                    type: "event",
+                    id: 81,
+                    event_type: "spec_withdrawn",
+                    actor,
+                    agent_context: {
+                      agent: "claude-code",
+                      session_id: "sibling-session",
+                    },
+                    created_at: clock.iso(),
+                    payload: { version: 2, reason: "Reconsider the approach" },
+                  },
+                ],
+                "e81",
+              );
+            }
+            return drains === 2
+              ? page([comment(82, "Keep the old API", clock.iso())], "c82")
+              : page([], null);
+          },
+        ],
+      ]);
+      const run = await runCli(
+        ["spec", "wait", "23", "--json", "--debounce", "4", "--interval", "2"],
+        { fetchImpl, env: sessionEnv, clock },
+      );
+      expect(run.exitCode).toBe(0);
+      expect(clock.elapsed()).toBe(4000);
+      const records = run.stdout
+        .trim()
+        .split("\n")
+        .map((s) => JSON.parse(s));
+      expect(records.map((r) => r.type)).toEqual([
+        "event",
+        "comment",
+        "cursor",
+        "outcome",
+      ]);
+      expect(records[0]).toMatchObject({ event_type: "spec_withdrawn", actor });
+      expect(records[2]).toMatchObject({ next_cursor: "c82" });
+      expect(records[3]).toMatchObject({ outcome: "withdrawn", version: 2 });
+    },
+  );
+
+  it.each(["unreviewed", "approved", "changes_requested", "withdrawn"])(
+    "returns latest %s when withdrawal is immediately followed by a new version",
+    async (reviewStatus) => {
+      let drains = 0;
+      let postDrainReads = 0;
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/me", ME],
+        [
+          "GET",
+          SPEC_PATH,
+          () => {
+            if (!drains) return specInfo();
+            postDrainReads += 1;
+            return postDrainReads === 1
+              ? specInfo({ review_status: "withdrawn" })
+              : specInfo({
+                  current_version: 3,
+                  current_version_cursor: "cv3",
+                  review_status: reviewStatus,
+                  unresolved_comments: 2,
+                  unresolved_carried_comments: 2,
+                });
+          },
+        ],
+        [
+          "GET",
+          TIMELINE_PATH,
+          () => {
+            drains += 1;
+            if (drains > 3)
+              throw new Error("withdrawal failed to stop the wait");
+            return page([], null);
+          },
+        ],
+      ]);
+      const run = await runCli(["spec", "wait", "23", "--json"], {
+        fetchImpl,
+        env: sessionEnv,
+        clock: virtualClock(),
+      });
+      expect(run.exitCode).toBe(0);
+      expect(JSON.parse(outcomeOf(run.stdout))).toMatchObject({
+        outcome: reviewStatus === "unreviewed" ? "feedback" : reviewStatus,
+        review_status: reviewStatus,
+        version: 3,
+        carried_comments: 2,
+      });
+    },
+  );
+
+  it("observes a replacement even when the withdrawn intermediate state was missed", async () => {
+    let drains = 0;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", ME],
+      ["GET", SPEC_PATH, () => specInfo(drains ? { current_version: 3 } : {})],
+      [
+        "GET",
+        TIMELINE_PATH,
+        () => {
+          drains += 1;
+          if (drains > 3)
+            throw new Error("new version failed to settle the wait");
+          return page([], null);
+        },
+      ],
+    ]);
+    const run = await runCli(["spec", "wait", "23", "--json"], {
+      fetchImpl,
+      env: sessionEnv,
+      clock: virtualClock(),
+    });
+    expect(run.exitCode).toBe(0);
+    expect(JSON.parse(outcomeOf(run.stdout))).toMatchObject({
+      outcome: "feedback",
+      review_status: "unreviewed",
+      version: 3,
+    });
+  });
+
+  it.each(["withdrawn", "unreviewed"])(
+    "push --wait reports latest %s after a resubmission race",
+    async (reviewStatus) => {
+      const { fetchImpl } = fakeFetch([
+        [
+          "POST",
+          PUSH_PATH,
+          {
+            unchanged: false,
+            version: 3,
+            cursor: "pc3",
+            added: [],
+            changed: [],
+            removed: [],
+          },
+        ],
+        [
+          "GET",
+          SPEC_PATH,
+          specInfo({
+            current_version: reviewStatus === "unreviewed" ? 4 : 3,
+            review_status: reviewStatus,
+            unresolved_comments: 2,
+            unresolved_carried_comments: 2,
+          }),
+        ],
+      ]);
+      const run = await runCli(
+        ["spec", "push", "23", specDir(), "--wait", "--json"],
+        { fetchImpl, env: sessionEnv },
+      );
+      expect(run.exitCode).toBe(0);
+      const records = run.stdout
+        .trim()
+        .split("\n")
+        .map((s) => JSON.parse(s));
+      expect(records.map((r) => r.type)).toEqual(["push", "cursor", "outcome"]);
+      expect(records[1]).toMatchObject({ next_cursor: "pc3" });
+      expect(records[2]).toMatchObject({
+        outcome: reviewStatus === "unreviewed" ? "feedback" : "withdrawn",
+        review_status: reviewStatus,
+        version: reviewStatus === "unreviewed" ? 4 : 3,
+        carried_comments: 2,
+      });
+    },
+  );
+
+  it("rechecks an initially withdrawn version before returning a newer unreviewed result", async () => {
+    let reads = 0;
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        SPEC_PATH,
+        () => {
+          reads += 1;
+          return reads === 1
+            ? specInfo({ review_status: "withdrawn" })
+            : specInfo({
+                current_version: 3,
+                unresolved_carried_comments: 2,
+                unresolved_comments: 2,
+              });
+        },
+      ],
+    ]);
+    const run = await runCli(["spec", "wait", "23", "--json"], {
+      fetchImpl,
+      env: sessionEnv,
+    });
+    expect(run.exitCode).toBe(0);
+    expect(JSON.parse(outcomeOf(run.stdout))).toMatchObject({
+      outcome: "feedback",
+      review_status: "unreviewed",
+      version: 3,
+    });
+  });
+
+  it.each(["timeline", "state", "final state"])(
+    "retries a transient %s failure without losing or repeating delivered entries",
+    async (failureAt) => {
+      let drains = 0;
+      let stateReads = 0;
+      const { fetchImpl, calls } = fakeFetch([
+        ["GET", "/api/me", ME],
+        [
+          "GET",
+          SPEC_PATH,
+          () => {
+            stateReads += 1;
+            if (
+              (failureAt === "state" && stateReads === 2) ||
+              (failureAt === "final state" && stateReads === 3)
+            )
+              return {
+                __status: 503,
+                body: { error: "unavailable", message: "try again" },
+              };
+            return specInfo({
+              review_status: drains ? "withdrawn" : "unreviewed",
+            });
+          },
+        ],
+        [
+          "GET",
+          TIMELINE_PATH,
+          () => {
+            drains += 1;
+            if (failureAt === "timeline" && drains === 1) {
+              return {
+                __status: 503,
+                body: { error: "unavailable", message: "try again" },
+              };
+            }
+            return page(
+              [comment(83, "Rework this", "2026-08-11T12:00:00.000Z")],
+              "c83",
+            );
+          },
+        ],
+      ]);
+      const run = await runCli(
+        ["spec", "wait", "23", "--json", "--debounce", "0"],
+        { fetchImpl, env: sessionEnv, clock: virtualClock() },
+      );
+      expect(run.exitCode).toBe(0);
+      expect(run.stderr).toContain("transient failure");
+      expect(
+        timelineDrains(calls).map((url) => url.searchParams.get("after")),
+      ).toEqual(failureAt === "final state" ? ["cv2"] : ["cv2", "cv2"]);
+      const records = run.stdout
+        .trim()
+        .split("\n")
+        .map((s) => JSON.parse(s));
+      expect(records.map((r) => r.type)).toEqual([
+        "comment",
+        "cursor",
+        "outcome",
+      ]);
+      expect(records[0]).toMatchObject({ id: 83 });
+      expect(records[1]).toMatchObject({ next_cursor: "c83" });
+      expect(records[2]).toMatchObject({ outcome: "withdrawn", version: 2 });
+    },
+  );
+
+  it("retries a state-only read without inventing activity or advancing the resume cursor", async () => {
+    let drains = 0;
+    let reads = 0;
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/me", ME],
+      [
+        "GET",
+        SPEC_PATH,
+        () => {
+          reads += 1;
+          if (reads === 2) {
+            return {
+              __status: 503,
+              body: { error: "unavailable", message: "try again" },
+            };
+          }
+          return specInfo({
+            review_status: drains ? "withdrawn" : "unreviewed",
+          });
+        },
+      ],
+      [
+        "GET",
+        TIMELINE_PATH,
+        () => {
+          drains += 1;
+          if (drains > 3) throw new Error("empty withdrawal failed to settle");
+          return page([], null);
+        },
+      ],
+    ]);
+    const run = await runCli(
+      ["spec", "wait", "23", "--since", "resume", "--json"],
+      { fetchImpl, env: sessionEnv, clock: virtualClock() },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(
+      timelineDrains(calls).map((url) => url.searchParams.get("after")),
+    ).toEqual(["resume", "resume", "resume"]);
+    const records = run.stdout
+      .trim()
+      .split("\n")
+      .map((s) => JSON.parse(s));
+    expect(records.map((r) => r.type)).toEqual(["cursor", "outcome"]);
+    expect(records[0]).toMatchObject({ next_cursor: "resume" });
+    expect(records[1]).toMatchObject({ outcome: "withdrawn" });
+  });
+
+  it("emits no cursor or outcome when the post-drain state read permanently fails", async () => {
+    let reads = 0;
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/me", ME],
+      [
+        "GET",
+        SPEC_PATH,
+        () => {
+          reads += 1;
+          return reads === 1
+            ? specInfo()
+            : {
+                __status: 403,
+                body: { error: "forbidden", message: "access revoked" },
+              };
+        },
+      ],
+      [
+        "GET",
+        TIMELINE_PATH,
+        page(
+          [
+            comment(
+              84,
+              "Not delivered without state",
+              "2026-08-11T12:00:00.000Z",
+            ),
+          ],
+          "c84",
+        ),
+      ],
+    ]);
+    const run = await runCli(
+      ["spec", "wait", "23", "--json", "--debounce", "0"],
+      {
+        fetchImpl,
+        env: sessionEnv,
+        clock: virtualClock(),
+      },
+    );
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stdout).toBe("");
+    expect(reads).toBe(2);
+    expect(timelineDrains(calls)).toHaveLength(1);
+  });
+
+  it("push --wait observes a live same-session withdrawal and prints one cursor", async () => {
+    let drains = 0;
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "POST",
+        PUSH_PATH,
+        {
+          unchanged: false,
+          version: 3,
+          cursor: "pc3",
+          added: [],
+          changed: [],
+          removed: [],
+        },
+      ],
+      ["GET", "/api/me", ME],
+      [
+        "GET",
+        SPEC_PATH,
+        () =>
+          specInfo({
+            current_version: 3,
+            review_status: drains >= 2 ? "withdrawn" : "unreviewed",
+          }),
+      ],
+      [
+        "GET",
+        TIMELINE_PATH,
+        () => {
+          drains += 1;
+          if (drains > 3)
+            throw new Error("push waiter ignored its session's withdrawal");
+          return page([], null);
+        },
+      ],
+    ]);
+    const run = await runCli(
+      ["spec", "push", "23", specDir(), "--wait", "--interval", "2"],
+      { fetchImpl, env: sessionEnv, clock: virtualClock() },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("spec v3 pushed:");
+    expect(run.stdout.match(/^cursor: /gm)).toHaveLength(1);
+    expect(outcomeOf(run.stdout)).toBe("withdrawn · spec v3 · reworking");
+    expect(
+      timelineDrains(calls).map((url) => url.searchParams.get("after")),
+    ).toEqual(["pc3", "pc3", "pc3"]);
+  });
+
+  it("delivers a foreign withdrawal committed between the empty drain and state read", async () => {
+    let drains = 0;
+    const clock = virtualClock();
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", ME],
+      [
+        "GET",
+        SPEC_PATH,
+        () =>
+          specInfo({
+            review_status: drains ? "withdrawn" : "unreviewed",
+          }),
+      ],
+      [
+        "GET",
+        TIMELINE_PATH,
+        () => {
+          drains += 1;
+          if (drains > 5)
+            throw new Error("confirmation never delivered the withdrawal");
+          return drains === 2
+            ? page(
+                [
+                  {
+                    type: "event",
+                    id: 85,
+                    event_type: "spec_withdrawn",
+                    actor: AUTHOR,
+                    created_at: clock.iso(),
+                    payload: { version: 2, reason: "Recheck the scope" },
+                  },
+                ],
+                "e85",
+              )
+            : page([], null);
+        },
+      ],
+    ]);
+    const run = await runCli(
+      ["spec", "wait", "23", "--debounce", "4", "--interval", "2"],
+      { fetchImpl, env: sessionEnv, clock },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(clock.elapsed()).toBe(4000);
+    expect(run.stdout).toContain("Recheck the scope");
+    expect(run.stdout).toContain("cursor: e85");
+    expect(outcomeOf(run.stdout)).toBe("withdrawn · spec v2 · reworking");
+  });
+});

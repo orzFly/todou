@@ -3,6 +3,7 @@ import {
   CAPABILITIES,
   type CapabilityId,
   can,
+  capabilityOf,
   minRoleOf,
   ROLE_RANK,
 } from "../src/permissions.ts";
@@ -40,6 +41,21 @@ describe("CAPABILITIES", () => {
     for (const cap of CAPABILITIES) {
       expect(MEMBER_ROLES).toContain(cap.minRole);
     }
+  });
+});
+
+describe("spec.withdraw", () => {
+  it("is a writer gate independent of ownership", () => {
+    expect(capabilityOf("spec.withdraw")).toEqual({
+      id: "spec.withdraw",
+      minRole: "writer",
+      enforce: "gate",
+    });
+    expect(can(null, "spec.withdraw")).toBe(false);
+    expect(can("reader", "spec.withdraw")).toBe(false);
+    expect(can("reporter", "spec.withdraw")).toBe(false);
+    expect(can("writer", "spec.withdraw")).toBe(true);
+    expect(can("admin", "spec.withdraw")).toBe(true);
   });
 });
 

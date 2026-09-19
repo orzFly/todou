@@ -207,6 +207,7 @@ directories and external review tools. Write the documents in a scratch director
 
 ```bash
 todou spec push <n> <dir> -p <proj> --message "v2" [--if-version <v>] [--wait]
+todou spec withdraw <n> -p <proj> --if-version <v> [--reason "reworking"] [--json]
 todou spec wait <n> -p <proj> [--since <cursor>]           # re-enter that wait
 todou spec pull <n> <dir> -p <proj> [--version <v>] [--prune]
 todou spec list -p <proj> [--state open|closed|all]        # which cards have specs, and where each stands
@@ -216,10 +217,11 @@ todou spec resolve <n> <commentIds…>
 todou spec review <n> --approve | --request-changes | --comment [--body …] [--annotations <file|->]
 ```
 
-`--comment` is a review that judges nothing: it records the summary and the annotations and leaves
-the version awaiting a verdict. It is the only form the account that pushed the version may submit —
-`--approve` and `--request-changes` from that account are refused, which is what stops a fleet of
-agents sharing one machine account from signing off its own specs.
+`--comment` records the summary and annotations while preserving the current review status, including
+`approved`, `changes_requested` or `withdrawn`; it does not reset a version to awaiting review. It is
+the only review form the account that pushed the version may submit — `--approve` and
+`--request-changes` from that account are refused, even from another agent session. Both verdicts are
+also refused for a withdrawn current version; a comment review with content is still allowed.
 
 `--annotations` stages inline comments with any of the three verdicts. The file is a JSON array;
 each entry needs `path` and `body` and points with exactly one of `quote` (verbatim text, located
@@ -233,6 +235,37 @@ printf '%s' '[{"path":"design.md","quote":"one read-time count","body":"why not 
   | todou spec review 23 -p <proj> --comment --annotations - --body "three spots"
 ```
 
+### Withdrawal and resubmission
+
+Withdraw a pending (`unreviewed`) version as soon as you decide it needs investigation or rework:
+`todou spec withdraw <n> -p <proj> --if-version <v> [--reason "..."]`. `--if-version` is required
+and must be the positive version number you inspected. Never silently fetch and target a newer
+version to retry a conflict. The reason is optional; if supplied, it is trimmed, must be nonempty
+and at most 2000 characters. It is plain text in the withdrawal event, with no automatic comment,
+mention or reference notification.
+
+Any project writer or higher role can withdraw, including the pusher, another agent session on the
+same account, or a different writer. Readers and reporters cannot. A stale version or an
+`approved`/`changes_requested` version returns a conflict; withdrawal cannot undo a verdict.
+Repeating withdrawal of the same still-current withdrawn version succeeds with `unchanged: true`
+and the original event cursor. It does not replace the reason, change timestamps or add another
+event or unread notification. Once a newer version exists, the old request conflicts.
+
+Withdrawal sets vN to `withdrawn · reworking` without creating a version or deleting anything.
+Files, author, publication time, message, reviews, annotations, anchors and resolution state remain;
+historical pulls and direct links keep working. The withdrawal remains visible in that version's
+history after resubmission. It removes the spec's pending-review reminder, without marking the issue
+read or clearing other comments, mentions or questions; the event can still cause ordinary unread.
+The command returns the version, `review_status: withdrawn`, `unchanged` and withdrawal-event
+`cursor` in JSON; human output reports withdrawal (or already withdrawn) and the cursor.
+
+Push when the replacement is ready. From `withdrawn`, even identical content creates vN+1 with
+`unreviewed` status and a new push record; a zero-content diff is valid. Other states retain the
+same-content no-op behavior. The new version restores pending review, inherits no approval, and
+keeps existing annotations under the normal carry/remap rules without resolving them automatically.
+
+### Writing and reviewing the documents
+
 A spec document states the design as it stands, and never how it got there: no "v3 said X, v4 changed
 it to Y", no "the review asked for Z", no list of corrections to another document — a correction
 rewrites the sentence it corrects and folds its reason into the prose. `proposal.md` holds the user's
@@ -242,18 +275,36 @@ where the reference does work — repeating what the reader has already read ser
 review annotation established is recorded as the requirement it now is, never as a note about the
 annotation.
 
-**The review gate is one command**: `spec push … --wait`. It pushes, waits on the whole issue from the
-push's own position, and reads the verdict from the spec's state at every wake-up. The last stdout
-line is the outcome.
+**Enter review with `spec push … --wait`.** It pushes, waits on the whole issue from the push's own
+position, and reads the latest spec state at every wake-up. The last stdout line is the outcome.
+Exit 0 means a result was returned successfully, never that implementation is approved.
+
+- `approved`: only approval of the latest version passes the gate. Confirm the latest version with
+  `todou spec status <n> -p <proj>` before handing off or implementing.
+- `changes_requested`: read and address the annotations, then push a replacement for review.
+- `feedback`: read the discussion and current status. If the pending version needs rework, withdraw
+  it before investigating; if it remains ready for review, resume waiting from the returned cursor.
+- `withdrawn`: return to investigation/rework and push a new version when ready. This is neither
+  approval nor a request-changes verdict.
+
+`spec wait` and `spec push --wait` report `withdrawn` before considering carried unresolved comments.
+An already-withdrawn current version returns immediately, and withdrawal during a wait is detected
+even from the waiting agent's own session. Results follow the latest state: if vN was withdrawn but
+vN+1 has already been pushed, report vN+1's verdict when decided, or `feedback` with vN+1 /
+`unreviewed` while undecided, rather than vN's old withdrawal.
 
 Revision loop:
 
-1. `todou spec comments <n> -p <proj> --unresolved` lists each annotation with id, file, anchor and
-   body.
-2. Revise the documents. Requirement changes go into `proposal.md` as well.
-3. `todou spec resolve <n> <ids…>` for each annotation you addressed.
-4. Push again with `--if-version <v> --wait`. The guard rejects a concurrent push; annotations follow
-   the text across versions.
+1. Read `todou spec status <n> -p <proj>` and
+   `todou spec comments <n> -p <proj> --unresolved` to identify the version, state and annotations.
+2. When deciding to investigate or rework a pending version, withdraw that inspected version with
+   `--if-version <v>` first. If it is already withdrawn, continue rework. If it is
+   `changes_requested`, revise directly; withdrawal cannot erase that verdict. On a conflict, read
+   the new state and reassess instead of withdrawing unseen work.
+3. Investigate and revise the documents. Requirement changes go into `proposal.md` as well.
+4. `todou spec resolve <n> <ids…>` for each annotation you addressed.
+5. Push again with `--if-version <v> --wait`. The guard rejects a concurrent push; annotations follow
+   the text across versions. Repeat until the latest version is `approved`.
 
-A verdict counts only against the latest version, and the account that pushed a version cannot give
-it one (`--comment` excepted).
+Only the latest version's approval passes the gate. An older approval, a comment review,
+withdrawal, or a successful wait exit does not authorize implementation.

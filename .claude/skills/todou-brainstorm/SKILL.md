@@ -12,10 +12,10 @@ Questions follow the "Asking the user questions" section of `/todou-cli`; the re
 spec document may and may not contain, follow its "Spec documents" section.
 
 <HARD-GATE>
-Write no code, scaffold nothing and invoke no implementation skill until the user has approved the
-design at the review gate. This holds for cards that look too simple to need a design: unexamined
-assumptions cost the most there. The design may be a few sentences, and it is still pushed as a spec
-and approved.
+Write no code, scaffold nothing and invoke no implementation skill until the latest spec version
+is `approved` at the review gate. An older approval, `withdrawn`, or a wait exiting 0 does not pass
+this gate. This holds for cards that look too simple to need a design: unexamined assumptions cost
+the most there. The design may be a few sentences, and it is still pushed as a spec and approved.
 </HARD-GATE>
 
 ## Steps
@@ -29,7 +29,25 @@ and approved.
    recommendation go into the document, never into a comment.
 4. Self-review the documents, then push with `todou spec push <n> <dir> -p <proj> --message
    "brainstorm v1" --wait` and act on the outcome.
-5. After `approved`, invoke `/todou-plan`.
+5. Follow the review loop below. Invoke `/todou-plan` only after `spec status` confirms that the
+   latest version is `approved`.
+
+## Review loop
+
+Read the wait outcome and current spec status; exit 0 alone is not approval. Read the discussion and
+unresolved annotations before deciding what to do next.
+
+- If you decide a pending (`unreviewed`) version needs investigation or rework, first run
+  `todou spec withdraw <n> -p <proj> --if-version <v> [--reason "..."]` for the version you inspected.
+  Then investigate and revise. A conflict requires reading the current state and reassessing.
+- On `withdrawn`, continue investigation/rework; the published files and discussion remain available.
+  If the current status is `changes_requested`, revise directly, since withdrawal cannot undo a verdict.
+- Resolve addressed annotations and push the ready replacement with
+  `todou spec push <n> <dir> -p <proj> --if-version <v> --message "brainstorm revision" --wait`.
+  Even unchanged content creates a new version when resubmitting a withdrawn spec; it needs fresh
+  approval. Repeat until the latest version is approved.
+- If feedback requires no rework and the current version remains ready for review, resume
+  `todou spec wait <n> -p <proj> --since <cursor>` using the returned cursor.
 
 ## Working through the idea
 

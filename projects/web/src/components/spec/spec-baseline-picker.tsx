@@ -97,6 +97,7 @@ export function SpecBaselinePicker({
                   message={v.message}
                   author={v.author}
                   createdAt={v.created_at}
+                  withdrawal={v.withdrawal}
                   active={active}
                   ghostChip
                   tag={v.number === version - 1 ? "previous" : undefined}

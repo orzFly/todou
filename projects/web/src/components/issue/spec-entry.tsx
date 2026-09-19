@@ -19,12 +19,14 @@ const STATUS_STYLE: Record<SpecReviewStatus, string> = {
     "border-green-600/60 bg-green-600/10 text-green-700 dark:text-green-400",
   changes_requested:
     "border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-400",
+  withdrawn: "text-muted-foreground",
 };
 
 const STATUS_LABEL: Record<SpecReviewStatus, string> = {
   unreviewed: "awaiting review",
   approved: "approved",
   changes_requested: "changes requested",
+  withdrawn: "withdrawn · reworking",
 };
 
 export function SpecStatusBadge({
@@ -228,7 +230,9 @@ export function SpecSidebarSection({
         state={returnState}
         className="text-xs text-muted-foreground hover:underline"
       >
-        Read &amp; review →
+        {spec.data.review_status === "withdrawn"
+          ? "Read spec →"
+          : "Read & review →"}
       </Link>
     </SidebarSection>
   );

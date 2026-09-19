@@ -7,12 +7,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { SpecFileInput, TodouClient } from "@todou/shared";
+import type {
+  SpecFileInput,
+  SpecReviewStatus,
+  TodouClient,
+} from "@todou/shared";
 import {
   formatRef,
   SPEC_MAX_FILE_CHARS,
   SPEC_MAX_FILES,
   SpecPushInput,
+  SpecWithdrawInput,
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { z } from "zod";
@@ -39,13 +44,12 @@ import {
  * the list, the status command and the card header cannot drift apart on
  * what `changes_requested` is called.
  */
-export function specVerdict(
-  status: "unreviewed" | "approved" | "changes_requested" | null,
-): string {
+export function specVerdict(status: SpecReviewStatus | null): string {
   return {
     unreviewed: "awaiting review",
     approved: "approved",
     changes_requested: "changes requested",
+    withdrawn: "withdrawn · reworking",
   }[status ?? "unreviewed"];
 }
 
@@ -130,9 +134,11 @@ export class SpecPushCommand extends ProjectCommand {
       Collects every .md under \`<dir>\` (recursively) and syncs the whole
       set as one new version: files absent from the directory are removed
       from the spec. \`<dir>\` is deliberately required — a stray push from
-      a repository root must not become the spec. No difference → no new
-      version. \`--if-version N\` fails with a conflict unless the current
-      version is N (optimistic lock for concurrent agents).
+      a repository root must not become the spec. Identical content keeps
+      the current version, except after withdrawal: re-pushing a withdrawn
+      spec creates a new unreviewed version even with identical files.
+      \`--if-version N\` fails with a conflict unless the current version
+      is N (optimistic lock for concurrent agents).
 
       The push answers with the cursor to wait for the verdict from: every
       timeline entry created after it is delivered by
@@ -152,9 +158,10 @@ export class SpecPushCommand extends ProjectCommand {
 
       \`--wait\` makes that whole gate one command: the push blocks from its
       own cursor until the spec has been judged, and prints how it was —
-      \`approved\`, \`changes requested\` with the annotation count, or
-      \`feedback\` when somebody else wrote on the card without judging
-      yet. Exit 0 carries all three; only a fatal error exits 1. Everything
+      \`approved\`, \`changes requested\` with the annotation count,
+      \`withdrawn\`, or \`feedback\` when somebody else wrote on the card
+      without judging yet. Exit 0 does not mean approval: inspect the
+      outcome. Only a fatal error exits 1. Everything
       \`spec wait\` documents about the wait applies unchanged, including
       that a killed wait is re-entered with \`spec wait <n> --since
       <cursor>\` — the position is the single \`cursor:\` line printed,
@@ -287,6 +294,7 @@ export class SpecPushCommand extends ProjectCommand {
       client,
       project,
       number,
+      expectedVersion: result.version,
       from: outcome.cursor,
       session: this.sessionSource(),
       ...waitFlags,
@@ -294,6 +302,67 @@ export class SpecPushCommand extends ProjectCommand {
       clock: this.clock,
       note: (line) => this.note(line),
       emitBatch: (records, human) => this.outputBatch(records, human),
+    });
+  }
+}
+
+export class SpecWithdrawCommand extends ProjectCommand {
+  static paths = [["spec", "withdraw"]];
+  static usage = Command.Usage({
+    description: "Withdraw the current unreviewed spec for reworking",
+    details: `
+      Requires \`--if-version N\` with the current positive version number.
+      A stale version or an approved/changes-requested spec conflicts.
+      Files, annotations and discussion remain readable.
+
+      \`--reason\` is optional plain text, trimmed to 1–2000 characters when
+      supplied; it sends no mention notifications. Retrying the same
+      withdrawn version succeeds unchanged and returns the original cursor,
+      without replacing the original reason, actor or timestamp.
+
+      The last output line is the withdrawal cursor. \`--json\` includes
+      \`version\`, \`review_status\`, \`unchanged\` and \`cursor\`.
+      The cursor always identifies the original withdrawal event.
+
+      Push again to submit a new unreviewed version, even with identical
+      files. A withdrawn version accepts \`spec review --comment\`, which
+      preserves its status; approve and request-changes are refused.
+    `,
+    examples: [
+      [
+        "Withdraw a version while reworking it",
+        '$0 spec withdraw 23 --if-version 2 --reason "reworking scope"',
+      ],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  ifVersion = Option.String("--if-version", {
+    required: true,
+    description: "Current version to withdraw (positive integer, required)",
+  });
+  reason = Option.String("--reason", {
+    description:
+      "Optional plain-text reason (1–2000 characters after trimming)",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const input = SpecWithdrawInput.safeParse({
+      version: Number(this.ifVersion),
+      ...(this.reason === undefined ? {} : { reason: this.reason }),
+    });
+    if (!input.success) {
+      throw new CliError(
+        `invalid spec withdraw (--if-version/--reason):\n${z.prettifyError(input.error)}`,
+      );
+    }
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const result = await client.withdrawSpec(project, number, input.data);
+    this.output(result, () => {
+      const summary = result.unchanged
+        ? `spec v${result.version} already withdrawn · reworking (unchanged)`
+        : `spec v${result.version} withdrawn · reworking`;
+      return `${summary}\ncursor: ${result.cursor} (issue watch --since <cursor>)`;
     });
   }
 }
@@ -512,12 +581,14 @@ export class SpecReviewCommand extends ProjectCommand {
       the server rejects a review of anything but the latest.
 
       \`--comment\` is a review that **judges nothing**: it records the
-      summary and the annotations and leaves the version awaiting a
-      verdict. It is also the one form the account that pushed the version
+      summary and annotations and preserves the current review status,
+      including withdrawn. It is also the one form the account that pushed the version
       may submit — \`--approve\` and \`--request-changes\` from that
       account are refused, so agents cannot sign off their own spec. A
       \`--comment\` with neither a summary nor an annotation is refused
       too, having said nothing.
+      A withdrawn version refuses \`--approve\` and \`--request-changes\`;
+      push a new version before requesting another verdict.
 
       \`--annotations <file|->\` stages inline comments, and works with any
       of the three verdicts — refusing a spec while pointing at the lines
@@ -561,7 +632,7 @@ export class SpecReviewCommand extends ProjectCommand {
     description: "Verdict: request changes",
   });
   comment = Option.Boolean("--comment", false, {
-    description: "No verdict: annotate and comment, still awaiting review",
+    description: "No verdict: annotate and comment, preserving review status",
   });
   body = Option.String("--body", {
     description: "Summary comment (markdown)",
@@ -759,22 +830,30 @@ export class SpecWaitCommand extends ProjectCommand {
       and judges each wake-up by re-reading the state — never by reading the
       event stream.
 
-      Three ways out, all of them exit 0, all of them ending on the outcome
-      line:
+      Four ways out, all of them exit 0, all of them ending on the outcome
+      line. Exit 0 does not mean approval: inspect the outcome.
 
       - \`approved\` — the current version carries an approve verdict. Any
         annotation still unresolved is named on the same line; it is a nit to
         fix while implementing, not a revision round.
-      - \`changes requested\` — a request-changes verdict, or annotations
-        outstanding on an unreviewed version, which is what a revision
-        pushed without \`spec resolve\` looks like. Address them, resolve
-        them, push again.
+      - \`changes requested\` — a request-changes verdict, or unresolved
+        annotations carried from older versions onto the unreviewed version
+        being waited on. Address them, resolve them, push again. Annotations
+        on the current version alone do not constitute a verdict.
+      - \`withdrawn\` — the version was withdrawn for reworking. This is
+        not approval, even if annotations remain unresolved. Push a new
+        version to submit it for review again.
       - \`feedback\` — somebody else wrote on the card without judging it.
         Their entries print above the outcome, in \`issue watch\`'s format;
         fold them into the documents and resume the wait. A
-        \`--comment\` review lands here too, and the annotations it left are
+        \`--comment\` review on an unreviewed version lands here too, and the annotations it left are
         not read-once: \`spec comments <n> --unresolved\` lists them and
         \`spec resolve\` closes them, exactly as after a verdict.
+        Comment reviews preserve an existing verdict or withdrawn status.
+
+      If a replacement version is already unreviewed when the wait wakes,
+      it returns \`feedback\` for that version, even with carried annotations.
+      The old version's withdrawal does not approve its replacement.
 
       Only a fatal error exits 1. Timeouts and outages are absorbed the way
       \`--forever\` absorbs them, and the wait reacts to the server's change
@@ -790,14 +869,14 @@ export class SpecWaitCommand extends ProjectCommand {
       from a cursor you already hold — the one the last wake-up printed, or
       the push's own — and nothing is replayed twice that matters.
 
-      This agent session's own activity never returns the command; the rest
-      of the account's does. The filter used to be the whole account, which
-      was safe while every review carried a verdict the pusher's account was
-      barred from giving — a \`--comment\` review is not barred, and a
-      sibling agent sharing the machine account is exactly who writes one.
-      So a plain comment from another session of the same account (an
-      orchestrator's note included) now wakes this wait, at the cost of one
-      turn.
+      This agent session's own activity is excluded from the printed entries
+      and does not count as feedback by itself. A plain comment from another
+      session of the same account can return \`feedback\`.
+
+      State reads still observe withdrawals and replacement versions from
+      any session, including this one. SSE notifications or polling trigger
+      those reads even when the corresponding activity entries are filtered
+      out.
     `,
     examples: [
       ["Wait for the verdict on a card's spec", "$0 spec wait 23"],
@@ -850,8 +929,9 @@ export class SpecStatusCommand extends ProjectCommand {
   static usage = Command.Usage({
     description: "Spec overview: version, review state, files",
     details:
-      "Errors when the issue has no spec. Under `--json` the full version " +
-      "list rides along. A wait for the verdict is `spec wait <n>` (or " +
+      "Errors when the issue has no spec. The version list includes historical " +
+      "withdrawal actors, timestamps and reasons, also under `--json`. " +
+      "A wait for the verdict is `spec wait <n>` (or " +
       "`spec push --wait`), which judges by reading this same state; " +
       "polling this command in place of that wait has no wake path.",
   });
@@ -869,7 +949,12 @@ export class SpecStatusCommand extends ProjectCommand {
         "versions:",
         ...info.versions.map((v) => {
           const note = v.message === null ? "" : ` — ${v.message}`;
-          return `  v${v.number} by ${personName(v.author)} at ${v.created_at}${note}`;
+          const withdrawal = v.withdrawal;
+          const withdrawn =
+            withdrawal === undefined
+              ? ""
+              : ` · withdrawn by ${personName(withdrawal.actor)} at ${withdrawal.created_at}${withdrawal.reason === null ? "" : ` — ${withdrawal.reason}`}`;
+          return `  v${v.number} by ${personName(v.author)} at ${v.created_at}${note}${withdrawn}`;
         }),
       ];
       return lines.join("\n");

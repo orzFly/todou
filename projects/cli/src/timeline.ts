@@ -13,6 +13,7 @@ import {
   ProjectSlug,
   SpecPushedPayload,
   SpecReviewPayload,
+  SpecWithdrawnPayload,
 } from "@todou/shared";
 import {
   type Painter,
@@ -554,6 +555,12 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       const message =
         spec.data.message === null ? "" : ` — ${spec.data.message}`;
       return `v${spec.data.version}${files ? `: ${files}` : ""}${message} · ${specPullHint(ctx, spec.data.version)}`;
+    }
+    case "spec_withdrawn": {
+      const withdrawal = SpecWithdrawnPayload.safeParse(payload);
+      if (!withdrawal.success) return scalarDetail(payload);
+      const { version, reason } = withdrawal.data;
+      return `v${version}${reason === null ? "" : ` — ${reason}`}`;
     }
     case "spec_review": {
       const review = SpecReviewPayload.safeParse(payload);

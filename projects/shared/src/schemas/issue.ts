@@ -3,6 +3,7 @@ import { Cursor, Id, Timestamp } from "./common.ts";
 import { IssueMetadataEntry, MetadataNamespaceSelector } from "./metadata.ts";
 import { MuteReason } from "./mute.ts";
 import { Label, ProjectSlug, Status, StatusCategory } from "./project.ts";
+import { SpecReviewStatus } from "./spec.ts";
 import { UserRef } from "./user.ts";
 
 /** One arrival: from `at` onwards the card belongs to the next project. */
@@ -63,7 +64,7 @@ export const Issue = z.object({
   created_at: Timestamp,
   /**
    * Last activity on the card: edits to its own fields, plus comments,
-   * attachments, answered questions and spec push/review. Being referenced
+   * attachments, answered questions and spec push/review/withdrawal. Being referenced
    * by another issue does not count.
    */
   updated_at: Timestamp,
@@ -75,15 +76,12 @@ export const Issue = z.object({
    */
   open_questions: z.number().int().nonnegative().default(0),
   /**
-   * Denormalized spec state (T-23): current version, verdict of the current
-   * version's review, unresolved anchored comments. Null version/status =
+   * Denormalized spec state (T-23): current version, review status,
+   * unresolved anchored comments. Null version/status =
    * no spec. Defaults keep old servers parseable.
    */
   spec_version: z.number().int().positive().nullable().default(null),
-  spec_review_status: z
-    .enum(["unreviewed", "approved", "changes_requested"])
-    .nullable()
-    .default(null),
+  spec_review_status: SpecReviewStatus.nullable().default(null),
   spec_unresolved_comments: z.number().int().nonnegative().default(0),
   /**
    * Per-viewer: whether this issue has activity by someone other than the

@@ -57,6 +57,45 @@ const directUploadResponses = (attachment: unknown) => [
 ];
 
 describe("TodouClient", () => {
+  it.each([undefined, "Rework the design"])(
+    "posts a version-guarded withdrawal with reason=%s",
+    async (reason) => {
+      const result = {
+        version: 2,
+        review_status: "withdrawn",
+        unchanged: false,
+        cursor: "withdrawal-cursor",
+      };
+      const { fetch, calls } = mockFetch(200, result);
+      const client = new TodouClient({ fetch });
+      const input = { version: 2, ...(reason === undefined ? {} : { reason }) };
+
+      await expect(client.withdrawSpec("todou", 428, input)).resolves.toEqual(
+        result,
+      );
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.url).toBe(
+        "/api/projects/todou/issues/428/spec/withdraw",
+      );
+      expect(calls[0]?.init.method).toBe("POST");
+      expect(JSON.parse(String(calls[0]?.init.body))).toEqual(input);
+    },
+  );
+
+  it("does not retry a conflicting withdrawal with a stale version", async () => {
+    const { fetch, calls } = mockFetch(409, {
+      error: {
+        code: "conflict",
+        message: "Current spec is v3 (unreviewed); refresh before withdrawing",
+      },
+    });
+    const client = new TodouClient({ fetch });
+    await expect(
+      client.withdrawSpec("todou", 428, { version: 2 }),
+    ).rejects.toMatchObject({ status: 409, code: "conflict" });
+    expect(calls).toHaveLength(1);
+  });
+
   it("builds csv query strings and skips undefined params", async () => {
     const { fetch, calls } = mockFetch(200, { items: [], next_cursor: null });
     const client = new TodouClient({ fetch });

@@ -53,6 +53,15 @@ describe("the rendered table", () => {
     expect(cell(container, row, "writer")).toBe("✓");
   });
 
+  it("allows every writer to withdraw specs, but not reporters or readers", () => {
+    const { container } = render(<RolePermissionsTable />);
+    const row = "Push, withdraw, review and resolve specs";
+    expect(cell(container, row, "reader")).toBe("—");
+    expect(cell(container, row, "reporter")).toBe("—");
+    expect(cell(container, row, "writer")).toBe("✓");
+    expect(cell(container, row, "admin")).toBe("✓");
+  });
+
   it("gives the label catalog to a writer", () => {
     const { container } = render(<RolePermissionsTable />);
     const row = "Create, recolor and delete labels";

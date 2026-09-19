@@ -126,6 +126,7 @@ export const CAPABILITIES = [
 
   { id: "spec.read", minRole: "reader", enforce: "addressed" },
   { id: "spec.push", minRole: "writer", enforce: "gate" },
+  { id: "spec.withdraw", minRole: "writer", enforce: "gate" },
   { id: "spec.review", minRole: "writer", enforce: "gate" },
   { id: "spec.resolve", minRole: "writer", enforce: "gate" },
 

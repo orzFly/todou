@@ -151,8 +151,8 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Collaborate",
-    label: "Push, review and resolve specs",
-    caps: ["spec.push", "spec.review", "spec.resolve"],
+    label: "Push, withdraw, review and resolve specs",
+    caps: ["spec.push", "spec.withdraw", "spec.review", "spec.resolve"],
   },
   {
     group: "Collaborate",

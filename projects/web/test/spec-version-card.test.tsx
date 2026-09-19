@@ -1,4 +1,5 @@
 import { fireEvent, waitFor } from "@testing-library/react";
+import type { SpecVersionInfo } from "@todou/shared";
 import { diffLines } from "diff";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SpecVersionCard } from "../src/components/timeline/spec-version-card.tsx";
@@ -194,6 +195,29 @@ describe("SpecVersionCard", () => {
     removed: ["gone.md"],
   };
 
+  const WITHDRAWAL: NonNullable<SpecVersionInfo["withdrawal"]> = {
+    actor: {
+      id: 3,
+      login: "alice",
+      display_name: "Alice",
+      kind: "human",
+      avatar_url: null,
+      owner: null,
+    },
+    created_at: "2026-08-12T13:00:00Z",
+    reason:
+      "Rework **scope** with @user and #123 [notes](https://example.test)",
+  };
+
+  const withdrawnInfo = (currentVersion = 2) => ({
+    ...SPEC_INFO,
+    current_version: currentVersion,
+    review_status: currentVersion === 2 ? "withdrawn" : "unreviewed",
+    versions: SPEC_INFO.versions.map((v) =>
+      v.number === 2 ? { ...v, withdrawal: WITHDRAWAL } : v,
+    ),
+  });
+
   it("renders rows, stats, totals, and the annotation footer", async () => {
     stubFetch();
     const view = renderWithProviders(
@@ -244,6 +268,78 @@ describe("SpecVersionCard", () => {
     expect(view.getByTestId("spec-review-cta")).toBeTruthy();
   });
 
+  it("shows current withdrawal and literal history while preserving file links", async () => {
+    stubFetch(withdrawnInfo());
+    const view = renderWithProviders(
+      <SpecVersionCard slug="p" issueNumber={1} payload={PAYLOAD} />,
+    );
+    expect(await view.findByText("withdrawn · reworking")).toBeTruthy();
+    expect(view.queryByTestId("spec-review-cta")).toBeNull();
+    const history = view.getByText(/Withdrawn by/);
+    expect(history.textContent).toContain("Alice");
+    expect(history.textContent).toContain(WITHDRAWAL.reason);
+    expect(history.querySelector("time")?.getAttribute("datetime")).toBe(
+      WITHDRAWAL.created_at,
+    );
+    expect(history.querySelectorAll("strong, em")).toHaveLength(0);
+    expect(
+      history.querySelectorAll('a:not([href="/users/alice"])'),
+    ).toHaveLength(0);
+    expect(
+      view.getByRole("link", { name: "design.md" }).getAttribute("href"),
+    ).toBe("/projects/p/issues/1/spec?file=design.md&v=2");
+    expect(
+      view.getByRole("link", { name: "diff v1 to v2" }).getAttribute("href"),
+    ).toBe("/projects/p/issues/1/spec?v=2&compare=1");
+    fireEvent.click(view.getByLabelText("collapse file list"));
+    expect(view.getByText("withdrawn · reworking")).toBeTruthy();
+    expect(view.getByText(/Withdrawn by/)).toBeTruthy();
+  });
+
+  it("keeps historical withdrawal on the old card and the next version pending", async () => {
+    stubFetch(withdrawnInfo(3));
+    const old = renderWithProviders(
+      <SpecVersionCard slug="p" issueNumber={1} payload={PAYLOAD} />,
+    );
+    expect(await old.findByText("previously withdrawn")).toBeTruthy();
+    expect(old.queryByText("withdrawn · reworking")).toBeNull();
+    expect(old.queryByTestId("spec-review-cta")).toBeNull();
+    expect(old.getByText(/Withdrawn by/).textContent).toContain("Alice");
+    old.unmount();
+
+    const current = renderWithProviders(
+      <SpecVersionCard
+        slug="p"
+        issueNumber={1}
+        payload={{
+          version: 3,
+          message: "resubmitted",
+          added: [],
+          changed: [],
+          removed: [],
+        }}
+      />,
+    );
+    expect(await current.findByTestId("spec-review-cta")).toBeTruthy();
+    expect(current.queryByText(/withdrawn/i)).toBeNull();
+    expect(
+      current.getByRole("link", { name: "Spec v3" }).getAttribute("href"),
+    ).toBe("/projects/p/issues/1/spec?v=3");
+    expect(
+      current.getByRole("link", { name: "diff v2 to v3" }).getAttribute("href"),
+    ).toBe("/projects/p/issues/1/spec?v=3&compare=2");
+  });
+
+  it("shows withdrawn current status when optional historical metadata is absent", async () => {
+    stubFetch({ ...SPEC_INFO, review_status: "withdrawn" });
+    const view = renderWithProviders(
+      <SpecVersionCard slug="p" issueNumber={1} payload={PAYLOAD} />,
+    );
+    expect(await view.findByText("withdrawn · reworking")).toBeTruthy();
+    expect(view.queryByTestId("spec-review-cta")).toBeNull();
+    expect(view.queryByText(/Withdrawn by/)).toBeNull();
+  });
+
   it("stays out of settled verdicts, older versions, and the pusher's view", async () => {
     const cases: Array<[string, object, number]> = [
       ["approved", { ...SPEC_INFO, review_status: "approved" }, 1],
@@ -252,6 +348,7 @@ describe("SpecVersionCard", () => {
         { ...SPEC_INFO, review_status: "changes_requested" },
         1,
       ],
+      ["withdrawn", { ...SPEC_INFO, review_status: "withdrawn" }, 1],
       ["superseded", { ...SPEC_INFO, current_version: 3 }, 1],
       ["pushed by the viewer", SPEC_INFO, 2],
     ];

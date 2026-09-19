@@ -1,14 +1,19 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   formatAnchorRange,
   type SpecReviewSubmitInput,
   type SpecReviewVerdict,
+  TodouError,
 } from "@todou/shared";
 import { ChevronDownIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
-import { useIsVersionPusher } from "@/api/spec.ts";
+import {
+  invalidateSpecState,
+  specQuery,
+  useIsVersionPusher,
+} from "@/api/spec.ts";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -104,6 +109,12 @@ export function ReviewSubmitDialog({
   const refCompletion = useRefCompletion(slug);
   const queryClient = useQueryClient();
   const isPusher = useIsVersionPusher(slug, issueNumber, currentVersion);
+  const spec = useQuery(specQuery(slug, issueNumber)).data;
+  const staleVersion =
+    spec !== undefined &&
+    spec !== null &&
+    spec.current_version !== currentVersion;
+  const withdrawn = spec?.review_status === "withdrawn";
   const summary = controlledSummary ?? localSummary;
   const legacySubmit = useMutation({
     mutationFn: (input: LegacySubmit) =>
@@ -114,21 +125,17 @@ export function ReviewSubmitDialog({
         comments: input.comments,
       }),
     onSuccess: (_result, input) => {
-      for (const key of [
-        ["spec", input.slug, input.issueNumber],
-        ["timeline", input.slug, input.issueNumber],
-        ["issue", input.slug, input.issueNumber],
-        ["issues", input.slug],
-      ]) {
-        void queryClient.invalidateQueries({ queryKey: key });
-      }
+      void invalidateSpecState(queryClient, input.slug, input.issueNumber);
       setLocalSummary("");
       editor.current?.setValue("");
       setLocalVerdict(null);
       localSubmitting.current = false;
       onSubmitted?.();
     },
-    onError: (error) => {
+    onError: (error, input) => {
+      if (error instanceof TodouError && error.status === 409) {
+        void invalidateSpecState(queryClient, input.slug, input.issueNumber);
+      }
       setLocalVerdict(null);
       localSubmitting.current = false;
       toast.error(error.message);
@@ -138,8 +145,25 @@ export function ReviewSubmitDialog({
     controlledPendingVerdict ?? (legacySubmit.isPending ? localVerdict : null);
   const pending = pendingVerdict !== null;
   const saysNothing = summary.trim() === "" && drafts.length === 0;
+  // Both responsive forms consume these same conditions. T-432 can extend
+  // the verdict restriction here without making the two widths disagree.
+  const commentDisabled = pending || staleVersion || saysNothing;
+  const verdictDisabled = pending || staleVersion || withdrawn || isPusher;
+  const staleTitle = `Spec v${currentVersion} is no longer current. Your review draft has been kept.`;
+  const verdictTitle = staleVersion
+    ? staleTitle
+    : withdrawn
+      ? "This spec has been withdrawn"
+      : isPusher
+        ? PUSHER_TITLE
+        : undefined;
+  const commentTitle = staleVersion
+    ? staleTitle
+    : saysNothing
+      ? "Write a summary or stage a comment first"
+      : undefined;
   const submit = (verdict: SpecReviewVerdict) => {
-    if (pending) return;
+    if (verdict === "comment" ? commentDisabled : verdictDisabled) return;
     if (onSubmit !== undefined) {
       onSubmit(verdict);
       return;
@@ -182,6 +206,7 @@ export function ReviewSubmitDialog({
             Finish review — spec v{currentVersion}
           </DialogTitle>
         </DialogHeader>
+        {staleVersion && <p role="status">{staleTitle}</p>}
 
         {drafts.length > 0 && (
           <ul className="min-w-0 max-h-48 space-y-1 overflow-y-auto text-xs [overflow-wrap:anywhere]">
@@ -228,12 +253,8 @@ export function ReviewSubmitDialog({
           <Button
             size="sm"
             variant="outline"
-            disabled={pending || saysNothing}
-            title={
-              saysNothing
-                ? "Write a summary or stage a comment first"
-                : undefined
-            }
+            disabled={commentDisabled}
+            title={commentTitle}
             onClick={() => submit("comment")}
           >
             {pendingVerdict === "comment" ? "Submitting…" : "Comment"}
@@ -242,8 +263,8 @@ export function ReviewSubmitDialog({
             size="sm"
             variant="outline"
             className="border-red-500/60 text-red-700 dark:text-red-400"
-            disabled={pending || isPusher}
-            title={isPusher ? PUSHER_TITLE : undefined}
+            disabled={verdictDisabled}
+            title={verdictTitle}
             onClick={() => submit("request_changes")}
           >
             {pendingVerdict === "request_changes"
@@ -253,8 +274,8 @@ export function ReviewSubmitDialog({
           <Button
             size="sm"
             className="bg-green-700 text-white hover:bg-green-800"
-            disabled={pending || isPusher}
-            title={isPusher ? PUSHER_TITLE : undefined}
+            disabled={verdictDisabled}
+            title={verdictTitle}
             onClick={() => submit("approve")}
           >
             {pendingVerdict === "approve" ? "Submitting…" : "Approve"}
@@ -274,28 +295,24 @@ export function ReviewSubmitDialog({
               className="w-48 max-w-[calc(100vw-1rem)]"
             >
               <DropdownMenuItem
-                disabled={pending || saysNothing}
-                title={
-                  saysNothing
-                    ? "Write a summary or stage a comment first"
-                    : undefined
-                }
+                disabled={commentDisabled}
+                title={commentTitle}
                 onSelect={() => submit("comment")}
               >
                 Comment only
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="text-red-700 focus:bg-red-50 focus:text-red-700 data-disabled:text-muted-foreground dark:text-red-400 dark:focus:bg-red-950 dark:focus:text-red-400 dark:data-disabled:text-muted-foreground"
-                disabled={pending || isPusher}
-                title={isPusher ? PUSHER_TITLE : undefined}
+                disabled={verdictDisabled}
+                title={verdictTitle}
                 onSelect={() => submit("request_changes")}
               >
                 Request changes
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="text-green-700 focus:bg-green-50 focus:text-green-700 data-disabled:text-muted-foreground dark:text-green-400 dark:focus:bg-green-950 dark:focus:text-green-400 dark:data-disabled:text-muted-foreground"
-                disabled={pending || isPusher}
-                title={isPusher ? PUSHER_TITLE : undefined}
+                disabled={verdictDisabled}
+                title={verdictTitle}
                 onSelect={() => submit("approve")}
               >
                 Approve

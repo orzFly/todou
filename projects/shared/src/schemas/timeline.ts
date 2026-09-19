@@ -20,6 +20,7 @@ export const IssueEventType = z.enum([
   "attachment_added",
   "question_answered",
   "spec_pushed",
+  "spec_withdrawn",
   "spec_review",
   "spec_comments_resolved",
   // Trash (T-145). Payload is empty on purpose: actor and timestamp are the

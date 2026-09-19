@@ -1,9 +1,11 @@
 import { waitFor } from "@testing-library/react";
+import type { SpecReviewStatus } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { specVersionStatsQuery } from "../src/api/spec.ts";
 import {
   SpecEntryRow,
   SpecSidebarSection,
+  SpecStatusBadge,
 } from "../src/components/issue/spec-entry.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -35,7 +37,10 @@ const PUSH_EVENT = {
 };
 
 /** Records every requested URL; `specVersion` shapes the issue payload. */
-function stubFetch(specVersion: number | null = 3): string[] {
+function stubFetch(
+  specVersion: number | null = 3,
+  reviewStatus: SpecReviewStatus = "unreviewed",
+): string[] {
   const requested: string[] = [];
   vi.stubGlobal("fetch", async (input: unknown) => {
     const url = new URL(String(input), "http://test");
@@ -44,7 +49,7 @@ function stubFetch(specVersion: number | null = 3): string[] {
       return Response.json({
         number: 1,
         spec_version: specVersion,
-        spec_review_status: specVersion === null ? null : "unreviewed",
+        spec_review_status: specVersion === null ? null : reviewStatus,
       });
     }
     if (url.pathname.endsWith("/timeline")) {
@@ -67,7 +72,9 @@ function stubFetch(specVersion: number | null = 3): string[] {
             },
       );
     }
-    if (url.pathname.endsWith("/spec")) return Response.json(INFO);
+    if (url.pathname.endsWith("/spec")) {
+      return Response.json({ ...INFO, review_status: reviewStatus });
+    }
     throw new Error(`unexpected fetch: ${url.pathname}`);
   });
   return requested;
@@ -87,6 +94,20 @@ describe("SpecEntryRow (T-63)", () => {
       expect(link.getAttribute("href")).toContain("#event-77");
     });
     await view.findByText("+1");
+  });
+
+  it("keeps the withdrawn spec and its latest push destination visible", async () => {
+    stubFetch(3, "withdrawn");
+    const view = renderWithProviders(<SpecEntryRow slug="p" issueNumber={1} />);
+    expect(await view.findByText("withdrawn · reworking")).toBeTruthy();
+    expect(view.getByText("Spec v3")).toBeTruthy();
+    expect(view.getByText("2 files")).toBeTruthy();
+    expect(view.queryByText("awaiting review")).toBeNull();
+    await waitFor(() =>
+      expect(view.getByTestId("spec-entry").getAttribute("href")).toContain(
+        "#event-77",
+      ),
+    );
   });
 
   it("skips the spec probe and push lookup when the issue has no spec (T-91)", async () => {
@@ -133,4 +154,34 @@ describe("SpecSidebarSection (T-63)", () => {
     expect(view.queryByText("Request changes")).toBeNull();
     await view.findByText("+1");
   });
+
+  it("keeps withdrawn files readable without a review prompt", async () => {
+    stubFetch(3, "withdrawn");
+    const view = renderWithProviders(
+      <SpecSidebarSection slug="p" issueNumber={1} />,
+    );
+    expect(await view.findByText("withdrawn · reworking")).toBeTruthy();
+    expect(
+      view.getByRole("link", { name: "Read spec →" }).getAttribute("href"),
+    ).toBe("/projects/p/issues/1/spec");
+    expect(
+      view.getByRole("link", { name: /design.md/ }).getAttribute("href"),
+    ).toBe("/projects/p/issues/1/spec?file=design.md");
+    expect(view.queryByText(/Read & review/)).toBeNull();
+  });
+});
+
+describe("SpecStatusBadge", () => {
+  it.each([
+    ["unreviewed", "awaiting review"],
+    ["approved", "approved"],
+    ["changes_requested", "changes requested"],
+    ["withdrawn", "withdrawn · reworking"],
+  ] as const)(
+    "labels %s without changing the previous verdicts",
+    async (status, label) => {
+      const view = renderWithProviders(<SpecStatusBadge status={status} />);
+      expect(await view.findByText(label)).toBeTruthy();
+    },
+  );
 });

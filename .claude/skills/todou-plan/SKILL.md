@@ -19,7 +19,30 @@ gate, and what a spec document may and may not contain, are in its "Spec documen
 3. Self-check: remove placeholders, resolve contradictions, rewrite requirements that can be read two
    ways, confirm the scope fits.
 4. Push with `todou spec push <n> <dir> -p <proj> --message "plan v1" --wait` and act on the outcome.
-5. After `approved`, stop and report in the terminal.
+5. Follow the review loop below. Stop and report in the terminal only after `spec status` confirms
+   that the latest version is `approved`.
+
+## Review loop
+
+Read the outcome of `spec push --wait` or `spec wait`, then the discussion, unresolved annotations
+and current spec status. Exit 0 means the wait returned a result; it does not mean approval.
+
+- When deciding a pending (`unreviewed`) version needs investigation or rework, first run
+  `todou spec withdraw <n> -p <proj> --if-version <v> [--reason "..."]` against the version you
+  inspected. Then investigate and revise the plan and any affected design or requirements.
+  If withdrawal conflicts, read the latest state and reassess; do not blindly target the new version.
+- A `withdrawn` outcome sends you back to investigation/rework, with the existing spec and discussion
+  still available. If the current status is `changes_requested`, revise directly; that verdict
+  cannot be withdrawn.
+- Resolve annotations you addressed, then push with
+  `todou spec push <n> <dir> -p <proj> --if-version <v> --message "plan revision" --wait`.
+  Resubmitting from withdrawn creates a new version even with identical content and requires fresh
+  approval. Repeat the loop until the latest version is `approved`.
+- If feedback requires no rework and the current version remains ready for review, resume
+  `todou spec wait <n> -p <proj> --since <cursor>` from the returned cursor.
+
+Only the latest version's approval passes the gate. Earlier approval, a comment review or withdrawal
+does not authorize implementation.
 
 ## The documents
 

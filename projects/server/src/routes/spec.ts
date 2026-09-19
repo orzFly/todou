@@ -11,6 +11,8 @@ import {
   SpecPushResult,
   SpecReviewResult,
   SpecReviewSubmitInput,
+  SpecWithdrawInput,
+  SpecWithdrawResult,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import {
@@ -20,6 +22,7 @@ import {
   pushSpec,
   resolveSpecComments,
   submitSpecReview,
+  withdrawSpec,
 } from "../services/spec.ts";
 import { movedResponses } from "./moved-responses.ts";
 import { roleTag } from "./role-tag.ts";
@@ -59,17 +62,39 @@ const specPushRoute = createRoute({
   path: "/{slug}/issues/{number}/spec/push",
   summary:
     `Replace the spec with the pushed file set ${roleTag("spec.push")}; a ` +
-    "change becomes one new whole-set version, no change is a no-op",
+    "change or resubmission of a withdrawn spec becomes a new whole-set version",
   description:
     "The result carries a `cursor` (T-182): resume a timeline read or a " +
     "watch from it — `--since <cursor>` — and every entry created after " +
     "this push is delivered, the push's own event excluded. That is the " +
     "cursor to wait for the review verdict from; one taken after the push " +
-    "returns leaves a window the verdict can land in unseen. An unchanged " +
-    "push mints no event, so its cursor is the lower bound of the current " +
+    "returns leaves a window the verdict can land in unseen. Identical content " +
+    "is a no-op except when the current version is withdrawn: resubmission " +
+    "creates a new unreviewed version even with an empty diff. A no-op push " +
+    "mints no event, so its cursor is the lower bound of the current " +
     "version's instant and may re-deliver entries of that same instant.",
   request: { params: issueParams, body: jsonBody(SpecPushInput) },
   responses: { 200: { description: "Result", ...jsonBody(SpecPushResult) } },
+});
+
+const specWithdrawRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/spec/withdraw",
+  summary: `Withdraw the current unreviewed spec ${roleTag("spec.withdraw")}`,
+  description:
+    "Requires the current version number. Preserves files and discussion. " +
+    "The optional reason is plain text, without mention notifications. " +
+    "Retrying the same withdrawn version returns the original event cursor " +
+    "without changing the reason, timestamp or timeline. A stale version or " +
+    "an approved/changes_requested version returns 409; no spec returns 404.",
+  request: { params: issueParams, body: jsonBody(SpecWithdrawInput) },
+  responses: {
+    200: { description: "Withdrawal", ...jsonBody(SpecWithdrawResult) },
+    403: { description: "Writer capability required" },
+    404: { description: "Issue or spec not found" },
+    409: { description: "Version/state conflict or issue not writable" },
+    422: { description: "Invalid withdrawal input" },
+  },
 });
 
 const specReviewRoute = createRoute({
@@ -83,9 +108,9 @@ const specReviewRoute = createRoute({
     "pushed the reviewed version — a verdict has to come from someone " +
     "else. `comment` is accepted from anyone, including that account: it " +
     "records a summary and annotations without judging, and leaves the " +
-    "review status untouched, so the version still owes a verdict " +
-    "afterwards. A `comment` carrying neither a summary nor an annotation " +
-    "is rejected.",
+    "review status untouched. A withdrawn version refuses approve/request_changes " +
+    "before writing any summary or annotations, but still accepts comment. " +
+    "A comment carrying neither a summary nor an annotation is rejected.",
   request: { params: issueParams, body: jsonBody(SpecReviewSubmitInput) },
   responses: {
     201: { description: "Review", ...jsonBody(SpecReviewResult) },
@@ -147,6 +172,21 @@ export function specRoutes() {
     const { slug, number } = c.req.valid("param");
     return c.json(
       await pushSpec(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      200,
+    );
+  });
+
+  app.openapi(specWithdrawRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await withdrawSpec(
         c.get("appCtx"),
         c.get("user"),
         slug,

@@ -1179,4 +1179,268 @@ describe("cross-project inbox T-97", () => {
     expect(rowOf(await items(), PA, n)?.project).toMatchObject({ icon_url });
     await markRead(PA, n);
   });
+
+  describe("spec withdrawal inbox regressions (T-428)", () => {
+    const PW = "inbox-withdraw";
+    let ownerLogin: string;
+
+    const weakUnread = async (on: boolean) => {
+      const res = await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({ show_weak_unread: on }),
+      });
+      expect(res.status).toBe(200);
+    };
+
+    const withdraw = async (number: number) => {
+      await settle();
+      const res = await t.app.request(
+        `/api/projects/${PW}/issues/${number}/spec/withdraw`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...bob.headers },
+          body: JSON.stringify({
+            version: 1,
+            reason: `Reworking @${ownerLogin}`,
+          }),
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(await json(res)).toMatchObject({ review_status: "withdrawn" });
+    };
+
+    const listRow = async (number: number) => {
+      const res = await t.app.request(
+        `/api/projects/${PW}/issues?numbers=${number}`,
+        { headers: headers() },
+      );
+      expect(res.status).toBe(200);
+      return (await json(res)).items[0];
+    };
+
+    beforeAll(async () => {
+      const created = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug: PW, name: "Withdrawal inbox" }),
+      });
+      expect(created.status).toBe(201);
+      const member = await t.app.request(
+        `/api/projects/${PW}/members/${bob.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role: "writer" }),
+        },
+      );
+      expect(member.status).toBe(204);
+      const me = await t.app.request("/api/me", { headers: headers() });
+      expect(me.status).toBe(200);
+      ownerLogin = (await json(me)).login;
+      await items();
+      await settle();
+    });
+
+    it.each([false, true])(
+      "withdrawal clears pending review with weak unread %s (T-428)",
+      async (showWeakUnread) => {
+        await weakUnread(showWeakUnread);
+        try {
+          const number = await createIssue(PW, "withdraw pending review");
+          await pushSpec(PW, number, bob.headers);
+          await markRead(PW, number);
+          expect(rowOf(await items(), PW, number)).toMatchObject({
+            unread: false,
+            unread_comments: 0,
+            pending_spec_review: true,
+          });
+
+          await withdraw(number);
+          const row = rowOf(await items(), PW, number);
+          if (showWeakUnread) {
+            expect(row).toMatchObject({
+              unread: true,
+              unread_comments: 0,
+              pending_spec_review: false,
+              mentions_you: false,
+            });
+          } else {
+            expect(row).toBeUndefined();
+          }
+          expect(await listRow(number)).toMatchObject({
+            unread: true,
+            unread_comments: 0,
+            spec_review_status: "withdrawn",
+          });
+          await markRead(PW, number);
+          expect(rowOf(await items(), PW, number)).toBeUndefined();
+        } finally {
+          await weakUnread(true);
+        }
+      },
+    );
+
+    it.each(["comment", "mention", "question", "strong event"] as const)(
+      "withdrawal preserves an unrelated %s with weak unread off (T-428)",
+      async (reason) => {
+        await weakUnread(false);
+        try {
+          const number = await createIssue(PW, `withdraw with ${reason}`);
+          await pushSpec(PW, number, bob.headers);
+          await markRead(PW, number);
+          if (reason === "question") {
+            await ask(PW, number, bob.headers, "Which direction?");
+            // The pending question must survive without an unread comment.
+            await markRead(PW, number);
+          } else if (reason === "strong event") {
+            const blocker = await createIssue(PW, "withdrawal blocker");
+            const blocked = await t.app.request(
+              `/api/projects/${PW}/issues/${number}/blocked-by`,
+              {
+                method: "POST",
+                headers: headers(),
+                body: JSON.stringify({ ref: `#${blocker}` }),
+              },
+            );
+            expect(blocked.status).toBe(200);
+            await markRead(PW, number);
+            await settle();
+            const closed = await t.app.request(
+              `/api/projects/${PW}/issues/${blocker}`,
+              {
+                method: "PATCH",
+                headers: { "content-type": "application/json", ...bob.headers },
+                body: JSON.stringify({
+                  status_id: await statusOf(PW, "closed"),
+                }),
+              },
+            );
+            expect(closed.status).toBe(200);
+          } else {
+            if (reason === "mention") {
+              const muted = await t.app.request(
+                `/api/projects/${PW}/issues/${number}/mute`,
+                {
+                  method: "PUT",
+                  headers: headers(),
+                  body: JSON.stringify({ mode: "forever" }),
+                },
+              );
+              expect(muted.status).toBe(204);
+            }
+            const posted = await comment(
+              PW,
+              number,
+              bob.headers,
+              reason === "mention"
+                ? `Please look @${ownerLogin}`
+                : "Still relevant",
+            );
+            expect(posted.status).toBe(201);
+          }
+          const expected = {
+            unread_comments:
+              reason === "comment" || reason === "mention" ? 1 : 0,
+            open_questions: reason === "question" ? 1 : 0,
+            mentions_you: reason === "mention",
+          };
+          expect(rowOf(await items(), PW, number)).toMatchObject({
+            ...expected,
+            pending_spec_review: true,
+          });
+          await withdraw(number);
+          expect(rowOf(await items(), PW, number)).toMatchObject({
+            ...expected,
+            unread: true,
+            pending_spec_review: false,
+          });
+          await setStatus(PW, number, "closed");
+          await markRead(PW, number);
+        } finally {
+          await weakUnread(true);
+        }
+      },
+    );
+
+    it.each(["forever", "until_activity", "project"] as const)(
+      "withdrawal respects the %s mute (T-428)",
+      async (mode) => {
+        const number = await createIssue(PW, `withdraw muted ${mode}`);
+        await pushSpec(PW, number, bob.headers);
+        await markRead(PW, number);
+        const mutePath =
+          mode === "project"
+            ? `/api/projects/${PW}/mute`
+            : `/api/projects/${PW}/issues/${number}/mute`;
+        const muted = await t.app.request(mutePath, {
+          method: "PUT",
+          headers: headers(),
+          ...(mode === "project" ? {} : { body: JSON.stringify({ mode }) }),
+        });
+        expect(muted.status).toBe(204);
+        try {
+          expect(rowOf(await items(), PW, number)).toBeUndefined();
+          await withdraw(number);
+          const row = rowOf(await items(), PW, number);
+          if (mode === "until_activity") {
+            expect(row).toMatchObject({
+              unread: true,
+              unread_comments: 0,
+              pending_spec_review: false,
+            });
+          } else {
+            expect(row).toBeUndefined();
+          }
+          expect(await listRow(number)).toMatchObject({
+            unread: true,
+            unread_comments: 0,
+            muted: mode === "until_activity" ? null : mode,
+          });
+        } finally {
+          expect(
+            (
+              await t.app.request(mutePath, {
+                method: "DELETE",
+                headers: headers(),
+              })
+            ).status,
+          ).toBe(204);
+          await markRead(PW, number);
+        }
+      },
+    );
+
+    it.each([false, true])(
+      "withdrawal on a closed issue follows weak unread %s without restoring pending work (T-428)",
+      async (showWeakUnread) => {
+        await weakUnread(showWeakUnread);
+        try {
+          const number = await createIssue(PW, "withdraw closed spec");
+          await pushSpec(PW, number, bob.headers);
+          await ask(PW, number, bob.headers, "Retired question");
+          await setStatus(PW, number, "closed");
+          await markRead(PW, number);
+          expect(rowOf(await items(), PW, number)).toBeUndefined();
+          await withdraw(number);
+          const row = rowOf(await items(), PW, number);
+          if (showWeakUnread) {
+            expect(row).toMatchObject({
+              unread: true,
+              unread_comments: 0,
+              pending_spec_review: false,
+              open_questions: 1,
+              status: { category: "closed" },
+            });
+          } else {
+            expect(row).toBeUndefined();
+          }
+          await markRead(PW, number);
+          expect(rowOf(await items(), PW, number)).toBeUndefined();
+        } finally {
+          await weakUnread(true);
+        }
+      },
+    );
+  });
 });

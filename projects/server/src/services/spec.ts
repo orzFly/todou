@@ -13,7 +13,10 @@ import type {
   SpecPushResult,
   SpecReviewResult,
   SpecReviewSubmitInput,
+  SpecWithdrawInput,
+  SpecWithdrawResult,
 } from "@todou/shared";
+import { SpecWithdrawnPayload } from "@todou/shared";
 import { diffLines } from "diff";
 import {
   and,
@@ -155,11 +158,13 @@ export async function pushSpec(
   const result = await db.transaction(async (tx) => {
     // Serialize concurrent pushes on the issue row; the unique
     // (issue, number) index backstops anything that slips through.
-    await tx
-      .select({ id: issues.id })
+    const [locked] = await tx
+      .select({ ...gateColumns, specReviewStatus: issues.specReviewStatus })
       .from(issues)
       .where(eq(issues.id, issue.id))
       .for("update");
+    if (!locked) throw new NotFoundError("issue not found");
+    assertIssueWritable(locked, actor, role);
 
     const current = await currentVersionRow(tx, issue.id);
     const currentNumber = current?.number ?? 0;
@@ -183,7 +188,12 @@ export async function pushSpec(
       .filter((p) => before.has(p) && before.get(p) !== after.get(p))
       .sort();
 
-    if (added.length === 0 && removed.length === 0 && changed.length === 0) {
+    if (
+      added.length === 0 &&
+      removed.length === 0 &&
+      changed.length === 0 &&
+      locked.specReviewStatus !== "withdrawn"
+    ) {
       // A push carries at least one file, so an issue with no spec yet
       // always adds one: reaching here means `current` exists.
       if (!current) throw new Error("unchanged push against no version");
@@ -305,6 +315,121 @@ export async function pushSpec(
   return result;
 }
 
+export async function withdrawSpec(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  issueNumber: number,
+  input: SpecWithdrawInput,
+  agentContext: AgentContext | null = null,
+): Promise<SpecWithdrawResult> {
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "spec.withdraw",
+  );
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const issue = await loadIssue(
+    db,
+    project.id,
+    issueNumber,
+    actor,
+    role,
+    assertIssueWritable,
+  );
+  const events: ChangeEvent[] = [];
+  const result = await db.transaction(
+    async (tx): Promise<SpecWithdrawResult> => {
+      const [locked] = await tx
+        .select({ ...gateColumns, specReviewStatus: issues.specReviewStatus })
+        .from(issues)
+        .where(eq(issues.id, issue.id))
+        .for("update");
+      if (!locked) throw new NotFoundError("issue not found");
+      assertIssueWritable(locked, actor, role);
+      const current = await currentVersionRow(tx, issue.id);
+      if (!current) throw new NotFoundError("this issue has no spec");
+      if (input.version !== current.number) {
+        throw new ConflictError(
+          `the current spec is v${current.number} (${locked.specReviewStatus}); cannot withdraw v${input.version} — refresh before retrying`,
+        );
+      }
+      if (locked.specReviewStatus === "withdrawn") {
+        const [event] = await tx
+          .select({ id: issueEvents.id, ts: microIso(issueEvents.createdAt) })
+          .from(issueEvents)
+          .where(
+            and(
+              eq(issueEvents.issueId, issue.id),
+              eq(issueEvents.type, "spec_withdrawn"),
+              sql`${issueEvents.payload} ->> 'version' = ${String(current.number)}`,
+            ),
+          )
+          .orderBy(asc(issueEvents.id))
+          .limit(1);
+        if (!event) throw new Error("withdrawn spec has no withdrawal event");
+        return {
+          version: current.number,
+          review_status: "withdrawn",
+          unchanged: true,
+          cursor: encodeTimelineCursor({ t: event.ts, k: 1, i: event.id }),
+        };
+      }
+      if (locked.specReviewStatus !== "unreviewed") {
+        throw new ConflictError(
+          `the current spec v${current.number} is ${locked.specReviewStatus}; only an unreviewed spec can be withdrawn — refresh before retrying`,
+        );
+      }
+      const [event] = await tx
+        .insert(issueEvents)
+        .values({
+          projectId: project.id,
+          issueId: issue.id,
+          actorId: actor.id,
+          type: "spec_withdrawn",
+          payload: { version: current.number, reason: input.reason ?? null },
+          agentContext,
+        })
+        .returning({ id: issueEvents.id, ts: microIso(issueEvents.createdAt) });
+      if (!event) throw new Error("event insert returned no row");
+      await tx
+        .update(issues)
+        .set({ specReviewStatus: "withdrawn", updatedAt: new Date() })
+        .where(eq(issues.id, issue.id));
+      events.push(
+        {
+          entity: "issue",
+          id: issue.id,
+          action: "updated",
+          issue_number: issueNumber,
+          list_row: { kind: "activity" },
+        },
+        {
+          entity: "timeline",
+          id: event.id,
+          action: "created",
+          issue_number: issueNumber,
+        },
+        {
+          entity: "spec",
+          id: issue.id,
+          action: "updated",
+          issue_number: issueNumber,
+        },
+      );
+      return {
+        version: current.number,
+        review_status: "withdrawn",
+        unchanged: false,
+        cursor: encodeTimelineCursor({ t: event.ts, k: 1, i: event.id }),
+      };
+    },
+  );
+  for (const event of events) ctx.bus.publish(project.id, event);
+  return result;
+}
+
 export async function getSpecInfo(
   ctx: AppContext,
   actor: UserRow,
@@ -314,7 +439,7 @@ export async function getSpecInfo(
   // The spec reads below follow the card: a link to one written before the
   // card moved answers to whoever can read where it is now (T-245), which
   // takes reaching the tombstone before knowing the reader's role here. The
-  // three writer entries in this file keep their own gate.
+  // writer entries in this file keep their own gate.
   const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(
@@ -344,10 +469,37 @@ export async function getSpecInfo(
   const current = versionRows.at(-1);
   if (!current) throw new NotFoundError("this issue has no spec");
 
-  const refs = await getUserRefs(
-    ctx.router.system(),
-    versionRows.map((v) => v.authorId),
-  );
+  // One issue-scoped query for all historical withdrawals, then one batched
+  // identity lookup shared with version authors.
+  const withdrawalRows = await db
+    .select({
+      actorId: issueEvents.actorId,
+      createdAt: issueEvents.createdAt,
+      payload: issueEvents.payload,
+    })
+    .from(issueEvents)
+    .where(
+      and(
+        eq(issueEvents.issueId, issue.id),
+        eq(issueEvents.type, "spec_withdrawn"),
+      ),
+    )
+    .orderBy(asc(issueEvents.id));
+  const withdrawals = withdrawalRows.map((row) => ({
+    ...row,
+    payload: SpecWithdrawnPayload.parse(row.payload),
+  }));
+  const withdrawalByVersion = new Map<number, (typeof withdrawals)[number]>();
+  for (const withdrawal of withdrawals) {
+    const version = withdrawal.payload.version;
+    if (!withdrawalByVersion.has(version)) {
+      withdrawalByVersion.set(version, withdrawal);
+    }
+  }
+  const refs = await getUserRefs(ctx.router.system(), [
+    ...versionRows.map((v) => v.authorId),
+    ...withdrawals.map((withdrawal) => withdrawal.actorId),
+  ]);
   const files = await filesOfVersion(db, current.id);
 
   // Read-time count rather than a fourth writer of a denormalized column:
@@ -384,11 +536,24 @@ export async function getSpecInfo(
     versions: versionRows.map((v) => {
       const author = refs.get(v.authorId);
       if (!author) throw new Error("author ref missing");
+      const withdrawal = withdrawalByVersion.get(v.number);
+      const withdrawalActor = withdrawal && refs.get(withdrawal.actorId);
+      if (withdrawal && !withdrawalActor)
+        throw new Error("withdrawal actor ref missing");
       return {
         number: v.number,
         author,
         message: v.message,
         created_at: v.createdAt.toISOString(),
+        ...(withdrawal && withdrawalActor
+          ? {
+              withdrawal: {
+                actor: withdrawalActor,
+                created_at: withdrawal.createdAt.toISOString(),
+                reason: withdrawal.payload.reason,
+              },
+            }
+          : {}),
       };
     }),
   };
@@ -556,11 +721,13 @@ export async function submitSpecReview(
   const result = await db.transaction(async (tx) => {
     // Same lock as pushSpec: a review and a push racing on one issue
     // serialize, so the version check below cannot go stale mid-commit.
-    await tx
-      .select({ id: issues.id })
+    const [locked] = await tx
+      .select({ ...gateColumns, specReviewStatus: issues.specReviewStatus })
       .from(issues)
       .where(eq(issues.id, issue.id))
       .for("update");
+    if (!locked) throw new NotFoundError("issue not found");
+    assertIssueWritable(locked, actor, role);
 
     const current = await currentVersionRow(tx, issue.id);
     if (!current) throw new NotFoundError("this issue has no spec");
@@ -576,6 +743,16 @@ export async function submitSpecReview(
     if (input.verdict !== "comment" && current.authorId === actor.id) {
       throw new ForbiddenError(
         `v${current.number} was pushed by this account — its verdict must come from someone else`,
+      );
+    }
+    // Keep the self-verdict permission check above this business-state guard.
+    // Reject before validating anchors or inserting any part of the review.
+    if (
+      input.verdict !== "comment" &&
+      locked.specReviewStatus === "withdrawn"
+    ) {
+      throw new ConflictError(
+        `the current spec v${current.number} is withdrawn — refresh before reviewing a new submission`,
       );
     }
 

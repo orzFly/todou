@@ -342,6 +342,70 @@ describe("single-project block watches", () => {
   );
 });
 
+describe("withdrawal activity display", () => {
+  it.each([
+    { label: "project watch", command: ["watch", "-p", "todou"] },
+    { label: "issue watch", command: ["issue", "watch", "146"] },
+  ])("$label prints the withdrawn version and reason", async ({ command }) => {
+    const entries = [
+      {
+        ...opened(146),
+        id: 71,
+        event_type: "spec_withdrawn",
+        payload: { version: 2, reason: "reworking scope" },
+      },
+      {
+        ...opened(146),
+        id: 72,
+        event_type: "spec_withdrawn",
+        payload: { version: 3, reason: null },
+      },
+    ];
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", me],
+      [
+        "GET",
+        "/api/projects/todou/activity",
+        { items: entries, next_cursor: "a1", has_more: false },
+      ],
+      [
+        "GET",
+        "/api/projects/todou/issues/146/timeline",
+        {
+          items: entries,
+          prev_cursor: null,
+          next_cursor: "a1",
+          has_more: false,
+        },
+      ],
+      ...cardRoutes,
+    ]);
+    const human = await runCli([...command, "--poll", "--since", "a0"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toContain(
+      "T-146 User spec_withdrawn (v2 — reworking scope)",
+    );
+    expect(human.stdout).toContain("T-146 User spec_withdrawn (v3)");
+    const json = await runCli(
+      [...command, "--poll", "--since", "a0", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(json.exitCode).toBe(0);
+    const { items, cursor } = parseNdjson(json.stdout);
+    expect(items).toEqual(
+      entries.map((entry) =>
+        command[0] === "issue"
+          ? entry
+          : { ...entry, issue_ref: "T-146", project: "todou" },
+      ),
+    );
+    expect(cursor.next_cursor).toBe("a1");
+  });
+});
+
 /** How a standing watch is stopped in a test: the drain turns fatal. */
 const FATAL = { __status: 404, body: { code: "not_found", message: "gone" } };
 const udsEnv = {

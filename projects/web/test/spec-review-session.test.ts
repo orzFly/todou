@@ -108,6 +108,50 @@ describe("the stable spec review session", () => {
     expect(session.isDirty()).toBe(true);
   });
 
+  it("keeps a failed review's version while summary or staged drafts survive", () => {
+    const session = createSpecReviewSession({
+      slug: "withdraw-race",
+      issueNumber: 7,
+    });
+    session.setFinishOpen(true, 3);
+    session.setSummary("review of v3");
+    const pending = session.beginSubmit("approve");
+    if (pending === null) throw new Error("submit was not started");
+    session.failSubmit(pending.id);
+    session.setFinishOpen(false);
+    session.setFinishOpen(true, 4);
+    expect(session.getSnapshot()).toMatchObject({
+      reviewVersion: 3,
+      summary: "review of v3",
+      finishOpen: true,
+      pending: null,
+    });
+    session.setSummary("");
+    session.setFinishOpen(false);
+    session.setFinishOpen(true, 4, true);
+    expect(session.getSnapshot().reviewVersion).toBe(3);
+    session.setFinishOpen(false);
+    session.setFinishOpen(true, 4, false);
+    expect(session.getSnapshot().reviewVersion).toBe(4);
+  });
+
+  it("releases the review version only after the submitted summary succeeds", () => {
+    const session = createSpecReviewSession({
+      slug: "withdraw-comment",
+      issueNumber: 7,
+    });
+    session.setFinishOpen(true, 3);
+    session.setSummary("comment on withdrawn version");
+    const pending = session.beginSubmit("comment");
+    if (pending === null) throw new Error("submit was not started");
+    session.finishSubmit(pending.id, "comment on withdrawn version");
+    expect(session.getSnapshot()).toMatchObject({
+      reviewVersion: null,
+      summary: "",
+      finishOpen: false,
+    });
+  });
+
   it("shares a pending submit across a later visit to the same card", () => {
     const first = createSpecReviewSession({ slug: "pending", issueNumber: 7 });
     const disconnectFirst = first.connect();

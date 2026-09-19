@@ -5,7 +5,8 @@ reading for itself uses the default human output instead.
 
 ## Exit codes of the wait commands, by mode
 
-- `--forever` (the standard wait; `spec wait` always behaves this way): 0 = new entries, 1 = fatal.
+- `--forever` (the standard wait): 0 = new entries, 1 = fatal. `spec wait` always uses this mode,
+  but 0 means it successfully returned an outcome, including `withdrawn`; it does not mean approval.
   Timeouts and outages are handled inside the command. `--timeout` is the heartbeat interval (default
   600s): one `still watching — nothing new in …` line per interval on stderr.
 - Blocking without a flag: 0 = new entries; 3 = timeout with nothing new (normal, not an error);
@@ -36,10 +37,17 @@ so several watches on one session stay tellable apart without opening the messag
 
 One compact record per line: item records, then one `{"type":"cursor","next_cursor":…,"ref_format":…}`
 record closing the batch. `spec wait` and `spec push --wait` add a final
-`{"type":"outcome","outcome":"approved"|"changes_requested"|"feedback",…}` record with
-`review_status`, `unresolved_comments` and `version`. A file you append a watch to is parseable line
-by line; resume from the last cursor record, because item lines not yet followed by a cursor record
-replay on the next run.
+`{"type":"outcome","outcome":"approved"|"changes_requested"|"withdrawn"|"feedback",…}` record with
+`review_status`, `unresolved_comments`, `carried_comments` and `version`. A file you append a watch
+to is parseable line by line; resume from the last cursor record, because item lines not yet followed
+by a cursor record replay on the next run.
+
+Branch on the outcome, not exit 0. Only `approved` for the latest version passes the implementation
+gate. `withdrawn` means investigate/rework and push a new version when ready; its `review_status`
+is `withdrawn` even when unresolved carried comments remain. Withdrawal takes precedence over those
+counts, returns immediately if already current, and is detected during a wait even from the same
+agent session. If a replacement version is already current, the result follows that version:
+its verdict when decided, or `feedback` with its version and `unreviewed` status while undecided.
 
 ```bash
 jq -r 'select(.type=="cursor").next_cursor'     # the cursor

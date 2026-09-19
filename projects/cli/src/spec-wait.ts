@@ -37,7 +37,11 @@ import {
  * called, or what the output looks like.
  */
 
-export type SpecOutcomeName = "approved" | "changes_requested" | "feedback";
+export type SpecOutcomeName =
+  | "approved"
+  | "changes_requested"
+  | "withdrawn"
+  | "feedback";
 
 export type SpecOutcome = {
   outcome: SpecOutcomeName;
@@ -69,6 +73,11 @@ export function judgeSpec(info: SpecInfo): SpecOutcome | null {
   if (info.review_status === "changes_requested") {
     return { outcome: "changes_requested", ...state };
   }
+  // Withdrawal describes the current version even when older annotations
+  // remain open. Those counts are context, never a request-changes verdict.
+  if (info.review_status === "withdrawn") {
+    return { outcome: "withdrawn", ...state };
+  }
   // A push resets the verdict but never the annotation count, so an
   // unreviewed version still carrying *older* annotations is the pusher's
   // own doing: it addressed a review and forgot to resolve what it
@@ -95,10 +104,34 @@ function carriedComments(info: SpecInfo): number {
   );
 }
 
+function currentOutcome(
+  info: SpecInfo,
+  expectedVersion: number,
+): SpecOutcome | null {
+  // A replacement manuscript needs its own review. Even carried annotations
+  // cannot turn an unreviewed replacement into the old version's outcome.
+  if (
+    info.current_version !== expectedVersion &&
+    info.review_status === "unreviewed"
+  ) {
+    return {
+      outcome: "feedback",
+      review_status: info.review_status,
+      unresolved_comments: info.unresolved_comments,
+      carried_comments: carriedComments(info),
+      version: info.current_version,
+    };
+  }
+  return judgeSpec(info);
+}
+
 function outcomeLine(outcome: SpecOutcome, paint: Painter): string {
   const n = outcome.unresolved_comments;
   const annotations = `${n} ${plural(n, "unresolved annotation")}`;
   const version = `spec v${outcome.version}`;
+  if (outcome.outcome === "withdrawn") {
+    return `${paint("dim", "withdrawn")} · ${version} · reworking`;
+  }
   if (outcome.outcome === "approved") {
     return [
       paint("green", "approved"),
@@ -147,6 +180,8 @@ export async function waitForSpecReview(args: {
    * version was pushed", which is what a cold re-entry wants.
    */
   from: string | undefined;
+  /** A push already knows which version it submitted before the first read. */
+  expectedVersion?: number;
   /** This session's identity, re-read per drain by the self-filter below. */
   session: SessionSource;
   debounceSec: number;
@@ -168,6 +203,7 @@ export async function waitForSpecReview(args: {
     retryTransient(() => client.getSpec(project, number), retry);
 
   let info = await readSpec();
+  const expectedVersion = args.expectedVersion ?? info.current_version;
   let baseline: string | undefined = args.from ?? servedVersionCursor(info);
   if (baseline === undefined) {
     args.note(
@@ -227,7 +263,12 @@ export async function waitForSpecReview(args: {
 
   // A wait only wakes for the future, so a verdict that is already in has to
   // be read before blocking rather than waited for.
-  const settled = judgeSpec(info);
+  if (currentOutcome(info, expectedVersion) !== null) {
+    // The version can have been resubmitted while its reference spelling was
+    // being fetched. Never return an older withdrawal over that new version.
+    info = await readSpec();
+  }
+  const settled = currentOutcome(info, expectedVersion);
   if (settled !== null) {
     emit([], baseline, settled, NO_CARDS);
     return 0;
@@ -259,6 +300,9 @@ export async function waitForSpecReview(args: {
 
   let woke: TimelineItem[] = [];
   let cursor = baseline;
+  let stateOutcome: SpecOutcome | null = null;
+  let stateConfirmed = false;
+  let batching = false;
   try {
     await runWatchLoop<TimelineItem>({
       poll: false,
@@ -269,31 +313,47 @@ export async function waitForSpecReview(args: {
       baseline,
       retry,
       clock: args.clock,
-      wait: nudges.wait,
+      // Confirm a state-only result with another drain: a foreign event may
+      // have committed between the empty timeline and its state GET. Once
+      // entries arrive, preserve the full debounce and delivery order.
+      shouldStop: () => stateOutcome !== null && stateConfirmed && !batching,
+      wait: (maxMs) =>
+        stateOutcome !== null && !batching
+          ? Promise.resolve()
+          : nudges.wait(maxMs),
       onQuiet: (_cursor, totalMs) =>
         args.note(
           quietNote("still waiting for a verdict", timeoutSec, totalMs),
         ),
       // No `types` filter: a plain comment — an amended requirement, a
       // question back — has to wake the waiter as surely as a verdict does.
-      drain: (after) =>
-        drainTimeline(client, project, number, {
+      drain: async (after) => {
+        const page = await drainTimeline(client, project, number, {
           after,
           ...selfFilter.params(),
-        }),
+        });
+        // The loop retries this whole drain if either request fails. Do not
+        // commit its cursor or state until both succeed: otherwise a failed
+        // GET could skip entries that were fetched but never delivered.
+        const nextInfo = await client.getSpec(project, number);
+        stateConfirmed = stateOutcome !== null;
+        stateOutcome = currentOutcome(nextInfo, expectedVersion);
+        cursor = page.cursor ?? cursor;
+        batching ||= page.items.length > 0;
+        return page;
+      },
       onItems: (items, next) => {
         woke = items;
         cursor = next ?? cursor;
       },
-      // Unreachable under `forever`, which returns only with entries or by
-      // throwing; the loop demands the callback anyway.
+      // Empty state-only outcomes leave through shouldStop, without an
+      // onItems callback; the successful drain above holds their cursor.
       onEmpty: () => {},
     });
   } finally {
     nudges.close();
   }
 
-  const fresh = await readSpec();
   // After the drain, before the render: what woke this wait is usually a
   // comment, but a reference to the card is exactly the entry whose point is
   // the card it came from (T-286).
@@ -301,10 +361,13 @@ export async function waitForSpecReview(args: {
     client,
     woke.map((item) => ({ ...spelling, item, project, number })),
   );
+  // Resolve cards first, then re-read immediately before rendering. An
+  // intervening resubmission always takes precedence over an old withdrawal.
+  const fresh = await readSpec();
   emit(
     woke,
     cursor,
-    judgeSpec(fresh) ?? {
+    currentOutcome(fresh, expectedVersion) ?? {
       outcome: "feedback",
       review_status: fresh.review_status,
       unresolved_comments: fresh.unresolved_comments,

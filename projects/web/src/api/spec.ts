@@ -1,8 +1,15 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   GoneError,
   MovedError,
   SpecPushedPayload,
+  type SpecWithdrawInput,
   TodouError,
   TodouNetworkError,
 } from "@todou/shared";
@@ -78,6 +85,47 @@ export const specCommentsQuery = (slug: string, issueNumber: number) =>
     queryKey: ["spec", slug, issueNumber, "comments"],
     queryFn: () => api.getSpecComments(slug, issueNumber),
   });
+
+/** Refresh mutable projections; versioned file snapshots stay valid. */
+export function invalidateSpecState(
+  queryClient: QueryClient,
+  slug: string,
+  issueNumber: number,
+) {
+  return Promise.all(
+    [
+      ["spec", slug, issueNumber],
+      ["issue", slug, issueNumber],
+      ["issues", slug],
+      ["timeline", slug, issueNumber],
+      ["inbox"],
+    ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+  );
+}
+
+export type WithdrawSpecVariables = SpecWithdrawInput & {
+  slug: string;
+  issueNumber: number;
+};
+
+export function useWithdrawSpec() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      slug,
+      issueNumber,
+      version,
+      reason,
+    }: WithdrawSpecVariables) =>
+      api.withdrawSpec(slug, issueNumber, {
+        version,
+        ...(reason === undefined ? {} : { reason }),
+      }),
+    onSettled: (_result, _error, { slug, issueNumber }) => {
+      void invalidateSpecState(queryClient, slug, issueNumber);
+    },
+  });
+}
 
 /**
  * The spec surfaces of the issue page, gated on the denormalized

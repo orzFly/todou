@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { SpecVersionInfo, UserRef } from "@todou/shared";
 import { describe, expect, it } from "vitest";
+import { SpecBaselinePicker } from "../src/components/spec/spec-baseline-picker.tsx";
 import { SpecVersionPicker } from "../src/components/spec/spec-version-picker.tsx";
 import { specSearchFor } from "../src/lib/spec-search.ts";
 import { renderWithProviders } from "./render.tsx";
@@ -34,6 +35,18 @@ const VERSIONS: SpecVersionInfo[] = [
     created_at: "2026-01-03T12:45:00Z",
   },
 ];
+
+const WITHDRAWAL: NonNullable<SpecVersionInfo["withdrawal"]> = {
+  actor: {
+    ...AUTHOR,
+    id: 2,
+    login: "alice",
+    display_name: "Alice",
+    kind: "human",
+  },
+  created_at: "2026-01-02T12:00:00Z",
+  reason: "Rework **scope** with @user and #123 [notes](https://example.test)",
+};
 
 function renderPicker(
   props: Partial<Parameters<typeof SpecVersionPicker>[0]> = {},
@@ -167,5 +180,71 @@ describe("SpecVersionPicker (T-178)", () => {
     expect(versionLinks()[2]?.getAttribute("href")).toBe(
       "/projects/demo/issues/7/spec?file=design.md&v=1",
     );
+  });
+
+  it("keeps withdrawal history on its version after a new submission", async () => {
+    const view = await openMenu({
+      versions: VERSIONS.map((v) =>
+        v.number === 2 ? { ...v, withdrawal: WITHDRAWAL } : v,
+      ),
+    });
+    expect(
+      view.getByRole("button", { hidden: true }).textContent,
+    ).not.toContain("withdrawn");
+    const [latest, withdrawn, oldest] = versionLinks();
+    expect(latest?.textContent).not.toContain("withdrawn");
+    expect(oldest?.textContent).not.toContain("withdrawn");
+    expect(withdrawn?.textContent).toContain("Previously withdrawn by ");
+    expect(withdrawn?.textContent).toContain("Alice");
+    expect(withdrawn?.textContent).toContain(WITHDRAWAL.reason);
+    expect(
+      withdrawn?.querySelector(`time[datetime="${WITHDRAWAL.created_at}"]`),
+    ).not.toBeNull();
+    expect(withdrawn?.querySelectorAll("a, strong, em")).toHaveLength(0);
+    expect(withdrawn?.getAttribute("href")).toBe(
+      "/projects/demo/issues/7/spec?file=design.md&v=2",
+    );
+  });
+
+  it("marks the viewed historical version on the closed trigger", async () => {
+    const view = renderPicker({
+      version: 2,
+      versions: VERSIONS.map((v) =>
+        v.number === 2
+          ? { ...v, withdrawal: { ...WITHDRAWAL, reason: null } }
+          : v,
+      ),
+    });
+    const trigger = await view.findByRole("button");
+    expect(trigger.textContent).toContain("v2");
+    expect(trigger.textContent).toContain("previously withdrawn");
+    expect(trigger.textContent).not.toContain("reworking");
+  });
+
+  it("retains a withdrawn baseline and its historical comparison destination", async () => {
+    const view = renderWithProviders(
+      <SpecBaselinePicker
+        slug="demo"
+        issueNumber={7}
+        version={3}
+        baseline={2}
+        versions={VERSIONS.map((v) =>
+          v.number === 2 ? { ...v, withdrawal: WITHDRAWAL } : v,
+        )}
+        searchFor={(baseline) => ({ v: 3, compare: baseline })}
+      />,
+    );
+    const trigger = await view.findByRole("button");
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+    const [withdrawn, oldest] = versionLinks();
+    expect(withdrawn?.textContent).toContain("Previously withdrawn by ");
+    expect(withdrawn?.textContent).toContain("Alice");
+    expect(withdrawn?.textContent).toContain(WITHDRAWAL.reason);
+    expect(withdrawn?.querySelectorAll("a")).toHaveLength(0);
+    expect(withdrawn?.getAttribute("href")).toBe(
+      "/projects/demo/issues/7/spec?v=3&compare=2",
+    );
+    expect(oldest?.textContent).not.toContain("withdrawn");
   });
 });

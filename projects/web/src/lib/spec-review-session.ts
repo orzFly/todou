@@ -39,6 +39,7 @@ export type SpecReviewSessionSnapshot = {
   composerBody: string;
   summary: string;
   finishOpen: boolean;
+  reviewVersion: number | null;
   pending: PendingSpecReview | null;
 };
 
@@ -51,7 +52,7 @@ export type SpecReviewSession = {
   setComposerBody: (body: string) => void;
   clearComposer: () => void;
   setSummary: (summary: string) => void;
-  setFinishOpen: (open: boolean) => void;
+  setFinishOpen: (open: boolean, version?: number, hasDrafts?: boolean) => void;
   beginSubmit: (verdict: SpecReviewVerdict) => PendingSpecReview | null;
   finishSubmit: (pendingId: number, submittedSummary: string) => void;
   failSubmit: (pendingId: number) => void;
@@ -132,6 +133,7 @@ export function createSpecReviewSession(
     composerBody: "",
     summary: "",
     finishOpen: false,
+    reviewVersion: null,
     pending: sharedPending.pending,
   };
 
@@ -178,7 +180,25 @@ export function createSpecReviewSession(
       update({ staging: null, composerBody: "" });
     },
     setSummary: (summary) => update({ summary }),
-    setFinishOpen: (finishOpen) => update({ finishOpen }),
+    setFinishOpen: (finishOpen, version, hasDrafts = false) => {
+      // A failed review keeps its original target even after a push or a
+      // close/reopen. An empty form may start a fresh review of the new version.
+      const retainVersion =
+        snapshot.summary.trim() !== "" ||
+        hasDrafts ||
+        snapshot.pending !== null;
+      update({
+        finishOpen,
+        ...(finishOpen && version !== undefined
+          ? {
+              reviewVersion:
+                retainVersion && snapshot.reviewVersion !== null
+                  ? snapshot.reviewVersion
+                  : version,
+            }
+          : {}),
+      });
+    },
     beginSubmit: (verdict) => {
       if (sharedPending.pending !== null) return null;
       const pending = { id: ++nextSubmitNumber, verdict };
@@ -192,7 +212,9 @@ export function createSpecReviewSession(
       const summaryUnchanged = snapshot.summary === submittedSummary;
       update({
         pending: null,
-        ...(summaryUnchanged ? { summary: "", finishOpen: false } : {}),
+        ...(summaryUnchanged
+          ? { summary: "", finishOpen: false, reviewVersion: null }
+          : {}),
       });
     },
     failSubmit: (pendingId) => {

@@ -1,4 +1,7 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { issueReads, readFrontiers } from "../src/db/project-schema.ts";
+import { accessibleProjectRows, routeInfoOf } from "../src/services/access.ts";
 import {
   addUserWithToken,
   makeTestApp,
@@ -321,6 +324,78 @@ describe.each(PLACEMENTS)(
       expect((await markRead(issue.number)).status).toBe(204);
       expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
     });
+
+    it.each([
+      { actor: "foreign", existingRead: false },
+      { actor: "foreign", existingRead: true },
+      { actor: "self", existingRead: false },
+      { actor: "self", existingRead: true },
+    ])(
+      "withdrawal by $actor preserves read positions (existing read: $existingRead) and adds no unread comments (T-428)",
+      async ({ actor, existingRead }) => {
+        const issue = await createIssue("withdraw without reading");
+        const pushed = await t.app.request(
+          `/api/projects/${slug}/issues/${issue.number}/spec/push`,
+          {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({
+              files: [{ path: "design.md", body: "# Design\n" }],
+            }),
+          },
+        );
+        expect(pushed.status).toBe(200);
+        expect(await stateOf(issue.number)).toEqual({
+          unread: false,
+          count: 0,
+        });
+        if (existingRead) {
+          await settle();
+          expect((await markRead(issue.number)).status).toBe(204);
+        }
+
+        const project = (await accessibleProjectRows(t.ctx, bob.user)).find(
+          (row) => row.slug === slug,
+        );
+        if (!project) throw new Error(`missing project ${slug}`);
+        const db = await t.ctx.router.forProject(routeInfoOf(project));
+        const positions = async () => ({
+          reads: await db
+            .select()
+            .from(issueReads)
+            .where(eq(issueReads.projectId, project.id))
+            .orderBy(issueReads.id),
+          frontiers: await db
+            .select()
+            .from(readFrontiers)
+            .where(eq(readFrontiers.projectId, project.id))
+            .orderBy(readFrontiers.id),
+        });
+        const before = await positions();
+        await settle();
+        const withdrawn = await t.app.request(
+          `/api/projects/${slug}/issues/${issue.number}/spec/withdraw`,
+          {
+            method: "POST",
+            headers:
+              actor === "foreign"
+                ? { "content-type": "application/json", ...bob.headers }
+                : headers(),
+            body: JSON.stringify({
+              version: 1,
+              reason: "Reworking the design",
+            }),
+          },
+        );
+        expect(withdrawn.status).toBe(200);
+        expect(await positions()).toEqual(before);
+        expect(await stateOf(issue.number)).toEqual({
+          unread: actor === "foreign",
+          count: 0,
+        });
+        expect(await positions()).toEqual(before);
+      },
+    );
 
     it("counts a foreign card's top post as its first comment (T-151)", async () => {
       const posted = await createIssueAs(bob.headers, "bob opens one", {

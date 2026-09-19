@@ -76,6 +76,7 @@ import {
 import { SpecVersionPicker } from "@/components/spec/spec-version-picker.tsx";
 import { SpecViewToggle } from "@/components/spec/spec-view-toggle.tsx";
 import { useLinkedTriggerWidths } from "@/components/spec/use-linked-trigger-widths.ts";
+import { WithdrawSpec } from "@/components/spec/withdraw-spec.tsx";
 import type { Target } from "@/components/timeline/comment-item.tsx";
 import {
   DiffstatBar,
@@ -1105,6 +1106,12 @@ function SpecViewBody({
               the only break left falls on the elastic gap above, which is the
               row's own seam: identity and navigation, then actions. */}
           <span className="inline-flex shrink-0 items-center gap-2">
+            <WithdrawSpec
+              slug={slug}
+              issueNumber={issueNumber}
+              version={version}
+              spec={spec}
+            />
             <ToolbarSlot name="comment-file" title={commentFileReason}>
               <Button
                 size="sm"
@@ -1141,7 +1148,13 @@ function SpecViewBody({
                   ? `Finish review (${drafts.drafts.length} staged)`
                   : "Finish review"
               }
-              onClick={() => session.setFinishOpen(true)}
+              onClick={() =>
+                session.setFinishOpen(
+                  true,
+                  spec.current_version,
+                  drafts.drafts.length > 0,
+                )
+              }
             >
               Finish review
               {/* T-190 reserved this box so staging the first draft would not
@@ -1578,7 +1591,7 @@ function SpecViewBody({
       <ReviewSubmitDialog
         slug={slug}
         issueNumber={issueNumber}
-        currentVersion={spec.current_version}
+        currentVersion={reviewSession.reviewVersion ?? spec.current_version}
         drafts={drafts.drafts}
         summary={reviewSession.summary}
         open={reviewSession.finishOpen}
@@ -1587,7 +1600,7 @@ function SpecViewBody({
         onClose={() => session.setFinishOpen(false)}
         onSubmit={(verdict) =>
           submitReview({
-            currentVersion: spec.current_version,
+            currentVersion: reviewSession.reviewVersion ?? spec.current_version,
             verdict,
             drafts: drafts.drafts,
           })

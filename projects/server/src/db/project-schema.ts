@@ -175,7 +175,7 @@ export const issues = pgTable(
     // and status = the issue has no spec.
     specVersion: integer("spec_version"),
     specReviewStatus: text("spec_review_status", {
-      enum: ["unreviewed", "approved", "changes_requested"],
+      enum: ["unreviewed", "approved", "changes_requested", "withdrawn"],
     }),
     specUnresolvedComments: integer("spec_unresolved_comments")
       .notNull()
@@ -333,6 +333,7 @@ export const issueEvents = pgTable(
         "attachment_added",
         "question_answered",
         "spec_pushed",
+        "spec_withdrawn",
         "spec_review",
         "spec_comments_resolved",
         "deleted",

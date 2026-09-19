@@ -1,6 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMatches } from "@tanstack/react-router";
-import type { SpecReviewSubmitInput, SpecReviewVerdict } from "@todou/shared";
+import {
+  type SpecReviewSubmitInput,
+  type SpecReviewVerdict,
+  TodouError,
+} from "@todou/shared";
 import {
   createContext,
   type ReactNode,
@@ -12,6 +16,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import { invalidateSpecState, specQuery } from "@/api/spec.ts";
 import {
   confirmSubmittedSpecReviewDrafts,
   type SpecReviewDraft,
@@ -91,6 +96,20 @@ function SessionOwner({
     ({ currentVersion, verdict, drafts }: SubmitReviewInput) => {
       const state = session.getSnapshot();
       if (state.pending !== null) return;
+      const version = state.reviewVersion ?? currentVersion;
+      const latest = queryClient.getQueryData(
+        specQuery(slug, issueNumber).queryKey,
+      );
+      if (latest && latest.current_version !== version) {
+        toast.error(
+          `Spec v${version} is no longer current. Your review draft has been kept.`,
+        );
+        return;
+      }
+      if (latest?.review_status === "withdrawn" && verdict !== "comment") {
+        toast.error(`Spec v${version} has been withdrawn.`);
+        return;
+      }
 
       const submittedDrafts = drafts.map((draft) => ({
         ...draft,
@@ -103,7 +122,7 @@ function SessionOwner({
 
       void api
         .submitSpecReview(slug, issueNumber, {
-          version: currentVersion,
+          version,
           verdict,
           ...(body === "" ? {} : { body }),
           comments: submitComments(submittedDrafts),
@@ -120,17 +139,13 @@ function SessionOwner({
           );
           confirmSubmittedSpecReviewDrafts(slug, issueNumber, submittedDrafts);
           session.finishSubmit(pending.id, submittedSummary);
-          for (const key of [
-            ["spec", slug, issueNumber],
-            ["timeline", slug, issueNumber],
-            ["issue", slug, issueNumber],
-            ["issues", slug],
-          ]) {
-            void queryClient.invalidateQueries({ queryKey: key });
-          }
+          void invalidateSpecState(queryClient, slug, issueNumber);
         })
         .catch((error: unknown) => {
           session.failSubmit(pending.id);
+          if (error instanceof TodouError && error.status === 409) {
+            void invalidateSpecState(queryClient, slug, issueNumber);
+          }
           if (isCurrentSpecReviewSession(state.identity, state.token)) {
             toast.error(
               error instanceof Error ? error.message : "Review failed",

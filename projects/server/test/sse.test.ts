@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { ChangeEvent } from "@todou/shared";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -677,6 +678,116 @@ describe("user-level SSE stream (T-122)", () => {
       hers.abort();
       mine.abort();
     });
+
+    it.each([
+      { showWeakUnread: false, commentSurvives: false },
+      { showWeakUnread: true, commentSurvives: false },
+      { showWeakUnread: false, commentSurvives: true },
+    ])(
+      "withdrawal sends each receiver the actual inbox row (weak: $showWeakUnread, comment: $commentSurvives) (T-428)",
+      async ({ showWeakUnread, commentSurvives }) => {
+        const prefs = await t.app.request("/api/me/prefs", {
+          method: "PATCH",
+          headers: { "content-type": "application/json", ...zoe.headers },
+          body: JSON.stringify({ show_weak_unread: showWeakUnread }),
+        });
+        expect(prefs.status).toBe(200);
+        let reader: SseReader | undefined;
+        let actor: SseReader | undefined;
+        try {
+          await readInbox(zoe.headers);
+          await readInbox({ cookie });
+          const created = await t.app.request("/api/projects/alpha/issues", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...zoe.headers },
+            body: JSON.stringify({ title: "withdrawal receiver state" }),
+          });
+          expect(created.status).toBe(201);
+          const { number } = await json(created);
+          const base = `/api/projects/alpha/issues/${number}`;
+          const pushed = await t.app.request(`${base}/spec/push`, {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({
+              files: [{ path: "design.md", body: "# Design\n" }],
+            }),
+          });
+          expect(pushed.status).toBe(200);
+          // Database timestamps use the real clock at µs precision; fake JS
+          // timers cannot separate them from the read route's ms timestamp.
+          await delay(5);
+          for (const who of [zoe.headers, { cookie }]) {
+            const read = await t.app.request(`${base}/read`, {
+              method: "PUT",
+              headers: { "content-type": "application/json", ...who },
+              body: "{}",
+            });
+            expect(read.status).toBe(204);
+          }
+          if (commentSurvives) {
+            await delay(5);
+            await commentAs("alpha", number, "Still needs an answer", {
+              cookie,
+            });
+          }
+          expect(await inboxRowOf(zoe.headers, "alpha", number)).toMatchObject({
+            pending_spec_review: true,
+            unread_comments: commentSurvives ? 1 : 0,
+          });
+          expect(await inboxRowOf({ cookie }, "alpha", number)).toBeNull();
+          reader = await SseReader.open("/api/events?inbox=1", zoe.headers);
+          actor = await SseReader.open("/api/events?inbox=1", { cookie });
+          await delay(5);
+          const withdrawn = await t.app.request(`${base}/spec/withdraw`, {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({ version: 1 }),
+          });
+          expect(withdrawn.status).toBe(200);
+
+          const expectedReader = await inboxRowOf(zoe.headers, "alpha", number);
+          const expectedActor = await inboxRowOf({ cookie }, "alpha", number);
+          expect(expectedActor).toBeNull();
+          if (showWeakUnread || commentSurvives) {
+            expect(expectedReader).toMatchObject({
+              unread: true,
+              unread_comments: commentSurvives ? 1 : 0,
+              pending_spec_review: false,
+            });
+          } else {
+            expect(expectedReader).toBeNull();
+          }
+          for (const entity of ["issue", "timeline", "spec"]) {
+            const received = await reader.next("change");
+            const own = await actor.next("change");
+            expect(received).toMatchObject({
+              entity,
+              project: "alpha",
+              issue_number: number,
+            });
+            expect(own).toMatchObject({
+              entity,
+              project: "alpha",
+              issue_number: number,
+            });
+            expect(received).toHaveProperty("inbox_row", expectedReader);
+            expect(own).toHaveProperty("inbox_row", expectedActor);
+            if (entity === "issue") {
+              expect(received.list_row).toEqual({ kind: "activity" });
+            }
+          }
+        } finally {
+          reader?.abort();
+          actor?.abort();
+          const restored = await t.app.request("/api/me/prefs", {
+            method: "PATCH",
+            headers: { "content-type": "application/json", ...zoe.headers },
+            body: JSON.stringify({ show_weak_unread: true }),
+          });
+          expect(restored.status).toBe(200);
+        }
+      },
+    );
 
     it("omits the field on events that name no issue", async () => {
       const stream = await SseReader.open("/api/events?inbox=1", { cookie });

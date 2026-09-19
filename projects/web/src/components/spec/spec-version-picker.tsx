@@ -63,6 +63,7 @@ export function SpecVersionMenuRow({
   message,
   author,
   createdAt,
+  withdrawal,
   active,
   ghostChip = false,
   tag,
@@ -71,6 +72,7 @@ export function SpecVersionMenuRow({
   message: string | null;
   author: SpecVersionInfo["author"];
   createdAt: string;
+  withdrawal?: SpecVersionInfo["withdrawal"];
   active: boolean;
   /** Baseline rows: the filled chip belongs to the version being read. */
   ghostChip?: boolean;
@@ -94,6 +96,29 @@ export function SpecVersionMenuRow({
             {new Date(createdAt).toLocaleString()}
           </time>
         </span>
+        {withdrawal && (
+          <span className="text-xs text-muted-foreground">
+            {"Previously withdrawn by "}
+            <UserChip
+              user={withdrawal.actor}
+              nameClassName="text-xs"
+              link={false}
+            />
+            {" · "}
+            <time
+              dateTime={withdrawal.created_at}
+              title={withdrawal.created_at}
+            >
+              {new Date(withdrawal.created_at).toLocaleString()}
+            </time>
+            {withdrawal.reason !== null && (
+              <>
+                {" — "}
+                {withdrawal.reason}
+              </>
+            )}
+          </span>
+        )}
       </span>
       {tag !== undefined && (
         <span className="mt-0.5 shrink-0 text-muted-foreground text-xs">
@@ -162,6 +187,9 @@ export function SpecVersionPicker({
         >
           <MessageText message={current?.message ?? null} />
         </span>
+        {current?.withdrawal && (
+          <span className="text-muted-foreground">previously withdrawn</span>
+        )}
         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -185,6 +213,7 @@ export function SpecVersionPicker({
                   message={v.message}
                   author={v.author}
                   createdAt={v.created_at}
+                  withdrawal={v.withdrawal}
                   active={active}
                 />
               </Link>

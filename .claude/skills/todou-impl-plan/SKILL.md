@@ -9,10 +9,17 @@ Execute a plan that lives as an approved spec set on a todou issue. Read `/todou
 
 ## Steps
 
-1. `todou spec status <n> -p <proj>`. The latest version must carry an approve verdict. If it does
-   not, run `todou spec wait <n> -p <proj>` and follow the review loop of `/todou-plan`; do not
-   implement an unapproved plan, and do not plan to check `spec status` later, because a deferred
-   check has nothing to wake it.
+1. `todou spec status <n> -p <proj>`. The latest version must be `approved`; an older approval
+   cannot authorize the current plan. If the current version is `withdrawn`, return to the
+   investigation/rework loop in `/todou-plan`, push the ready replacement and wait for fresh approval.
+   If a pending (`unreviewed`) version needs rework, withdraw the inspected version first with
+   `todou spec withdraw <n> -p <proj> --if-version <v> [--reason "..."]`, then investigate and push.
+   A `changes_requested` version goes directly to revision because withdrawal cannot undo a verdict.
+   If still awaiting approval, run `todou spec wait <n> -p <proj>` and follow that review loop.
+   Read its outcome:
+   `withdrawn` and exit 0 are not permission to implement. Even an identical-content push from
+   withdrawn creates a new unreviewed version. Recheck the latest status before implementing;
+   do not defer this gate until after implementation starts.
 2. `todou spec pull <n> <dir> -p <proj>` into a scratch directory (`mktemp -d`). Read whichever
    exist: `proposal.md` (requirements), `design.md`, `api.md`, `plan.md` (the steps).
 3. Take the card (`/todou-cli`, "Taking a card"), then run `todou agent can-i-follow` and do what it

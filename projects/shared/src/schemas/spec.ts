@@ -60,7 +60,7 @@ export const SpecPushInput = z
 export type SpecPushInput = z.infer<typeof SpecPushInput>;
 
 export const SpecPushResult = z.object({
-  /** True when the push matched the current version exactly — no new version. */
+  /** True when matching content kept the current, non-withdrawn version. */
   unchanged: z.boolean(),
   /** The new version number, or the current one when unchanged. */
   version: z.number().int().positive(),
@@ -78,10 +78,26 @@ export const SpecPushResult = z.object({
 });
 export type SpecPushResult = z.infer<typeof SpecPushResult>;
 
+export const SpecWithdrawInput = z.strictObject({
+  version: z.number().int().positive(),
+  reason: z.string().trim().min(1).max(2000).optional(),
+});
+export type SpecWithdrawInput = z.infer<typeof SpecWithdrawInput>;
+
+export const SpecWithdrawResult = z.object({
+  version: z.number().int().positive(),
+  review_status: z.literal("withdrawn"),
+  unchanged: z.boolean(),
+  /** The first withdrawal event's cursor, including on an unchanged retry. */
+  cursor: Cursor,
+});
+export type SpecWithdrawResult = z.infer<typeof SpecWithdrawResult>;
+
 export const SpecReviewStatus = z.enum([
   "unreviewed",
   "approved",
   "changes_requested",
+  "withdrawn",
 ]);
 export type SpecReviewStatus = z.infer<typeof SpecReviewStatus>;
 
@@ -90,6 +106,14 @@ export const SpecVersionInfo = z.object({
   author: UserRef,
   message: z.string().nullable(),
   created_at: Timestamp,
+  /** Omitted for versions that have never been withdrawn and by older servers. */
+  withdrawal: z
+    .object({
+      actor: UserRef,
+      created_at: Timestamp,
+      reason: z.string().nullable(),
+    })
+    .optional(),
 });
 export type SpecVersionInfo = z.infer<typeof SpecVersionInfo>;
 
@@ -155,11 +179,18 @@ export const SpecPushedPayload = z.strictObject({
 });
 export type SpecPushedPayload = z.infer<typeof SpecPushedPayload>;
 
+/** Payload of the `spec_withdrawn` timeline event. */
+export const SpecWithdrawnPayload = z.strictObject({
+  version: z.number().int().positive(),
+  reason: z.string().nullable(),
+});
+export type SpecWithdrawnPayload = z.infer<typeof SpecWithdrawnPayload>;
+
 /**
  * What one review round did. `comment` (T-277) is a round that says its
  * piece — a summary, annotations, or both — without judging: it leaves
- * `SpecReviewStatus` exactly where it was, so the card still owes a verdict
- * and the pusher of the version may submit one.
+ * `SpecReviewStatus` unchanged, including approved or withdrawn. The pusher
+ * of the version may submit a comment round without casting a verdict.
  */
 export const SpecReviewVerdict = z.enum([
   "approve",

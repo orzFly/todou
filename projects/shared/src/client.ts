@@ -79,6 +79,8 @@ import type {
   SpecPushResult,
   SpecReviewResult,
   SpecReviewSubmitInput,
+  SpecWithdrawInput,
+  SpecWithdrawResult,
   Status,
   StatusCreateInput,
   StatusUpdateInput,
@@ -1043,6 +1045,12 @@ export class TodouClient {
     this.request<SpecPushResult>(
       "POST",
       `/projects/${slug}/issues/${number}/spec/push`,
+      { json: input },
+    );
+  withdrawSpec = (slug: string, number: number, input: SpecWithdrawInput) =>
+    this.request<SpecWithdrawResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/spec/withdraw`,
       { json: input },
     );
   submitSpecReview = (

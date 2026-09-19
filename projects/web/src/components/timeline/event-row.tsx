@@ -440,6 +440,14 @@ export function renderEvent(
         `pushed spec v${String(payload.version)} (${parts})${message}`,
       );
     }
+    case "spec_withdrawn": {
+      const reason =
+        typeof payload.reason === "string" ? ` — ${payload.reason}` : "";
+      const text = `withdrew spec v${String(payload.version)} · reworking${reason}`;
+      // Withdrawal reasons are literal text, including mentions and issue refs.
+      // `plain` would turn those refs into links.
+      return { node: text, text };
+    }
     case "spec_review": {
       const verdict =
         {
@@ -703,6 +711,7 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   attachment_added: <PaperclipIcon className="size-3.5" />,
   question_answered: <ListChecksIcon className="size-3.5 text-green-600" />,
   spec_pushed: <BookOpenTextIcon className="size-3.5" />,
+  spec_withdrawn: <CirclePauseIcon className="size-3.5" />,
   spec_review: <FileCheck2Icon className="size-3.5 text-amber-600" />,
   spec_comments_resolved: <CheckIcon className="size-3.5 text-green-600" />,
   deleted: <Trash2Icon className="size-3.5 text-destructive" />,

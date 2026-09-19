@@ -3,12 +3,15 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SPEC_MAX_FILE_CHARS, SPEC_MAX_FILES } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { specVerdict } from "../src/commands/spec.ts";
+import * as specWait from "../src/spec-wait.ts";
 import { fakeFetch, type Route, runCli } from "./harness.ts";
 
 const ENV = {
@@ -25,6 +28,222 @@ function specDir(files: Record<string, string>): string {
   }
   return dir;
 }
+
+describe("spec verdict formatting", () => {
+  it.each([
+    [null, "awaiting review"],
+    ["unreviewed", "awaiting review"],
+    ["approved", "approved"],
+    ["changes_requested", "changes requested"],
+    ["withdrawn", "withdrawn · reworking"],
+  ] as const)("formats %s as %s", (status, text) => {
+    expect(specVerdict(status)).toBe(text);
+  });
+});
+
+describe("spec withdraw", () => {
+  const cursor = "3:hlsw2ffv8g.1.3pz";
+  const response = {
+    version: 3,
+    review_status: "withdrawn",
+    unchanged: false,
+    cursor,
+  };
+  const route = (reply: unknown = response): Route => [
+    "POST",
+    "/api/projects/proj/issues/23/spec/withdraw",
+    reply,
+  ];
+
+  it("posts the explicit version and trimmed reason, then prints the cursor", async () => {
+    const { fetchImpl, calls } = fakeFetch([route()]);
+    const run = await runCli(
+      [
+        "spec",
+        "withdraw",
+        "23",
+        "--if-version",
+        "3",
+        "--reason",
+        "  reworking @user scope \n",
+      ],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      version: 3,
+      reason: "reworking @user scope",
+    });
+    expect(run.stdout).toBe(
+      `spec v3 withdrawn · reworking\ncursor: ${cursor} (issue watch --since <cursor>)\n`,
+    );
+    expect(run.stderr).toBe("");
+  });
+
+  it.each([false, true])(
+    "preserves the API JSON when unchanged=%s",
+    async (unchanged) => {
+      const result = { ...response, unchanged };
+      const { fetchImpl, calls } = fakeFetch([route(result)]);
+      const run = await runCli(
+        ["spec", "withdraw", "23", "--if-version", "3", "--json"],
+        { fetchImpl, env: ENV },
+      );
+      expect(run.exitCode).toBe(0);
+      expect(JSON.parse(run.stdout)).toEqual(result);
+      expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ version: 3 });
+    },
+  );
+  it("reports an idempotent retry without claiming its new reason was saved", async () => {
+    const { fetchImpl } = fakeFetch([route({ ...response, unchanged: true })]);
+    const run = await runCli(
+      [
+        "spec",
+        "withdraw",
+        "23",
+        "--if-version",
+        "3",
+        "--reason",
+        "replacement reason",
+      ],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toBe(
+      `spec v3 already withdrawn · reworking (unchanged)\ncursor: ${cursor} (issue watch --since <cursor>)\n`,
+    );
+    expect(run.stdout).not.toContain("replacement reason");
+  });
+
+  it("requires --if-version before making any request", async () => {
+    const { fetchImpl, calls } = fakeFetch([]);
+    const run = await runCli(["spec", "withdraw", "23"], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).not.toBe(0);
+    expect(`${run.stdout}${run.stderr}`).toContain("--if-version");
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    "0",
+    "-1",
+    "1.5",
+    "NaN",
+    "Infinity",
+    "three",
+    "",
+    " ",
+    "9007199254740992",
+  ])("rejects invalid --if-version %j before any request", async (version) => {
+    const { fetchImpl, calls } = fakeFetch([]);
+    const run = await runCli(
+      ["spec", "withdraw", "23", `--if-version=${version}`],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("--if-version");
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["", " \n\t", "x".repeat(2001)])(
+    "rejects an invalid supplied reason before any request",
+    async (reason) => {
+      const { fetchImpl, calls } = fakeFetch([]);
+      const run = await runCli(
+        ["spec", "withdraw", "23", "--if-version", "3", "--reason", reason],
+        { fetchImpl, env: ENV },
+      );
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("--reason");
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it("accepts a reason at the trimmed length limit", async () => {
+    const { fetchImpl, calls } = fakeFetch([route()]);
+    const reason = "x".repeat(2000);
+    const run = await runCli(
+      [
+        "spec",
+        "withdraw",
+        "23",
+        "--if-version",
+        "3",
+        "--reason",
+        ` ${reason} `,
+      ],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(JSON.parse(String(calls[0]?.init.body)).reason).toBe(reason);
+  });
+  it.each([
+    [404, "this issue has no spec"],
+    [403, "writer capability required"],
+    [
+      409,
+      "the current spec is v4 (unreviewed); cannot withdraw v3 — refresh before retrying",
+    ],
+    [
+      409,
+      "the current spec v3 is approved; only an unreviewed spec can be withdrawn — refresh before retrying",
+    ],
+    [
+      409,
+      "the current spec v3 is changes_requested; only an unreviewed spec can be withdrawn — refresh before retrying",
+    ],
+  ])(
+    "surfaces API %s errors without reporting success",
+    async (status, message) => {
+      const { fetchImpl, calls } = fakeFetch([
+        route({
+          __status: status,
+          body: { error: { code: "error", message } },
+        }),
+      ]);
+      const run = await runCli(
+        ["spec", "withdraw", "23", "--if-version", "3"],
+        { fetchImpl, env: ENV },
+      );
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain(message);
+      expect(run.stdout).toBe("");
+      const writes = calls.filter((call) => call.init.method === "POST");
+      expect(writes).toHaveLength(1);
+      expect(writes[0]?.url).toContain(
+        "/api/projects/proj/issues/23/spec/withdraw",
+      );
+    },
+  );
+});
+
+describe("spec withdrawal help", () => {
+  it.each([
+    ["withdraw", ["--if-version", "--reason", "original cursor", "identical"]],
+    ["push", ["withdrawn", "identical", "Exit 0 does not mean approval"]],
+    [
+      "wait",
+      [
+        "withdrawn",
+        "Exit 0 does not mean approval",
+        "replacement",
+        "even with carried annotations",
+        "including this one",
+      ],
+    ],
+    ["review", ["preserves the current review status", "withdrawn"]],
+  ])("documents %s semantics", async (command, phrases) => {
+    const run = await runCli(["spec", command as string, "--help"], {
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(0);
+    const text = run.stdout.replace(/\s+/g, " ");
+    for (const phrase of phrases) expect(text).toContain(phrase);
+  });
+});
 
 describe("spec push", () => {
   it("collects .md recursively and posts the whole set", async () => {
@@ -77,6 +296,78 @@ describe("spec push", () => {
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toContain("no changes — spec stays at v3");
   });
+
+  it("reports a same-content resubmission as a new version when the API says it changed", async () => {
+    const dir = specDir({ "a.md": "x\n" });
+    try {
+      const { fetchImpl } = fakeFetch([
+        [
+          "POST",
+          "/api/projects/proj/issues/23/spec/push",
+          {
+            unchanged: false,
+            version: 4,
+            added: [],
+            changed: [],
+            removed: [],
+            cursor: "3:z.1.4",
+          },
+        ],
+      ]);
+      const run = await runCli(["spec", "push", "23", dir], {
+        fetchImpl,
+        env: ENV,
+      });
+      expect(run.exitCode).toBe(0);
+      expect(run.stdout).toContain(
+        "spec v4 pushed: 0 added, 0 changed, 0 removed",
+      );
+      expect(run.stdout).not.toContain("no changes");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])(
+    "passes the returned version to --wait when unchanged=%s",
+    async (unchanged) => {
+      const dir = specDir({ "a.md": "x\n" });
+      const wait = vi.spyOn(specWait, "waitForSpecReview").mockResolvedValue(0);
+      try {
+        const { fetchImpl } = fakeFetch([
+          [
+            "POST",
+            "/api/projects/proj/issues/23/spec/push",
+            {
+              unchanged,
+              version: 4,
+              added: [],
+              changed: [],
+              removed: [],
+              cursor: "3:z.1.4",
+            },
+          ],
+        ]);
+        const run = await runCli(["spec", "push", "23", dir, "--wait"], {
+          fetchImpl,
+          env: ENV,
+        });
+        expect(run.exitCode).toBe(0);
+        expect(wait).toHaveBeenCalledOnce();
+        expect(wait).toHaveBeenCalledWith(
+          expect.objectContaining({
+            project: "proj",
+            number: 23,
+            expectedVersion: 4,
+            from: "3:z.1.4",
+          }),
+        );
+      } finally {
+        wait.mockRestore();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("fails locally, before any request, on an empty directory", async () => {
     const dir = specDir({});
@@ -406,6 +697,30 @@ describe("spec list (T-184)", () => {
     expect(parsed.items.map((i) => i.number)).toEqual([23]);
     expect(parsed.items[0]?.ref).toBe("#23");
   });
+
+  it("shows withdrawn specs through the shared formatter and retains their JSON state", async () => {
+    const item = row(23, "Reworking scope", {
+      spec_version: 3,
+      spec_review_status: "withdrawn",
+      spec_unresolved_comments: 2,
+    });
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/proj/issues",
+        { items: [item], next_cursor: null },
+      ],
+    ]);
+    const human = await runCli(["spec", "list"], { fetchImpl, env: ENV });
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toMatch(/v3\s+withdrawn · reworking\s+2 unresolved/);
+    expect(human.stdout).not.toContain("awaiting review");
+    const json = await runCli(["spec", "list", "--json"], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(JSON.parse(json.stdout).items[0]).toMatchObject(item);
+  });
 });
 
 describe("spec status", () => {
@@ -451,6 +766,82 @@ describe("spec status", () => {
     expect(run.stdout).toContain("v2 by Claude Agent");
     expect(run.stdout).toContain("address review");
   });
+
+  it.each(["withdrawn", "unreviewed"])(
+    "retains historical withdrawal metadata when the current status is %s",
+    async (review_status) => {
+      const actor = { id: 3, login: "user", display_name: "User" };
+      const withdrawal = {
+        actor,
+        created_at: "2026-08-12T06:00:00.000Z",
+        reason: "reworking scope",
+      };
+      const info = {
+        current_version: review_status === "withdrawn" ? 2 : 3,
+        current_version_cursor: "3:z.1.4",
+        review_status,
+        unresolved_comments: 2,
+        unresolved_carried_comments: 1,
+        files: [{ path: "design.md", size: 7 }],
+        versions: [
+          {
+            number: 1,
+            author: actor,
+            message: null,
+            created_at: "2026-08-12T03:00:00.000Z",
+            withdrawal: { ...withdrawal, reason: null },
+          },
+          {
+            number: 2,
+            author: actor,
+            message: "scope",
+            created_at: "2026-08-12T05:00:00.000Z",
+            withdrawal,
+          },
+          ...(review_status === "unreviewed"
+            ? [
+                {
+                  number: 3,
+                  author: actor,
+                  message: null,
+                  created_at: "2026-08-12T07:00:00.000Z",
+                },
+              ]
+            : []),
+        ],
+      };
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/projects/proj/issues/23/spec", info],
+      ]);
+      const human = await runCli(["spec", "status", "23"], {
+        fetchImpl,
+        env: ENV,
+      });
+      expect(human.exitCode).toBe(0);
+      expect(human.stdout).toContain(
+        `spec v${info.current_version} · ${review_status === "withdrawn" ? "withdrawn · reworking" : "awaiting review"} · 2 unresolved`,
+      );
+      expect(human.stdout).toContain(
+        "v2 by User at 2026-08-12T05:00:00.000Z — scope · withdrawn by User at 2026-08-12T06:00:00.000Z — reworking scope",
+      );
+      const first = human.stdout
+        .split("\n")
+        .find((line) => line.startsWith("  v1 "));
+      expect(first).toContain("withdrawn by User at 2026-08-12T06:00:00.000Z");
+      expect(first).not.toContain("null");
+      if (review_status === "unreviewed") {
+        const current = human.stdout
+          .split("\n")
+          .find((line) => line.startsWith("  v3 "));
+        expect(current).not.toContain("withdrawn");
+      }
+      const json = await runCli(["spec", "status", "23", "--json"], {
+        fetchImpl,
+        env: ENV,
+      });
+      expect(JSON.parse(json.stdout)).toEqual(info);
+    },
+  );
 });
 
 describe("spec comments", () => {
@@ -674,6 +1065,61 @@ describe("spec review", () => {
       comments: [],
     });
   });
+
+  it("allows a comment on a withdrawn version without claiming a new verdict", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/proj/issues/23/spec",
+        { current_version: 3, review_status: "withdrawn" },
+      ],
+      [
+        "POST",
+        "/api/projects/proj/issues/23/spec/reviews",
+        {
+          event_id: 99,
+          version: 3,
+          verdict: "comment",
+          summary_comment_id: 88,
+          comment_ids: [],
+        },
+      ],
+    ]);
+    const run = await runCli(
+      ["spec", "review", "23", "--comment", "--body", "reworking scope"],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toBe("commented on spec v3\n");
+    expect(JSON.parse(String(calls[1]?.init.body))).toEqual({
+      version: 3,
+      verdict: "comment",
+      body: "reworking scope",
+      comments: [],
+    });
+  });
+
+  it.each(["--approve", "--request-changes"])(
+    "surfaces the withdrawn conflict for %s",
+    async (verdict) => {
+      const message =
+        "the current spec v3 is withdrawn — refresh before reviewing a new submission";
+      const { fetchImpl } = fakeFetch([
+        [
+          "POST",
+          "/api/projects/proj/issues/23/spec/reviews",
+          { __status: 409, body: { error: { code: "conflict", message } } },
+        ],
+      ]);
+      const run = await runCli(
+        ["spec", "review", "23", "--version", "3", verdict],
+        { fetchImpl, env: ENV },
+      );
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain(message);
+      expect(run.stdout).toBe("");
+    },
+  );
 });
 
 // T-277: the CLI half of inline review. Everything a local check can catch
