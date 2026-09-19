@@ -15,6 +15,7 @@ import {
   useState,
 } from "react";
 import type Markdown from "react-markdown";
+import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
 import {
   MarkdownViewWithPlugins,
   useMarkdownRemarkPlugins,
@@ -1016,6 +1017,8 @@ export function AnnotatedMarkdown({
       {chips.map((chip) => (
         <AnnotationChip
           key={chip.blockKey}
+          slug={slug}
+          issueNumber={issueNumber}
           chip={chip}
           onFlash={flashAnnotation}
           onEditDraft={onEditDraft}
@@ -1102,6 +1105,8 @@ function StageButton({
 }
 
 function AnnotationChip({
+  slug,
+  issueNumber,
   chip,
   onFlash,
   onEditDraft,
@@ -1109,6 +1114,14 @@ function AnnotationChip({
   onResolve,
   resolving,
 }: {
+  /**
+   * Which issue a published annotation's comment belongs to. Passed down
+   * rather than read back off the location: comment ids repeat across
+   * projects, so a header that guessed from the page would keep linking
+   * somewhere plausible after the wrong guess.
+   */
+  slug: string;
+  issueNumber: number;
   chip: Chip;
   onFlash: (annotation: DisplayedAnnotation, blockKey: string) => void;
   onEditDraft: (draft: SpecReviewDraft) => void;
@@ -1184,12 +1197,18 @@ function AnnotationChip({
             </div>
           ) : (
             <div key={item.key} className="rounded-md border p-2 text-sm">
-              <div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground">
+              <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
                 <UserChip user={item.item.author} />
-                <span title={item.item.created_at}>
+                <span>
                   {locate(item)} · v{item.item.anchor.version}
                 </span>
                 <span className="ml-auto" />
+                <CommentHeaderMeta
+                  slug={slug}
+                  issueNumber={issueNumber}
+                  commentId={item.item.comment_id}
+                  createdAt={item.item.created_at}
+                />
                 {item.item.resolved === null ? (
                   <Button
                     size="sm"

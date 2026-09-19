@@ -1,20 +1,18 @@
-import { Link } from "@tanstack/react-router";
 import { isHidden, type TimelineComment } from "@todou/shared";
 import type { ReactNode } from "react";
+import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
 import {
   CLOSE_DELAY_MS,
   HoverDepth,
   OPEN_DELAY_MS,
 } from "@/components/shared/hover-preview.ts";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
-import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card.tsx";
-import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
 export function CommentHoverCard({
   slug,
@@ -28,25 +26,20 @@ export function CommentHoverCard({
   /** The link the reader hovers. */
   children: ReactNode;
 }) {
-  const returnState = useReturnLinkState();
   return (
     <HoverCard openDelay={OPEN_DELAY_MS} closeDelay={CLOSE_DELAY_MS}>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
       <HoverCardContent>
         <HoverDepth.Provider value={1}>
-          <div className="mb-2 flex items-baseline gap-2">
+          <div className="mb-2 flex flex-wrap items-baseline gap-2">
             <UserChip user={comment.author} />
-            <Link
-              to="/projects/$slug/issues/$number"
-              params={{ slug, number: String(issueNumber) }}
-              hash={commentAnchor(comment.id)}
-              hashScrollIntoView={false}
-              state={returnState}
-              className="shrink-0 text-xs whitespace-nowrap text-muted-foreground hover:underline"
-              title={comment.created_at}
-            >
-              {new Date(comment.created_at).toLocaleString()}
-            </Link>
+            <CommentHeaderMeta
+              className="ml-auto"
+              slug={slug}
+              issueNumber={issueNumber}
+              commentId={comment.id}
+              createdAt={comment.created_at}
+            />
           </div>
           {isHidden(comment) ? (
             <p className="text-sm text-muted-foreground">

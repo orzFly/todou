@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import type { MemberRole, TimelineComment } from "@todou/shared";
 import { can, isHidden } from "@todou/shared";
 import { EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
@@ -17,12 +16,12 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
+import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
-import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
@@ -92,7 +91,6 @@ export function CommentItem({
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const refCompletion = useRefCompletion(slug);
-  const returnState = useReturnLinkState();
   const target: Target = { slug, issueNumber, commentId: comment.id };
   const mayHide = canHideComment(viewer) && !isHidden(comment);
   const mayDelete = canEditComment(viewer, comment.author.id);
@@ -166,32 +164,20 @@ export function CommentItem({
       className={`rounded-lg border ${pending ? "opacity-60" : ""}`}
       data-comment-id={comment.id}
     >
-      <div className="flex items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
+      <div className="flex flex-wrap items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
         <UserChip user={comment.author} />
+        {/* T-433's rule — text of different sizes shares one baseline —
+            applied to the badge here, where T-435 put an id and a time on
+            that same line. The icon opts out and stays centred because a
+            replaced box has no baseline of its own: left in the group, the
+            pill's position would be decided by a synthesized one taken from
+            the glyph's box rather than by the model name beside it. Scoped
+            to this call site; the event and revision rows keep T-433's
+            self-center. */}
         <AgentContextBadge
           context={comment.agent_context}
-          className="self-center"
+          className="items-baseline [&>svg]:self-center"
         />
-        {pending ? (
-          <span
-            className="shrink-0 text-xs whitespace-nowrap text-muted-foreground"
-            title={comment.created_at}
-          >
-            {new Date(comment.created_at).toLocaleString()}
-          </span>
-        ) : (
-          <Link
-            to="/projects/$slug/issues/$number"
-            params={{ slug, number: String(issueNumber) }}
-            hash={commentAnchor(comment.id)}
-            hashScrollIntoView={false}
-            state={returnState}
-            className="shrink-0 text-xs whitespace-nowrap text-muted-foreground hover:underline"
-            title={comment.created_at}
-          >
-            {new Date(comment.created_at).toLocaleString()}
-          </Link>
-        )}
         {comment.edited_at && (
           <RevisionHistory
             label="comment"
@@ -203,13 +189,26 @@ export function CommentItem({
             }
           />
         )}
+        {pending ? (
+          <CommentHeaderMeta
+            pending
+            className="ml-auto"
+            createdAt={comment.created_at}
+          />
+        ) : (
+          <CommentHeaderMeta
+            className="ml-auto"
+            slug={slug}
+            issueNumber={issueNumber}
+            commentId={comment.id}
+            createdAt={comment.created_at}
+          />
+        )}
         {pending && (
-          <span className="ml-auto text-xs text-muted-foreground">
-            sending…
-          </span>
+          <span className="text-xs text-muted-foreground">sending…</span>
         )}
         {!pending && (
-          <div className="ml-auto flex shrink-0 self-center items-center gap-0.5">
+          <div className="flex shrink-0 self-center items-center gap-0.5">
             {/* Both a mark and the way back: a reader who got here through
                 a Reveal sees at once that this one is put away, and the
                 same button restores it for everybody. Unreadable without

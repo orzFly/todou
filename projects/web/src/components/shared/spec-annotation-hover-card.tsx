@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 import {
   formatAnchorRange,
   isHidden,
@@ -6,6 +5,7 @@ import {
 } from "@todou/shared";
 import { FileTextIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
 import {
   CLOSE_DELAY_MS,
   HoverDepth,
@@ -13,14 +13,12 @@ import {
   useCanHoverPreview,
 } from "@/components/shared/hover-preview.ts";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
-import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card.tsx";
-import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
 /**
  * A spec annotation, previewed off the row that names it (T-406). What a
@@ -44,7 +42,6 @@ export function SpecAnnotationHoverCard({
   children: ReactNode;
 }) {
   const canHover = useCanHoverPreview();
-  const returnState = useReturnLinkState();
   if (!canHover) return <>{children}</>;
 
   const anchor = annotation.anchor;
@@ -53,19 +50,15 @@ export function SpecAnnotationHoverCard({
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
       <HoverCardContent>
         <HoverDepth.Provider value={1}>
-          <div className="mb-2 flex items-baseline gap-2">
+          <div className="mb-2 flex flex-wrap items-baseline gap-2">
             <UserChip user={annotation.author} />
-            <Link
-              to="/projects/$slug/issues/$number"
-              params={{ slug, number: String(issueNumber) }}
-              hash={commentAnchor(annotation.comment_id)}
-              hashScrollIntoView={false}
-              state={returnState}
-              className="shrink-0 text-xs whitespace-nowrap text-muted-foreground hover:underline"
-              title={annotation.created_at}
-            >
-              {new Date(annotation.created_at).toLocaleString()}
-            </Link>
+            <CommentHeaderMeta
+              className="ml-auto"
+              slug={slug}
+              issueNumber={issueNumber}
+              commentId={annotation.comment_id}
+              createdAt={annotation.created_at}
+            />
           </div>
           <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
             <FileTextIcon className="size-3.5 shrink-0" />

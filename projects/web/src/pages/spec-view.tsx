@@ -47,6 +47,7 @@ import { issueQuery } from "@/api/issues.ts";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
+import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
 import {
   PIERRE_HIGHLIGHTER,
   PIERRE_THEME_TYPE,
@@ -1426,6 +1427,8 @@ function SpecViewBody({
                   {fileLevel.map((item) => (
                     <UnplacedComment
                       key={item.comment_id}
+                      slug={slug}
+                      issueNumber={issueNumber}
                       item={item}
                       onResolve={(id) =>
                         resolve.mutate({ slug, issueNumber, commentId: id })
@@ -1469,6 +1472,8 @@ function SpecViewBody({
               {fullSource && selected !== undefined ? (
                 // Brings its own frame, so it stands outside the prose box.
                 <SpecSourceFile
+                  slug={slug}
+                  issueNumber={issueNumber}
                   path={selected.path}
                   body={selected.body}
                   version={version}
@@ -1544,6 +1549,8 @@ function SpecViewBody({
                   {unplaced.map((item) => (
                     <UnplacedComment
                       key={item.comment_id}
+                      slug={slug}
+                      issueNumber={issueNumber}
                       item={item}
                       onResolve={(id) =>
                         resolve.mutate({ slug, issueNumber, commentId: id })
@@ -1757,10 +1764,19 @@ function RemovedFileNotice({
 }
 
 function UnplacedComment({
+  slug,
+  issueNumber,
   item,
   onResolve,
   resolving,
 }: {
+  /**
+   * Which issue this annotation's comment belongs to. Threaded from the page
+   * rather than read off the location: comment ids repeat across projects,
+   * and a header that guessed would keep linking somewhere plausible.
+   */
+  slug: string;
+  issueNumber: number;
   item: SpecCommentItem;
   onResolve: (id: number) => void;
   resolving: boolean;
@@ -1772,7 +1788,7 @@ function UnplacedComment({
         item.resolved !== null && "opacity-70",
       )}
     >
-      <div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground">
+      <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
         <UserChip user={item.author} />
         <span>
           {formatAnchorRange(item.anchor)} · v{item.anchor.version}
@@ -1783,6 +1799,12 @@ function UnplacedComment({
           </span>
         )}
         <span className="ml-auto" />
+        <CommentHeaderMeta
+          slug={slug}
+          issueNumber={issueNumber}
+          commentId={item.comment_id}
+          createdAt={item.created_at}
+        />
         {item.resolved === null ? (
           <Button
             size="sm"
@@ -1898,6 +1920,8 @@ function SpecDiff({
           ref={entry.path === focusPath ? focusRef : undefined}
         >
           <SpecStackEntry
+            slug={slug}
+            issueNumber={issueNumber}
             entry={entry}
             fromVersion={fromVersion}
             toVersion={toVersion}
@@ -1915,6 +1939,8 @@ function SpecDiff({
 
 /** Picks the drawing that fits a file's fate between the two versions. */
 function SpecStackEntry({
+  slug,
+  issueNumber,
   entry,
   fromVersion,
   toVersion,
@@ -1924,6 +1950,9 @@ function SpecStackEntry({
   wrap,
   stickyTop,
 }: {
+  /** Carried only for the annotation headers `renderAnnotation` draws. */
+  slug: string;
+  issueNumber: number;
   entry: SpecDiffEntry;
   fromVersion: number;
   toVersion: number;
@@ -1939,6 +1968,8 @@ function SpecStackEntry({
   if (kind === "unchanged" || (kind === "renamed" && oldBody === newBody)) {
     return (
       <SpecUnfoldableFile
+        slug={slug}
+        issueNumber={issueNumber}
         path={path}
         oldPath={from}
         body={newBody}
@@ -1973,6 +2004,8 @@ function SpecStackEntry({
 
   return (
     <AnnotatedFileDiff
+      slug={slug}
+      issueNumber={issueNumber}
       oldPath={from ?? path}
       newPath={path}
       oldBody={oldBody}
@@ -2022,6 +2055,8 @@ function SpecStackFrame({
  * way in buys the reader nothing (T-203).
  */
 function SpecUnfoldableFile({
+  slug,
+  issueNumber,
   path,
   oldPath,
   body,
@@ -2034,6 +2069,9 @@ function SpecUnfoldableFile({
   wrap,
   stickyTop,
 }: {
+  /** Carried only for the annotation headers `renderAnnotation` draws. */
+  slug: string;
+  issueNumber: number;
   path: string;
   /** Set only for a rename: where the baseline's comments are anchored. */
   oldPath?: string;
@@ -2099,6 +2137,8 @@ function SpecUnfoldableFile({
       </button>
       {open && (
         <SpecFileSource
+          slug={slug}
+          issueNumber={issueNumber}
           path={path}
           body={body}
           version={toVersion}
@@ -2112,6 +2152,8 @@ function SpecUnfoldableFile({
 }
 
 function AnnotatedFileDiff({
+  slug,
+  issueNumber,
   oldPath,
   newPath,
   oldBody,
@@ -2123,6 +2165,9 @@ function AnnotatedFileDiff({
   wrap,
   stickyTop,
 }: {
+  /** Carried only for the annotation headers `renderAnnotation` draws. */
+  slug: string;
+  issueNumber: number;
   /** Differs from `newPath` only across a rename. */
   oldPath: string;
   newPath: string;
@@ -2226,7 +2271,11 @@ function AnnotatedFileDiff({
         options={options}
         lineAnnotations={lineAnnotations}
         renderAnnotation={(annotation) => (
-          <DiffAnnotation item={annotation.metadata} />
+          <DiffAnnotation
+            slug={slug}
+            issueNumber={issueNumber}
+            item={annotation.metadata}
+          />
         )}
       />
     </SpecStackFrame>
@@ -2245,6 +2294,8 @@ function AnnotatedFileDiff({
  * selection, annotations and wrapping all behave as they do in the diff.
  */
 function SpecFileSource({
+  slug,
+  issueNumber,
   path,
   body,
   version,
@@ -2252,6 +2303,9 @@ function SpecFileSource({
   onStage,
   wrap,
 }: {
+  /** Carried only for the annotation headers `renderAnnotation` draws. */
+  slug: string;
+  issueNumber: number;
   path: string;
   body: string;
   /** What a line selection here anchors to. */
@@ -2318,7 +2372,11 @@ function SpecFileSource({
       options={options}
       lineAnnotations={lineAnnotations}
       renderAnnotation={(annotation) => (
-        <DiffAnnotation item={annotation.metadata} />
+        <DiffAnnotation
+          slug={slug}
+          issueNumber={issueNumber}
+          item={annotation.metadata}
+        />
       )}
     />
   );
@@ -2326,6 +2384,8 @@ function SpecFileSource({
 
 /** The whole source of one version, framed like a stack entry (T-200). */
 function SpecSourceFile({
+  slug,
+  issueNumber,
   path,
   body,
   version,
@@ -2334,6 +2394,9 @@ function SpecSourceFile({
   wrap,
   stickyTop,
 }: {
+  /** Carried only for the annotation headers `renderAnnotation` draws. */
+  slug: string;
+  issueNumber: number;
   path: string;
   body: string;
   version: number;
@@ -2361,6 +2424,8 @@ function SpecSourceFile({
       </p>
       <SpecStackFrame header={path} stickyTop={stickyTop}>
         <SpecFileSource
+          slug={slug}
+          issueNumber={issueNumber}
           path={path}
           body={body}
           version={version}
@@ -2373,10 +2438,19 @@ function SpecSourceFile({
   );
 }
 
-function DiffAnnotation({ item }: { item: SpecCommentItem }) {
+function DiffAnnotation({
+  slug,
+  issueNumber,
+  item,
+}: {
+  /** The annotation's own issue, threaded down as `UnplacedComment` explains. */
+  slug: string;
+  issueNumber: number;
+  item: SpecCommentItem;
+}) {
   return (
     <div className="border-y bg-background px-3 py-2 text-sm">
-      <div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground">
+      <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
         <UserChip user={item.author} />
         <span>
           {formatAnchorRange(item.anchor)} · v{item.anchor.version}
@@ -2384,6 +2458,13 @@ function DiffAnnotation({ item }: { item: SpecCommentItem }) {
         {item.resolved !== null && (
           <span className="text-green-700 dark:text-green-400">resolved</span>
         )}
+        <CommentHeaderMeta
+          className="ml-auto"
+          slug={slug}
+          issueNumber={issueNumber}
+          commentId={item.comment_id}
+          createdAt={item.created_at}
+        />
       </div>
       <p className="whitespace-pre-wrap">{item.body}</p>
     </div>
