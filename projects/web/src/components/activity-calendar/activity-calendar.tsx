@@ -1,4 +1,8 @@
-import type { ActivityDay, ActivitySelection } from "@todou/shared";
+import {
+  type ActivityDay,
+  type ActivitySelection,
+  enumLookup,
+} from "@todou/shared";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -206,7 +210,12 @@ export function ActivityCalendar({
       return;
     }
     let next = index;
-    const step = ARROW_STEPS[event.key];
+    const step = enumLookup(
+      ARROW_STEPS,
+      event.key,
+      () => undefined,
+      "KeyboardEvent.key",
+    );
     if (step !== undefined) {
       next += step;
       while (

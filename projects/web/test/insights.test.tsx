@@ -243,6 +243,7 @@ function renderPage(
     path: "insights",
     component: InsightsPage,
     validateSearch: parseInsightsSearch,
+    search: router.routesById["/authed/projects/$slug/insights"].options.search,
   });
   const testRouter = createRouter({
     routeTree: root.addChildren([
@@ -551,7 +552,7 @@ describe("Insights page", () => {
         tz,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "7天" }));
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
     await waitFor(() =>
       expect(view.router.state.location.search).toEqual({
         ...activity,
@@ -577,20 +578,20 @@ describe("Insights page", () => {
         ),
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "自定义" }));
-    await screen.findByLabelText("开始日期");
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    await screen.findByLabelText("Start date");
     expect(view.router.state.location.search).toMatchObject({
       ...activity,
       range: "custom",
       grain: "6h",
     });
-    fireEvent.change(screen.getByLabelText("开始日期"), {
+    fireEvent.change(screen.getByLabelText("Start date"), {
       target: { value: "2026-09-15" },
     });
-    fireEvent.change(screen.getByLabelText("结束日期"), {
+    fireEvent.change(screen.getByLabelText("End date"), {
       target: { value: "2026-09-16" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "应用日期" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply dates" }));
     await waitFor(() =>
       expect(view.router.state.location.search).toEqual({
         ...activity,
@@ -669,7 +670,7 @@ describe("Insights page", () => {
       expect(view.calendarRequest).not.toHaveBeenCalledWith(
         expect.objectContaining({ day: "2025-01-01" }),
       );
-      fireEvent.click(screen.getByRole("button", { name: "7天" }));
+      fireEvent.click(screen.getByRole("button", { name: "7d" }));
       await waitFor(() =>
         expect(view.router.state.location.search.range).toBe("7d"),
       );
@@ -864,6 +865,86 @@ describe("Insights page", () => {
     expect(screen.getByRole("heading", { name: "Burn chart" })).toBeTruthy();
     view.unmount();
     view.client.clear();
+  });
+
+  it("ignores a raw URL boolean activity marker and strips it from graph changes and links", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(
+      "/projects/x/insights?range=7d&grain=6h&activity_year=2026&activity_day=2026-09-17&activity_invalid=true",
+      { calendar: recordedCalendar },
+    );
+    await screen.findByText("Activity on 2026-09-17");
+    expect(view.router.options.parseSearch!("?activity_invalid=true")).toEqual({
+      activity_invalid: true,
+    });
+    expect(sonner.toast).not.toHaveBeenCalled();
+    const linked = view.router.buildLocation({
+      to: "/projects/$slug/insights",
+      params: { slug: "x" },
+      search: true,
+      _includeValidateSearch: true,
+    });
+    expect(new URLSearchParams(linked.searchStr).has("activity_invalid")).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "12h" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        range: "7d",
+        grain: "12h",
+        activity_year: 2026,
+        activity_day: "2026-09-17",
+      }),
+    );
+    expect(sonner.toast).not.toHaveBeenCalled();
+    view.unmount();
+    view.client.clear();
+  });
+
+  it("normalizes malformed activity immediately with no recorded fallback and reopens quietly", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(
+      "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2025&activity_day=2025-02-30",
+    );
+    await screen.findByText("No available dates in 2025.");
+    const normalized = {
+      range: "custom",
+      from: "2026-09-15",
+      to: "2026-09-18",
+      grain: "6h",
+      activity_year: 2025,
+    };
+    await waitFor(() => {
+      expect(view.router.state.location.search).toEqual(normalized);
+      expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
+        "Invalid activity date was reset.",
+      );
+    });
+    expect(view.router.history.canGoBack()).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "12h" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...normalized,
+        grain: "12h",
+      }),
+    );
+    const shared = view.router.state.location.href;
+    expect(shared).not.toContain("activity_invalid");
+    expect(shared).not.toContain("2025-02-30");
+    view.unmount();
+    view.client.clear();
+    vi.mocked(sonner.toast).mockClear();
+    const reopened = renderPage(shared);
+    await screen.findByText("No available dates in 2025.");
+    expect(reopened.router.state.location.search).toEqual({
+      ...normalized,
+      grain: "12h",
+    });
+    expect(sonner.toast).not.toHaveBeenCalled();
+    reopened.unmount();
+    reopened.client.clear();
   });
 
   it.each([

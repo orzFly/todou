@@ -19,6 +19,7 @@ import {
 } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import {
+  activityDateSearchParams,
   activityToday,
   browserActivityTimezone,
   resolveActivityDateSearch,
@@ -37,7 +38,10 @@ import {
 
 export function InsightsPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
-  const search = useSearch({ from: "/authed/projects/$slug/insights" });
+  // Router search includes raw keys; only the parser may derive invalidity.
+  const search = parseInsightsSearch(
+    useSearch({ from: "/authed/projects/$slug/insights" }),
+  );
   const navigate = useNavigate();
   const viewer = useQuery(meQuery);
   const project = useQuery(projectQuery(slug));
@@ -52,8 +56,18 @@ export function InsightsPage() {
     if (activity.invalid && !activityInvalidNotified.current) {
       activityInvalidNotified.current = true;
       toast("Invalid activity date was reset.");
+      void navigate({
+        to: "/projects/$slug/insights",
+        params: { slug },
+        search: activityDateSearchParams({
+          ...search,
+          activity_year: activity.year,
+          activity_day: activity.day,
+        }),
+        replace: true,
+      });
     }
-  }, [activity.invalid]);
+  }, [activity.invalid, activity.year, activity.day, navigate, search, slug]);
   const request = insightsRequest(search, context);
   const settings = useQuery({
     ...insightsSettingsQuery(slug),
@@ -162,12 +176,13 @@ export function InsightsPage() {
             void navigate({
               to: "/projects/$slug/insights",
               params: { slug },
-              search: parseInsightsSearch({
-                ...search,
-                activity_year: activity.year,
-                activity_day: day,
-                activity_invalid: undefined,
-              }),
+              search: activityDateSearchParams(
+                parseInsightsSearch({
+                  ...search,
+                  activity_year: activity.year,
+                  activity_day: day,
+                }),
+              ),
               replace: true,
             });
           }}
@@ -175,24 +190,26 @@ export function InsightsPage() {
             void navigate({
               to: "/projects/$slug/insights",
               params: { slug },
-              search: parseInsightsSearch({
-                ...search,
-                activity_year: year,
-                activity_day: undefined,
-                activity_invalid: undefined,
-              }),
+              search: activityDateSearchParams(
+                parseInsightsSearch({
+                  ...search,
+                  activity_year: year,
+                  activity_day: undefined,
+                }),
+              ),
             })
           }
           onDayChange={(day, options) =>
             void navigate({
               to: "/projects/$slug/insights",
               params: { slug },
-              search: parseInsightsSearch({
-                ...search,
-                activity_year: Number(day.slice(0, 4)),
-                activity_day: day,
-                activity_invalid: undefined,
-              }),
+              search: activityDateSearchParams(
+                parseInsightsSearch({
+                  ...search,
+                  activity_year: Number(day.slice(0, 4)),
+                  activity_day: day,
+                }),
+              ),
               replace: options?.replace ?? false,
             })
           }

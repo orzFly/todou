@@ -1,6 +1,7 @@
 import type { ActivityCalendarResponse } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  activityDateSearchParams,
   activityToday,
   browserActivityTimezone,
   defaultActivityDay,
@@ -75,23 +76,25 @@ describe("activity date search", () => {
     ).toEqual({ activity_year: 2024, activity_invalid: true });
   });
 
-  it("keeps the validated invalid marker through repeated route parsing", () => {
+  it("derives invalidity from dates and rejects every supplied marker", () => {
     const parsed = parseActivityDateSearch({
       activity_year: 2024,
       activity_day: "2024-02-30",
     });
-    expect(parseActivityDateSearch(parsed)).toEqual({
-      activity_year: 2024,
-      activity_invalid: true,
+    expect(parsed).toEqual({ activity_year: 2024, activity_invalid: true });
+    expect(resolveActivityDateSearch(parsed, context)).toEqual({
+      year: 2024,
+      invalid: true,
     });
-    for (const marker of ["true", 1, [], {}, false, null]) {
+    expect(activityDateSearchParams(parsed)).toEqual({ activity_year: 2024 });
+    expect(parseActivityDateSearch(parsed)).toEqual({ activity_year: 2024 });
+    for (const marker of [true, "true", 1, [], {}, false, null]) {
       expect(parseActivityDateSearch({ activity_invalid: marker })).toEqual({});
     }
     expect(
       parseActivityDateSearch({
         ...parsed,
         activity_day: "2024-02-29",
-        activity_invalid: undefined,
       }),
     ).toEqual({ activity_year: 2024, activity_day: "2024-02-29" });
   });

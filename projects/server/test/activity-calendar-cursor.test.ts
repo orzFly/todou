@@ -363,6 +363,50 @@ describe("canonical activity digests", () => {
     ).not.toBe(hashes.set_hash);
   });
 
+  it("distinguishes project ownership with identical issue IDs, timestamps and row order", () => {
+    const anchor = { project_id: 2, issue_id: 1, last_active_at: at };
+    const left = { project_id: 2, issue_id: 2, last_active_at: at };
+    const right = { ...left, project_id: 10 };
+    // A singleton cannot accidentally detect project omission via sort order.
+    expect(activityCalendarSetHash([left])).not.toBe(
+      activityCalendarSetHash([right]),
+    );
+    for (const [source, destination] of [
+      [left, right],
+      [right, left],
+    ] as const) {
+      // The anchor sorts before either twin by timestamp during pagination.
+      const selected = {
+        ...source,
+        last_active_at: "2026-09-01T12:00:00.123455Z",
+      };
+      const swapped = { ...selected, project_id: destination.project_id };
+      const query = { ...binding, limit: 1 };
+      const first = paginateActivityCalendar(
+        [anchor, selected],
+        [2, 10],
+        query,
+      );
+      const cursor = first.next_cursor;
+      if (!cursor) throw new Error("expected identity fixture continuation");
+      expectChanged(() =>
+        paginateActivityCalendar([anchor, swapped], [2, 10], query, cursor),
+      );
+      const renamed = { ...selected, title: "renamed", number: 99 };
+      expect(activityCalendarSetHash([renamed, anchor])).toBe(
+        activityCalendarSetHash([anchor, selected]),
+      );
+      expect(
+        paginateActivityCalendar([renamed, anchor], [10, 2], query, cursor),
+      ).toEqual({
+        total: 2,
+        items: [renamed],
+        has_more: false,
+        next_cursor: null,
+      });
+    }
+  });
+
   it("rejects duplicate identities and noncanonical digest inputs", () => {
     expectValidation(() => activityCalendarSetHash([...rows, rows[0]!]));
     expectValidation(() =>

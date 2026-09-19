@@ -1,9 +1,11 @@
+import type { SearchMiddleware } from "@tanstack/react-router";
 import type { ActivityCalendarResponse } from "@todou/shared";
 
 /** Date selection only. The page supplies its approved timezone policy. */
 export type ActivityDateSearch = {
   activity_year?: number;
   activity_day?: string;
+  /** Derived validation state. Never accepted from or written to a URL. */
   activity_invalid?: true;
 };
 
@@ -45,14 +47,27 @@ export function parseActivityDateSearch(
   return {
     ...(validYear ? { activity_year: year } : {}),
     ...(day !== undefined && !mismatch ? { activity_day: day } : {}),
-    ...(search.activity_invalid === true ||
-    (rawYear !== undefined && !validYear) ||
+    ...((rawYear !== undefined && !validYear) ||
     (search.activity_day !== undefined && day === undefined) ||
     mismatch
       ? { activity_invalid: true as const }
       : {}),
   };
 }
+
+/** Strip validation metadata at every URL serialization boundary. */
+export function activityDateSearchParams<T extends ActivityDateSearch>(
+  search: T,
+): Omit<T, "activity_invalid"> {
+  const { activity_invalid: _invalid, ...params } = search;
+  return params;
+}
+
+// TanStack merges validator output into raw search and validates Link targets
+// again. Strip after next() so neither inherited nor newly derived flags leak.
+export const activityDateSearchMiddleware: SearchMiddleware<
+  ActivityDateSearch
+> = ({ search, next }) => activityDateSearchParams(next(search));
 
 /** Calendar pages use the browser's IANA zone, with UTC when unavailable. */
 export function browserActivityTimezone(): string {

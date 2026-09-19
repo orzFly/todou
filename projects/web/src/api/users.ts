@@ -3,6 +3,7 @@ import { UserIssueRole, UserIssueState } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 import {
   type ActivityDateSearch,
+  activityDateSearchParams,
   parseActivityDateSearch,
 } from "@/lib/activity-calendar-search.ts";
 
@@ -56,6 +57,11 @@ export function userSearchSchema(search: Record<string, unknown>): {
     ...(state.success && state.data !== "open" ? { state: state.data } : {}),
     ...parseActivityDateSearch(search),
   };
+}
+
+/** Public URL fields only; the route validator also returns notice metadata. */
+export function userSearchParams(search: Record<string, unknown>) {
+  return activityDateSearchParams(userSearchSchema(search));
 }
 
 /**

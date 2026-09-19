@@ -63,6 +63,7 @@ const Route = createRoute({
   path: "/users/$ref",
   component: appRouter.routesById["/authed/users/$ref"].options.component,
   validateSearch: userSearchSchema,
+  search: appRouter.routesById["/authed/users/$ref"].options.search,
 });
 
 /**
@@ -457,6 +458,121 @@ describe("the registered user route's activity dates", () => {
     );
   });
 
+  it.each(["alice", "7"])(
+    "ignores a raw URL boolean marker at /users/%s",
+    async (ref) => {
+      const view = renderAt(
+        `/users/${ref}${address}&activity_invalid=true`,
+        clientWithId(alice, 7),
+      );
+      await view.findByText("No active cards on 2025-03-04.");
+      // The real TanStack parser decodes unquoted true as a boolean.
+      expect(
+        view.router.options.parseSearch!("?activity_invalid=true"),
+      ).toEqual({
+        activity_invalid: true,
+      });
+      expect(sonner.toast).not.toHaveBeenCalled();
+      const linked = view.router.buildLocation({
+        to: "/users/$ref",
+        params: { ref: "alice" },
+        search: true,
+        _includeValidateSearch: true,
+      });
+      expect(
+        new URLSearchParams(linked.searchStr).has("activity_invalid"),
+      ).toBe(false);
+      // Link target validation can derive fresh notice metadata too. Keep the
+      // actual invalid input so the destination can notify, but never the flag.
+      const invalidLink = view.router.buildLocation({
+        to: "/users/$ref",
+        params: { ref: "alice" },
+        search: {
+          role: "author",
+          activity_year: 2025,
+          activity_day: "2025-02-30",
+        },
+        _includeValidateSearch: true,
+      });
+      expect(
+        new URLSearchParams(invalidLink.searchStr).get("activity_day"),
+      ).toBe("2025-02-30");
+      expect(
+        new URLSearchParams(invalidLink.searchStr).has("activity_invalid"),
+      ).toBe(false);
+      fireEvent.click(view.getByRole("tab", { name: "Created" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual({
+          ...search,
+          role: "author",
+        }),
+      );
+      expect(view.router.state.location.searchStr).not.toContain(
+        "activity_invalid",
+      );
+      expect(sonner.toast).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["alice", "7"])(
+    "normalizes a genuine invalid date at /users/%s before role/state changes and reopening",
+    async (ref) => {
+      // No recorded fallback: normalization must not depend on the calendar
+      // supplying a default or the reader choosing a day.
+      vi.mocked(api.getUserActivityCalendar).mockImplementation(
+        async (_subject, input) => ({
+          ...recordedCalendar(input),
+          days: [],
+          selection: null,
+        }),
+      );
+      const view = renderAt(
+        `/users/${ref}?role=assignee&state=closed&activity_year=2025&activity_day=2025-02-30`,
+        clientWithId(alice, 7),
+      );
+      await view.findByText("No available dates in 2025.");
+      const normalized = {
+        role: "assignee",
+        state: "closed",
+        activity_year: 2025,
+      };
+      await waitFor(() => {
+        expect(view.router.state.location.pathname).toBe("/users/alice");
+        expect(view.router.state.location.search).toEqual(normalized);
+        expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
+          "Invalid activity date was reset.",
+        );
+      });
+      expect(view.router.history.canGoBack()).toBe(false);
+      fireEvent.click(view.getByRole("tab", { name: "Created" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual({
+          ...normalized,
+          role: "author",
+        }),
+      );
+      fireEvent.click(view.getByRole("tab", { name: "Open" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual({
+          role: "author",
+          activity_year: 2025,
+        }),
+      );
+      const shared = view.router.state.location.href;
+      expect(shared).not.toContain("activity_invalid");
+      expect(shared).not.toContain("2025-02-30");
+      view.unmount();
+      vi.mocked(sonner.toast).mockClear();
+      const reopened = renderAt(shared, clientWith(alice));
+      await reopened.findByText("No available dates in 2025.");
+      expect(reopened.router.state.location.search).toEqual({
+        role: "author",
+        activity_year: 2025,
+      });
+      expect(sonner.toast).not.toHaveBeenCalled();
+    },
+  );
+
   it("loads the numeric subject in the viewer's cache and ignores URL timezone", async () => {
     const client = clientWith(alice);
     const view = renderAt(`/users/alice${address}&tz=Pacific/Honolulu`, client);
@@ -690,7 +806,7 @@ describe("the registered user route's activity dates", () => {
     expect(view.router.history.canGoBack()).toBe(false);
   });
 
-  it("carries an invalid date through the id redirect, notifies once, and clears it on selection", async () => {
+  it("notifies once and normalizes the id redirect while a cached calendar refresh is pending", async () => {
     const notify = vi.mocked(sonner.toast);
     let resolveRefresh!: (value: ActivityCalendarResponse) => void;
     const refresh = {
@@ -707,9 +823,8 @@ describe("the registered user route's activity dates", () => {
     };
     const calendar = recordedCalendar(request);
     const client = clientWithId(alice, 7);
-    // A cached grid is usable while its refresh is pending. Holding that
-    // response also prevents automatic defaulting from clearing the marker
-    // before the reader chooses a valid day.
+    // A cached grid remains usable while its refresh is pending. Normalizing
+    // the invalid URL must not wait for that refresh or a manual selection.
     client.setQueryData(userActivityCalendarQuery(request).queryKey, calendar);
     vi.mocked(api.getUserActivityCalendar).mockImplementation(
       async (_subject, input) =>
@@ -727,8 +842,6 @@ describe("the registered user route's activity dates", () => {
           role: "assignee",
           state: "closed",
           activity_year: 2025,
-          activity_day: "2025-02-30",
-          activity_invalid: true,
         });
         expect(notify).toHaveBeenCalledExactlyOnceWith(
           "Invalid activity date was reset.",
@@ -738,7 +851,6 @@ describe("the registered user route's activity dates", () => {
         role: "assignee",
         state: "closed",
         activity_year: 2025,
-        activity_invalid: true,
       });
       expect(view.router.history.canGoBack()).toBe(false);
       fireEvent.click(view.getByRole("button", { name: /^2025-03-04\b/ }));

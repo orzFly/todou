@@ -1299,20 +1299,54 @@ describe("useUserEvents", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("ignores malformed payloads", () => {
+  it("ignores malformed and unknown change frames before accepting valid activity", () => {
+    vi.useFakeTimers();
     const { spy } = setup();
     const source = MockEventSource.instances[0];
-    for (const listener of source?.listeners.get("change") ?? []) {
+    expect(source).toBeDefined();
+    for (const listener of source.listeners.get("change") ?? []) {
       listener({ data: "not json" } as MessageEvent);
     }
     // Valid JSON but no project slug: fails the CrossChangeEvent parse.
-    source?.emit("change", {
+    source.emit("change", {
       entity: "timeline",
       id: 9,
       action: "created",
       issue_number: 3,
     });
+    for (const entity of [
+      "future_entity",
+      "constructor",
+      "__proto__",
+      "toString",
+    ]) {
+      source.emit("change", {
+        entity,
+        id: 9,
+        action: "created",
+        issue_number: 3,
+        project: "todou",
+      });
+    }
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
     expect(spy).not.toHaveBeenCalled();
+
+    // Reverse assertion: valid frames still invalidate in their existing order.
+    source.emit("change", {
+      entity: "status",
+      id: 9,
+      action: "updated",
+      project: "todou",
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    expect(spy.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+      ["statuses", "todou"],
+      ["issues", "todou"],
+      ["insights-settings", "todou"],
+      ["insights-burn", "todou"],
+      ["activity-project", "todou"],
+      ["activity-user"],
+    ]);
   });
 
   it("coalesces an event burst into one flush without duplicates", () => {
@@ -1902,9 +1936,22 @@ describe("useUserEvents tab sharing (T-276)", () => {
     );
   });
 
-  it("invalidates in both tabs from the leader's single stream", async () => {
+  it("rejects unknown entities in both tabs before accepting valid activity", async () => {
     vi.useFakeTimers();
     const { leader, follower } = await twoTabs();
+    for (const entity of [
+      "future_entity",
+      "constructor",
+      "__proto__",
+      "toString",
+    ]) {
+      leaderStream().emit("change", { ...TIMELINE_EVENT, entity });
+    }
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    for (const tab of [leader, follower]) {
+      expect(tab.spy).not.toHaveBeenCalled();
+    }
+
     leaderStream().emit("change", TIMELINE_EVENT);
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
 
@@ -1912,6 +1959,14 @@ describe("useUserEvents tab sharing (T-276)", () => {
       expect(tab.spy).toHaveBeenCalledWith({
         queryKey: ["timeline", "todou", 3],
       });
+      expect(
+        tab.spy.mock.calls
+          .map(([filters]) => filters?.queryKey)
+          .filter(
+            (key) =>
+              key?.[0] === "activity-project" || key?.[0] === "activity-user",
+          ),
+      ).toEqual([["activity-project", "todou"], ["activity-user"]]);
     }
   });
 

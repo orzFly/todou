@@ -5,7 +5,7 @@ import { CalendarIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { meQuery } from "@/api/queries.ts";
-import { userQuery, userSearchSchema } from "@/api/users.ts";
+import { userQuery, userSearchParams } from "@/api/users.ts";
 import type { ActivityDayChangeOptions } from "@/components/activity-calendar/activity-calendar-section.tsx";
 import {
   LoadFailure,
@@ -74,15 +74,23 @@ export function UserProfilePage({
   );
   const activityInvalidNotified = useRef(false);
   useEffect(() => {
-    if (
-      activity.invalid &&
-      !activityInvalidNotified.current &&
-      !redirectToLogin
-    ) {
+    if (activity.invalid && !activityInvalidNotified.current) {
       activityInvalidNotified.current = true;
       toast("Invalid activity date was reset.");
+      if (!redirectToLogin) {
+        onActivityDateChange(
+          { activity_year: activity.year, activity_day: activity.day },
+          { replace: true },
+        );
+      }
     }
-  }, [activity.invalid, redirectToLogin]);
+  }, [
+    activity.invalid,
+    activity.year,
+    activity.day,
+    redirectToLogin,
+    onActivityDateChange,
+  ]);
   const data = user.data;
   const hasContent = data !== undefined;
   const { replace, notice } = useReadFailure(
@@ -110,7 +118,7 @@ export function UserProfilePage({
       // whichever filter still sits at its default. The URL carries only
       // what the reader changed, so a target spelling the defaults out would
       // not describe the page it returns to.
-      search: userSearchSchema({
+      search: userSearchParams({
         role,
         state,
         activity_year,
@@ -162,7 +170,17 @@ export function UserProfilePage({
   const me = data as NonNullable<typeof data>;
   if (redirectToLogin) {
     return (
-      <Navigate to="/users/$ref" params={{ ref: me.login }} search replace />
+      <Navigate
+        to="/users/$ref"
+        params={{ ref: me.login }}
+        search={userSearchParams({
+          role,
+          state,
+          activity_year: activity.invalid ? activity.year : activity_year,
+          activity_day: activity.invalid ? activity.day : activity_day,
+        })}
+        replace
+      />
     );
   }
 

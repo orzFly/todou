@@ -325,22 +325,40 @@ describe("ActivityCalendar keyboard and inspection", () => {
     },
   );
 
-  it("leaves Tab, other keys and browser-modified arrows alone", () => {
+  it("leaves unknown native keys and browser-modified arrows alone", () => {
     const p = props();
-    render(<ActivityCalendar {...p} />);
+    const { container } = render(<ActivityCalendar {...p} />);
     focus("2024-01-10");
     for (const event of [
       { key: "Tab" },
       { key: "Escape" },
       { key: "a" },
+      { key: "Unidentified" },
+      { key: "future_key" },
+      // React normalizes prototype names before the component sees event.key.
+      // These exercise native dispatch, not literal prototype-string lookup.
+      // The enum source guard detects a return to bare ARROW_STEPS indexing.
+      { key: "constructor" },
+      { key: "__proto__" },
+      { key: "toString" },
       { key: "ArrowLeft", altKey: true },
       { key: "ArrowRight", metaKey: true },
       { key: "ArrowUp", ctrlKey: true },
     ]) {
       expect(fireEvent.keyDown(tile("2024-01-10"), event)).toBe(true);
       expect(document.activeElement).toBe(tile("2024-01-10"));
+      expect(tabStops(container)).toEqual(["2024-01-10"]);
     }
     expect(p.onDayChange).not.toHaveBeenCalled();
+    expect(p.onYearChange).not.toHaveBeenCalled();
+    // A handler that ignores every key must still fail this regression.
+    expect(fireEvent.keyDown(tile("2024-01-10"), { key: "ArrowDown" })).toBe(
+      false,
+    );
+    expect(document.activeElement).toBe(tile("2024-01-11"));
+    expect(tabStops(container)).toEqual(["2024-01-11"]);
+    expect(p.onDayChange).not.toHaveBeenCalled();
+    expect(p.onYearChange).not.toHaveBeenCalled();
   });
 
   it("exposes exact labels on focus, hover and touch, including disabled dates", () => {

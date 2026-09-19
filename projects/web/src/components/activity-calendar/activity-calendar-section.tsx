@@ -128,9 +128,11 @@ export function ActivityCalendarSection(props: ActivityCalendarSectionProps) {
           activityToday(new Date(initial.data.cutoff), initial.data.timezone),
         )
       : undefined;
+  // A background refresh keeps the complete snapshot mounted. Withdrawing
+  // layout readiness there would erase an otherwise readable return anchor.
+  // A cold/withdrawn snapshot still waits, including 409 and permission clears.
   const ready =
-    !loading &&
-    (query.isError || (query.isSuccess && query.data !== undefined)) &&
+    (query.data !== undefined || (!loading && query.isError)) &&
     defaultDay === undefined &&
     !(
       props.day !== undefined &&

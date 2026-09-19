@@ -754,6 +754,188 @@ describe.each(PLACEMENTS)(
       await exhaust(personPath(alice), [cards.A, cards.G], NEXT_DAY);
     });
 
+    it.skipIf(placement !== "dedicated")(
+      "restarts pagination when same-id evidence switches projects at unchanged counts and timestamps",
+      async ({ onTestFinished }) => {
+        // A separate subject keeps the expected set independent of the A-K oracle.
+        // Dedicated databases allocate the same issue ID in both readable projects.
+        const subject = await addUserWithToken(t.ctx, "identity-subject");
+        const left = await createProject("identity-left", "Identity left");
+        const right = await createProject("identity-right", "Identity right");
+        for (const project of [left, right]) {
+          await member(project, alice, "admin");
+          await member(project, subject, "writer");
+          await member(project, viewer, "reader");
+          // Keep later A-K checks independent of these new readable projects.
+          onTestFinished(async () => {
+            await request(
+              `/projects/${project.slug}/members/${viewer.user.id}`,
+              admin,
+              "DELETE",
+              undefined,
+              204,
+            );
+          });
+        }
+        await t.ctx.router
+          .system()
+          .update(users)
+          .set({ createdAt: new Date(BORN) })
+          .where(eq(users.id, subject.user.id));
+        // Keep the anchor first in BOTH digest orders (project/issue and issue
+        // only), so omitted project IDs cannot hide behind reordered hash input.
+        const anchor = await createCard(left, "Stable first page");
+        await createCard(right, "Unselected allocation anchor");
+        const leftCard = await createCard(left, "Left twin");
+        const rightCard = await createCard(right, "Right twin");
+        expect(left.db).not.toBe(right.db);
+        expect(left.id).toBeLessThan(right.id);
+        expect(leftCard.id).toBe(rightCard.id);
+        expect(anchor.id).toBeLessThan(leftCard.id);
+        for (const project of [left, right]) {
+          await project.db
+            .update(issues)
+            .set({ createdAt: new Date(BORN) })
+            .where(eq(issues.projectId, project.id));
+        }
+        const selectedAt = "2026-09-18T10:00:00.123456Z";
+        const leftComment = await at(
+          selectedAt,
+          () => say(leftCard, "Left evidence", subject.headers),
+          [left],
+        );
+        const rightComment = await at(
+          selectedAt,
+          () => say(rightCard, "Right evidence", subject.headers),
+          [right],
+        );
+        await at(F_AT, () => say(anchor, "Anchor evidence", subject.headers), [
+          left,
+        ]);
+        const path = personPath(subject);
+        // With both twins selected, neither counts nor pagination may collapse
+        // the two permanent identities to their shared local issue ID.
+        await exhaust(path, [anchor, leftCard, rightCard], DAY, 1);
+
+        async function retime(card: Card, commentId: number, stamp: string) {
+          const changed = await card.project.db
+            .update(comments)
+            .set({ createdAt: sql`${stamp}::timestamptz` })
+            .where(
+              and(
+                eq(comments.projectId, card.project.id),
+                eq(comments.issueId, card.id),
+                eq(comments.id, commentId),
+              ),
+            )
+            .returning({ id: comments.id });
+          expect(changed).toEqual([{ id: commentId }]);
+        }
+        function cursorOf(body: ActivityCalendarResponse) {
+          const raw = body.selection?.next_cursor;
+          if (!raw) throw new Error("expected identity fixture continuation");
+          // Inspect the server's wire envelope without reproducing its digest.
+          const envelope = JSON.parse(
+            Buffer.from(raw, "base64url").toString("utf8"),
+          ) as { scope_hash: string; set_hash: string; last: unknown };
+          return { raw, envelope };
+        }
+        await retime(rightCard, rightComment.id, BASE);
+        for (const [source, destination, sourceComment, destinationComment] of [
+          [leftCard, rightCard, leftComment.id, rightComment.id],
+          [rightCard, leftCard, rightComment.id, leftComment.id],
+        ] as const) {
+          const beforeItems = await exhaust(path, [anchor, source]);
+          expect(beforeItems.map((item) => item.last_active_at)).toEqual([
+            F_AT,
+            selectedAt,
+          ]);
+          const before = await calendar(path, DAY, 1);
+          expect(before.selection?.items.map(itemIdentity)).toEqual([
+            identity(anchor),
+          ]);
+          const cursor = cursorOf(before);
+          const unchanged = await calendar(path, DAY, 1, cursor.raw);
+          expect(unchanged.selection).toMatchObject({
+            total: 2,
+            has_more: false,
+            next_cursor: null,
+          });
+          expect(unchanged.selection?.items.map(itemIdentity)).toEqual([
+            identity(source),
+          ]);
+
+          // Alice's title edit changes the displayed card, but adds no evidence
+          // to this subject's selected set. The original cursor must still work.
+          const title = `${source.project.name} renamed`;
+          await patch(source, { title });
+          const renamed = await calendar(path, DAY, 1);
+          expect(renamed.selection?.next_cursor).toBe(cursor.raw);
+          const continued = await calendar(path, DAY, 1, cursor.raw);
+          expect(continued.selection).toMatchObject({
+            total: 2,
+            has_more: false,
+            next_cursor: null,
+          });
+          expect(continued.selection?.items).toEqual([
+            expect.objectContaining({
+              issue_id: source.id,
+              project: expect.objectContaining({ id: source.project.id }),
+              title,
+              last_active_at: selectedAt,
+            }),
+          ]);
+
+          // Swap which twin contributes evidence, keeping the first page, the
+          // readable scope, the total and every selected timestamp unchanged.
+          await retime(source, sourceComment, BASE);
+          await retime(destination, destinationComment, selectedAt);
+          const afterItems = await exhaust(path, [anchor, destination], DAY, 1);
+          expect(
+            afterItems.map((item) => [item.issue_id, item.last_active_at]),
+          ).toEqual(
+            beforeItems.map((item) => [item.issue_id, item.last_active_at]),
+          );
+          expect(afterItems.map(itemIdentity)).not.toEqual(
+            beforeItems.map(itemIdentity),
+          );
+          const fresh = await calendar(path, DAY, 1);
+          expect(fresh.days).toEqual(before.days);
+          expect(fresh.selection?.total).toBe(2);
+          expect(fresh.selection?.items).toEqual(before.selection?.items);
+          const params = new URLSearchParams({
+            year: "2026",
+            tz: TZ,
+            day: DAY,
+            limit: "1",
+            after: cursor.raw,
+          });
+          const conflict = await request<unknown>(
+            `${path}?${params}`,
+            viewer.headers,
+            "GET",
+            undefined,
+            409,
+          );
+          expect(conflict).toMatchObject({
+            error: {
+              code: "conflict",
+              details: { reason: "activity_changed", restart: true },
+            },
+          });
+          const replacement = cursorOf(fresh);
+          expect(replacement.envelope.scope_hash).toBe(
+            cursor.envelope.scope_hash,
+          );
+          expect(replacement.envelope.last).toEqual(cursor.envelope.last);
+          expect(replacement.envelope.set_hash).not.toBe(
+            cursor.envelope.set_hash,
+          );
+        }
+      },
+      120_000,
+    );
+
     it("restores I's old label evidence, but restoration adds no activity on its own day", async () => {
       const before = await calendar(personPath(alice), NEXT_DAY);
       await at("2026-09-19T06:00:00.000000Z", () =>

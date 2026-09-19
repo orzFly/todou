@@ -1160,9 +1160,20 @@ describe("the user page", () => {
       input: Parameters<typeof api.getUserActivityCalendar>[1],
     ) => userCalendar(input, true);
     const first = mountUser(path, undefined, { calendar });
-    await first.findByText("u one");
+    await settleUntil(
+      () =>
+        rowIds(first.container).includes("11") &&
+        first.queryByText("calendar card") !== null,
+    );
+    expect(rowIds(first.container)).toEqual(["11"]);
+    expect(first.getByText("u one")).toBeTruthy();
+    expect(first.getByText("calendar card")).toBeTruthy();
     fireEvent.click(first.getByRole("button", { name: "Load more" }));
-    await first.findByText("u two");
+    await settleUntil(
+      () => rowIds(first.container).includes("12") && settled(first.router)(),
+    );
+    expect(rowIds(first.container)).toEqual(["11", "12"]);
+    expect(first.getByText("u two")).toBeTruthy();
     act(() => fireEvent.pointerDown(first.container));
     const captured = entryOf(first.router).view;
     // This assertion reads UserProfilePage's actual hook output. Copying URL
@@ -1177,15 +1188,23 @@ describe("the user page", () => {
       JSON.stringify(first.router.history.location.state),
     );
     first.unmount();
+    const previousIssueCalls = first.listUserIssues.mock.calls.length;
     const restored = mountUser(path, undefined, { state, calendar });
-    await restored.findByText("u two");
-    await settleUntil(settled(restored.router));
+    await settleUntil(
+      () =>
+        rowIds(restored.container).includes("12") && settled(restored.router)(),
+    );
+    expect(rowIds(restored.container)).toEqual(["11", "12"]);
+    expect(restored.getByText("u two")).toBeTruthy();
     expect(entryOf(restored.router).pending).toBeUndefined();
     expect(restored.router.state.location.search).toEqual(search);
-    expect(restored.listUserIssues).toHaveBeenCalledWith(
-      "alice",
-      expect.objectContaining({ role: "assignee", state: "all", after: "u1" }),
-    );
+    // mountUser reuses the API spy, so only calls made by this mount count.
+    expect(
+      restored.listUserIssues.mock.calls.slice(previousIssueCalls),
+    ).toEqual([
+      ["alice", { role: "assignee", state: "all" }],
+      ["alice", { role: "assignee", state: "all", after: "u1" }],
+    ]);
     act(() => fireEvent.pointerDown(restored.container));
     expect(entryOf(restored.router).view?.target).toEqual({
       kind: "user",
@@ -1296,6 +1315,229 @@ describe("the user page", () => {
         moduleGate.resolve();
         base.resolve(userCalendar({ year: 2025, tz: "UTC" }));
         selected.resolve(userCalendar({ year: 2025, tz: "UTC" }));
+        view.unmount();
+      }
+    },
+  );
+
+  it("preserves the sampled user window during a stable warm calendar refresh", async () => {
+    const refetch = deferred<void>();
+    let refreshing = false;
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
+      4000,
+    );
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(400);
+    const search = {
+      role: "assignee",
+      state: "all",
+      activity_year: 2025,
+      activity_day: "2025-03-04",
+    };
+    const view = mountUser(
+      "/users/alice?role=assignee&state=all&activity_year=2025&activity_day=2025-03-04",
+      undefined,
+      {
+        calendar: async (_subject, input) => {
+          if (refreshing) await refetch.promise;
+          return userCalendar(input, true);
+        },
+      },
+    );
+    try {
+      await settleUntil(
+        () =>
+          view.queryByText("calendar card") !== null &&
+          rowIds(view.container).includes("11") &&
+          view.client.isFetching({ queryKey: ["activity-user"] }) === 0,
+      );
+      expect(rowIds(view.container)).toEqual(["11"]);
+      expect(view.getByText("calendar card")).toBeTruthy();
+      const row = view.container.querySelector<HTMLElement>(
+        '[data-return-id="11"]',
+      )!;
+      vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+        top: 200,
+        left: 0,
+        bottom: 240,
+        height: 40,
+      } as DOMRect);
+      act(() => fireEvent.pointerDown(row));
+      const before = entryOf(view.router).view;
+      expect(before?.scroll).toEqual([
+        {
+          region: "window",
+          x: 0,
+          y: 400,
+          candidates: [{ id: "11", offset: 144 }],
+        },
+      ]);
+      refreshing = true;
+      let finished!: Promise<void>;
+      act(() => {
+        finished = view.client.invalidateQueries({
+          queryKey: ["activity-user"],
+        });
+      });
+      await settleUntil(
+        () =>
+          view.container.querySelector('section[aria-busy="true"]') !== null,
+      );
+      expect(
+        view.container.querySelector('section[aria-busy="true"]'),
+      ).not.toBeNull();
+      expect(
+        view.client.isFetching({ queryKey: ["activity-user"] }),
+      ).toBeGreaterThan(0);
+      expect(rowIds(view.container)).toEqual(["11"]);
+      expect(view.getByText("calendar card")).toBeTruthy();
+      act(() => fireEvent.pointerDown(row));
+      expect(entryOf(view.router).view?.scroll).toEqual(before?.scroll);
+      expect(entryOf(view.router).view?.target).toEqual({
+        kind: "user",
+        ref: "alice",
+        search,
+      });
+      expect(entryOf(view.router).pending).toBeUndefined();
+      await act(async () => {
+        refetch.resolve();
+        await finished;
+      });
+      expect(restoreScrolls(scrollTo)).toEqual([]);
+    } finally {
+      refetch.resolve();
+      view.unmount();
+    }
+  });
+
+  it.each(["visible", "withdrawn"] as const)(
+    "commits replayed user rows during a calendar refetch with %s layout",
+    async (layout) => {
+      const replay = deferred<UserIssuesPage>();
+      const refetch = deferred<void>();
+      let refreshing = false;
+      const scrollTo = vi
+        .spyOn(window, "scrollTo")
+        .mockImplementation(() => {});
+      vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
+        4000,
+      );
+      vi.spyOn(window, "scrollY", "get").mockReturnValue(0);
+      const search = {
+        role: "assignee" as const,
+        state: "all" as const,
+        activity_year: 2025,
+        activity_day: "2025-03-04",
+      };
+      const view = mountUser(
+        "/users/alice?role=assignee&state=all&activity_year=2025&activity_day=2025-03-04",
+        snapshot({
+          target: { kind: "user", ref: "alice", search },
+          pages: [{ lane: "flat", extraPages: 1 }],
+          scroll: [
+            region({
+              region: "window",
+              y: 400,
+              candidates: [{ id: "11", offset: 25 }],
+            }),
+          ],
+        }),
+        {
+          calendar: async (_subject, input) => {
+            if (refreshing) await refetch.promise;
+            return userCalendar(input, true);
+          },
+          issues: async (_ref, query) =>
+            (query as Query)?.after === "u1"
+              ? replay.promise
+              : USER_PAGES.first!,
+        },
+      );
+      try {
+        await settleUntil(
+          () =>
+            view.queryByText("calendar card") !== null &&
+            view.listUserIssues.mock.calls.some(
+              ([, q]) => (q as Query)?.after === "u1",
+            ) &&
+            view.client.isFetching({ queryKey: ["activity-user"] }) === 0,
+        );
+        expect(rowIds(view.container)).toEqual(["11"]);
+        expect(view.getByText("calendar card")).toBeTruthy();
+        const row = view.container.querySelector<HTMLElement>(
+          '[data-return-id="11"]',
+        )!;
+        vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+          top: 950,
+          left: 0,
+          bottom: 990,
+          height: 40,
+        } as DOMRect);
+        expect(entryOf(view.router).pending?.locate).toBe(true);
+        expect(restoreScrolls(scrollTo)).toEqual([]);
+        refreshing = true;
+        let finished!: Promise<void>;
+        act(() => {
+          finished =
+            layout === "visible"
+              ? view.client.invalidateQueries({ queryKey: ["activity-user"] })
+              : view.client.resetQueries({ queryKey: ["activity-user"] });
+        });
+        await settleUntil(
+          () => view.client.isFetching({ queryKey: ["activity-user"] }) > 0,
+        );
+        // Let the real Section commit its fetch state before the independent page response.
+        if (layout === "withdrawn")
+          await settleUntil(() => view.queryByText("calendar card") === null);
+        else {
+          await settleUntil(
+            () =>
+              view.container.querySelector('section[aria-busy="true"]') !==
+              null,
+          );
+          expect(
+            view.container.querySelector('section[aria-busy="true"]'),
+          ).not.toBeNull();
+        }
+        expect(entryOf(view.router).pending?.locate).toBe(true);
+        await act(async () => replay.resolve(USER_PAGES.u1!));
+        await settleUntil(() => rowIds(view.container).includes("12"));
+        expect(rowIds(view.container)).toEqual(["11", "12"]);
+        expect(view.getByText("u two")).toBeTruthy();
+        expect(view.listUserIssues.mock.calls).toEqual([
+          ["alice", { role: "assignee", state: "all" }],
+          ["alice", { role: "assignee", state: "all", after: "u1" }],
+        ]);
+        expect(
+          view.client.isFetching({ queryKey: ["activity-user"] }),
+        ).toBeGreaterThan(0);
+        if (layout === "withdrawn") {
+          expect(view.queryByText("calendar card")).toBeNull();
+          await settle(100);
+          expect(entryOf(view.router).pending?.locate).toBe(true);
+          expect(restoreScrolls(scrollTo)).toEqual([]);
+        } else {
+          expect(view.getByText("calendar card")).toBeTruthy();
+          await settleUntil(settled(view.router));
+          expect(entryOf(view.router).pending).toBeUndefined();
+          expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
+        }
+        await act(async () => {
+          refetch.resolve();
+          await finished;
+        });
+        await settleUntil(
+          () =>
+            settled(view.router)() &&
+            view.queryByText("calendar card") !== null,
+        );
+        expect(entryOf(view.router).pending).toBeUndefined();
+        expect(rowIds(view.container)).toEqual(["11", "12"]);
+        expect(view.router.state.location.search).toEqual(search);
+        expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
+      } finally {
+        replay.resolve(USER_PAGES.u1!);
+        refetch.resolve();
         view.unmount();
       }
     },

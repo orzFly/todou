@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { userSearchSchema } from "../src/api/users.ts";
+import { userSearchParams, userSearchSchema } from "../src/api/users.ts";
 
 const activity = {
   activity_year: 2024,
@@ -7,6 +7,39 @@ const activity = {
 };
 
 describe("user search", () => {
+  it("does not accept URL notice metadata, including JSON boolean true", () => {
+    expect(
+      userSearchSchema({
+        role: "author",
+        state: "all",
+        ...activity,
+        activity_invalid: true,
+      }),
+    ).toEqual({ role: "author", state: "all", ...activity });
+  });
+
+  it("serializes public filters without a derived invalid-date marker", () => {
+    const invalid = {
+      role: "assignee",
+      state: "closed",
+      activity_year: 2024,
+      activity_day: "2024-02-30",
+    };
+    expect(userSearchSchema(invalid).activity_invalid).toBe(true);
+    expect(userSearchParams(invalid)).toEqual({
+      role: "assignee",
+      state: "closed",
+      activity_year: 2024,
+    });
+    expect(
+      userSearchParams({
+        ...userSearchSchema(invalid),
+        role: "author",
+        state: "all",
+      }),
+    ).toEqual({ role: "author", state: "all", activity_year: 2024 });
+  });
+
   it.each([
     [{}, {}],
     [{ role: "any", state: "open" }, {}],
