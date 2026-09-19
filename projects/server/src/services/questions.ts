@@ -229,7 +229,7 @@ export async function submitAnswers(
         issueId: issue.id,
         actorId: actor.id,
         type: "question_answered",
-        payload: { comment_id: commentId, answers },
+        payload: { comment_id: commentId, answers, via: "answer" },
         agentContext,
       })
       .returning();

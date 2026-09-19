@@ -124,6 +124,8 @@ export type QuestionAnswer = z.infer<typeof QuestionAnswer>;
 export const QuestionAnsweredPayload = z.strictObject({
   comment_id: Id,
   answers: z.array(QuestionAnswer),
+  /** Absent on legacy events; explicit declines are still active answers. */
+  via: z.enum(["answer", "hide"]).optional(),
 });
 export type QuestionAnsweredPayload = z.infer<typeof QuestionAnsweredPayload>;
 

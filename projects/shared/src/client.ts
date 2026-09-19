@@ -6,6 +6,8 @@ import {
 import type {
   AccessDenial,
   AccessHint,
+  ActivityCalendarQueryInput,
+  ActivityCalendarResponse,
   ActivityPage,
   Agent,
   AgentCreateInput,
@@ -713,6 +715,15 @@ export class TodouClient {
     this.request<BurnResponse>("GET", `/projects/${slug}/insights/burn`, {
       query: { ...query },
     });
+  getProjectActivityCalendar = (
+    slug: string,
+    query: ActivityCalendarQueryInput,
+  ) =>
+    this.request<ActivityCalendarResponse>(
+      "GET",
+      `/projects/${encodeURIComponent(slug)}/insights/activity`,
+      { query: { ...query } },
+    );
 
   /**
    * One account's public identity. `ref` is a user id when all digits, a
@@ -720,6 +731,15 @@ export class TodouClient {
    */
   getUser = (ref: string | number) =>
     this.request<PublicUser>("GET", `/users/${ref}`);
+  getUserActivityCalendar = (
+    ref: string | number,
+    query: ActivityCalendarQueryInput,
+  ) =>
+    this.request<ActivityCalendarResponse>(
+      "GET",
+      `/users/${encodeURIComponent(String(ref))}/activity`,
+      { query: { ...query } },
+    );
 
   /** Both lists are scoped to what the CALLER can read, not the subject. */
   listUserIssues = (ref: string | number, query?: Query) =>

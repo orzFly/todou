@@ -5,7 +5,6 @@ import {
   createRoute,
   createRouter,
   RouterProvider,
-  useNavigate,
 } from "@tanstack/react-router";
 import {
   act,
@@ -21,8 +20,8 @@ import type {
   UserIssuesPage,
   UserProjects,
 } from "@todou/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "../src/api/queries.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api, meQuery } from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
@@ -33,7 +32,7 @@ import {
   userQuery,
   userSearchSchema,
 } from "../src/api/users.ts";
-import { UserProfilePage } from "../src/pages/user-profile.tsx";
+import { router as appRouter } from "../src/router.tsx";
 import { expectVisible } from "./visibility.ts";
 
 const alice: PublicUser = {
@@ -108,12 +107,13 @@ const page = (
  * without a single test noticing.
  */
 const Root = createRootRoute();
+const Authed = createRoute({ getParentRoute: () => Root, id: "authed" });
 
 const UserRoute = createRoute({
-  getParentRoute: () => Root,
+  getParentRoute: () => Authed,
   path: "/users/$ref",
   validateSearch: userSearchSchema,
-  component: UserRoutePage,
+  component: appRouter.routesById["/authed/users/$ref"].options.component,
 });
 
 const ProjectRoute = createRoute({
@@ -131,34 +131,10 @@ const SpecRoute = createRoute({
   path: "issues/$number/spec",
 });
 
-function UserRoutePage() {
-  const { ref } = UserRoute.useParams();
-  const { role = "any", state = "open" } = UserRoute.useSearch();
-  const navigate = useNavigate();
-  return (
-    <UserProfilePage
-      ref={ref}
-      role={role}
-      state={state}
-      onFilters={(next) =>
-        void navigate({
-          to: "/users/$ref",
-          params: { ref },
-          search: userSearchSchema({
-            role: next.role ?? role,
-            state: next.state ?? state,
-          }),
-          replace: true,
-        })
-      }
-    />
-  );
-}
-
 function renderAt(path: string, client: QueryClient) {
   const router = createRouter({
     routeTree: Root.addChildren([
-      UserRoute,
+      Authed.addChildren([UserRoute]),
       ProjectRoute.addChildren([IssueRoute, SpecRoute]),
     ]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -176,6 +152,13 @@ function clientWithUser(): QueryClient {
     defaultOptions: { queries: { retry: false } },
   });
   client.setQueryData(userQuery(alice.login).queryKey, alice);
+  client.setQueryData(meQuery.queryKey, {
+    ...alice,
+    id: 42,
+    login: "viewer",
+    email: "viewer@example.com",
+    is_instance_admin: false,
+  });
   // Two projects, two prefixes: what makes a page-level slug visibly wrong.
   client.setQueryData(referenceConfigQuery("todou").queryKey, {
     format: { prefix: "T", history: [] },
@@ -191,6 +174,27 @@ function clientWithUser(): QueryClient {
 }
 
 const noProjects = (): UserProjects => ({ items: [] });
+
+beforeEach(() => {
+  vi.spyOn(api, "me").mockResolvedValue({
+    ...alice,
+    id: 42,
+    login: "viewer",
+    email: "viewer@example.com",
+    is_instance_admin: false,
+  });
+  vi.spyOn(api, "getUserActivityCalendar").mockImplementation(
+    async (_subject, input) => ({
+      year: Number(input.year),
+      timezone: input.tz,
+      cutoff: "2026-09-19T12:00:00Z",
+      read_started_at: "2026-09-19T12:00:00Z",
+      read_finished_at: "2026-09-19T12:00:00Z",
+      days: [],
+      selection: null,
+    }),
+  );
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

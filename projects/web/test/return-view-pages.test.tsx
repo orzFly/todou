@@ -8,8 +8,9 @@ import {
   RouterProvider,
   useNavigate,
 } from "@tanstack/react-router";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import type {
+  ActivityCalendarResponse,
   InboxItem,
   InboxPage as InboxPageData,
   IssueCounts,
@@ -18,11 +19,12 @@ import type {
   Label,
   Member,
   PublicUser,
+  ReferenceDirectory,
   Status,
   UserIssueItem,
   UserIssuesPage,
 } from "@todou/shared";
-import { Suspense, useSyncExternalStore } from "react";
+import { createElement, Suspense, useSyncExternalStore } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boardColumnQuery } from "../src/api/board.ts";
 import {
@@ -30,9 +32,13 @@ import {
   issueSearchSchema,
   issuesQuery,
 } from "../src/api/issues.ts";
-import { api, statusesQuery } from "../src/api/queries.ts";
-import { referenceConfigQuery } from "../src/api/references.ts";
+import { api, meQuery, statusesQuery } from "../src/api/queries.ts";
+import {
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "../src/api/references.ts";
 import { userQuery, userSearchSchema } from "../src/api/users.ts";
+import type * as CalendarSectionModule from "../src/components/activity-calendar/activity-calendar-section.tsx";
 import * as returnContext from "../src/components/shared/return-context.tsx";
 import { ReturnViewProvider } from "../src/components/shared/return-context.tsx";
 import {
@@ -47,11 +53,29 @@ import {
 import { BoardPage } from "../src/pages/board.tsx";
 import { InboxPage } from "../src/pages/inbox.tsx";
 import { ProjectIssueListPage } from "../src/pages/issue-list.tsx";
-import {
-  UserProfilePage,
-  UserRedirectPage,
-} from "../src/pages/user-profile.tsx";
+import { router as appRouter } from "../src/router.tsx";
 import { testQueryClient } from "./render.tsx";
+
+// Suspend only the user calendar in the lazy-layout case. Once released this
+// renders the real endpoint wrapper and calendar; no readiness is simulated.
+const userCalendarModule = vi.hoisted(() => ({
+  wait: null as Promise<void> | null,
+}));
+vi.mock(
+  "../src/components/activity-calendar/activity-calendar-section.tsx",
+  async (importOriginal) => {
+    const actual = await importOriginal<typeof CalendarSectionModule>();
+    return {
+      ...actual,
+      ActivityCalendarSection: (
+        props: Parameters<typeof actual.ActivityCalendarSection>[0],
+      ) => {
+        if (userCalendarModule.wait) throw userCalendarModule.wait;
+        return createElement(actual.ActivityCalendarSection, props);
+      },
+    };
+  },
+);
 
 /**
  * The page half of T-407: which pages a returning collection asks for, in
@@ -959,55 +983,119 @@ const USER_PAGES: Record<string, UserIssuesPage> = {
   u2: { items: [userItem(13, "u three")], next_cursor: null, has_more: false },
 };
 
-function mountUser(path: string, pending?: ReturnView) {
+function userCalendar(
+  input: Parameters<typeof api.getUserActivityCalendar>[1],
+  recorded = false,
+): ActivityCalendarResponse {
+  const year = Number(input.year);
+  const date = `${year}-03-04`;
+  return {
+    year,
+    timezone: input.tz,
+    cutoff: "2026-09-19T12:00:00Z",
+    read_started_at: "2026-09-19T12:00:00Z",
+    read_finished_at: "2026-09-19T12:00:00Z",
+    days: recorded ? [{ date, state: "recorded", count: 1 }] : [],
+    selection:
+      recorded && input.day
+        ? {
+            date: input.day,
+            total: 1,
+            items: [
+              {
+                project: {
+                  id: 1,
+                  slug: "alpha",
+                  name: "Alpha",
+                  issue_prefix: "A",
+                },
+                issue_id: 21,
+                number: 21,
+                title: "calendar card",
+                status: todo,
+                url: "/projects/alpha/issues/21",
+                last_active_at: `${date}T12:00:00Z`,
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        : null,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function mountUser(
+  path: string,
+  pending?: ReturnView,
+  options: {
+    state?: unknown;
+    calendar?: typeof api.getUserActivityCalendar;
+    issues?: typeof api.listUserIssues;
+  } = {},
+) {
   const client = testQueryClient();
   client.setQueryData(userQuery("alice").queryKey, alice);
+  const viewer = {
+    ...alice,
+    email: "alice@example.com",
+    is_instance_admin: false,
+  };
+  client.setQueryData(meQuery.queryKey, viewer);
+  client.setQueryData(referenceConfigQuery("alpha").queryKey, {
+    format: { prefix: "A", history: [] },
+    autolinks: [],
+  });
+  client.setQueryData<ReferenceDirectory>(referenceDirectoryQuery.queryKey, {
+    entries: [],
+    contested: [],
+  });
+  vi.spyOn(api, "me").mockResolvedValue(viewer);
+  const calendar = vi
+    .spyOn(api, "getUserActivityCalendar")
+    .mockImplementation(
+      options.calendar ?? (async (_subject, input) => userCalendar(input)),
+    );
   vi.spyOn(api, "getUser").mockResolvedValue(alice);
   vi.spyOn(api, "listUserProjects").mockResolvedValue({ items: [] });
-  const listUserIssues = vi
-    .spyOn(api, "listUserIssues")
-    .mockImplementation(async (_ref, query) => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      return USER_PAGES[String((query as Query)?.after ?? "first")];
-    });
+  const listUserIssues = vi.spyOn(api, "listUserIssues").mockImplementation(
+    options.issues ??
+      (async (_ref, query) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        return USER_PAGES[String((query as Query)?.after ?? "first")];
+      }),
+  );
 
   const rootRoute = returnRoot(account(VIEWER));
-  const userRoute = createRoute({
+  const authedRoute = createRoute({
     getParentRoute: () => rootRoute,
+    id: "authed",
+  });
+  const userRoute = createRoute({
+    getParentRoute: () => authedRoute,
     path: "/users/$ref",
     validateSearch: userSearchSchema,
-    component: function UserShim() {
-      const { ref } = userRoute.useParams();
-      const { role = "any", state = "open" } = userRoute.useSearch();
-      const navigate = useNavigate();
-      if (/^\d{1,15}$/.test(ref)) return <UserRedirectPage ref={ref} />;
-      return (
-        <UserProfilePage
-          ref={ref}
-          role={role}
-          state={state}
-          onFilters={(chosen) =>
-            void navigate({
-              to: "/users/$ref",
-              params: { ref },
-              search: userSearchSchema({ role, state, ...chosen }),
-              replace: true,
-            })
-          }
-        />
-      );
-    },
+    component: appRouter.routesById["/authed/users/$ref"].options.component,
   });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([userRoute]),
-    history: historyAt(path, { pending }),
+    routeTree: rootRoute.addChildren([authedRoute.addChildren([userRoute])]),
+    history: historyAt(path, { pending, state: options.state }),
   });
   const view = render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { ...view, router, listUserIssues };
+  return { ...view, router, client, listUserIssues, calendar };
 }
 
 describe("the user page", () => {
@@ -1024,7 +1112,9 @@ describe("the user page", () => {
         pages: [{ lane: "flat", extraPages: 2 }],
       }),
     );
-    await settle(350);
+    await settleUntil(
+      () => rowIds(view.container).length === 3 && settled(view.router)(),
+    );
 
     const asked = view.listUserIssues.mock.calls.map(([ref, query]) => ({
       ref,
@@ -1036,6 +1126,7 @@ describe("the user page", () => {
       { ref: "alice", role: "assignee", state: "all", after: "u2" },
     ]);
     expect(rowIds(view.container)).toEqual(["11", "12", "13"]);
+    expect(entryOf(view.router).pending).toBeUndefined();
   });
 
   it("describes itself by the canonical login even when reached by id", async () => {
@@ -1053,6 +1144,425 @@ describe("the user page", () => {
     expect(view.router.state.location.pathname).toBe("/users/alice");
     expect(frozen?.target).toEqual({ kind: "user", ref: "alice", search: {} });
     expect(frozen?.userLabel).toBe("alice");
+  });
+
+  it("captures date props in useReturnView and restores them after history serialization", async () => {
+    const search = {
+      role: "assignee" as const,
+      state: "all" as const,
+      activity_year: 2025,
+      activity_day: "2025-03-04",
+    };
+    const path =
+      "/users/alice?role=assignee&state=all&activity_year=2025&activity_day=2025-03-04";
+    const calendar = async (
+      _subject: Parameters<typeof api.getUserActivityCalendar>[0],
+      input: Parameters<typeof api.getUserActivityCalendar>[1],
+    ) => userCalendar(input, true);
+    const first = mountUser(path, undefined, { calendar });
+    await settleUntil(
+      () =>
+        rowIds(first.container).includes("11") &&
+        first.queryByText("calendar card") !== null,
+    );
+    expect(rowIds(first.container)).toEqual(["11"]);
+    expect(first.getByText("u one")).toBeTruthy();
+    expect(first.getByText("calendar card")).toBeTruthy();
+    fireEvent.click(first.getByRole("button", { name: "Load more" }));
+    await settleUntil(
+      () => rowIds(first.container).includes("12") && settled(first.router)(),
+    );
+    expect(rowIds(first.container)).toEqual(["11", "12"]);
+    expect(first.getByText("u two")).toBeTruthy();
+    act(() => fireEvent.pointerDown(first.container));
+    const captured = entryOf(first.router).view;
+    // This assertion reads UserProfilePage's actual hook output. Copying URL
+    // search into the harness's pending snapshot cannot satisfy it.
+    expect(captured?.target).toEqual({ kind: "user", ref: "alice", search });
+    expect(captured?.pages).toEqual([{ lane: "flat", extraPages: 1 }]);
+    expect(captured).toBeDefined();
+    writeReturnEntry(first.router, {
+      pending: { view: captured as ReturnView, locate: true },
+    });
+    const state = JSON.parse(
+      JSON.stringify(first.router.history.location.state),
+    );
+    first.unmount();
+    const previousIssueCalls = first.listUserIssues.mock.calls.length;
+    const restored = mountUser(path, undefined, { state, calendar });
+    await settleUntil(
+      () =>
+        rowIds(restored.container).includes("12") && settled(restored.router)(),
+    );
+    expect(rowIds(restored.container)).toEqual(["11", "12"]);
+    expect(restored.getByText("u two")).toBeTruthy();
+    expect(entryOf(restored.router).pending).toBeUndefined();
+    expect(restored.router.state.location.search).toEqual(search);
+    // mountUser reuses the API spy, so only calls made by this mount count.
+    expect(
+      restored.listUserIssues.mock.calls.slice(previousIssueCalls),
+    ).toEqual([
+      ["alice", { role: "assignee", state: "all" }],
+      ["alice", { role: "assignee", state: "all", after: "u1" }],
+    ]);
+    act(() => fireEvent.pointerDown(restored.container));
+    expect(entryOf(restored.router).view?.target).toEqual({
+      kind: "user",
+      ref: "alice",
+      search,
+    });
+  });
+
+  it.each(["success", "empty", "error", "selected pending", "lazy"] as const)(
+    "waits for calendar layout before restoring a card anchor: %s",
+    async (outcome) => {
+      const base = deferred<ActivityCalendarResponse>();
+      const selected = deferred<ActivityCalendarResponse>();
+      const moduleGate = deferred<void>();
+      const scrollTo = vi
+        .spyOn(window, "scrollTo")
+        .mockImplementation(() => {});
+      vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
+        4000,
+      );
+      vi.spyOn(window, "scrollY", "get").mockReturnValue(0);
+      const search = {
+        role: "assignee" as const,
+        state: "all" as const,
+        activity_year: 2025,
+        ...(outcome === "empty" ? {} : { activity_day: "2025-03-04" }),
+      };
+      if (outcome === "lazy") userCalendarModule.wait = moduleGate.promise;
+      const pending = snapshot({
+        target: { kind: "user", ref: "alice", search },
+        scroll: [
+          region({
+            region: "window",
+            y: 400,
+            candidates: [{ id: "11", offset: 25 }],
+          }),
+        ],
+      });
+      const view = mountUser(
+        `/users/alice?role=assignee&state=all&activity_year=2025${outcome === "empty" ? "" : "&activity_day=2025-03-04"}`,
+        pending,
+        {
+          calendar: async (_subject, input) =>
+            input.day ? selected.promise : base.promise,
+        },
+      );
+      try {
+        await view.findByText("u one");
+        const row = view.container.querySelector<HTMLElement>(
+          '[data-return-id="11"]',
+        );
+        expect(row).not.toBeNull();
+        let top = 300;
+        vi.spyOn(
+          row as HTMLElement,
+          "getBoundingClientRect",
+        ).mockImplementation(
+          () => ({ top, left: 0, bottom: top + 40, height: 40 }) as DOMRect,
+        );
+        await settle(150);
+        expect(entryOf(view.router).pending?.locate).toBe(true);
+        expect(restoreScrolls(scrollTo)).toEqual([]);
+        if (outcome === "lazy") {
+          expect(view.calendar).not.toHaveBeenCalled();
+          await act(async () => {
+            userCalendarModule.wait = null;
+            moduleGate.resolve();
+          });
+        }
+        await waitFor(() => expect(view.calendar).toHaveBeenCalled());
+        const input = view.calendar.mock.calls[0]![1];
+        const recorded =
+          outcome === "success" ||
+          outcome === "selected pending" ||
+          outcome === "lazy";
+        if (!recorded) top = 950;
+        await act(async () => {
+          if (outcome === "error")
+            base.reject(new Error("calendar unavailable"));
+          else base.resolve(userCalendar(input, recorded));
+        });
+        if (recorded) {
+          await waitFor(() =>
+            expect(view.calendar).toHaveBeenCalledWith(
+              alice.id,
+              expect.objectContaining({ day: "2025-03-04" }),
+            ),
+          );
+          await settle(150);
+          // The grid is now present, but the selected first-page list has not
+          // settled. Measuring here would still anchor above the final rows.
+          expect(entryOf(view.router).pending?.locate).toBe(true);
+          expect(restoreScrolls(scrollTo)).toEqual([]);
+          top = 950;
+          await act(async () => {
+            selected.resolve(
+              userCalendar({ ...input, day: "2025-03-04" }, true),
+            );
+          });
+          await view.findByText("calendar card");
+        }
+        await settleUntil(settled(view.router));
+        expect(entryOf(view.router).pending).toBeUndefined();
+        // Final row top minus the real fallback shell inset and saved offset.
+        expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
+      } finally {
+        userCalendarModule.wait = null;
+        moduleGate.resolve();
+        base.resolve(userCalendar({ year: 2025, tz: "UTC" }));
+        selected.resolve(userCalendar({ year: 2025, tz: "UTC" }));
+        view.unmount();
+      }
+    },
+  );
+
+  it("preserves the sampled user window during a stable warm calendar refresh", async () => {
+    const refetch = deferred<void>();
+    let refreshing = false;
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
+      4000,
+    );
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(400);
+    const search = {
+      role: "assignee",
+      state: "all",
+      activity_year: 2025,
+      activity_day: "2025-03-04",
+    };
+    const view = mountUser(
+      "/users/alice?role=assignee&state=all&activity_year=2025&activity_day=2025-03-04",
+      undefined,
+      {
+        calendar: async (_subject, input) => {
+          if (refreshing) await refetch.promise;
+          return userCalendar(input, true);
+        },
+      },
+    );
+    try {
+      await settleUntil(
+        () =>
+          view.queryByText("calendar card") !== null &&
+          rowIds(view.container).includes("11") &&
+          view.client.isFetching({ queryKey: ["activity-user"] }) === 0,
+      );
+      expect(rowIds(view.container)).toEqual(["11"]);
+      expect(view.getByText("calendar card")).toBeTruthy();
+      const row = view.container.querySelector<HTMLElement>(
+        '[data-return-id="11"]',
+      )!;
+      vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+        top: 200,
+        left: 0,
+        bottom: 240,
+        height: 40,
+      } as DOMRect);
+      act(() => fireEvent.pointerDown(row));
+      const before = entryOf(view.router).view;
+      expect(before?.scroll).toEqual([
+        {
+          region: "window",
+          x: 0,
+          y: 400,
+          candidates: [{ id: "11", offset: 144 }],
+        },
+      ]);
+      refreshing = true;
+      let finished!: Promise<void>;
+      act(() => {
+        finished = view.client.invalidateQueries({
+          queryKey: ["activity-user"],
+        });
+      });
+      await settleUntil(
+        () =>
+          view.container.querySelector('section[aria-busy="true"]') !== null,
+      );
+      expect(
+        view.container.querySelector('section[aria-busy="true"]'),
+      ).not.toBeNull();
+      expect(
+        view.client.isFetching({ queryKey: ["activity-user"] }),
+      ).toBeGreaterThan(0);
+      expect(rowIds(view.container)).toEqual(["11"]);
+      expect(view.getByText("calendar card")).toBeTruthy();
+      act(() => fireEvent.pointerDown(row));
+      expect(entryOf(view.router).view?.scroll).toEqual(before?.scroll);
+      expect(entryOf(view.router).view?.target).toEqual({
+        kind: "user",
+        ref: "alice",
+        search,
+      });
+      expect(entryOf(view.router).pending).toBeUndefined();
+      await act(async () => {
+        refetch.resolve();
+        await finished;
+      });
+      expect(restoreScrolls(scrollTo)).toEqual([]);
+    } finally {
+      refetch.resolve();
+      view.unmount();
+    }
+  });
+
+  it.each(["visible", "withdrawn"] as const)(
+    "commits replayed user rows during a calendar refetch with %s layout",
+    async (layout) => {
+      const replay = deferred<UserIssuesPage>();
+      const refetch = deferred<void>();
+      let refreshing = false;
+      const scrollTo = vi
+        .spyOn(window, "scrollTo")
+        .mockImplementation(() => {});
+      vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
+        4000,
+      );
+      vi.spyOn(window, "scrollY", "get").mockReturnValue(0);
+      const search = {
+        role: "assignee" as const,
+        state: "all" as const,
+        activity_year: 2025,
+        activity_day: "2025-03-04",
+      };
+      const view = mountUser(
+        "/users/alice?role=assignee&state=all&activity_year=2025&activity_day=2025-03-04",
+        snapshot({
+          target: { kind: "user", ref: "alice", search },
+          pages: [{ lane: "flat", extraPages: 1 }],
+          scroll: [
+            region({
+              region: "window",
+              y: 400,
+              candidates: [{ id: "11", offset: 25 }],
+            }),
+          ],
+        }),
+        {
+          calendar: async (_subject, input) => {
+            if (refreshing) await refetch.promise;
+            return userCalendar(input, true);
+          },
+          issues: async (_ref, query) =>
+            (query as Query)?.after === "u1"
+              ? replay.promise
+              : USER_PAGES.first!,
+        },
+      );
+      try {
+        await settleUntil(
+          () =>
+            view.queryByText("calendar card") !== null &&
+            view.listUserIssues.mock.calls.some(
+              ([, q]) => (q as Query)?.after === "u1",
+            ) &&
+            view.client.isFetching({ queryKey: ["activity-user"] }) === 0,
+        );
+        expect(rowIds(view.container)).toEqual(["11"]);
+        expect(view.getByText("calendar card")).toBeTruthy();
+        const row = view.container.querySelector<HTMLElement>(
+          '[data-return-id="11"]',
+        )!;
+        vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+          top: 950,
+          left: 0,
+          bottom: 990,
+          height: 40,
+        } as DOMRect);
+        expect(entryOf(view.router).pending?.locate).toBe(true);
+        expect(restoreScrolls(scrollTo)).toEqual([]);
+        refreshing = true;
+        let finished!: Promise<void>;
+        act(() => {
+          finished =
+            layout === "visible"
+              ? view.client.invalidateQueries({ queryKey: ["activity-user"] })
+              : view.client.resetQueries({ queryKey: ["activity-user"] });
+        });
+        await settleUntil(
+          () => view.client.isFetching({ queryKey: ["activity-user"] }) > 0,
+        );
+        // Let the real Section commit its fetch state before the independent page response.
+        if (layout === "withdrawn")
+          await settleUntil(() => view.queryByText("calendar card") === null);
+        else {
+          await settleUntil(
+            () =>
+              view.container.querySelector('section[aria-busy="true"]') !==
+              null,
+          );
+          expect(
+            view.container.querySelector('section[aria-busy="true"]'),
+          ).not.toBeNull();
+        }
+        expect(entryOf(view.router).pending?.locate).toBe(true);
+        await act(async () => replay.resolve(USER_PAGES.u1!));
+        await settleUntil(() => rowIds(view.container).includes("12"));
+        expect(rowIds(view.container)).toEqual(["11", "12"]);
+        expect(view.getByText("u two")).toBeTruthy();
+        expect(view.listUserIssues.mock.calls).toEqual([
+          ["alice", { role: "assignee", state: "all" }],
+          ["alice", { role: "assignee", state: "all", after: "u1" }],
+        ]);
+        expect(
+          view.client.isFetching({ queryKey: ["activity-user"] }),
+        ).toBeGreaterThan(0);
+        if (layout === "withdrawn") {
+          expect(view.queryByText("calendar card")).toBeNull();
+          await settle(100);
+          expect(entryOf(view.router).pending?.locate).toBe(true);
+          expect(restoreScrolls(scrollTo)).toEqual([]);
+        } else {
+          expect(view.getByText("calendar card")).toBeTruthy();
+          await settleUntil(settled(view.router));
+          expect(entryOf(view.router).pending).toBeUndefined();
+          expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
+        }
+        await act(async () => {
+          refetch.resolve();
+          await finished;
+        });
+        await settleUntil(
+          () =>
+            settled(view.router)() &&
+            view.queryByText("calendar card") !== null,
+        );
+        expect(entryOf(view.router).pending).toBeUndefined();
+        expect(rowIds(view.container)).toEqual(["11", "12"]);
+        expect(view.router.state.location.search).toEqual(search);
+        expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
+      } finally {
+        replay.resolve(USER_PAGES.u1!);
+        refetch.resolve();
+        view.unmount();
+      }
+    },
+  );
+
+  it("still waits for card rows after the calendar has settled", async () => {
+    const rows = deferred<UserIssuesPage>();
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const view = mountUser(
+      "/users/alice",
+      snapshot({
+        target: { kind: "user", ref: "alice", search: {} },
+        scroll: [region({ region: "window", y: 400 })],
+      }),
+      { issues: async () => rows.promise },
+    );
+    await view.findByText(/No available dates in/);
+    await settle(150);
+    expect(entryOf(view.router).pending?.locate).toBe(true);
+    expect(restoreScrolls(scrollTo)).toEqual([]);
+    await act(async () => rows.resolve(USER_PAGES.first!));
+    await view.findByText("u one");
+    await settleUntil(settled(view.router));
+    expect(entryOf(view.router).pending).toBeUndefined();
+    expect(restoreScrolls(scrollTo)).toHaveLength(1);
   });
 });
 

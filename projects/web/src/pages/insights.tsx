@@ -5,8 +5,11 @@ import {
   Grain,
   type Grain as GrainValue,
 } from "@todou/shared";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { insightsBurnQuery, insightsSettingsQuery } from "@/api/insights.ts";
+import { meQuery, projectQuery } from "@/api/queries.ts";
+import { ActivityCalendarSection } from "@/components/activity-calendar/activity-calendar-section.tsx";
 import { BurnChart } from "@/components/insights/burn-chart.tsx";
 import { StatusFlowChart } from "@/components/insights/status-flow-chart.tsx";
 import { PageSkeleton } from "@/components/page-skeleton.tsx";
@@ -15,6 +18,12 @@ import {
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
+import {
+  activityDateSearchParams,
+  activityToday,
+  browserActivityTimezone,
+  resolveActivityDateSearch,
+} from "@/lib/activity-calendar-search.ts";
 import type {
   InsightsSearch,
   InsightsSearchContext,
@@ -23,18 +32,42 @@ import type {
 import {
   insightsPresetRequest,
   insightsRequest,
+  parseInsightsSearch,
   resolveInsightsSearch,
 } from "@/lib/insights-search.ts";
 
 export function InsightsPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
-  const search = useSearch({ from: "/authed/projects/$slug/insights" });
+  // Router search includes raw keys; only the parser may derive invalidity.
+  const search = parseInsightsSearch(
+    useSearch({ from: "/authed/projects/$slug/insights" }),
+  );
   const navigate = useNavigate();
+  const viewer = useQuery(meQuery);
+  const project = useQuery(projectQuery(slug));
   const [context] = useState<InsightsSearchContext>(() => ({
     now: new Date(),
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
+    timezone: browserActivityTimezone(),
   }));
   const resolved = resolveInsightsSearch(search, context);
+  const activity = resolveActivityDateSearch(search, context);
+  const activityInvalidNotified = useRef(false);
+  useEffect(() => {
+    if (activity.invalid && !activityInvalidNotified.current) {
+      activityInvalidNotified.current = true;
+      toast("Invalid activity date was reset.");
+      void navigate({
+        to: "/projects/$slug/insights",
+        params: { slug },
+        search: activityDateSearchParams({
+          ...search,
+          activity_year: activity.year,
+          activity_day: activity.day,
+        }),
+        replace: true,
+      });
+    }
+  }, [activity.invalid, activity.year, activity.day, navigate, search, slug]);
   const request = insightsRequest(search, context);
   const settings = useQuery({
     ...insightsSettingsQuery(slug),
@@ -64,11 +97,17 @@ export function InsightsPage() {
         search={resolved}
         context={context}
         onChange={(next) => {
-          const { invalid: _invalid, ...validated } = next;
           void navigate({
             to: "/projects/$slug/insights",
             params: { slug },
-            search: validated,
+            search: {
+              activity_year: search.activity_year,
+              activity_day: search.activity_day,
+              range: next.range,
+              from: next.from,
+              to: next.to,
+              grain: next.grain,
+            },
             replace: true,
           });
         }}
@@ -116,6 +155,65 @@ export function InsightsPage() {
           )}
           <InsightsResults data={result.data} />
         </>
+      )}
+      {viewer.data && project.data && (
+        <ActivityCalendarSection
+          viewerId={viewer.data.id}
+          scope={{
+            kind: "project",
+            projectId: project.data.id,
+            slug: project.data.slug,
+          }}
+          year={activity.year}
+          day={activity.day}
+          timezone={context.timezone}
+          today={activityToday(context.now, context.timezone)}
+          onInvalidDay={(day) => {
+            if (!activityInvalidNotified.current) {
+              activityInvalidNotified.current = true;
+              toast("Invalid activity date was reset.");
+            }
+            void navigate({
+              to: "/projects/$slug/insights",
+              params: { slug },
+              search: activityDateSearchParams(
+                parseInsightsSearch({
+                  ...search,
+                  activity_year: activity.year,
+                  activity_day: day,
+                }),
+              ),
+              replace: true,
+            });
+          }}
+          onYearChange={(year) =>
+            void navigate({
+              to: "/projects/$slug/insights",
+              params: { slug },
+              search: activityDateSearchParams(
+                parseInsightsSearch({
+                  ...search,
+                  activity_year: year,
+                  activity_day: undefined,
+                }),
+              ),
+            })
+          }
+          onDayChange={(day, options) =>
+            void navigate({
+              to: "/projects/$slug/insights",
+              params: { slug },
+              search: activityDateSearchParams(
+                parseInsightsSearch({
+                  ...search,
+                  activity_year: Number(day.slice(0, 4)),
+                  activity_day: day,
+                }),
+              ),
+              replace: options?.replace ?? false,
+            })
+          }
+        />
       )}
     </div>
   );

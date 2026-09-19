@@ -2,6 +2,7 @@ import { UserIssueRole, UserIssueState } from "@todou/shared";
 import { z } from "zod";
 import { issueSearchSchema } from "@/api/issues.ts";
 import { searchPageSchema } from "@/api/search.ts";
+import { parseActivityDateSearch } from "@/lib/activity-calendar-search.ts";
 
 /**
  * What a detail page remembers about the collection the reader came from, so
@@ -69,10 +70,14 @@ export const returnTargetSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("user"),
     ref: z.string().regex(USER_REF),
-    search: z.object({
-      role: UserIssueRole.optional(),
-      state: UserIssueState.optional(),
-    }),
+    search: z
+      .object({
+        role: UserIssueRole.optional(),
+        state: UserIssueState.optional(),
+        activity_year: z.number().optional(),
+        activity_day: z.string().optional(),
+      })
+      .refine((search) => !parseActivityDateSearch(search).activity_invalid),
   }),
 ]);
 export type ReturnTarget = z.infer<typeof returnTargetSchema>;

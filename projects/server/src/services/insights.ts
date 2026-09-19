@@ -17,8 +17,15 @@ import {
 } from "../db/project-schema.ts";
 import { DomainError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
+import {
+  calendarProvider,
+  dateValue,
+  localDateBoundary,
+  rowsFrom,
+  validatedTimezone,
+} from "./calendar.ts";
 import { aggregateInsights } from "./insights/aggregate.ts";
-import { type BoundaryProvider, buildBuckets } from "./insights/buckets.ts";
+import { buildBuckets } from "./insights/buckets.ts";
 import { type ReplayEvent, replayIssue } from "./insights/replay.ts";
 import { insightsSettingsResponse } from "./insights-settings.ts";
 import { live } from "./trash.ts";
@@ -35,67 +42,6 @@ const REPLAY_EVENT_TYPES = [
 
 function validation(message: string, details?: unknown): DomainError {
   return new DomainError(400, "validation_failed", message, details);
-}
-
-function rowsFrom(result: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(result)) return result as Array<Record<string, unknown>>;
-  if (typeof result === "object" && result !== null && "rows" in result) {
-    const rows = result.rows;
-    if (Array.isArray(rows)) return rows as Array<Record<string, unknown>>;
-  }
-  return [];
-}
-
-function dateValue(
-  row: Record<string, unknown> | undefined,
-  key: string,
-): Date {
-  const raw = row?.[key];
-  const date = raw instanceof Date ? raw : new Date(String(raw));
-  if (Number.isNaN(date.getTime()))
-    throw new Error(`database returned invalid ${key}`);
-  return date;
-}
-
-async function validatedTimezone(db: Db, timezone: string): Promise<string> {
-  const result = rowsFrom(
-    await db.execute(
-      sql`select name from pg_timezone_names where name = ${timezone} limit 1`,
-    ),
-  );
-  if (result.length === 0)
-    throw validation(`unknown IANA timezone: ${timezone}`);
-  return timezone;
-}
-
-async function localDateBoundary(
-  db: Db,
-  value: string,
-  timezone: string,
-): Promise<Date> {
-  const rows = rowsFrom(
-    await db.execute(
-      sql`select (${value}::date::timestamp at time zone ${timezone}) as boundary`,
-    ),
-  );
-  return dateValue(rows[0], "boundary");
-}
-
-function calendarProvider(db: Db): BoundaryProvider {
-  return async (from, to, grain, timezone) => {
-    const base = sql`
-      select (d::timestamp at time zone ${timezone}) as boundary
-      from generate_series(
-        (timezone(${timezone}, ${from.toISOString()}::timestamptz)::date - 8),
-        (timezone(${timezone}, ${to.toISOString()}::timestamptz)::date + 8),
-        interval '1 day'
-      ) as d`;
-    const result =
-      grain === "1w"
-        ? await db.execute(sql`${base} where extract(isodow from d) = 1`)
-        : await db.execute(base);
-    return rowsFrom(result).map((row) => dateValue(row, "boundary"));
-  };
 }
 
 function isLocalDate(value: string): boolean {

@@ -231,7 +231,13 @@ describe("question wait", () => {
     expect(result.stdout).toContain("answered #comment-42");
   });
 
-  it("decodes the question_answered event when it arrives", async () => {
+  it.each([
+    { name: "legacy answer", via: undefined, declined: false },
+    { name: "legacy decline", via: undefined, declined: true },
+    { name: "active answer", via: "answer", declined: false },
+    { name: "explicit decline", via: "answer", declined: true },
+    { name: "hide settlement", via: "hide", declined: true },
+  ])("decodes the arriving $name as answered", async ({ via, declined }) => {
     const clock = virtualClock();
     let polls = 0;
     const { fetchImpl } = fakeFetch([
@@ -256,12 +262,15 @@ describe("question wait", () => {
                 actor: USER,
                 payload: {
                   comment_id: 42,
+                  ...(via === undefined ? {} : { via }),
                   answers: [
                     {
                       key: "schema",
-                      selected: [{ index: 0, label: "New entity" }],
+                      selected: declined
+                        ? []
+                        : [{ index: 0, label: "New entity" }],
                       other: null,
-                      declined: false,
+                      declined,
                     },
                   ],
                 },
@@ -293,7 +302,16 @@ describe("question wait", () => {
     expect(result.exitCode).toBe(0);
     const out = JSON.parse(result.stdout);
     expect(out.event_id).toBe(7);
-    expect(out.answers[0].key).toBe("schema");
+    expect(out.answers).toEqual([
+      {
+        key: "schema",
+        selected: declined ? [] : [{ index: 0, label: "New entity" }],
+        other: null,
+        declined,
+      },
+    ]);
+    expect(result.stdout).not.toContain("no answer within");
+    expect(polls).toBe(2);
     expect(clock.elapsed()).toBe(2_000);
   });
 

@@ -54,6 +54,8 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Membership predicate, not an enum label: parser-derived MIME base is compared to true and unknown media types fall through to OCTET_STREAM.",
   "projects/server/src/http/content-type.ts :: read VIEWABLE_TYPES[base] #1":
     "Membership predicate, not an enum label: parser-derived MIME base is compared to true and unknown media types fall through to OCTET_STREAM.",
+  "projects/server/src/services/activity-calendar/evidence.ts :: read rules[kind] #1":
+    "Closed server producer: ACTIVITY_EVENT_TYPES.map supplies kind from the local literal allowlist, and rules is a total Record of that list. Persisted columns.type is only the SQL CASE operand; unknown types reach ELSE false, never index rules.",
   "projects/server/src/services/agents.ts :: read ROLE_RANK[role] #1":
     "Same-version server DB role: project_members.role is written by this server from parsed MemberRole requests; listing sort trusts that internal invariant. Drizzle enum is NOT a runtime parse or DB CHECK.",
   "projects/server/src/services/attachment-names.ts :: read COMPOUND_EXTENSIONS[`${before}.${last}`.toLowerCase()] #1":
@@ -115,7 +117,9 @@ const DECLARED: Readonly<Record<string, string>> = {
   "projects/web/src/api/search.ts :: read SEARCH_DOMAIN_IS[d] #1":
     "Closed domain selection: caller domains originate from SEARCH_DOMAINS options or searchDomainsOf parseSearchQuery; SEARCH_DOMAIN_IS maps that local domain union.",
   "projects/web/src/api/useUserEvents.ts :: switch event.entity #1":
-    "Parsed SSE boundary: onChangeFrame uses CrossChangeEventSchema.parse and onMeFrame uses MeEventSchema.parse; BroadcastChannel messages re-enter these same handlers.",
+    "Parsed SSE boundary: invalidationsFor receives onChangeFrame's CrossChangeEventSchema.parse result; shared events.ts defines entity with the closed ChangeEntity enum. Direct SSE and forwarded BroadcastChannel frames use this same parser before the activity switch.",
+  "projects/web/src/api/useUserEvents.ts :: switch event.entity #2":
+    "Parsed SSE boundary: entityInvalidations receives the same parsed ChangeEvent from invalidationsFor; CrossChangeEventSchema.parse validates shared ChangeEntity for direct SSE and forwarded BroadcastChannel frames before either switch.",
   "projects/web/src/api/useUserEvents.ts :: switch event.kind #1":
     "Parsed SSE boundary: onChangeFrame uses CrossChangeEventSchema.parse and onMeFrame uses MeEventSchema.parse; BroadcastChannel messages re-enter these same handlers.",
   "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #1":

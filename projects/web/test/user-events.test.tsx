@@ -15,6 +15,10 @@ import type {
 } from "@todou/shared";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  projectActivityCalendarQuery,
+  userActivityCalendarQuery,
+} from "../src/api/activity-calendar.ts";
 import { issuesEntry } from "../src/api/issues-cache.ts";
 import { clientOrigin } from "../src/api/queries.ts";
 import { openTabChannel, type TabMessage } from "../src/api/tab-sync.ts";
@@ -71,6 +75,37 @@ const cachedInbox = (...items: Record<string, unknown>[]) => ({
   truncated: false,
 });
 
+/** Production keys for cached years, drilldowns, viewers, and profile subjects. */
+const activityCacheKeys = () => {
+  const request = { viewerId: USER_ID, year: 2026, tz: "UTC" };
+  const requests = [
+    request,
+    { ...request, day: AT.slice(0, 10), after: "next-page" },
+    { ...request, viewerId: USER_ID + 1, year: 2025, tz: "Asia/Tokyo" },
+  ];
+  return {
+    project: requests.map((input) => [
+      ...projectActivityCalendarQuery({
+        ...input,
+        slug: "todou",
+        projectId: 1,
+      }).queryKey,
+    ]),
+    otherProject: requests.map((input) => [
+      ...projectActivityCalendarQuery({
+        ...input,
+        slug: "other",
+        projectId: 2,
+      }).queryKey,
+    ]),
+    personal: [USER_ID, USER_ID + 2].flatMap((subjectId) =>
+      requests.map((input) => [
+        ...userActivityCalendarQuery({ ...input, subjectId }).queryKey,
+      ]),
+    ),
+  };
+};
+
 describe("invalidationsFor (SSE → invalidation descriptors)", () => {
   it("falls back to a broad refetch for an unjudged issue event", () => {
     // No `list_row`: a server predating T-279, or a publish path nobody
@@ -89,6 +124,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["issue-ref", "todou", 42], scope: "refetch" },
       { key: ["comment-ref", "todou", 42], scope: "refetch" },
       { key: ["comment-location"], scope: "refetch" },
+      { key: ["activity-project", "todou"], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
     ]);
   });
 
@@ -141,21 +178,65 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     expect(keys).not.toContainEqual(["issue-ref", "old-slug", 42]);
   });
 
-  it("leaves the lists to the paired issue event on a spec change", () => {
-    // Every spec write emits an `issue` event too, and its `activity`
-    // verdict refreshes exactly the pages showing the badge — so a second,
-    // broad pass on the same key would only undo that narrowing.
-    expect(
-      invalidationsFor(
-        { entity: "spec", id: 1, action: "updated", issue_number: 42 },
+  it.each([
+    {
+      entity: "spec" as const,
+      action: "updated" as const,
+      keys: [
+        ["spec", "todou", 42],
+        ["spec-files", "todou", 42, "current"],
+        ["issue", "todou", 42],
+      ],
+    },
+    {
+      entity: "attachment" as const,
+      action: "created" as const,
+      keys: [
+        ["issue", "todou", 42],
+        ["timeline", "todou", 42],
+        ["attachments", "todou", 42],
+      ],
+    },
+  ])(
+    "leaves $entity activity refresh to its paired events",
+    ({ entity, action, keys }) => {
+      const own = invalidationsFor(
+        { entity, id: 1, action, issue_number: 42 },
         "todou",
-      ).map((inv) => inv.key),
-    ).toEqual([
-      ["spec", "todou", 42],
-      ["spec-files", "todou", 42, "current"],
-      ["issue", "todou", 42],
-    ]);
-  });
+      );
+      expect(own).toEqual(keys.map((key) => ({ key, scope: "refetch" })));
+
+      // Spec writes and attachment uploads also publish the issue's activity
+      // verdict and a timeline entry. Those refresh the calendars once per burst.
+      const batch = coalesceBatch([
+        ...own,
+        ...invalidationsFor(
+          {
+            entity: "issue",
+            id: 42,
+            action: "updated",
+            issue_number: 42,
+            list_row: { kind: "activity" },
+          },
+          "todou",
+        ),
+        ...invalidationsFor(
+          { entity: "timeline", id: 1, action: "created", issue_number: 42 },
+          "todou",
+        ),
+      ]);
+      expect(
+        batch.filter(
+          (entry) =>
+            entry.key[0] === "activity-project" ||
+            entry.key[0] === "activity-user",
+        ),
+      ).toEqual([
+        { key: ["activity-project", "todou"], scope: "refetch" },
+        { key: ["activity-user"], scope: "refetch" },
+      ]);
+    },
+  );
 
   it("scopes timeline events' list refetch to pages containing the issue", () => {
     expect(
@@ -176,6 +257,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["insights-burn", "todou"], scope: "refetch" },
       { key: ["comment-ref"], scope: "refetch" },
       { key: ["comment-location"], scope: "refetch" },
+      { key: ["activity-project", "todou"], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
     ]);
   });
 
@@ -191,6 +274,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       ["issues", "todou"],
       ["comment-ref"],
       ["comment-location"],
+      ["activity-project", "todou"],
+      ["activity-user"],
     ]);
   });
 
@@ -202,6 +287,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["issues", "p"], scope: "refetch" },
       { key: ["insights-settings", "p"], scope: "refetch" },
       { key: ["insights-burn", "p"], scope: "refetch" },
+      { key: ["activity-project", "p"], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
     ]);
     // A member event can be the user's own grant or revocation, so the
     // project list goes stale with it (T-122) — as does the agent Projects
@@ -219,6 +306,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["issue-ref"], scope: "refetch" },
       { key: ["comment-ref"], scope: "refetch" },
       { key: ["comment-location"], scope: "refetch" },
+      { key: ["activity-project", "p"], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
     ]);
   });
 
@@ -271,6 +360,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     expect(keys).toContainEqual(["issue-ref"]);
     expect(keys).toContainEqual(["comment-ref"]);
     expect(keys).toContainEqual(["comment-location"]);
+    expect(keys).toContainEqual(["activity-project"]);
+    expect(keys).toContainEqual(["activity-user"]);
     // A preference toggled elsewhere during the outage has no other way in:
     // its `me` event went down with the connection (T-275).
     expect(keys).toContainEqual(["me-prefs"]);
@@ -470,6 +561,34 @@ describe("coalesceBatch (T-275)", () => {
     ).toEqual([
       { key: ["timeline", "todou", 3], scope: "refetch" },
       { key: ["issues", "todou"], scope: { issueRows: [listVerdict(3)] } },
+    ]);
+  });
+
+  it("coalesces activity prefixes across entities and projects", () => {
+    const batch = coalesceBatch([
+      ...invalidationsFor(
+        { entity: "issue", id: 3, action: "updated", issue_number: 3 },
+        "todou",
+      ),
+      ...invalidationsFor(
+        { entity: "timeline", id: 9, action: "updated", issue_number: 3 },
+        "todou",
+      ),
+      ...invalidationsFor(
+        { entity: "member", id: USER_ID, action: "deleted" },
+        "other",
+      ),
+    ]);
+    expect(
+      batch.filter(
+        (entry) =>
+          entry.key[0] === "activity-project" ||
+          entry.key[0] === "activity-user",
+      ),
+    ).toEqual([
+      { key: ["activity-project", "todou"], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
+      { key: ["activity-project", "other"], scope: "refetch" },
     ]);
   });
 
@@ -730,6 +849,13 @@ describe("useUserEvents", () => {
     return { spy, hook, queryClient };
   }
 
+  const seedActivityCache = (queryClient: QueryClient) => {
+    const keys = activityCacheKeys();
+    for (const key of [...keys.project, ...keys.otherProject, ...keys.personal])
+      queryClient.setQueryData(key, { cached: true });
+    return keys;
+  };
+
   /** Calls the spy recorded against exactly the `["inbox"]` key. */
   const inboxCalls = (spy: ReturnType<typeof setup>["spy"]) =>
     spy.mock.calls.filter(
@@ -835,8 +961,11 @@ describe("useUserEvents", () => {
     );
   });
 
-  /** One change event on issue 7 of todou, carrying `row` as its verdict. */
-  const emitInboxRow = (row: InboxRowState | null) => {
+  /** One change on issue 7 of todou, unless the event overrides that pointer. */
+  const emitInboxRow = (
+    row: InboxRowState | null,
+    over: Partial<CrossChangeEvent> = {},
+  ) => {
     MockEventSource.instances[0]?.emit("change", {
       entity: "timeline",
       id: 9,
@@ -844,9 +973,75 @@ describe("useUserEvents", () => {
       issue_number: 7,
       project: "todou",
       inbox_row: row,
+      ...over,
     });
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
   };
+
+  it.each<{ name: string; event: Partial<CrossChangeEvent> }>([
+    {
+      name: "a timeline revision",
+      event: { action: "updated" },
+    },
+    {
+      name: "a pointerless issue change",
+      event: { entity: "issue", action: "updated", issue_number: undefined },
+    },
+    {
+      name: "a pointerless timeline change",
+      event: { issue_number: undefined },
+    },
+    {
+      name: "the viewer losing project membership",
+      event: {
+        entity: "member",
+        id: USER_ID,
+        action: "deleted",
+        issue_number: undefined,
+      },
+    },
+    {
+      name: "a status change",
+      event: { entity: "status", action: "updated", issue_number: undefined },
+    },
+    {
+      name: "a project change",
+      event: { entity: "project", action: "updated", issue_number: undefined },
+    },
+  ])("$name refreshes cached project and personal activity", ({ event }) => {
+    vi.useFakeTimers();
+    const { spy, queryClient } = setup();
+    const keys = seedActivityCache(queryClient);
+
+    emitInboxRow(null, event);
+
+    for (const key of [...keys.project, ...keys.personal])
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    for (const key of keys.otherProject)
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false);
+    expect(callsFor(spy, ["activity-project", "todou"])).toHaveLength(1);
+    expect(callsFor(spy, ["activity-user"])).toHaveLength(1);
+  });
+
+  it("refreshes every cached personal subject for a foreign project event", () => {
+    vi.useFakeTimers();
+    const { spy, queryClient } = setup();
+    const keys = seedActivityCache(queryClient);
+
+    emitInboxRow(null, {
+      entity: "issue",
+      action: "updated",
+      project: "other",
+    });
+
+    for (const key of [...keys.otherProject, ...keys.personal])
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    for (const key of keys.project)
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false);
+    expect(callsFor(spy, ["activity-project", "other"])).toHaveLength(1);
+    expect(callsFor(spy, ["activity-project", "todou"])).toHaveLength(0);
+    expect(callsFor(spy, ["activity-user"])).toHaveLength(1);
+  });
 
   it("leaves the cached inbox alone when the card is not in it", () => {
     // The half T-273 won, kept: not "refetch less often" but "leave the
@@ -1104,25 +1299,60 @@ describe("useUserEvents", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("ignores malformed payloads", () => {
+  it("ignores malformed and unknown change frames before accepting valid activity", () => {
+    vi.useFakeTimers();
     const { spy } = setup();
     const source = MockEventSource.instances[0];
-    for (const listener of source?.listeners.get("change") ?? []) {
+    expect(source).toBeDefined();
+    for (const listener of source.listeners.get("change") ?? []) {
       listener({ data: "not json" } as MessageEvent);
     }
     // Valid JSON but no project slug: fails the CrossChangeEvent parse.
-    source?.emit("change", {
+    source.emit("change", {
       entity: "timeline",
       id: 9,
       action: "created",
       issue_number: 3,
     });
+    for (const entity of [
+      "future_entity",
+      "constructor",
+      "__proto__",
+      "toString",
+    ]) {
+      source.emit("change", {
+        entity,
+        id: 9,
+        action: "created",
+        issue_number: 3,
+        project: "todou",
+      });
+    }
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
     expect(spy).not.toHaveBeenCalled();
+
+    // Reverse assertion: valid frames still invalidate in their existing order.
+    source.emit("change", {
+      entity: "status",
+      id: 9,
+      action: "updated",
+      project: "todou",
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    expect(spy.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+      ["statuses", "todou"],
+      ["issues", "todou"],
+      ["insights-settings", "todou"],
+      ["insights-burn", "todou"],
+      ["activity-project", "todou"],
+      ["activity-user"],
+    ]);
   });
 
   it("coalesces an event burst into one flush without duplicates", () => {
     vi.useFakeTimers();
-    const { spy } = setup();
+    const { spy, queryClient } = setup();
+    const keys = seedActivityCache(queryClient);
     const source = MockEventSource.instances[0];
     const event = {
       entity: "timeline",
@@ -1133,6 +1363,8 @@ describe("useUserEvents", () => {
     };
     source?.emit("change", event);
     source?.emit("change", { ...event, id: 10 });
+    source?.emit("change", { ...event, id: 11, project: "other" });
+    source?.emit("change", { ...event, id: 12, project: "other" });
     expect(spy).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
@@ -1142,6 +1374,24 @@ describe("useUserEvents", () => {
         JSON.stringify(["timeline", "todou", 3]),
     );
     expect(timelineCalls).toHaveLength(1);
+    expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toEqual([
+      ["timeline", "todou", 3],
+      ["questions", "todou", 3],
+      ["issues", "todou"],
+      ["insights-burn", "todou"],
+      ["comment-ref"],
+      ["comment-location"],
+      ["activity-project", "todou"],
+      ["activity-user"],
+      ["inbox"],
+      ["timeline", "other", 3],
+      ["questions", "other", 3],
+      ["issues", "other"],
+      ["insights-burn", "other"],
+      ["activity-project", "other"],
+    ]);
+    for (const key of [...keys.project, ...keys.otherProject, ...keys.personal])
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
   });
 
   it("lets a broad issues refetch subsume a contains-scope in the same window", () => {
@@ -1232,14 +1482,20 @@ describe("useUserEvents", () => {
   });
 
   it("compensates with broad invalidation after a reconnect", async () => {
-    const { spy } = setup();
+    const { spy, queryClient } = setup();
+    const keys = seedActivityCache(queryClient);
     const source = MockEventSource.instances[0];
     source?.onerror?.();
     source?.onopen?.();
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] }),
     );
-    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(6);
+    expect(spy).toHaveBeenCalledTimes(25);
+    expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toEqual(
+      reconnectInvalidations(),
+    );
+    for (const key of [...keys.project, ...keys.otherProject, ...keys.personal])
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
   });
 
   it("closes the stream on unmount", () => {
@@ -1316,6 +1572,13 @@ describe("isSharedKey / shouldAdopt (T-276)", () => {
     expect(isSharedKey(["issues", "todou"])).toBe(false);
     expect(isSharedKey(["inbox", "todou"])).toBe(false);
     expect(isSharedKey(["projects", 1])).toBe(false);
+    expect(isSharedKey(["activity-project"])).toBe(false);
+    expect(isSharedKey(["activity-project", "todou"])).toBe(false);
+    expect(isSharedKey(["activity-user"])).toBe(false);
+    expect(isSharedKey(["activity-user", USER_ID])).toBe(false);
+    const keys = activityCacheKeys();
+    for (const key of [...keys.project, ...keys.otherProject, ...keys.personal])
+      expect(isSharedKey(key)).toBe(false);
     expect(isSharedKey("inbox")).toBe(false);
   });
 
@@ -1386,13 +1649,14 @@ describe("useUserEvents visibility gate (T-276)", () => {
       )
       .map((call) => call[0]?.refetchType ?? "default");
 
-  const emitTimelineEvent = () => {
+  const emitTimelineEvent = (over: Partial<CrossChangeEvent> = {}) => {
     MockEventSource.instances[0]?.emit("change", {
       entity: "timeline",
       id: 9,
       action: "created",
       issue_number: 7,
       project: "todou",
+      ...over,
     });
   };
 
@@ -1425,6 +1689,48 @@ describe("useUserEvents visibility gate (T-276)", () => {
 
     focusManager.setFocused(true);
     await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
+  });
+
+  it("refetches a mounted personal calendar for a foreign project timeline event", async () => {
+    focusManager.setFocused(true);
+    const options = userActivityCalendarQuery({
+      viewerId: USER_ID,
+      subjectId: USER_ID + 2,
+      year: 2026,
+      tz: "UTC",
+    });
+    const before = { days: [{ date: AT.slice(0, 10), count: 0 }] };
+    const after = { days: [{ date: AT.slice(0, 10), count: 1 }] };
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce(before)
+      .mockResolvedValue(after);
+    const { spy, hook, queryClient } = setupTab({
+      ...options,
+      queryKey: [...options.queryKey],
+      queryFn,
+      staleTime: Infinity,
+    });
+    try {
+      await waitFor(() =>
+        expect(queryClient.getQueryData(options.queryKey)).toEqual(before),
+      );
+      expect(queryFn).toHaveBeenCalledTimes(1);
+
+      emitTimelineEvent({ project: "other", action: "updated" });
+
+      await waitFor(() =>
+        expect(queryClient.getQueryData(options.queryKey)).toEqual(after),
+      );
+      expect(queryFn).toHaveBeenCalledTimes(2);
+      expect(passes(spy, ["activity-user"])).toEqual(["default"]);
+      expect(queryClient.getQueryState(options.queryKey)?.isInvalidated).toBe(
+        false,
+      );
+    } finally {
+      hook.unmount();
+      queryClient.clear();
+    }
   });
 
   it("takes a long staleTime with it: me-prefs refetches on focus too", async () => {
@@ -1630,9 +1936,22 @@ describe("useUserEvents tab sharing (T-276)", () => {
     );
   });
 
-  it("invalidates in both tabs from the leader's single stream", async () => {
+  it("rejects unknown entities in both tabs before accepting valid activity", async () => {
     vi.useFakeTimers();
     const { leader, follower } = await twoTabs();
+    for (const entity of [
+      "future_entity",
+      "constructor",
+      "__proto__",
+      "toString",
+    ]) {
+      leaderStream().emit("change", { ...TIMELINE_EVENT, entity });
+    }
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    for (const tab of [leader, follower]) {
+      expect(tab.spy).not.toHaveBeenCalled();
+    }
+
     leaderStream().emit("change", TIMELINE_EVENT);
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
 
@@ -1640,6 +1959,14 @@ describe("useUserEvents tab sharing (T-276)", () => {
       expect(tab.spy).toHaveBeenCalledWith({
         queryKey: ["timeline", "todou", 3],
       });
+      expect(
+        tab.spy.mock.calls
+          .map(([filters]) => filters?.queryKey)
+          .filter(
+            (key) =>
+              key?.[0] === "activity-project" || key?.[0] === "activity-user",
+          ),
+      ).toEqual([["activity-project", "todou"], ["activity-user"]]);
     }
   });
 
@@ -1847,6 +2174,13 @@ describe("useUserEvents tab sharing (T-276)", () => {
       queryKey: ["timeline", "todou", 7],
       queryFn: () => [],
     });
+    const keys = activityCacheKeys();
+    for (const key of [...keys.project, ...keys.personal]) {
+      await leader.queryClient.fetchQuery({
+        queryKey: key,
+        queryFn: () => ({ cached: true }),
+      });
+    }
 
     expect(seen).toEqual([]);
     channel.close();
@@ -1867,6 +2201,17 @@ describe("useUserEvents tab sharing (T-276)", () => {
     expect(
       follower.queryClient.getQueryData(["issues", "todou"]),
     ).toBeUndefined();
+    const keys = activityCacheKeys();
+    for (const key of [...keys.project, ...keys.personal]) {
+      channel.post({
+        v: 1,
+        frame: "data",
+        key,
+        data: { cached: true },
+        at: Date.now(),
+      });
+      expect(follower.queryClient.getQueryData(key)).toBeUndefined();
+    }
     channel.close();
   });
 

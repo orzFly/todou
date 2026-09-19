@@ -13,6 +13,7 @@ export * from "./ref-shapes.ts";
 export * from "./references-grammar.ts";
 export * from "./resolve-links.ts";
 export * from "./schemas/access-denial.ts";
+export * from "./schemas/activity-calendar.ts";
 export * from "./schemas/agent.ts";
 export * from "./schemas/agent-context.ts";
 export * from "./schemas/attachment.ts";

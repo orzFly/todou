@@ -5,7 +5,6 @@ import {
   createRoute,
   createRouter,
   RouterProvider,
-  useParams,
 } from "@tanstack/react-router";
 import {
   act,
@@ -14,14 +13,24 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { PublicUser } from "@todou/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, queryClient } from "../src/api/queries.ts";
+import type { ActivityCalendarResponse, PublicUser } from "@todou/shared";
+import * as sonner from "sonner";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { userActivityCalendarQuery } from "../src/api/activity-calendar.ts";
+import { api, meQuery, queryClient } from "../src/api/queries.ts";
 import { userQuery, userSearchSchema } from "../src/api/users.ts";
-import {
-  UserProfilePage,
-  UserRedirectPage,
-} from "../src/pages/user-profile.tsx";
+import { router as appRouter } from "../src/router.tsx";
+
+vi.mock("sonner", async (importOriginal) => {
+  const actual = await importOriginal<typeof sonner>();
+  return {
+    ...actual,
+    toast: Object.assign(
+      vi.fn(() => "invalid-date"),
+      actual.toast,
+    ),
+  };
+});
 
 const alice: PublicUser = {
   id: 7,
@@ -45,24 +54,16 @@ const bot: PublicUser = {
 
 const Root = createRootRoute();
 
-/** The app's own dispatch (router.tsx): digits redirect, names render. */
-function UserRoutePage() {
-  const ref = useParams({
-    from: Route.fullPath as never,
-    strict: false,
-  }) as { ref: string };
-  return /^\d{1,15}$/.test(ref.ref) ? (
-    <UserRedirectPage ref={ref.ref} />
-  ) : (
-    <UserProfilePage ref={ref.ref} />
-  );
-}
+// Use the registered production component: its route hooks require this exact
+// pathless parent id, even though the public URL remains /users/$ref.
+const Authed = createRoute({ getParentRoute: () => Root, id: "authed" });
 
 const Route = createRoute({
-  getParentRoute: () => Root,
+  getParentRoute: () => Authed,
   path: "/users/$ref",
-  component: UserRoutePage,
+  component: appRouter.routesById["/authed/users/$ref"].options.component,
   validateSearch: userSearchSchema,
+  search: appRouter.routesById["/authed/users/$ref"].options.search,
 });
 
 /**
@@ -70,8 +71,15 @@ const Route = createRoute({
  * a reader does: by URL.
  */
 function renderAt(path: string, client: QueryClient) {
+  client.setQueryData(meQuery.queryKey, {
+    ...alice,
+    id: 42,
+    login: "viewer",
+    email: "viewer@example.com",
+    is_instance_admin: false,
+  });
   const router = createRouter({
-    routeTree: Root.addChildren([Route]),
+    routeTree: Root.addChildren([Authed.addChildren([Route])]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
   const view = render(
@@ -110,6 +118,36 @@ const clientWithId = (data: PublicUser, id: number): QueryClient => {
   client.setQueryData(userQuery(data.login).queryKey, data);
   return client;
 };
+
+// No recorded days means the identity/no-date cases keep their original URL.
+// Calendar-specific cases below replace this endpoint with recorded dates.
+beforeEach(() => {
+  vi.mocked(sonner.toast).mockClear();
+  vi.spyOn(api, "me").mockResolvedValue({
+    ...alice,
+    id: 42,
+    login: "viewer",
+    email: "viewer@example.com",
+    is_instance_admin: false,
+  });
+  vi.spyOn(api, "listUserIssues").mockResolvedValue({
+    items: [],
+    next_cursor: null,
+    has_more: false,
+  });
+  vi.spyOn(api, "listUserProjects").mockResolvedValue({ items: [] });
+  vi.spyOn(api, "getUserActivityCalendar").mockImplementation(
+    async (_subject, input) => ({
+      year: Number(input.year),
+      timezone: input.tz,
+      cutoff: "2026-09-19T12:00:00Z",
+      read_started_at: "2026-09-19T12:00:00Z",
+      read_finished_at: "2026-09-19T12:00:00Z",
+      days: [],
+      selection: null,
+    }),
+  );
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -371,5 +409,472 @@ describe("the id address under a failing read (T-414)", () => {
       role: "assignee",
       state: "all",
     });
+  });
+});
+
+function recordedCalendar(
+  input: Parameters<typeof api.getUserActivityCalendar>[1],
+): ActivityCalendarResponse {
+  const year = Number(input.year);
+  const start = Date.UTC(year, 0, 1);
+  const count = (Date.UTC(year + 1, 0, 1) - start) / 86_400_000;
+  return {
+    year,
+    timezone: input.tz,
+    cutoff: "2026-09-19T12:00:00Z",
+    read_started_at: "2026-09-19T12:00:00Z",
+    read_finished_at: "2026-09-19T12:00:00Z",
+    days: Array.from({ length: count }, (_, index) => ({
+      date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+      state: "recorded" as const,
+      count: 0,
+    })),
+    selection: input.day
+      ? {
+          date: input.day,
+          total: 0,
+          items: [],
+          next_cursor: null,
+          has_more: false,
+        }
+      : null,
+  };
+}
+
+describe("the registered user route's activity dates", () => {
+  const dates = { activity_year: 2025, activity_day: "2025-03-04" };
+  const search = { role: "assignee", state: "closed", ...dates };
+  const address =
+    "?role=assignee&state=closed&activity_year=2025&activity_day=2025-03-04";
+
+  beforeEach(() => {
+    const options = Intl.DateTimeFormat().resolvedOptions();
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+      ...options,
+      timeZone: "Asia/Tokyo",
+    });
+    vi.mocked(api.getUserActivityCalendar).mockImplementation(
+      async (_subject, input) => recordedCalendar(input),
+    );
+  });
+
+  it.each(["alice", "7"])(
+    "ignores a raw URL boolean marker at /users/%s",
+    async (ref) => {
+      const view = renderAt(
+        `/users/${ref}${address}&activity_invalid=true`,
+        clientWithId(alice, 7),
+      );
+      await view.findByText("No active cards on 2025-03-04.");
+      // The real TanStack parser decodes unquoted true as a boolean.
+      expect(
+        view.router.options.parseSearch!("?activity_invalid=true"),
+      ).toEqual({
+        activity_invalid: true,
+      });
+      expect(sonner.toast).not.toHaveBeenCalled();
+      const linked = view.router.buildLocation({
+        to: "/users/$ref",
+        params: { ref: "alice" },
+        search: true,
+        _includeValidateSearch: true,
+      });
+      expect(
+        new URLSearchParams(linked.searchStr).has("activity_invalid"),
+      ).toBe(false);
+      // Link target validation can derive fresh notice metadata too. Keep the
+      // actual invalid input so the destination can notify, but never the flag.
+      const invalidLink = view.router.buildLocation({
+        to: "/users/$ref",
+        params: { ref: "alice" },
+        search: {
+          role: "author",
+          activity_year: 2025,
+          activity_day: "2025-02-30",
+        },
+        _includeValidateSearch: true,
+      });
+      expect(
+        new URLSearchParams(invalidLink.searchStr).get("activity_day"),
+      ).toBe("2025-02-30");
+      expect(
+        new URLSearchParams(invalidLink.searchStr).has("activity_invalid"),
+      ).toBe(false);
+      fireEvent.click(view.getByRole("tab", { name: "Created" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual({
+          ...search,
+          role: "author",
+        }),
+      );
+      expect(view.router.state.location.searchStr).not.toContain(
+        "activity_invalid",
+      );
+      expect(sonner.toast).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["alice", "7"])(
+    "normalizes a genuine invalid date at /users/%s before role/state changes and reopening",
+    async (ref) => {
+      // No recorded fallback: normalization must not depend on the calendar
+      // supplying a default or the reader choosing a day.
+      vi.mocked(api.getUserActivityCalendar).mockImplementation(
+        async (_subject, input) => ({
+          ...recordedCalendar(input),
+          days: [],
+          selection: null,
+        }),
+      );
+      const view = renderAt(
+        `/users/${ref}?role=assignee&state=closed&activity_year=2025&activity_day=2025-02-30`,
+        clientWithId(alice, 7),
+      );
+      await view.findByText("No available dates in 2025.");
+      const normalized = {
+        role: "assignee",
+        state: "closed",
+        activity_year: 2025,
+      };
+      await waitFor(() => {
+        expect(view.router.state.location.pathname).toBe("/users/alice");
+        expect(view.router.state.location.search).toEqual(normalized);
+        expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
+          "Invalid activity date was reset.",
+        );
+      });
+      expect(view.router.history.canGoBack()).toBe(false);
+      fireEvent.click(view.getByRole("tab", { name: "Created" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual({
+          ...normalized,
+          role: "author",
+        }),
+      );
+      fireEvent.click(view.getByRole("tab", { name: "Open" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual({
+          role: "author",
+          activity_year: 2025,
+        }),
+      );
+      const shared = view.router.state.location.href;
+      expect(shared).not.toContain("activity_invalid");
+      expect(shared).not.toContain("2025-02-30");
+      view.unmount();
+      vi.mocked(sonner.toast).mockClear();
+      const reopened = renderAt(shared, clientWith(alice));
+      await reopened.findByText("No available dates in 2025.");
+      expect(reopened.router.state.location.search).toEqual({
+        role: "author",
+        activity_year: 2025,
+      });
+      expect(sonner.toast).not.toHaveBeenCalled();
+    },
+  );
+
+  it("loads the numeric subject in the viewer's cache and ignores URL timezone", async () => {
+    const client = clientWith(alice);
+    const view = renderAt(`/users/alice${address}&tz=Pacific/Honolulu`, client);
+    await view.findByText("No active cards on 2025-03-04.");
+    expect(api.getUserActivityCalendar).toHaveBeenCalledWith(7, {
+      year: 2025,
+      day: "2025-03-04",
+      tz: "Asia/Tokyo",
+      limit: 50,
+      after: undefined,
+    });
+    const request = {
+      viewerId: 42,
+      subjectId: 7,
+      year: 2025,
+      day: "2025-03-04",
+      tz: "Asia/Tokyo",
+    };
+    expect(
+      client.getQueryData(userActivityCalendarQuery(request).queryKey),
+    ).toMatchObject({ year: 2025, timezone: "Asia/Tokyo" });
+    expect(
+      client.getQueryData(
+        userActivityCalendarQuery({ ...request, viewerId: 7 }).queryKey,
+      ),
+    ).toBeUndefined();
+    expect(
+      (view.getByRole("spinbutton", { name: "Year" }) as HTMLInputElement)
+        .value,
+    ).toBe("2025");
+    expect(userSearchSchema(view.router.state.location.search)).toEqual(search);
+    expect(view.router.state.location.search).toEqual({
+      ...search,
+      tz: "Pacific/Honolulu",
+    });
+    fireEvent.click(view.getByRole("button", { name: /^2025-03-05\b/ }));
+    await view.findByText("No active cards on 2025-03-05.");
+    expect(view.router.state.location.search).toEqual({
+      ...search,
+      activity_day: "2025-03-05",
+    });
+    expect(api.getUserActivityCalendar).toHaveBeenLastCalledWith(7, {
+      year: 2025,
+      day: "2025-03-05",
+      tz: "Asia/Tokyo",
+      limit: 50,
+      after: undefined,
+    });
+  });
+
+  it("keeps role and state when selecting a day and another year", async () => {
+    const view = renderAt(`/users/alice${address}`, clientWith(alice));
+    await view.findByText("No active cards on 2025-03-04.");
+    fireEvent.click(view.getByRole("button", { name: /^2025-03-05\b/ }));
+    await view.findByText("No active cards on 2025-03-05.");
+    expect(view.router.state.location.search).toEqual({
+      ...search,
+      activity_day: "2025-03-05",
+    });
+
+    fireEvent.change(view.getByRole("spinbutton", { name: "Year" }), {
+      target: { value: "2024" },
+    });
+    // The server supplies the last recorded date in the newly chosen year.
+    await view.findByText("No active cards on 2024-12-31.");
+    expect(view.router.state.location.search).toEqual({
+      role: "assignee",
+      state: "closed",
+      activity_year: 2024,
+      activity_day: "2024-12-31",
+    });
+    expect(view.router.history.canGoBack()).toBe(true);
+    act(() => view.router.history.back());
+    await view.findByText("No active cards on 2025-03-05.");
+    expect(view.router.state.location.search).toEqual({
+      ...search,
+      activity_day: "2025-03-05",
+    });
+    act(() => view.router.history.back());
+    await view.findByText("No active cards on 2025-03-04.");
+    expect(view.router.state.location.search).toEqual(search);
+    act(() => view.router.history.forward());
+    await view.findByText("No active cards on 2025-03-05.");
+    expect(view.router.state.location.search).toEqual({
+      ...search,
+      activity_day: "2025-03-05",
+    });
+    act(() => view.router.history.forward());
+    await view.findByText("No active cards on 2024-12-31.");
+    expect(view.router.state.location.search).toEqual({
+      role: "assignee",
+      state: "closed",
+      activity_year: 2024,
+      activity_day: "2024-12-31",
+    });
+  });
+
+  it("keeps dates through role/state changes and resetting both defaults", async () => {
+    const view = renderAt(`/users/alice${address}`, clientWith(alice));
+    await view.findByText("No active cards on 2025-03-04.");
+    fireEvent.click(view.getByRole("tab", { name: "Created" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...search,
+        role: "author",
+      }),
+    );
+    fireEvent.click(
+      within(view.getByRole("tablist", { name: "State" })).getByRole("tab", {
+        name: "All",
+      }),
+    );
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...dates,
+        role: "author",
+        state: "all",
+      }),
+    );
+    fireEvent.click(
+      within(view.getByRole("tablist", { name: "Involvement" })).getByRole(
+        "tab",
+        { name: "All" },
+      ),
+    );
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...dates,
+        state: "all",
+      }),
+    );
+    fireEvent.click(view.getByRole("tab", { name: "Open" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual(dates),
+    );
+    expect(view.getByText("No active cards on 2025-03-04.")).toBeTruthy();
+    expect(view.router.history.canGoBack()).toBe(false);
+  });
+
+  it("replaces a numeric address with the complete date and filter search", async () => {
+    const view = renderAt(`/users/7${address}`, clientWithId(alice, 7));
+    await view.findByText("No active cards on 2025-03-04.");
+    expect(view.router.state.location.pathname).toBe("/users/alice");
+    expect(view.router.state.location.search).toEqual(search);
+    expect(view.router.history.canGoBack()).toBe(false);
+    expect(
+      view.getByRole("tab", { name: "Assigned" }).getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(
+      view.getByRole("tab", { name: "Closed" }).getAttribute("aria-selected"),
+    ).toBe("true");
+  });
+
+  it.each(["partially unavailable", "all unavailable"] as const)(
+    "resets a server-rejected day with one notice when dates are %s",
+    async (availability) => {
+      vi.mocked(api.getUserActivityCalendar).mockImplementation(
+        async (_subject, input) => {
+          const response = recordedCalendar(input);
+          return {
+            ...response,
+            days: response.days.map((day) =>
+              availability === "all unavailable" || day.date === "2025-03-04"
+                ? {
+                    date: day.date,
+                    state: "not_applicable" as const,
+                    count: null,
+                  }
+                : day,
+            ),
+          };
+        },
+      );
+      const view = renderAt(`/users/alice${address}`, clientWith(alice));
+      if (availability === "all unavailable") {
+        await view.findByText("No available dates in 2025.");
+      } else {
+        await view.findByText("No active cards on 2025-12-31.");
+      }
+      await waitFor(() => {
+        expect(view.router.state.location.search).toEqual({
+          role: "assignee",
+          state: "closed",
+          activity_year: 2025,
+          ...(availability === "all unavailable"
+            ? {}
+            : { activity_day: "2025-12-31" }),
+        });
+        expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
+          "Invalid activity date was reset.",
+        );
+      });
+      expect(view.router.history.canGoBack()).toBe(false);
+      expect(api.getUserActivityCalendar).not.toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ day: "2025-03-04" }),
+      );
+      fireEvent.click(view.getByRole("tab", { name: "Created" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search.role).toBe("author"),
+      );
+      expect(sonner.toast).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("leaves an empty year with no requested day quiet", async () => {
+    vi.mocked(api.getUserActivityCalendar).mockImplementation(
+      async (_subject, input) => {
+        const response = recordedCalendar(input);
+        return {
+          ...response,
+          days: response.days.map((day) => ({
+            date: day.date,
+            state: "not_applicable" as const,
+            count: null,
+          })),
+        };
+      },
+    );
+    const view = renderAt(
+      "/users/alice?role=assignee&state=closed&activity_year=2025",
+      clientWith(alice),
+    );
+    await view.findByText("No available dates in 2025.");
+    expect(view.router.state.location.search).toEqual({
+      role: "assignee",
+      state: "closed",
+      activity_year: 2025,
+    });
+    expect(sonner.toast).not.toHaveBeenCalled();
+    expect(view.router.history.canGoBack()).toBe(false);
+  });
+
+  it("notifies once and normalizes the id redirect while a cached calendar refresh is pending", async () => {
+    const notify = vi.mocked(sonner.toast);
+    let resolveRefresh!: (value: ActivityCalendarResponse) => void;
+    const refresh = {
+      promise: new Promise<ActivityCalendarResponse>((resolve) => {
+        resolveRefresh = resolve;
+      }),
+      resolve: (value: ActivityCalendarResponse) => resolveRefresh(value),
+    };
+    const request = {
+      viewerId: 42,
+      subjectId: 7,
+      year: 2025,
+      tz: "Asia/Tokyo",
+    };
+    const calendar = recordedCalendar(request);
+    const client = clientWithId(alice, 7);
+    // A cached grid remains usable while its refresh is pending. Normalizing
+    // the invalid URL must not wait for that refresh or a manual selection.
+    client.setQueryData(userActivityCalendarQuery(request).queryKey, calendar);
+    vi.mocked(api.getUserActivityCalendar).mockImplementation(
+      async (_subject, input) =>
+        input.day ? recordedCalendar(input) : refresh.promise,
+    );
+    const view = renderAt(
+      "/users/7?role=assignee&state=closed&activity_year=2025&activity_day=2025-02-30",
+      client,
+    );
+    try {
+      await view.findByRole("button", { name: /^2025-03-04\b/ });
+      await waitFor(() => {
+        expect(view.router.state.location.pathname).toBe("/users/alice");
+        expect(view.router.state.location.search).toEqual({
+          role: "assignee",
+          state: "closed",
+          activity_year: 2025,
+        });
+        expect(notify).toHaveBeenCalledExactlyOnceWith(
+          "Invalid activity date was reset.",
+        );
+      });
+      expect(userSearchSchema(view.router.state.location.search)).toEqual({
+        role: "assignee",
+        state: "closed",
+        activity_year: 2025,
+      });
+      expect(view.router.history.canGoBack()).toBe(false);
+      fireEvent.click(view.getByRole("button", { name: /^2025-03-04\b/ }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual(search),
+      );
+      await act(async () => refresh.resolve(calendar));
+      await view.findByText("No active cards on 2025-03-04.");
+      await settle();
+      expect(view.router.state.location.search).toEqual(search);
+      expect(notify).toHaveBeenCalledExactlyOnceWith(
+        "Invalid activity date was reset.",
+      );
+      expect(
+        view
+          .getByRole("tab", { name: "Assigned" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(
+        view.getByRole("tab", { name: "Closed" }).getAttribute("aria-selected"),
+      ).toBe("true");
+    } finally {
+      refresh.resolve(calendar);
+      view.unmount();
+    }
   });
 });

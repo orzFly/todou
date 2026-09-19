@@ -189,6 +189,160 @@ describe("insights search", () => {
   });
 });
 
+describe("insights search with activity dates", () => {
+  const chart = {
+    range: "custom",
+    from: "2026-02-28",
+    to: "2026-03-08",
+    grain: "6h",
+  };
+  const activity = {
+    activity_year: 2024,
+    activity_day: "2024-02-29",
+  };
+
+  it("preserves the exact legacy custom URL output", () => {
+    expect(
+      parseInsightsSearch({
+        ...chart,
+        tz: "America/New_York",
+        other: "ignored",
+      }),
+    ).toStrictEqual({
+      range: "custom",
+      from: "2026-02-28",
+      to: "2026-03-08",
+      grain: "6h",
+    });
+  });
+
+  it.each(["24h", "7d", "30d", "90d"])(
+    "preserves the exact legacy %s URL output",
+    (range) => {
+      expect(parseInsightsSearch({ range })).toStrictEqual({
+        range,
+        from: undefined,
+        to: undefined,
+        grain: undefined,
+      });
+    },
+  );
+
+  it("preserves the exact legacy empty URL output", () => {
+    expect(parseInsightsSearch({})).toStrictEqual({
+      range: undefined,
+      from: undefined,
+      to: undefined,
+      grain: undefined,
+    });
+  });
+
+  it("keeps every chart filter alongside a valid activity selection", () => {
+    expect(
+      parseInsightsSearch({
+        ...chart,
+        activity_year: "2024",
+        activity_day: "2024-02-29",
+      }),
+    ).toStrictEqual({ ...chart, ...activity });
+  });
+
+  it.each([
+    ["malformed day", { activity_day: "2026-03-08T00:00:00Z" }, {}],
+    ["nonexistent day", { activity_day: "2026-02-29" }, {}],
+    ["array day", { activity_day: ["2024-02-29"] }, {}],
+    ["malformed year", { activity_year: "2026x" }, {}],
+    ["array year", { activity_year: [2024] }, {}],
+    [
+      "mismatched year and day",
+      { activity_year: 2024, activity_day: "2023-02-28" },
+      { activity_year: 2024 },
+    ],
+    [
+      "invalid day beside a valid year",
+      { activity_year: 2024, activity_day: "2024-02-30" },
+      { activity_year: 2024 },
+    ],
+    [
+      "invalid year beside a valid day",
+      { activity_year: true, activity_day: "2024-02-29" },
+      { activity_day: "2024-02-29" },
+    ],
+  ])("keeps all chart filters with %s", (_case, invalid, preserved) => {
+    const parsed = parseInsightsSearch({ ...chart, ...invalid });
+    expect(parsed).toStrictEqual({
+      ...chart,
+      ...preserved,
+      activity_invalid: true,
+    });
+    expect(insightsRequest(parsed, context)).toStrictEqual({
+      from: "2026-02-28",
+      to: "2026-03-09",
+      grain: "6h",
+      tz: "America/New_York",
+    });
+  });
+
+  it("retains chart filters when the activity selection changes or clears", () => {
+    const initial = parseInsightsSearch({ ...chart, ...activity });
+    const changed = parseInsightsSearch({
+      ...initial,
+      activity_year: "2026",
+      activity_day: "2026-03-08",
+    });
+    expect(changed).toStrictEqual({
+      ...chart,
+      activity_year: 2026,
+      activity_day: "2026-03-08",
+    });
+    expect(
+      parseInsightsSearch({
+        ...changed,
+        activity_year: undefined,
+        activity_day: undefined,
+      }),
+    ).toStrictEqual(chart);
+  });
+
+  it("retains activity dates when chart filters change", () => {
+    const initial = parseInsightsSearch({ ...chart, ...activity });
+    expect(
+      parseInsightsSearch({
+        ...initial,
+        range: "90d",
+        from: undefined,
+        to: undefined,
+        grain: "1w",
+      }),
+    ).toStrictEqual({
+      range: "90d",
+      from: undefined,
+      to: undefined,
+      grain: "1w",
+      ...activity,
+    });
+  });
+
+  it.each([
+    ["range", "365d"],
+    ["from", "2026-02-30"],
+    ["to", "2026-03-08T00:00:00Z"],
+    ["grain", "2h"],
+  ])(
+    "keeps activity dates and valid chart fields with invalid %s",
+    (key, value) => {
+      expect(
+        parseInsightsSearch({ ...chart, ...activity, [key]: value }),
+      ).toStrictEqual({
+        ...chart,
+        [key]: undefined,
+        invalid: true,
+        ...activity,
+      });
+    },
+  );
+});
+
 describe("insights query keys", () => {
   const request = {
     from: "2026-03-01",

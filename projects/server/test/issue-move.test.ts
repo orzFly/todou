@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   attachments,
@@ -7,9 +7,11 @@ import {
   issueReads,
   issues,
   pendingUploads,
+  revisions,
   specVersions,
 } from "../src/db/project-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
+import { microIso } from "../src/services/timeline.ts";
 import {
   addUserWithToken,
   makeTestApp,
@@ -21,6 +23,29 @@ import {
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
 type Who = Record<string, string>;
+
+type MoveHistory = {
+  issueId: number;
+  events: Array<{
+    id: number;
+    type: string;
+    payload: unknown;
+    stamp: string;
+  }>;
+  comments: Array<{
+    id: number;
+    body: string;
+    component: typeof comments.$inferSelect.component;
+    stamp: string;
+  }>;
+  revisions: Array<{
+    id: number;
+    subjectType: string;
+    subjectId: number;
+    body: string;
+    stamp: string;
+  }>;
+};
 
 /**
  * Moving a card between projects, end to end.
@@ -103,6 +128,155 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
         dropped_assignees: Array<{ login: string }>;
       };
       issue: { number: number; moves: unknown[] };
+    };
+  };
+
+  const history = async (
+    projectId: number,
+    slug: string,
+    number: number,
+  ): Promise<MoveHistory> => {
+    const db = await dbOf(projectId, slug);
+    const [issue] = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(eq(issues.projectId, projectId), eq(issues.number, number)));
+    expect(issue).toBeDefined();
+    const issueId = issue!.id;
+    const events = await db
+      .select({
+        id: issueEvents.id,
+        type: issueEvents.type,
+        payload: issueEvents.payload,
+        stamp: microIso(issueEvents.createdAt),
+      })
+      .from(issueEvents)
+      .where(eq(issueEvents.issueId, issueId))
+      .orderBy(issueEvents.id);
+    const copiedComments = await db
+      .select({
+        id: comments.id,
+        body: comments.body,
+        component: comments.component,
+        stamp: microIso(comments.createdAt),
+      })
+      .from(comments)
+      .where(eq(comments.issueId, issueId))
+      .orderBy(comments.id);
+    const copiedRevisions = await db
+      .select({
+        id: revisions.id,
+        subjectType: revisions.subjectType,
+        subjectId: revisions.subjectId,
+        body: revisions.body,
+        stamp: microIso(revisions.createdAt),
+      })
+      .from(revisions)
+      .where(
+        and(
+          eq(revisions.projectId, projectId),
+          or(
+            and(
+              eq(revisions.subjectType, "issue_body"),
+              eq(revisions.subjectId, issueId),
+            ),
+            and(
+              eq(revisions.subjectType, "comment"),
+              inArray(
+                revisions.subjectId,
+                copiedComments.map((c) => c.id),
+              ),
+            ),
+          ),
+        ),
+      )
+      .orderBy(revisions.id);
+    return {
+      issueId,
+      events,
+      comments: copiedComments,
+      revisions: copiedRevisions,
+    };
+  };
+
+  const expectWatermark = (rows: MoveHistory) => {
+    const arrival = rows.events
+      .filter((event) => event.type === "moved_in")
+      .at(-1);
+    expect(arrival).toBeDefined();
+    // Exclude only this arrival: a prior moved_in is itself imported history.
+    const importedEvents = rows.events.filter(
+      (event) => event.id !== arrival!.id,
+    );
+    const maximum = (items: Array<{ id: number }>) =>
+      items.length === 0 ? null : Math.max(...items.map((item) => item.id));
+    const boundary = {
+      v: 1,
+      events: maximum(importedEvents),
+      comments: maximum(rows.comments),
+      revisions: maximum(rows.revisions),
+    };
+    expect(
+      (arrival!.payload as Record<string, unknown>).activity_imported_max_ids,
+    ).toStrictEqual(boundary);
+    if (boundary.events !== null) {
+      expect(arrival!.id).toBeGreaterThan(boundary.events);
+    }
+    return { arrival: arrival!, boundary, importedEvents };
+  };
+
+  const addActivity = async (
+    projectId: number,
+    slug: string,
+    issueId: number,
+    body: string,
+    stamp = "2025-01-02T03:04:05.123456Z",
+  ) => {
+    const db = await dbOf(projectId, slug);
+    const createdAt = sql`${stamp}::timestamptz`;
+    const [comment] = await db
+      .insert(comments)
+      .values({ projectId, issueId, authorId, body, createdAt })
+      .returning({ id: comments.id });
+    const [event] = await db
+      .insert(issueEvents)
+      .values({
+        projectId,
+        issueId,
+        actorId: authorId,
+        type: "title_changed",
+        payload: { from: "prior title", to: body },
+        createdAt,
+      })
+      .returning({ id: issueEvents.id });
+    const edits = await db
+      .insert(revisions)
+      .values([
+        {
+          projectId,
+          subjectType: "issue_body",
+          subjectId: issueId,
+          actorId: authorId,
+          body: `${body}: prior issue body`,
+          createdAt,
+        },
+        {
+          projectId,
+          subjectType: "comment",
+          subjectId: comment!.id,
+          actorId: authorId,
+          body: `${body}: prior comment body`,
+          createdAt,
+        },
+      ])
+      .returning({ id: revisions.id });
+    expect(comment).toBeDefined();
+    expect(event).toBeDefined();
+    expect(edits).toHaveLength(2);
+    return {
+      events: [event!.id],
+      comments: [comment!.id],
+      revisions: edits.map((revision) => revision.id),
     };
   };
 
@@ -506,31 +680,71 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     expect(events.map((e) => e.type)).toEqual(["moved_out"]);
   });
 
-  it("keeps the tombstone out of every list and puts moved_out in activity", async () => {
-    const source = await createIssue(A, "vanishes from lists", "findable body");
-    await moved(A, source.number, B);
+  it.each(["empty", "body revision only"])(
+    "keeps the tombstone out of lists and scopes watermarks to copied rows (%s history)",
+    async (historyKind) => {
+      const source = await createIssue(
+        A,
+        "vanishes from lists",
+        "findable body",
+      );
+      const unrelated = await createIssue(B, "unrelated destination history");
+      await addActivity(idB, B, unrelated.id, "unrelated");
+      if (historyKind === "body revision only") {
+        const db = await dbOf(idA, A);
+        await db.insert(revisions).values({
+          projectId: idA,
+          subjectType: "issue_body",
+          subjectId: source.id,
+          actorId: authorId,
+          body: "prior body without comments",
+        });
+      }
+      const result = await moved(A, source.number, B);
+      const copied = await history(idB, B, result.moved_to.number);
+      const { boundary } = expectWatermark(copied);
+      expect(copied.events.map((event) => event.type)).toEqual([
+        "opened",
+        "moved_in",
+      ]);
+      expect(copied.comments).toEqual([]);
+      expect(copied.revisions).toHaveLength(historyKind === "empty" ? 0 : 1);
+      if (historyKind === "body revision only") {
+        expect(copied.revisions[0]).toMatchObject({
+          subjectType: "issue_body",
+          subjectId: copied.issueId,
+          body: "prior body without comments",
+        });
+      }
+      expect(boundary).toStrictEqual({
+        v: 1,
+        events: copied.events[0]!.id,
+        comments: null,
+        revisions: historyKind === "empty" ? null : copied.revisions[0]!.id,
+      });
 
-    const list = await json(
-      await req(`/projects/${A}/issues?limit=100`, author),
-    );
-    expect(list.items.map((i: { number: number }) => i.number)).not.toContain(
-      source.number,
-    );
-    const search = await json(
-      await req(`/projects/${A}/search?q=findable`, author),
-    );
-    expect(JSON.stringify(search)).not.toContain("findable body");
+      const list = await json(
+        await req(`/projects/${A}/issues?limit=100`, author),
+      );
+      expect(list.items.map((i: { number: number }) => i.number)).not.toContain(
+        source.number,
+      );
+      const search = await json(
+        await req(`/projects/${A}/search?q=findable`, author),
+      );
+      expect(JSON.stringify(search)).not.toContain("findable body");
 
-    const activity = await json(
-      await req(`/projects/${A}/activity?limit=100`, author),
-    );
-    expect(
-      activity.items.some(
-        (i: { event_type?: string; issue_number: number }) =>
-          i.event_type === "moved_out" && i.issue_number === source.number,
-      ),
-    ).toBe(true);
-  });
+      const activity = await json(
+        await req(`/projects/${A}/activity?limit=100`, author),
+      );
+      expect(
+        activity.items.some(
+          (i: { event_type?: string; issue_number: number }) =>
+            i.event_type === "moved_out" && i.issue_number === source.number,
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("refuses the moves it must refuse", async () => {
     const mine = await createIssue(A, "permission checks", "body");
@@ -626,10 +840,90 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
 
   it("takes its old number back on the return trip", async () => {
     const source = await createIssue(A, "there and back", "body");
+    await addActivity(idA, A, source.id, "original history");
     const out = await moved(A, source.number, B);
+    const inB = await history(idB, B, out.moved_to.number);
+    const first = expectWatermark(inB);
+    expect(out.reinhabited).toBe(false);
+    // Activity written during the stay in B must join the next import.
+    const duringStay = await addActivity(idB, B, inB.issueId, "written in B");
+    const returning = await history(idB, B, out.moved_to.number);
+    for (const kind of ["events", "comments", "revisions"] as const) {
+      expect(first.boundary[kind]).toBeGreaterThan(0);
+      for (const id of duringStay[kind]) {
+        expect(id).toBeGreaterThan(first.boundary[kind]!);
+      }
+    }
+
+    // Simulate stale children left on the destination tombstone. Its
+    // moved_out and both polymorphic revision subjects must also disappear.
+    const stale = await addActivity(idA, A, source.id, "stale tombstone");
+    const tombstone = await history(idA, A, source.number);
+    expect(tombstone.events.some((event) => event.type === "moved_out")).toBe(
+      true,
+    );
     const back = await moved(B, out.moved_to.number, A);
     expect(back.reinhabited).toBe(true);
     expect(back.moved_to.number).toBe(source.number);
+    const home = await history(idA, A, source.number);
+    expect(home.issueId).toBe(source.id);
+    const second = expectWatermark(home);
+    const arrivals = home.events.filter((event) => event.type === "moved_in");
+    expect(arrivals).toHaveLength(2);
+    expect(arrivals[0]!.payload).toStrictEqual(first.arrival.payload);
+    expect(second.importedEvents).toContainEqual(arrivals[0]);
+    expect(arrivals[0]!.id).toBeLessThanOrEqual(second.boundary.events!);
+    expect(second.boundary).not.toStrictEqual(first.boundary);
+    expect(home.events.some((event) => event.type === "moved_out")).toBe(false);
+    expect(home.comments.map((comment) => comment.body)).toEqual([
+      "original history",
+      "written in B",
+    ]);
+    expect(home.revisions.map((revision) => revision.body).sort()).toEqual(
+      returning.revisions.map((revision) => revision.body).sort(),
+    );
+    expect(
+      second.importedEvents.map((event) => ({
+        type: event.type,
+        payload: event.payload,
+        stamp: event.stamp,
+      })),
+    ).toEqual(
+      returning.events.map((event) => ({
+        type: event.type,
+        payload: event.payload,
+        stamp: event.stamp,
+      })),
+    );
+    for (const kind of ["events", "comments", "revisions"] as const) {
+      expect(home[kind]).toHaveLength(
+        returning[kind].length + (kind === "events" ? 1 : 0),
+      );
+      expect(second.boundary[kind]).toBeGreaterThan(Math.max(...stale[kind]));
+      for (const id of stale[kind]) {
+        expect(home[kind].map((row) => row.id)).not.toContain(id);
+      }
+    }
+    const dbA = await dbOf(idA, A);
+    expect(
+      await dbA
+        .select({ id: revisions.id })
+        .from(revisions)
+        .where(inArray(revisions.id, stale.revisions)),
+    ).toEqual([]);
+
+    // New activity after reinhabiting is beyond the newly committed boundary.
+    const fresh = await addActivity(idA, A, home.issueId, "after return");
+    for (const kind of ["events", "comments", "revisions"] as const) {
+      for (const id of fresh[kind]) {
+        expect(id).toBeGreaterThan(second.boundary[kind]!);
+      }
+    }
+    expect(
+      (await history(idA, A, source.number)).events.find(
+        (event) => event.id === second.arrival.id,
+      ),
+    ).toEqual(second.arrival);
 
     // Both legs are on the card's record, oldest first.
     const issue = await json(
@@ -727,7 +1021,23 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
       payload: { by_project: A, by_issue: source.number },
     });
 
-    await moved(A, source.number, B);
+    const legacyPayload = { by_project: B, by_issue: inB.number };
+    const dbA = await dbOf(idA, A);
+    await dbA.insert(issueEvents).values({
+      projectId: idA,
+      issueId: source.id,
+      actorId: authorId,
+      type: "cross_referenced",
+      payload: legacyPayload,
+    });
+    const result = await moved(A, source.number, B);
+    const copied = await history(idB, B, result.moved_to.number);
+    const references = copied.events.filter(
+      (event) => event.type === "cross_referenced",
+    );
+    expect(references).toHaveLength(1);
+    expect(references[0]!.payload).toStrictEqual(legacyPayload);
+    expect(references[0]!.payload).not.toHaveProperty("by_project_id");
 
     const after = await json(
       await req(
@@ -746,14 +1056,60 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     });
   });
 
-  it("copies the timeline in order, to the microsecond", async () => {
+  it("copies history to the microsecond and separates imported activity by destination IDs", async () => {
     const source = await createIssue(A, "ordered history", "body");
+    const stamp = "2025-01-02T03:04:05.123456Z";
+    await addActivity(idA, A, source.id, "imported", stamp);
+    let questionId = 0;
     for (const body of ["first", "second", "third"]) {
-      await req(`/projects/${A}/issues/${source.number}/comments`, author, {
-        method: "POST",
-        body: JSON.stringify({ body }),
-      });
+      const res = await req(
+        `/projects/${A}/issues/${source.number}/comments`,
+        author,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            body,
+            ...(body === "first"
+              ? {
+                  component: {
+                    type: "questions",
+                    questions: [
+                      {
+                        key: "choice",
+                        question: "Which option?",
+                        options: [{ label: "One" }, { label: "Two" }],
+                      },
+                    ],
+                  },
+                }
+              : {}),
+          }),
+        },
+      );
+      expect(res.status).toBe(201);
+      if (body === "first") questionId = (await json(res)).id;
     }
+    const answerRes = await req(
+      `/projects/${A}/issues/${source.number}/comments/${questionId}/answers`,
+      author,
+      {
+        method: "POST",
+        body: JSON.stringify({ answers: [{ key: "choice", selected: [1] }] }),
+      },
+    );
+    expect(answerRes.status).toBe(201);
+    const answer = await json(answerRes);
+    // Legacy answers carry no `via`: copying must not invent provenance.
+    const legacyPayload = {
+      comment_id: questionId,
+      answers: answer.payload.answers,
+    };
+    const dbA = await dbOf(idA, A);
+    await dbA
+      .update(issueEvents)
+      .set({ payload: legacyPayload })
+      .where(eq(issueEvents.id, answer.id));
+    const original = await history(idA, A, source.number);
     const before = await json(
       await req(
         `/projects/${A}/issues/${source.number}/timeline?limit=100`,
@@ -772,6 +1128,85 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     // The copy adds moved_in at the end and changes nothing before it.
     expect(stamps(after).slice(0, stamps(before).length)).toEqual(
       stamps(before),
+    );
+
+    const copied = await history(idB, B, result.moved_to.number);
+    const { boundary, arrival, importedEvents } = expectWatermark(copied);
+    expect(result.reinhabited).toBe(false);
+    expect(importedEvents).toHaveLength(original.events.length);
+    expect(copied.comments).toHaveLength(original.comments.length);
+    expect(copied.revisions).toHaveLength(2);
+    const importedComment = copied.comments.find(
+      (comment) => comment.body === "imported",
+    );
+    expect(importedComment).toBeDefined();
+    expect(copied.revisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subjectType: "issue_body",
+          subjectId: copied.issueId,
+          body: "imported: prior issue body",
+          stamp,
+        }),
+        expect.objectContaining({
+          subjectType: "comment",
+          subjectId: importedComment!.id,
+          body: "imported: prior comment body",
+          stamp,
+        }),
+      ]),
+    );
+    const copiedQuestion = copied.comments.find(
+      (comment) => comment.body === "first",
+    );
+    expect(copiedQuestion).toBeDefined();
+    expect(copiedQuestion!.component).toStrictEqual(
+      original.comments.find((comment) => comment.id === questionId)!.component,
+    );
+    const copiedAnswer = importedEvents.filter(
+      (event) => event.type === "question_answered",
+    );
+    expect(copiedAnswer).toHaveLength(1);
+    expect(copiedAnswer[0]!.payload).toStrictEqual({
+      ...legacyPayload,
+      comment_id: copiedQuestion!.id,
+    });
+    expect(copiedAnswer[0]!.payload).not.toHaveProperty("via");
+    const questionsRes = await req(
+      `/projects/${B}/issues/${result.moved_to.number}/questions`,
+      author,
+    );
+    expect(questionsRes.status).toBe(200);
+    const questions = await json(questionsRes);
+    expect(questions.open).toBe(0);
+    expect(questions.items).toHaveLength(1);
+    expect(questions.items[0]).toMatchObject({
+      comment_id: copiedQuestion!.id,
+      answer: { answers: legacyPayload.answers },
+    });
+
+    // Backdated new activity shares the exact imported microsecond. Only
+    // destination IDs distinguish it from the copy, for every source table.
+    const fresh = await addActivity(idB, B, copied.issueId, "new", stamp);
+    const current = await history(idB, B, result.moved_to.number);
+    for (const kind of ["events", "comments", "revisions"] as const) {
+      expect(boundary[kind]).toBeGreaterThan(0);
+      const imported = kind === "events" ? importedEvents : copied[kind];
+      expect(imported.some((row) => row.stamp === stamp)).toBe(true);
+      for (const row of imported) {
+        expect(row.id).toBeLessThanOrEqual(boundary[kind]!);
+      }
+      const newRows = current[kind].filter((row) =>
+        fresh[kind].includes(row.id),
+      );
+      expect(newRows).toHaveLength(fresh[kind].length);
+      for (const row of newRows) {
+        expect(row.stamp).toBe(stamp);
+        expect(row.id).toBeGreaterThan(boundary[kind]!);
+      }
+    }
+    expect(current.events.find((event) => event.id === arrival.id)).toEqual(
+      arrival,
     );
   });
 
@@ -813,33 +1248,69 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     expect(onCard[0].event_type).toBe("moved_in");
   });
 
-  it("hides the id map from the move's own response and reads", async () => {
-    const source = await createIssue(A, "no id map anywhere", "body");
-    await req(`/projects/${A}/issues/${source.number}/comments`, author, {
-      method: "POST",
-      body: JSON.stringify({ body: "mapped" }),
-    });
-    const result = await moved(A, source.number, B);
-    expect(JSON.stringify(result)).not.toContain("id_map");
-
-    const timeline = await json(
-      await req(
-        `/projects/${B}/issues/${result.moved_to.number}/timeline?limit=100`,
-        author,
-      ),
+  it("hides move internals from the move response and every public timeline", async () => {
+    const source = await createIssue(A, "no move internals anywhere", "body");
+    const commentRes = await req(
+      `/projects/${A}/issues/${source.number}/comments`,
+      author,
+      { method: "POST", body: JSON.stringify({ body: "mapped" }) },
     );
-    expect(JSON.stringify(timeline)).not.toContain("id_map");
+    expect(commentRes.status).toBe(201);
+    // Start both feeds just before the move so pagination cannot hide it.
+    await createIssue(B, "destination cursor baseline");
+    const projectCursorRes = await req(
+      `/projects/${B}/activity?last=1&limit=1`,
+      author,
+    );
+    const crossCursorRes = await req(
+      `/activity?projects=${A},${B}&last=1&limit=1`,
+      author,
+    );
+    expect(projectCursorRes.status).toBe(200);
+    expect(crossCursorRes.status).toBe(200);
+    const projectCursor = (await json(projectCursorRes)).next_cursor;
+    const crossCursor = (await json(crossCursorRes)).next_cursor;
+    expect(typeof projectCursor).toBe("string");
+    expect(typeof crossCursor).toBe("string");
 
-    // …but the server kept it, because the protocol's recovery needs it.
-    const db = await dbOf(idB, B);
-    const [event] = await db
-      .select({ payload: issueEvents.payload })
-      .from(issueEvents)
-      .where(
-        and(eq(issueEvents.projectId, idB), eq(issueEvents.type, "moved_in")),
-      )
-      .limit(1);
-    expect(event?.payload).toHaveProperty("id_map");
+    const result = await moved(A, source.number, B);
+    expect(result.issue.moves).toHaveLength(1);
+    expect(result.issue.moves[0]).toMatchObject({
+      from_project: A,
+      from_number: source.number,
+    });
+    const copied = await history(idB, B, result.moved_to.number);
+    const { arrival } = expectWatermark(copied);
+    expect(arrival.payload).toHaveProperty("id_map");
+
+    const responses: unknown[] = [result];
+    for (const path of [
+      `/projects/${B}/issues/${result.moved_to.number}/timeline?limit=100`,
+      `/projects/${B}/activity?after=${encodeURIComponent(projectCursor)}&limit=100`,
+      `/activity?projects=${A},${B}&after=${encodeURIComponent(crossCursor)}&limit=100`,
+    ]) {
+      const res = await req(path, author);
+      expect(res.status).toBe(200);
+      const page = await json(res);
+      const arrivals = page.items.filter(
+        (item: { id: number; event_type?: string; project?: string }) =>
+          item.id === arrival.id &&
+          item.event_type === "moved_in" &&
+          (item.project === undefined || item.project === B),
+      );
+      expect(arrivals).toHaveLength(1);
+      expect(arrivals[0].payload).toMatchObject({
+        from_project: A,
+        from_number: source.number,
+      });
+      responses.push(page);
+    }
+    for (const response of responses) {
+      expect(JSON.stringify(response)).not.toContain("id_map");
+      expect(JSON.stringify(response)).not.toContain(
+        "activity_imported_max_ids",
+      );
+    }
   });
 
   it("emits both projects' change events", async () => {

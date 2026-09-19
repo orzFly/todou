@@ -1,12 +1,17 @@
 import { Readable } from "node:stream";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  ActivityCalendarQuery,
+  ActivityCalendarResponse,
+  ErrorBody,
   PublicUser,
   UserIssuesPage,
   UserIssuesQuery,
   UserProjects,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
+import { ValidationFailedError } from "../errors.ts";
+import { getUserActivityCalendar } from "../services/activity-calendar/index.ts";
 import { openAvatar } from "../services/profile.ts";
 import { listUserIssues } from "../services/user-issues.ts";
 import {
@@ -86,8 +91,70 @@ const avatarRoute = createRoute({
   responses: { 200: { description: "Image stream" } },
 });
 
+const userActivityRoute = createRoute({
+  method: "get",
+  path: "/users/{ref}/activity",
+  summary: "An account's activity across projects the viewer can read",
+  request: {
+    params: z.strictObject({ ref: z.string().min(1).max(64) }),
+    query: ActivityCalendarQuery,
+  },
+  responses: {
+    200: {
+      description: "Calendar and selected-day cards",
+      content: { "application/json": { schema: ActivityCalendarResponse } },
+    },
+    401: {
+      description: "Authentication required",
+      content: { "application/json": { schema: ErrorBody } },
+    },
+    403: {
+      description: "Read capability required",
+      content: { "application/json": { schema: ErrorBody } },
+    },
+    404: {
+      description: "User not found",
+      content: { "application/json": { schema: ErrorBody } },
+    },
+    409: {
+      description: "Activity changed; restart",
+      content: { "application/json": { schema: ErrorBody } },
+    },
+    422: {
+      description: "Invalid activity query",
+      content: { "application/json": { schema: ErrorBody } },
+    },
+    500: {
+      description: "Database read failed",
+      content: { "application/json": { schema: ErrorBody } },
+    },
+  },
+});
+
 export function userRoutes() {
   const app = new OpenAPIHono<AppEnv>();
+  app.openapi(
+    userActivityRoute,
+    async (c) =>
+      c.json(
+        await getUserActivityCalendar(
+          c.get("appCtx"),
+          c.get("user"),
+          c.req.valid("param").ref,
+          c.req.valid("query"),
+        ),
+        200,
+      ),
+    (result) => {
+      if (!result.success) {
+        throw new ValidationFailedError(
+          z.prettifyError(result.error),
+          result.error.issues,
+        );
+      }
+      return undefined;
+    },
+  );
 
   app.openapi(userRoute, async (c) => {
     const user = c.get("user");

@@ -1,6 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 import { UserIssueRole, UserIssueState } from "@todou/shared";
 import { api } from "@/api/queries.ts";
+import {
+  type ActivityDateSearch,
+  activityDateSearchParams,
+  parseActivityDateSearch,
+} from "@/lib/activity-calendar-search.ts";
 
 const userKey = (ref: string) => ["user", ref] as const;
 
@@ -44,13 +49,19 @@ export type UserIssuesFilters = {
 export function userSearchSchema(search: Record<string, unknown>): {
   role?: UserIssueRole;
   state?: UserIssueState;
-} {
+} & ActivityDateSearch {
   const role = UserIssueRole.safeParse(search.role);
   const state = UserIssueState.safeParse(search.state);
   return {
     ...(role.success && role.data !== "any" ? { role: role.data } : {}),
     ...(state.success && state.data !== "open" ? { state: state.data } : {}),
+    ...parseActivityDateSearch(search),
   };
+}
+
+/** Public URL fields only; the route validator also returns notice metadata. */
+export function userSearchParams(search: Record<string, unknown>) {
+  return activityDateSearchParams(userSearchSchema(search));
 }
 
 /**

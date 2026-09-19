@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { issueEvents, issues } from "../src/db/project-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
+import { hideCommentsInTx } from "../src/services/comments.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -599,6 +600,29 @@ describe("hidden comments", () => {
     const answered = async (number: number) =>
       (await eventRows(number)).filter((e) => e.type === "question_answered");
 
+    const expectOpenQuestions = async (number: number, expected: number) => {
+      expect((await issueRow(number)).row.openQuestions).toBe(expected);
+      const list = await req(
+        `/projects/${slug}/issues?numbers=${number}`,
+        writer,
+      );
+      expect(list.status).toBe(200);
+      const listed = await json(list);
+      expect(listed.items).toHaveLength(1);
+      expect(listed.items[0]).toMatchObject({
+        number,
+        open_questions: expected,
+      });
+      const res = await req(
+        `/projects/${slug}/issues/${number}/questions`,
+        writer,
+      );
+      expect(res.status).toBe(200);
+      const status = await json(res);
+      expect(status.open).toBe(expected);
+      return status;
+    };
+
     const resolvedEvents = async (number: number) =>
       (await eventRows(number)).filter(
         (e) => e.type === "spec_comments_resolved",
@@ -620,12 +644,68 @@ describe("hidden comments", () => {
       expect(events).toHaveLength(1);
       expect(events[0]?.payload).toEqual({
         comment_id: id,
+        via: "hide",
         answers: [
           { key: "q1", selected: [], other: null, declined: true },
           { key: "q2", selected: [], other: null, declined: true },
         ],
       });
-      expect((await issueRow(number)).row.openQuestions).toBe(0);
+      const status = await expectOpenQuestions(number, 0);
+      expect(status.items).toHaveLength(1);
+      expect(status.items[0].comment_id).toBe(id);
+      expect(status.items[0].answer).toMatchObject({
+        answers: [
+          { key: "q1", selected: [], other: null, declined: true },
+          { key: "q2", selected: [], other: null, declined: true },
+        ],
+      });
+      expect((await hide(number, [id])).settled).toBeUndefined();
+      expect(await answered(number)).toEqual(events);
+      await expectOpenQuestions(number, 0);
+    });
+
+    it("rolls back the hide provenance and counter with its transaction", async () => {
+      const number = await newCard("failed hide settlement");
+      const id = await ask(number);
+      const { db, row } = await issueRow(number);
+      await expect(
+        db.transaction(async (tx) => {
+          const result = await hideCommentsInTx(tx, {
+            projectId,
+            issueId: row.id,
+            issueNumber: number,
+            actorId: row.authorId,
+            input: { comment_ids: [id], hidden: true },
+            agentContext: null,
+          });
+          expect(result.settled?.declined_questions).toEqual([id]);
+          const events = await tx
+            .select()
+            .from(issueEvents)
+            .where(
+              and(
+                eq(issueEvents.issueId, row.id),
+                eq(issueEvents.type, "question_answered"),
+              ),
+            );
+          expect(events).toHaveLength(1);
+          expect(events[0]?.payload).toMatchObject({ via: "hide" });
+          throw new Error("abort after settlement");
+        }),
+      ).rejects.toThrow("abort after settlement");
+      expect(await answered(number)).toEqual([]);
+      const status = await expectOpenQuestions(number, 2);
+      expect(status.items[0].answer).toBeNull();
+      const page = await timeline(number);
+      expect(
+        page.items.find(
+          (item: { id: number }) => item.id === id && "hidden_at" in item,
+        )?.hidden_at,
+      ).toBeNull();
+      expect((await hide(number, [id])).settled?.declined_questions).toEqual([
+        id,
+      ]);
+      await expectOpenQuestions(number, 0);
     });
 
     it("leaves a later answer nothing to say", async () => {
@@ -647,31 +727,93 @@ describe("hidden comments", () => {
         },
       );
       expect(res.status).toBe(409);
+      expect((await json(res)).error.message).toContain("already answered");
       expect(await answered(number)).toHaveLength(1);
+      await expectOpenQuestions(number, 0);
     });
 
-    it("settles nothing on a comment somebody already answered", async () => {
-      const number = await newCard("hide an answered question");
-      const id = await ask(number);
-      const answer = await req(
-        `/projects/${slug}/issues/${number}/comments/${id}/answers`,
-        owner,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            answers: [
-              { key: "q1", selected: [0] },
-              { key: "q2", selected: [1] },
-            ],
-          }),
-        },
-      );
-      expect(answer.status).toBe(201);
+    it.each([
+      { name: "active answer", legacy: false, declined: false },
+      { name: "explicit decline", legacy: false, declined: true },
+      { name: "legacy answer", legacy: true, declined: false },
+      { name: "legacy decline", legacy: true, declined: true },
+    ])(
+      "settles nothing on a comment after $name",
+      async ({ legacy, declined }) => {
+        const number = await newCard("hide an answered question");
+        const id = await ask(number);
+        const answer = await req(
+          `/projects/${slug}/issues/${number}/comments/${id}/answers`,
+          owner,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              answers: [
+                { key: "q1", selected: declined ? [] : [0], declined },
+                { key: "q2", selected: declined ? [] : [1], declined },
+              ],
+            }),
+          },
+        );
+        expect(answer.status).toBe(201);
+        const event = await json(answer);
+        const answers = [
+          {
+            key: "q1",
+            selected: declined ? [] : [{ index: 0, label: "a table" }],
+            other: null,
+            declined,
+          },
+          {
+            key: "q2",
+            selected: declined ? [] : [{ index: 1, label: "later" }],
+            other: null,
+            declined,
+          },
+        ];
+        expect(event.payload).toEqual({
+          comment_id: id,
+          answers,
+          via: "answer",
+        });
+        const payload = {
+          comment_id: id,
+          answers,
+          ...(legacy ? {} : { via: "answer" }),
+        };
+        if (legacy) {
+          const { db } = await issueRow(number);
+          await db
+            .update(issueEvents)
+            .set({ payload })
+            .where(eq(issueEvents.id, event.id));
+        }
+        await expectOpenQuestions(number, 0);
 
-      const result = await hide(number, [id]);
-      expect(result.settled).toBeUndefined();
-      expect(await answered(number)).toHaveLength(1);
-    });
+        // A second open comment catches an accidental extra decrement on hide.
+        const openId = await ask(number);
+        await expectOpenQuestions(number, 2);
+        const result = await hide(number, [id]);
+        expect(result.settled).toBeUndefined();
+        expect(await answered(number)).toEqual([
+          { type: "question_answered", payload },
+        ]);
+        const status = await expectOpenQuestions(number, 2);
+        expect(status.items).toHaveLength(2);
+        expect(status.items[0].comment_id).toBe(id);
+        expect(status.items[0].answer).toMatchObject({
+          event_id: event.id,
+          answers,
+        });
+        expect(status.items[1].comment_id).toBe(openId);
+        expect(status.items[1].answer).toBeNull();
+        expect(
+          status.items
+            .filter((item: { answer: unknown }) => item.answer === null)
+            .map((item: { comment_id: number }) => item.comment_id),
+        ).toEqual([openId]);
+      },
+    );
 
     it("resolves an annotation it hides, whoever wrote it", async () => {
       // The hider's own annotation, and somebody else's: the symmetry is
@@ -751,6 +893,9 @@ describe("hidden comments", () => {
       const annotation = await annotate(number, owner, writer);
       const question = await ask(number);
       await hide(number, [question, annotation]);
+      const settledAnswers = await answered(number);
+      expect(settledAnswers).toHaveLength(1);
+      expect(settledAnswers[0]?.payload).toMatchObject({ via: "hide" });
 
       const res = await setHidden(number, [question, annotation], false);
       expect(res.status).toBe(200);
@@ -761,8 +906,16 @@ describe("hidden comments", () => {
       expect(shown[question]).toBe("which one?");
       expect(shown[annotation]).toBe("say why");
       // The decline and the resolve stay: an answer cannot be edited, ever.
-      expect(await answered(number)).toHaveLength(1);
-      expect((await issueRow(number)).row.openQuestions).toBe(0);
+      expect(await answered(number)).toEqual(settledAnswers);
+      const status = await expectOpenQuestions(number, 0);
+      expect(status.items).toHaveLength(1);
+      expect(status.items[0].comment_id).toBe(question);
+      expect(status.items[0].answer).toMatchObject({
+        answers: [
+          { key: "q1", selected: [], other: null, declined: true },
+          { key: "q2", selected: [], other: null, declined: true },
+        ],
+      });
       expect((await issueRow(number)).row.specUnresolvedComments).toBe(0);
     });
   });

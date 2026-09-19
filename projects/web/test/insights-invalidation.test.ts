@@ -24,6 +24,8 @@ describe("insights event invalidation", () => {
       { key: ["issue-ref"], scope: "refetch" },
       { key: ["comment-ref"], scope: "refetch" },
       { key: ["comment-location"], scope: "refetch" },
+      { key: ["activity-project", slug], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
     ]);
   });
 
@@ -44,6 +46,8 @@ describe("insights event invalidation", () => {
       { key: ["issue-ref"], scope: "refetch" },
       { key: ["comment-ref"], scope: "refetch" },
       { key: ["comment-location"], scope: "refetch" },
+      { key: ["activity-project", slug], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
     ]);
   });
 
@@ -60,6 +64,8 @@ describe("insights event invalidation", () => {
         { key: ["issue-ref", slug, 4], scope: "refetch" },
         { key: ["comment-ref", slug, 4], scope: "refetch" },
         { key: ["comment-location"], scope: "refetch" },
+        { key: ["activity-project", slug], scope: "refetch" },
+        { key: ["activity-user"], scope: "refetch" },
       ]);
     },
   );
@@ -70,6 +76,8 @@ describe("insights event invalidation", () => {
       { key: ["issues", slug], scope: "refetch" },
       settings,
       burn,
+      { key: ["activity-project", slug], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
     ]);
   });
 
@@ -84,6 +92,8 @@ describe("insights event invalidation", () => {
       { key: ["issue-ref"], scope: "refetch" },
       { key: ["comment-ref"], scope: "refetch" },
       { key: ["comment-location"], scope: "refetch" },
+      { key: ["activity-project", slug], scope: "refetch" },
+      { key: ["activity-user"], scope: "refetch" },
     ]);
     expect(
       invalidationsFor({ ...event, entity: "project" }, "other"),

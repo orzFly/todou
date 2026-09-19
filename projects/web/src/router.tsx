@@ -13,7 +13,7 @@ import { useState } from "react";
 import { issueSearchSchema, newIssueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
 import { searchPageSchema } from "@/api/search.ts";
-import { userSearchSchema } from "@/api/users.ts";
+import { userSearchParams, userSearchSchema } from "@/api/users.ts";
 import { ConnectionBanner } from "@/components/connection-banner.tsx";
 import {
   PagePending,
@@ -32,6 +32,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Toaster } from "@/components/ui/sonner";
+import { activityDateSearchMiddleware } from "@/lib/activity-calendar-search.ts";
 import { statusOf } from "@/lib/http-status.ts";
 import { parseInsightsSearch } from "@/lib/insights-search.ts";
 import { INBOX_TABS, type InboxTab } from "@/lib/return-view.ts";
@@ -54,7 +55,7 @@ import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
 import { SearchPage } from "@/pages/search.tsx";
 import { TokensSettingsPage } from "@/pages/tokens-settings.tsx";
-import { UserProfilePage, UserRedirectPage } from "@/pages/user-profile.tsx";
+import { UserProfilePage } from "@/pages/user-profile.tsx";
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -319,6 +320,7 @@ const projectInsightsRoute = createRoute({
     "InsightsPage",
   ),
   validateSearch: parseInsightsSearch,
+  search: { middlewares: [activityDateSearchMiddleware] },
   staticData: { pageSkeleton: "insights" },
 });
 
@@ -395,29 +397,49 @@ const userRoute = createRoute({
   path: "/users/$ref",
   component: UserPage,
   validateSearch: userSearchSchema,
+  search: { middlewares: [activityDateSearchMiddleware] },
 });
 
 function UserPage() {
   const { ref } = userRoute.useParams();
-  const { role = "any", state = "open" } = userRoute.useSearch();
+  // TanStack merges raw search into validated search. Reparse to derive
+  // notice metadata exclusively from date fields, never a supplied flag.
+  const search = userSearchSchema(userRoute.useSearch());
+  const { role = "any", state = "open" } = search;
   const navigate = useNavigate();
-  if (/^\d{1,15}$/.test(ref)) return <UserRedirectPage ref={ref} />;
+  // T-414: keep one userQuery subscriber for either address spelling. A
+  // separate numeric-address observer mounting this page after a failed read
+  // makes retryOnMount alternate pending/error and repeatedly remount it.
+  // The same page owns the read and redirects once the account resolves.
   return (
     <UserProfilePage
       ref={ref}
+      redirectToLogin={/^\d{1,15}$/.test(ref)}
       role={role}
       state={state}
+      activity_year={search.activity_year}
+      activity_day={search.activity_day}
+      activity_invalid={search.activity_invalid}
+      onActivityDateChange={(next, options) =>
+        void navigate({
+          to: "/users/$ref",
+          params: { ref },
+          search: userSearchParams({
+            ...search,
+            ...next,
+          }),
+          replace: options?.replace ?? false,
+        })
+      }
       // Filter controls rewriting their own page's search params: the case
       // AGENTS.md leaves to navigate() rather than requiring a link.
       onFilters={(next) =>
         void navigate({
           to: "/users/$ref",
           params: { ref },
-          // Through the same schema the route validates with: it drops
-          // whichever value still sits at its default, so the URL carries
-          // only what the reader actually changed. validateSearch does not
-          // run on a programmatic navigate, so stripping has to happen here.
-          search: userSearchSchema({
+          // Defaults and validation metadata stay out of shared addresses.
+          search: userSearchParams({
+            ...search,
             role: next.role ?? role,
             state: next.state ?? state,
           }),

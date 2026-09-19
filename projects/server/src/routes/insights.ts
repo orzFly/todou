@@ -1,13 +1,18 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  ActivityCalendarQuery,
+  ActivityCalendarResponse,
   BurnQuery,
   BurnResponse,
+  ErrorBody,
   ProjectRef,
   PutSettings,
   Settings,
 } from "@todou/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
+import { ValidationFailedError } from "../errors.ts";
+import { getProjectActivityCalendar } from "../services/activity-calendar/index.ts";
 import { getInsightsBurn } from "../services/insights.ts";
 import {
   getInsightsSettings,
@@ -71,8 +76,50 @@ const getBurnRoute = createRoute({
   },
 });
 
+const getActivityRoute = createRoute({
+  method: "get",
+  path: "/{slug}/insights/activity",
+  summary: `Current-card activity calendar ${roleTag("activity.read")}`,
+  request: { params, query: ActivityCalendarQuery },
+  responses: {
+    200: {
+      description: "Calendar and selected-day cards",
+      ...jsonBody(ActivityCalendarResponse),
+    },
+    401: { description: "Authentication required", ...jsonBody(ErrorBody) },
+    403: { description: "Read capability required", ...jsonBody(ErrorBody) },
+    404: { description: "Project not found", ...jsonBody(ErrorBody) },
+    409: { description: "Activity changed; restart", ...jsonBody(ErrorBody) },
+    422: { description: "Invalid activity query", ...jsonBody(ErrorBody) },
+    500: { description: "Database read failed", ...jsonBody(ErrorBody) },
+  },
+});
+
 export function insightsRoutes() {
   const app = new OpenAPIHono<AppEnv>({ defaultHook: validationHook });
+  app.openapi(
+    getActivityRoute,
+    async (c) =>
+      c.json(
+        await getProjectActivityCalendar(
+          c.get("appCtx"),
+          c.get("user"),
+          c.req.valid("param").slug,
+          c.req.valid("query"),
+        ),
+        200,
+      ),
+    // An explicit route hook overrides this router's burn-specific 400 hook.
+    (result) => {
+      if (!result.success) {
+        throw new ValidationFailedError(
+          z.prettifyError(result.error),
+          result.error.issues,
+        );
+      }
+      return undefined;
+    },
+  );
   app.openapi(getSettingsRoute, async (c) =>
     c.json(
       await getInsightsSettings(

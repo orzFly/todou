@@ -9,16 +9,27 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { BurnResponse, Flow } from "@todou/shared";
+import {
+  ActivityCalendarQuery,
+  ActivityCalendarResponse,
+  type ActivityDay,
+  BurnResponse,
+  Flow,
+  type Me,
+  type Project,
+} from "@todou/shared";
+import * as sonner from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { projectActivityCalendarQuery } from "../src/api/activity-calendar.ts";
 import { insightsKeys } from "../src/api/insights.ts";
-import { api } from "../src/api/queries.ts";
+import { api, meQuery, projectQuery } from "../src/api/queries.ts";
 import {
   insightsRequest,
   parseInsightsSearch,
@@ -31,6 +42,17 @@ import {
 } from "../src/pages/insights.tsx";
 import { router } from "../src/router.tsx";
 import { testQueryClient } from "./render.tsx";
+
+vi.mock("sonner", async (importOriginal) => {
+  const actual = await importOriginal<typeof sonner>();
+  return {
+    ...actual,
+    toast: Object.assign(
+      vi.fn(() => "invalid-date"),
+      actual.toast,
+    ),
+  };
+});
 
 const known = (value: number) => ({ value, known: value, unknown: 0 });
 const flow = Flow.parse(
@@ -90,9 +112,126 @@ const settings = {
   roles: data.statuses,
 };
 
+const viewer: Me = {
+  id: 7,
+  login: "user",
+  display_name: "User",
+  kind: "human",
+  avatar_url: null,
+  owner: null,
+  email: null,
+  is_instance_admin: false,
+  created_at: "2025-01-01T00:00:00Z",
+};
+const canonicalProject: Project = {
+  id: 42,
+  slug: "canonical-x",
+  name: "Example project",
+  description: "",
+  created_at: "2025-09-17T00:00:00Z",
+  viewer_role: "admin",
+};
+const cutoff = "2026-09-18T12:00:00Z";
+
+function calendarSnapshot(
+  query: ActivityCalendarQuery,
+  recorded = false,
+): ActivityCalendarResponse {
+  const days: ActivityDay[] = [];
+  const date = new Date(`${query.year}-01-01T00:00:00Z`);
+  while (date.getUTCFullYear() === query.year) {
+    const day = date.toISOString().slice(0, 10);
+    days.push(
+      day > "2026-09-18"
+        ? { date: day, state: "future", count: null }
+        : recorded && day >= "2025-09-17"
+          ? {
+              date: day,
+              state: "recorded",
+              count: day.endsWith("-09-17") || day.endsWith("-09-18") ? 1 : 0,
+            }
+          : { date: day, state: "not_applicable", count: null },
+    );
+    date.setUTCDate(date.getUTCDate() + 1);
+  }
+  const selected = days.find((day) => day.date === query.day);
+  return ActivityCalendarResponse.parse({
+    year: query.year,
+    timezone: query.tz,
+    cutoff,
+    read_started_at: cutoff,
+    read_finished_at: cutoff,
+    days,
+    selection:
+      selected?.state === "recorded"
+        ? {
+            date: selected.date,
+            total: selected.count,
+            items: selected.count
+              ? [
+                  {
+                    project: { ...canonicalProject, issue_prefix: null },
+                    issue_id: 123,
+                    number: 3,
+                    title: `Activity on ${selected.date}`,
+                    status: {
+                      id: 1,
+                      name: "Todo",
+                      category: "open",
+                      color: "#123456",
+                      position: 0,
+                      is_default: true,
+                    },
+                    url: "/projects/canonical-x/issues/3",
+                    last_active_at: `${selected.date}T01:00:00Z`,
+                  },
+                ]
+              : [],
+            next_cursor: null,
+            has_more: false,
+          }
+        : null,
+  });
+}
+
+const recordedCalendar = (query: ActivityCalendarQuery) =>
+  calendarSnapshot(query, true);
+
 function renderPage(
   entry = "/projects/x/insights?range=custom&from=2026-09-17&to=2026-09-18&tz=UTC",
+  {
+    seedIdentities = true,
+    calendar = calendarSnapshot,
+  }: {
+    seedIdentities?: boolean;
+    calendar?: (
+      query: ActivityCalendarQuery,
+    ) => ActivityCalendarResponse | Promise<ActivityCalendarResponse>;
+  } = {},
 ) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(cutoff));
+  const requests: URL[] = [];
+  const calendarRequest = vi.fn(calendar);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = new URL(
+      input instanceof Request ? input.url : String(input),
+      "http://localhost",
+    );
+    requests.push(url);
+    if (url.pathname === "/api/me") return Response.json(viewer);
+    if (url.pathname === "/api/projects/x") {
+      return Response.json(canonicalProject);
+    }
+    if (url.pathname === "/api/projects/canonical-x/insights/activity") {
+      return Response.json(
+        await calendarRequest(
+          ActivityCalendarQuery.parse(Object.fromEntries(url.searchParams)),
+        ),
+      );
+    }
+    throw new Error(`Unexpected request: ${url.pathname}${url.search}`);
+  });
   const root = createRootRoute();
   const authed = createRoute({ getParentRoute: () => root, id: "authed" });
   const project = createRoute({
@@ -104,6 +243,7 @@ function renderPage(
     path: "insights",
     component: InsightsPage,
     validateSearch: parseInsightsSearch,
+    search: router.routesById["/authed/projects/$slug/insights"].options.search,
   });
   const testRouter = createRouter({
     routeTree: root.addChildren([
@@ -112,15 +252,23 @@ function renderPage(
     history: createMemoryHistory({ initialEntries: [entry] }),
   });
   const client = testQueryClient();
+  if (seedIdentities) {
+    client.setQueryData(meQuery.queryKey, viewer);
+    client.setQueryData(projectQuery("x").queryKey, canonicalProject);
+  }
   const view = render(
     <QueryClientProvider client={client}>
       <RouterProvider router={testRouter} />
     </QueryClientProvider>,
   );
-  return { ...view, router: testRouter, client };
+  return { ...view, router: testRouter, client, requests, calendarRequest };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.mocked(sonner.toast).mockClear();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("Insights route", () => {
   it("uses the one shared URL parser and declares the Insights loading shape", () => {
@@ -135,6 +283,9 @@ describe("Insights route", () => {
       "utf8",
     );
     expect(source).toContain('() => import("@/pages/insights.tsx")');
+    expect(source).toMatch(
+      /const projectInsightsRoute = createRoute\(\{[^}]*component:\s*lazyRouteComponent\(\s*\(\) => import\("@\/pages\/insights\.tsx"\),\s*"InsightsPage"/,
+    );
     expect(source).not.toMatch(
       /import\s[^;]*from\s["'][^"']*(?:pages\/insights|components\/insights)/,
     );
@@ -274,6 +425,667 @@ describe("Insights controls", () => {
 });
 
 describe("Insights page", () => {
+  it("mounts the real calendar without rewriting a valid old URL with no activity dates", async () => {
+    const options = Intl.DateTimeFormat().resolvedOptions();
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+      ...options,
+      timeZone: "Asia/Tokyo",
+    });
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const entry =
+      "/projects/x/insights?range=custom&from=2026-09-17&to=2026-09-18&grain=6h&tz=America%2FNew_York";
+    const view = renderPage(entry, { seedIdentities: false });
+    await screen.findByText("No available dates in 2026.");
+    await screen.findByRole("heading", { name: "Burn chart" });
+    expect(view.router.state.location.href).toBe(entry);
+    expect(view.router.state.location.search).not.toHaveProperty(
+      "activity_year",
+    );
+    expect(view.router.state.location.search).not.toHaveProperty(
+      "activity_day",
+    );
+    expect(view.requests.map((url) => url.pathname)).toEqual(
+      expect.arrayContaining(["/api/me", "/api/projects/x"]),
+    );
+    expect(view.client.getQueryData(meQuery.queryKey)).toEqual(viewer);
+    expect(view.client.getQueryData(projectQuery("x").queryKey)).toEqual(
+      canonicalProject,
+    );
+    expect(view.calendarRequest).toHaveBeenCalledExactlyOnceWith({
+      year: 2026,
+      tz: "Asia/Tokyo",
+      limit: 50,
+    });
+    const query = {
+      viewerId: viewer.id,
+      projectId: canonicalProject.id,
+      slug: canonicalProject.slug,
+      year: 2026,
+      tz: "Asia/Tokyo",
+    };
+    expect(
+      view.client
+        .getQueryCache()
+        .findAll({ queryKey: ["activity-project"] })
+        .map((cached) => cached.queryKey),
+    ).toEqual([
+      [
+        "activity-project",
+        "canonical-x",
+        {
+          viewerId: 7,
+          projectId: 42,
+          year: 2026,
+          day: undefined,
+          tz: "Asia/Tokyo",
+          limit: 50,
+          after: undefined,
+        },
+      ],
+    ]);
+    const cached = view.client.getQueryData(
+      projectActivityCalendarQuery(query).queryKey,
+    );
+    expect(cached).toEqual(
+      calendarSnapshot({
+        year: 2026,
+        tz: "Asia/Tokyo",
+        limit: 50,
+      }),
+    );
+    const dates = screen.getByRole("group", { name: "2026 activity dates" });
+    expect(within(dates).getAllByRole("button")).toHaveLength(365);
+    expect(
+      within(dates).getByRole("button", { name: /2026-09-17: Not applicable/ }),
+    ).toHaveProperty("disabled", true);
+    expect(
+      within(dates).getByRole("button", { name: /2026-09-19: Future date/ }),
+    ).toHaveProperty("disabled", true);
+    expect(
+      screen.queryByRole("region", { name: "Selected day activity" }),
+    ).toBeNull();
+    expect(burn).toHaveBeenCalledExactlyOnceWith("x", {
+      from: "2026-09-17",
+      to: "2026-09-19",
+      grain: "6h",
+      tz: "Asia/Tokyo",
+    });
+    view.unmount();
+    view.client.clear();
+  });
+
+  it("preserves the selected activity year and day through grain, preset and custom graph changes", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(
+      "/projects/x/insights?range=custom&from=2026-09-17&to=2026-09-18&activity_year=2026&activity_day=2026-09-17&tz=UTC",
+      { calendar: recordedCalendar },
+    );
+    await screen.findByText("Activity on 2026-09-17");
+    await screen.findByRole("heading", { name: "Burn chart" });
+    const activity = { activity_year: 2026, activity_day: "2026-09-17" };
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+    expect(
+      screen
+        .getByRole("button", { name: /2026-09-17: 1 active card/ })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(view.calendarRequest.mock.calls.map(([query]) => query.day)).toEqual(
+      [undefined, "2026-09-17"],
+    );
+    fireEvent.click(screen.getByRole("button", { name: "6h" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...activity,
+        range: "custom",
+        from: "2026-09-17",
+        to: "2026-09-18",
+        grain: "6h",
+      }),
+    );
+    await waitFor(() =>
+      expect(burn).toHaveBeenLastCalledWith("x", {
+        from: "2026-09-17",
+        to: "2026-09-19",
+        grain: "6h",
+        tz,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...activity,
+        range: "7d",
+        grain: "6h",
+      }),
+    );
+    const presetSearch = new URLSearchParams(
+      view.router.state.location.searchStr,
+    );
+    expect(presetSearch.has("from")).toBe(false);
+    expect(presetSearch.has("to")).toBe(false);
+    expect(presetSearch.has("tz")).toBe(false);
+    await waitFor(() =>
+      expect(burn).toHaveBeenLastCalledWith(
+        "x",
+        insightsRequest(
+          { range: "7d", grain: "6h" },
+          {
+            now: new Date(cutoff),
+            timezone: tz,
+          },
+        ),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    await screen.findByLabelText("Start date");
+    expect(view.router.state.location.search).toMatchObject({
+      ...activity,
+      range: "custom",
+      grain: "6h",
+    });
+    fireEvent.change(screen.getByLabelText("Start date"), {
+      target: { value: "2026-09-15" },
+    });
+    fireEvent.change(screen.getByLabelText("End date"), {
+      target: { value: "2026-09-16" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply dates" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...activity,
+        range: "custom",
+        from: "2026-09-15",
+        to: "2026-09-16",
+        grain: "6h",
+      }),
+    );
+    await waitFor(() =>
+      expect(burn).toHaveBeenLastCalledWith("x", {
+        from: "2026-09-15",
+        to: "2026-09-17",
+        grain: "6h",
+        tz,
+      }),
+    );
+    expect(screen.getByText("Activity on 2026-09-17")).toBeTruthy();
+    expect(view.calendarRequest).toHaveBeenCalledTimes(2);
+    expect(
+      view.client.getQueryData(
+        projectActivityCalendarQuery({
+          viewerId: viewer.id,
+          projectId: canonicalProject.id,
+          slug: canonicalProject.slug,
+          year: 2026,
+          day: "2026-09-17",
+          tz,
+        }).queryKey,
+      ),
+    ).toEqual(
+      recordedCalendar({
+        year: 2026,
+        day: "2026-09-17",
+        tz,
+        limit: 50,
+      }),
+    );
+    view.unmount();
+    view.client.clear();
+  });
+
+  it.each(["partially unavailable", "all unavailable"] as const)(
+    "resets a server-rejected day with one notice when project dates are %s",
+    async (availability) => {
+      vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+      vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+      const view = renderPage(
+        "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2025&activity_day=2025-01-01",
+        {
+          calendar: (query) =>
+            calendarSnapshot(query, availability === "partially unavailable"),
+        },
+      );
+      if (availability === "all unavailable") {
+        await screen.findByText("No available dates in 2025.");
+      } else {
+        await screen.findByText("No active cards on 2025-12-31.");
+      }
+      await waitFor(() => {
+        expect(view.router.state.location.search).toEqual({
+          range: "custom",
+          from: "2026-09-15",
+          to: "2026-09-18",
+          grain: "6h",
+          activity_year: 2025,
+          ...(availability === "all unavailable"
+            ? {}
+            : { activity_day: "2025-12-31" }),
+        });
+        expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
+          "Invalid activity date was reset.",
+        );
+      });
+      expect(view.router.history.canGoBack()).toBe(false);
+      expect(view.calendarRequest).not.toHaveBeenCalledWith(
+        expect.objectContaining({ day: "2025-01-01" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "7d" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search.range).toBe("7d"),
+      );
+      expect(sonner.toast).toHaveBeenCalledTimes(1);
+      view.unmount();
+      view.client.clear();
+    },
+  );
+
+  it("leaves an empty project year with no requested day quiet", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(
+      "/projects/x/insights?range=7d&grain=6h&activity_year=2025",
+    );
+    await screen.findByText("No available dates in 2025.");
+    expect(view.router.state.location.search).toEqual({
+      range: "7d",
+      grain: "6h",
+      activity_year: 2025,
+    });
+    expect(sonner.toast).not.toHaveBeenCalled();
+    expect(view.router.history.canGoBack()).toBe(false);
+    view.unmount();
+    view.client.clear();
+  });
+
+  it.each(["click", "Enter", "year"] as const)(
+    "drops legacy URL timezone on calendar %s while preserving graph filters",
+    async (action) => {
+      const options = Intl.DateTimeFormat().resolvedOptions();
+      vi.spyOn(
+        Intl.DateTimeFormat.prototype,
+        "resolvedOptions",
+      ).mockReturnValue({
+        ...options,
+        timeZone: "Asia/Tokyo",
+      });
+      vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+      const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+      const view = renderPage(
+        "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2026&activity_day=2026-09-17&tz=Pacific%2FHonolulu",
+        { calendar: recordedCalendar },
+      );
+      await screen.findByText("Activity on 2026-09-17");
+      expect(
+        new URLSearchParams(view.router.state.location.searchStr).get("tz"),
+      ).toBe("Pacific/Honolulu");
+      if (action === "year") {
+        fireEvent.change(screen.getByRole("spinbutton", { name: "Year" }), {
+          target: { value: "2025" },
+        });
+        await screen.findByText("No active cards on 2025-12-31.");
+      } else {
+        const date = screen.getByRole("button", {
+          name: /2026-09-18: 1 active card/,
+        });
+        if (action === "Enter") fireEvent.keyDown(date, { key: "Enter" });
+        else fireEvent.click(date);
+        await screen.findByText("Activity on 2026-09-18");
+      }
+      expect(
+        new URLSearchParams(view.router.state.location.searchStr).has("tz"),
+      ).toBe(false);
+      expect(view.router.state.location.search).toEqual({
+        range: "custom",
+        from: "2026-09-15",
+        to: "2026-09-18",
+        grain: "6h",
+        activity_year: action === "year" ? 2025 : 2026,
+        activity_day: action === "year" ? "2025-12-31" : "2026-09-18",
+      });
+      expect(view.calendarRequest).toHaveBeenLastCalledWith({
+        year: action === "year" ? 2025 : 2026,
+        day: action === "year" ? "2025-12-31" : "2026-09-18",
+        tz: "Asia/Tokyo",
+        limit: 50,
+      });
+      expect(burn).toHaveBeenCalledExactlyOnceWith("x", {
+        from: "2026-09-15",
+        to: "2026-09-19",
+        grain: "6h",
+        tz: "Asia/Tokyo",
+      });
+      view.unmount();
+      view.client.clear();
+    },
+  );
+
+  it("retains custom graph filters through activity selections, back/forward and year changes", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    let resolveYear!: (value: ActivityCalendarResponse) => void;
+    const previousYear = new Promise<ActivityCalendarResponse>((resolve) => {
+      resolveYear = resolve;
+    });
+    const view = renderPage(
+      "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2026&activity_day=2026-09-17",
+      {
+        calendar: (query) =>
+          query.year === 2025 && !query.day
+            ? previousYear
+            : recordedCalendar(query),
+      },
+    );
+    await screen.findByText("Activity on 2026-09-17");
+    await screen.findByRole("heading", { name: "Burn chart" });
+    const graph = {
+      range: "custom",
+      from: "2026-09-15",
+      to: "2026-09-18",
+      grain: "6h",
+    };
+    fireEvent.click(
+      screen.getByRole("button", { name: /2026-09-18: 1 active card/ }),
+    );
+    await screen.findByText("Activity on 2026-09-18");
+    expect(view.router.state.location.search).toEqual({
+      ...graph,
+      activity_year: 2026,
+      activity_day: "2026-09-18",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /2026-09-17: 1 active card/ }),
+    );
+    await screen.findByText("Activity on 2026-09-17");
+    expect(view.router.state.location.search).toEqual({
+      ...graph,
+      activity_year: 2026,
+      activity_day: "2026-09-17",
+    });
+    await act(async () => {
+      view.router.history.back();
+    });
+    await screen.findByText("Activity on 2026-09-18");
+    expect(view.router.state.location.search).toEqual({
+      ...graph,
+      activity_year: 2026,
+      activity_day: "2026-09-18",
+    });
+    await act(async () => {
+      view.router.history.forward();
+    });
+    await screen.findByText("Activity on 2026-09-17");
+    expect(view.router.state.location.search).toEqual({
+      ...graph,
+      activity_year: 2026,
+      activity_day: "2026-09-17",
+    });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Year" }), {
+      target: { value: "2025" },
+    });
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...graph,
+        activity_year: 2025,
+      }),
+    );
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+    await waitFor(() =>
+      expect(view.calendarRequest).toHaveBeenLastCalledWith({
+        year: 2025,
+        tz,
+        limit: 50,
+      }),
+    );
+    expect(screen.queryByText("Activity on 2026-09-17")).toBeNull();
+    resolveYear(recordedCalendar({ year: 2025, tz, limit: 50 }));
+    await screen.findByText("No active cards on 2025-12-31.");
+    expect(view.router.state.location.search).toEqual({
+      ...graph,
+      activity_year: 2025,
+      activity_day: "2025-12-31",
+    });
+    expect(view.calendarRequest).toHaveBeenLastCalledWith({
+      year: 2025,
+      day: "2025-12-31",
+      tz,
+      limit: 50,
+    });
+    expect(
+      screen
+        .getByRole("button", { name: "2025-12-31: 0 active cards" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(burn).toHaveBeenCalledExactlyOnceWith("x", {
+      from: "2026-09-15",
+      to: "2026-09-19",
+      grain: "6h",
+      tz,
+    });
+    expect(screen.getByRole("heading", { name: "Burn chart" })).toBeTruthy();
+    view.unmount();
+    view.client.clear();
+  });
+
+  it("ignores a raw URL boolean activity marker and strips it from graph changes and links", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(
+      "/projects/x/insights?range=7d&grain=6h&activity_year=2026&activity_day=2026-09-17&activity_invalid=true",
+      { calendar: recordedCalendar },
+    );
+    await screen.findByText("Activity on 2026-09-17");
+    expect(view.router.options.parseSearch!("?activity_invalid=true")).toEqual({
+      activity_invalid: true,
+    });
+    expect(sonner.toast).not.toHaveBeenCalled();
+    const linked = view.router.buildLocation({
+      to: "/projects/$slug/insights",
+      params: { slug: "x" },
+      search: true,
+      _includeValidateSearch: true,
+    });
+    expect(new URLSearchParams(linked.searchStr).has("activity_invalid")).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "12h" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        range: "7d",
+        grain: "12h",
+        activity_year: 2026,
+        activity_day: "2026-09-17",
+      }),
+    );
+    expect(sonner.toast).not.toHaveBeenCalled();
+    view.unmount();
+    view.client.clear();
+  });
+
+  it("normalizes malformed activity immediately with no recorded fallback and reopens quietly", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(
+      "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2025&activity_day=2025-02-30",
+    );
+    await screen.findByText("No available dates in 2025.");
+    const normalized = {
+      range: "custom",
+      from: "2026-09-15",
+      to: "2026-09-18",
+      grain: "6h",
+      activity_year: 2025,
+    };
+    await waitFor(() => {
+      expect(view.router.state.location.search).toEqual(normalized);
+      expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
+        "Invalid activity date was reset.",
+      );
+    });
+    expect(view.router.history.canGoBack()).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "12h" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        ...normalized,
+        grain: "12h",
+      }),
+    );
+    const shared = view.router.state.location.href;
+    expect(shared).not.toContain("activity_invalid");
+    expect(shared).not.toContain("2025-02-30");
+    view.unmount();
+    view.client.clear();
+    vi.mocked(sonner.toast).mockClear();
+    const reopened = renderPage(shared);
+    await screen.findByText("No available dates in 2025.");
+    expect(reopened.router.state.location.search).toEqual({
+      ...normalized,
+      grain: "12h",
+    });
+    expect(sonner.toast).not.toHaveBeenCalled();
+    reopened.unmount();
+    reopened.client.clear();
+  });
+
+  it.each([
+    "activity_year=bad&activity_day=2026-02-30",
+    "activity_year=2026&activity_day=2025-09-17",
+    "activity_year=2027&activity_day=2027-09-17",
+  ])(
+    "keeps graph fetching and filtering independent of invalid activity: %s",
+    async (activity) => {
+      const settingsRequest = vi
+        .spyOn(api, "getInsightsSettings")
+        .mockResolvedValue(settings);
+      const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+      const view = renderPage(
+        `/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&${activity}`,
+        { calendar: recordedCalendar },
+      );
+      await screen.findByText("Activity on 2026-09-18");
+      await screen.findByRole("heading", { name: "Burn chart" });
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+      expect(settingsRequest).toHaveBeenCalledExactlyOnceWith("x");
+      expect(burn).toHaveBeenCalledExactlyOnceWith("x", {
+        from: "2026-09-15",
+        to: "2026-09-19",
+        grain: "6h",
+        tz,
+      });
+      expect(
+        screen.queryByText("Invalid URL filters were reset to safe defaults."),
+      ).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(
+        view.calendarRequest.mock.calls.map(([query]) => [
+          query.year,
+          query.day,
+        ]),
+      ).toEqual([
+        [2026, undefined],
+        [2026, "2026-09-18"],
+      ]);
+      fireEvent.click(screen.getByRole("button", { name: "12h" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual({
+          range: "custom",
+          from: "2026-09-15",
+          to: "2026-09-18",
+          grain: "12h",
+          activity_year: 2026,
+          activity_day: "2026-09-18",
+        }),
+      );
+      await waitFor(() =>
+        expect(burn).toHaveBeenLastCalledWith("x", {
+          from: "2026-09-15",
+          to: "2026-09-19",
+          grain: "12h",
+          tz,
+        }),
+      );
+      expect(screen.getByText("Activity on 2026-09-18")).toBeTruthy();
+      view.unmount();
+      view.client.clear();
+    },
+  );
+
+  it("allows activity selection and fetching while an invalid graph range remains invalid", async () => {
+    const settingsRequest = vi
+      .spyOn(api, "getInsightsSettings")
+      .mockResolvedValue(settings);
+    const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(
+      "/projects/x/insights?range=custom&from=2026-09-18&to=2026-09-17&grain=6h&activity_year=2026&activity_day=2026-09-17",
+      { calendar: recordedCalendar },
+    );
+    await screen.findByText("Activity on 2026-09-17");
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Choose a valid custom range",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /2026-09-18: 1 active card/ }),
+    );
+    await screen.findByText("Activity on 2026-09-18");
+    expect(view.router.state.location.search).toEqual({
+      range: "custom",
+      from: "2026-09-18",
+      to: "2026-09-17",
+      grain: "6h",
+      activity_year: 2026,
+      activity_day: "2026-09-18",
+    });
+    expect(view.calendarRequest.mock.calls.map(([query]) => query.day)).toEqual(
+      [undefined, "2026-09-17", "2026-09-18"],
+    );
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Choose a valid custom range",
+    );
+    expect(settingsRequest).not.toHaveBeenCalled();
+    expect(burn).not.toHaveBeenCalled();
+    view.unmount();
+    view.client.clear();
+  });
+
+  it("keeps charts and graph filters working through calendar failure and retry", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(undefined, {
+      calendar: async () => {
+        throw new Error("calendar unavailable");
+      },
+    });
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    await within(activity).findByText(/calendar unavailable/);
+    await screen.findByRole("heading", { name: "Burn chart" });
+    expect(
+      screen.getByRole("heading", { name: "Status flow chart" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "6h" }));
+    await waitFor(() =>
+      expect(burn).toHaveBeenLastCalledWith("x", {
+        from: "2026-09-17",
+        to: "2026-09-19",
+        grain: "6h",
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
+      }),
+    );
+    expect(view.router.state.location.search).toEqual({
+      range: "custom",
+      from: "2026-09-17",
+      to: "2026-09-18",
+      grain: "6h",
+    });
+    view.calendarRequest.mockImplementation(calendarSnapshot);
+    fireEvent.click(within(activity).getByRole("button", { name: "Retry" }));
+    await screen.findByText("No available dates in 2026.");
+    expect(within(activity).queryByRole("alert")).toBeNull();
+    expect(burn).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { name: "Burn chart" })).toBeTruthy();
+    view.unmount();
+    view.client.clear();
+  });
+
   it("fetches settings first and uses a versioned burn key plus route search", async () => {
     const settingsRequest = vi
       .spyOn(api, "getInsightsSettings")

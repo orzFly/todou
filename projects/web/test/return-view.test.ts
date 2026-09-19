@@ -98,6 +98,110 @@ describe("parseReturnView — the destination has to be entirely valid", () => {
   });
 });
 
+describe("parseReturnView — version 1 user activity dates", () => {
+  it.each([
+    { activity_year: 2024 },
+    { activity_day: "2024-02-29" },
+    { activity_year: 2024, activity_day: "2024-02-29" },
+  ])(
+    "preserves optional activity fields %j after serialization",
+    (activity) => {
+      const raw = stored({
+        v: 1,
+        userLabel: "alice",
+        target: {
+          kind: "user",
+          ref: "alice",
+          search: { role: "assignee", state: "closed", ...activity },
+        },
+      });
+      const view = parseReturnView(JSON.parse(JSON.stringify(raw)), VIEWER);
+      expect(RETURN_VIEW_VERSION).toBe(1);
+      expect(view).toStrictEqual({
+        v: 1,
+        userId: VIEWER,
+        snapshotId: "s1",
+        userLabel: "alice",
+        target: {
+          kind: "user",
+          ref: "alice",
+          search: { role: "assignee", state: "closed", ...activity },
+        },
+        pages: [{ lane: "flat", extraPages: 2 }],
+        scroll: [{ region: "window", x: 0, y: 900, candidates: [] }],
+      });
+      expect(
+        parseReturnView(JSON.parse(JSON.stringify(view)), VIEWER),
+      ).toStrictEqual(view);
+    },
+  );
+
+  it.each([
+    {},
+    { role: "assignee" },
+    { role: "author", state: "all" },
+    { role: "any", state: "open" },
+  ])("reads old user snapshots without adding date fields: %j", (search) => {
+    const raw = stored({
+      v: 1,
+      target: { kind: "user", ref: "alice", search },
+    });
+    expect(
+      parseReturnView(JSON.parse(JSON.stringify(raw)), VIEWER),
+    ).toStrictEqual({
+      v: 1,
+      userId: VIEWER,
+      snapshotId: "s1",
+      target: { kind: "user", ref: "alice", search },
+      pages: [{ lane: "flat", extraPages: 2 }],
+      scroll: [{ region: "window", x: 0, y: 900, candidates: [] }],
+    });
+  });
+
+  it.each([
+    ["malformed day", { activity_day: "2024-2-29" }],
+    ["timestamp day", { activity_day: "2026-03-08T00:00:00Z" }],
+    ["day with trailing newline", { activity_day: "2026-01-01\n" }],
+    ["non-leap February 29", { activity_day: "2026-02-29" }],
+    ["nonexistent April 31", { activity_day: "2026-04-31" }],
+    ["year zero in day", { activity_day: "0000-01-01" }],
+    ["unsupported year in day", { activity_day: "9999-01-01" }],
+    [
+      "mismatched year and day",
+      { activity_year: 2024, activity_day: "2023-02-28" },
+    ],
+    [
+      "nonexistent day with a valid year",
+      { activity_year: 2024, activity_day: "2024-02-30" },
+    ],
+    ["year zero", { activity_year: 0 }],
+    ["negative year", { activity_year: -1 }],
+    ["unsupported year", { activity_year: 9999 }],
+    ["fractional year", { activity_year: 2026.5 }],
+    ["malformed year", { activity_year: "2026x" }],
+    ["numeric string year", { activity_year: "2024" }],
+    ["boolean year", { activity_year: true }],
+    ["array year", { activity_year: [2024] }],
+    ["object year", { activity_year: {} }],
+    ["null year", { activity_year: null }],
+    ["numeric day", { activity_day: 20260101 }],
+    ["boolean day", { activity_day: true }],
+    ["array day", { activity_day: ["2024-02-29"] }],
+    ["object day", { activity_day: {} }],
+    ["null day", { activity_day: null }],
+  ])("rejects the whole stored snapshot with %s", (_case, activity) => {
+    const raw = stored({
+      v: 1,
+      target: {
+        kind: "user",
+        ref: "alice",
+        search: { role: "author", state: "all", ...activity },
+      },
+    });
+    expect(parseReturnView(JSON.parse(JSON.stringify(raw)), VIEWER)).toBeNull();
+  });
+});
+
 describe("parseReturnView — a broken position costs only the position", () => {
   it("keeps the filters when the remembered scroll is nonsense", () => {
     const view = parseReturnView(
