@@ -6,19 +6,40 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { SpecComments, SpecFiles, SpecInfo } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
+import { RevisionHistory } from "../src/components/shared/revision-history.tsx";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
-import { testQueryClient } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 // The real diff renders in a shadow root happy-dom cannot lay out; the stub
-// surfaces the one option this suite is about as an attribute instead.
+// surfaces the one option this suite is about as an attribute instead. The
+// filename comes with it so a diff belonging to the spec page cannot be
+// mistaken for one belonging to an edit history.
 vi.mock("@pierre/diffs/react", () => ({
-  MultiFileDiff: ({ options }: { options: { overflow?: string } }) => (
-    <div data-testid="diff" data-overflow={options.overflow ?? "unset"} />
+  MultiFileDiff: ({
+    oldFile,
+    newFile,
+    options,
+  }: {
+    oldFile?: { name: string };
+    newFile?: { name: string };
+    options: { overflow?: string };
+  }) => (
+    <div
+      data-testid="diff"
+      data-file={newFile?.name ?? oldFile?.name ?? "unknown"}
+      data-overflow={options.overflow ?? "unset"}
+    />
   ),
   CodeView: () => null,
 }));
@@ -183,5 +204,120 @@ describe("spec diff wrap toggle (T-143)", () => {
     const view = renderSpecView("?v=2&compare=1");
     const toggle = await view.findByRole("button", { name: /wrap/i });
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+const SPEC_KEY = "todou-spec-diff-wrap";
+const HISTORY_KEY = "todou-edit-history-wrap";
+
+const REVISION = {
+  id: 3,
+  actor: AUTHOR,
+  created_at: "2026-08-12T10:00:00Z",
+  body_before: "old text",
+  body_after: "new text",
+  agent_context: null,
+};
+
+/**
+ * The real edit history, entered the way a reader does. Both surfaces label
+ * their control "wrap long lines", so the two are never on screen together
+ * here: each is mounted, driven and unmounted before the other appears.
+ */
+function renderEditHistory() {
+  return renderWithProviders(
+    <RevisionHistory
+      label="comment"
+      editedAt={REVISION.created_at}
+      filename="comment.md"
+      queryKey={["revisions", "demo", 1, "comment", 17]}
+      fetchRevisions={() => Promise.resolve({ items: [REVISION] })}
+    />,
+  );
+}
+
+async function openEditHistoryDiff() {
+  fireEvent.click(await screen.findByText("(edited)"));
+  const list = await screen.findByRole("dialog", { name: "" });
+  fireEvent.click(await within(list).findByRole("button", { name: /User/ }));
+  return await screen.findByRole("dialog", { name: "Edit history — comment" });
+}
+
+async function expectHistoryMode(dialog: HTMLElement, wrap: boolean) {
+  await waitFor(() => {
+    const diff = within(dialog).getByTestId("diff");
+    expect(diff.getAttribute("data-file")).toBe("comment.md");
+    expect(diff.getAttribute("data-overflow")).toBe(wrap ? "wrap" : "scroll");
+  });
+  expect(
+    within(dialog)
+      .getByRole("button", { name: "wrap long lines" })
+      .getAttribute("aria-pressed"),
+  ).toBe(String(wrap));
+}
+
+async function expectSpecMode(
+  view: ReturnType<typeof renderSpecView>,
+  wrap: boolean,
+) {
+  const toggle = await view.findByRole("button", { name: /wrap/i });
+  expect(toggle.getAttribute("aria-pressed")).toBe(String(wrap));
+  await waitFor(() => {
+    const diff = view.getByTestId("diff");
+    expect(diff.getAttribute("data-file")).toBe("design.md");
+    expect(diff.getAttribute("data-overflow")).toBe(wrap ? "wrap" : "scroll");
+  });
+  return toggle;
+}
+
+describe("edit history and the spec diff stay independent (T-425)", () => {
+  it("S1: a spec diff switched off neither reaches nor is reached by edit history", async () => {
+    localStorage.setItem(SPEC_KEY, "off");
+    mockSpec();
+    const spec = renderSpecView("?v=2&compare=1");
+    await expectSpecMode(spec, false);
+    spec.unmount();
+
+    // Nothing is saved under the edit-history key, so it opens wrapping.
+    // Reading the spec key instead would open it scrolling.
+    const history = renderEditHistory();
+    const dialog = await openEditHistoryDiff();
+    await expectHistoryMode(dialog, true);
+    const toggle = within(dialog).getByRole("button", {
+      name: "wrap long lines",
+    });
+    fireEvent.click(toggle);
+    await expectHistoryMode(dialog, false);
+    fireEvent.click(toggle);
+    await expectHistoryMode(dialog, true);
+    history.unmount();
+
+    expect(localStorage.getItem(HISTORY_KEY)).toBe("on");
+    expect(localStorage.getItem(SPEC_KEY)).toBe("off");
+
+    // …and the spec diff is where it was left, not where edit history went.
+    await expectSpecMode(renderSpecView("?v=2&compare=1"), false);
+  });
+
+  it("S2: edit history switched off neither reaches nor is reached by the spec diff", async () => {
+    localStorage.setItem(HISTORY_KEY, "off");
+    mockSpec();
+    const history = renderEditHistory();
+    await expectHistoryMode(await openEditHistoryDiff(), false);
+    history.unmount();
+
+    const spec = renderSpecView("?v=2&compare=1");
+    const toggle = await expectSpecMode(spec, true);
+    fireEvent.click(toggle);
+    await expectSpecMode(spec, false);
+    fireEvent.click(toggle);
+    await expectSpecMode(spec, true);
+    spec.unmount();
+
+    expect(localStorage.getItem(SPEC_KEY)).toBe("on");
+    expect(localStorage.getItem(HISTORY_KEY)).toBe("off");
+
+    renderEditHistory();
+    await expectHistoryMode(await openEditHistoryDiff(), false);
   });
 });

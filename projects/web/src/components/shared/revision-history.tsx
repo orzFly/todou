@@ -1,5 +1,6 @@
 import { hashKey, useQuery } from "@tanstack/react-query";
 import type { Revision, RevisionPage } from "@todou/shared";
+import { WrapTextIcon } from "lucide-react";
 import { Suspense, useMemo, useState } from "react";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import {
@@ -25,6 +26,34 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
+import { cn } from "@/lib/utils.ts";
+
+/**
+ * Its own key, not the spec diff's `todou-spec-diff-wrap`: the two surfaces
+ * were asked to remember separately, so turning wrapping off here leaves a
+ * spec comparison alone and the other way round (T-425).
+ */
+const HISTORY_WRAP_STORAGE_KEY = "todou-edit-history-wrap";
+
+// An edit history holds prose — a comment or a description — so wrapping,
+// not horizontal scrolling, is the posture it opens in until the reader says
+// otherwise, as the spec diff decided for the same reason (T-143).
+function readHistoryWrap(): boolean {
+  try {
+    return localStorage.getItem(HISTORY_WRAP_STORAGE_KEY) !== "off";
+  } catch {
+    // storage may be unavailable (private mode); fall through
+    return true;
+  }
+}
+
+function writeHistoryWrap(wrap: boolean) {
+  try {
+    localStorage.setItem(HISTORY_WRAP_STORAGE_KEY, wrap ? "on" : "off");
+  } catch {
+    // preference just won't persist
+  }
+}
 
 /** Both sides of one edit as diff inputs; .md names give markdown highlighting. */
 export function toDiffFiles(revision: Revision, filename: string) {
@@ -153,12 +182,72 @@ function KeyedRevisionHistory({
         }}
       >
         <DialogContent className="sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Edit history — {label}</DialogTitle>
-          </DialogHeader>
-          {selected && <RevisionDiff revision={selected} filename={filename} />}
+          {/* Mounted only while a revision is selected, which is what makes
+              the saved wrapping choice a per-opening read: the `(edited)`
+              marker outside this dialog stays mounted for the life of the
+              comment, so reading there would pin the choice to whatever it
+              was when the page loaded. The key covers one case the list
+              cannot currently produce — one revision replacing another with
+              no close in between; `U4b` in the tests says so and will fail
+              if that stops being true. */}
+          {selected && (
+            <RevisionDialog
+              key={selected.id}
+              revision={selected}
+              filename={filename}
+              label={label}
+            />
+          )}
         </DialogContent>
       </Dialog>
+    </>
+  );
+}
+
+function RevisionDialog({
+  revision,
+  filename,
+  label,
+}: {
+  revision: Revision;
+  filename: string;
+  label: string;
+}) {
+  const [wrap, setWrap] = useState(readHistoryWrap);
+  return (
+    <>
+      {/* `pr-8` clears the dialog's own Close, which is absolutely positioned
+          over this row's right end rather than laid out in it. */}
+      <DialogHeader className="flex-row items-center gap-3 pr-8 text-left">
+        <DialogTitle className="min-w-0 flex-1">
+          Edit history — {label}
+        </DialogTitle>
+        <button
+          type="button"
+          aria-pressed={wrap}
+          aria-label="wrap long lines"
+          title="Wrap long lines instead of scrolling horizontally"
+          onClick={() => {
+            // State first: a storage write that throws must not cost the
+            // reader the toggle they just asked for.
+            setWrap(!wrap);
+            writeHistoryWrap(!wrap);
+          }}
+          // The spec diff toolbar's `wrap` pill, spelled out again rather than
+          // imported: its home is a module the whole heavyweight spec page
+          // hangs off, and this dialog is reachable from every issue.
+          className={cn(
+            "inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border px-2.5 text-xs",
+            wrap
+              ? "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400"
+              : "text-muted-foreground hover:border-foreground/50",
+          )}
+        >
+          <WrapTextIcon className="size-3.5" />
+          wrap
+        </button>
+      </DialogHeader>
+      <RevisionDiff revision={revision} filename={filename} wrap={wrap} />
     </>
   );
 }
@@ -166,9 +255,11 @@ function KeyedRevisionHistory({
 function RevisionDiff({
   revision,
   filename,
+  wrap,
 }: {
   revision: Revision;
   filename: string;
+  wrap: boolean;
 }) {
   const { oldFile, newFile } = useMemo(
     () => toDiffFiles(revision, filename),
@@ -180,9 +271,15 @@ function RevisionDiff({
       theme: syntaxTheme,
       themeType: PIERRE_THEME_TYPE,
       diffStyle: "unified" as const,
+      // pierre's own wrapping, which keeps gutter and content on one subgrid
+      // so a soft-wrapped line still carries exactly one line number. Host
+      // CSS could not do this: the lines live in pierre's shadow root.
+      // "scroll" is pierre's default, so turning wrapping off is the diff
+      // this dialog rendered before T-425, option for option.
+      overflow: wrap ? ("wrap" as const) : ("scroll" as const),
       preferredHighlighter: PIERRE_HIGHLIGHTER,
     }),
-    [syntaxTheme],
+    [syntaxTheme, wrap],
   );
   return (
     <div className="max-h-[70vh] overflow-auto rounded-md">
