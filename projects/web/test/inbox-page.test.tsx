@@ -161,8 +161,10 @@ describe("InboxPage", () => {
   it("shows the potato empty state", async () => {
     mockInbox({ items: [], truncated: false });
     const view = renderWithProviders(<InboxPage />);
-    expect(await view.findByText("收件箱清空了 🥔")).toBeTruthy();
-    expect(view.queryByText("No issues match. 地里很干净 🥔")).toBeNull();
+    expect(await view.findByText("Inbox all dug out 🥔")).toBeTruthy();
+    expect(
+      view.queryByText("No issues match. Nothing but clean dirt 🥔"),
+    ).toBeNull();
   });
 
   it("renders groups with reason badges and row details", async () => {
@@ -482,8 +484,8 @@ describe("InboxPage", () => {
     const view = renderInbox();
     await view.findByText("issue 1");
     fireEvent.click(view.getByRole("tab", { name: "Mentions" }));
-    await view.findByText("No issues match. 地里很干净 🥔");
-    expect(view.queryByText("收件箱清空了 🥔")).toBeNull();
+    await view.findByText("No issues match. Nothing but clean dirt 🥔");
+    expect(view.queryByText("Inbox all dug out 🥔")).toBeNull();
     expect(view.queryByText("issue 1")).toBeNull();
     expect(view.getByText(/more unread than shown/)).toBeTruthy();
     expect(view.router.state.location.href).toBe("/inbox?tab=mentions");
@@ -525,7 +527,7 @@ describe("InboxPage", () => {
     fireEvent.click(
       view.getByRole("button", { name: "Mark the inbox as read" }),
     );
-    await view.findByText("No issues match. 地里很干净 🥔");
+    await view.findByText("No issues match. Nothing but clean dirt 🥔");
     expect(mark).toHaveBeenCalledWith({});
     expect(api.getInbox).toHaveBeenCalledTimes(2);
     expect(view.queryByText("issue 1")).toBeNull();
@@ -537,8 +539,10 @@ describe("InboxPage", () => {
   it("shows only the full empty state when opening Mentions on an empty inbox", async () => {
     mockInbox({ items: [], truncated: false });
     const view = renderInbox("/inbox?tab=mentions");
-    await view.findByText("收件箱清空了 🥔");
-    expect(view.queryByText("No issues match. 地里很干净 🥔")).toBeNull();
+    await view.findByText("Inbox all dug out 🥔");
+    expect(
+      view.queryByText("No issues match. Nothing but clean dirt 🥔"),
+    ).toBeNull();
     expect(
       view.getByRole("tab", { name: "Mentions" }).getAttribute("aria-selected"),
     ).toBe("true");
@@ -559,9 +563,9 @@ describe("InboxPage", () => {
     await act(async () => {
       view.client.setQueryData(inboxQuery.queryKey, updated);
     });
-    await view.findByText("No issues match. 地里很干净 🥔");
+    await view.findByText("No issues match. Nothing but clean dirt 🥔");
     expect(view.queryByText("issue 1")).toBeNull();
-    expect(view.queryByText("收件箱清空了 🥔")).toBeNull();
+    expect(view.queryByText("Inbox all dug out 🥔")).toBeNull();
     expect(view.router.state.location.href).toBe("/inbox?tab=mentions");
     fireEvent.click(view.getByRole("tab", { name: "All" }));
     await view.findByText("issue 1");
@@ -760,6 +764,6 @@ describe("InboxPage · load failure (T-376)", () => {
     get.mockResolvedValueOnce(inboxFixture({ items: [], truncated: false }));
     fireEvent.click(view.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
-    await view.findByText("收件箱清空了 🥔");
+    await view.findByText("Inbox all dug out 🥔");
   });
 });

@@ -223,7 +223,7 @@ describe("GroupedIssueList", () => {
         search={{}}
       />,
     );
-    expect(await findByText(/地里很干净/)).toBeTruthy();
+    expect(await findByText(/Nothing but clean dirt/)).toBeTruthy();
   });
 });
 

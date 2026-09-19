@@ -432,7 +432,7 @@ export function TrashView({
       </div>
       {issues.data.items.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-          The trash is empty. 干干净净 🧺
+          The trash is empty. Squeaky clean 🧺
         </div>
       ) : (
         <ul className={cn("rounded-lg border", grid)}>
@@ -606,7 +606,7 @@ export function GroupedIssueList({
   if (groups.length === 0) {
     return (
       <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-        No issues match. 地里很干净 🥔
+        No issues match. Nothing but clean dirt 🥔
       </div>
     );
   }
@@ -1014,7 +1014,7 @@ export function IssueList({
   if (shown.length === 0 && !narrowing) {
     return (
       <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-        No issues match. 地里很干净 🥔
+        No issues match. Nothing but clean dirt 🥔
       </div>
     );
   }

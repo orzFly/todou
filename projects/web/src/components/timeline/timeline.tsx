@@ -446,7 +446,7 @@ export function Timeline({
                 setNewBelow(false);
               }}
             >
-              <ArrowDownIcon className="size-4" /> 新消息
+              <ArrowDownIcon className="size-4" /> New messages
             </Button>
           </div>
         )}

@@ -47,7 +47,7 @@ export function ProjectsPage() {
       </div>
       {projects.data.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-          还没有项目——种下第一颗土豆吧 🥔
+          No projects yet — plant your first potato 🥔
         </div>
       ) : (
         <ProjectCardGrid>
@@ -67,7 +67,7 @@ export function ProjectsPage() {
                   count > 0 ? (
                     <>
                       <UnreadBadge count={count} />
-                      <span className="sr-only">{count} 未读</span>
+                      <span className="sr-only">{count} unread</span>
                     </>
                   ) : undefined
                 }

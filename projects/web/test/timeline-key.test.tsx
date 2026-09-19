@@ -291,7 +291,8 @@ describe("the issue page's timeline, keyed by card", () => {
 
   it("does not announce the card it just left as new content", async () => {
     stubPage();
-    const pill = () => within(view.container).queryByText("新消息") !== null;
+    const pill = () =>
+      within(view.container).queryByText("New messages") !== null;
     const view = renderAt("/projects/p/issues/7");
     await waitFor(() =>
       expect(view.container.querySelectorAll("[data-comment-id]").length).toBe(

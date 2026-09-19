@@ -24,12 +24,12 @@ const TAG_TEMPLATES: TagTemplate[] = [
       "<summary>",
       // Blank lines separate the summary tags from its Markdown title.
       "",
-      `\${1:标题}`,
+      `\${1:Title}`,
       "",
       "</summary>",
       // Blank lines around the body keep it outside the raw HTML blocks.
       "",
-      `\${2:正文}`,
+      `\${2:Body}`,
       "",
       "</details>",
       // A final field keeps backward navigation available from the body.

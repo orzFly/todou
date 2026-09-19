@@ -43,7 +43,7 @@ export function UserProjectsSection({ login }: { login: string }) {
 
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold">Ta 的项目</h2>
+      <h2 className="text-lg font-semibold">Their projects</h2>
       {notice && (
         <RefreshFailure
           what="these projects"
@@ -71,7 +71,7 @@ export function UserProjectsSection({ login }: { login: string }) {
         </ProjectCardGrid>
       ) : data.items.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-          没有你们都在的项目 🥔
+          No projects you are both in 🥔
         </div>
       ) : (
         <ProjectCardGrid>

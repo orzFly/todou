@@ -210,7 +210,7 @@ export function UserIssuesSection({
   return (
     <section ref={rootRef} className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">Ta 的卡</h2>
+        <h2 className="text-lg font-semibold">Their cards</h2>
         <div className="flex flex-wrap items-center gap-2">
           <Segmented
             options={ROLES}
@@ -250,7 +250,7 @@ export function UserIssuesSection({
         <Skeleton className="h-32 w-full" />
       ) : items.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-          没有你能看到的卡 🥔
+          No cards you can see 🥔
         </div>
       ) : (
         <>

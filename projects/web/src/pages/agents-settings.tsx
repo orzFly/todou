@@ -80,7 +80,7 @@ export function AgentsSettingsPage() {
       </div>
       {agents.data.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-          No agents yet. 造一个帮你挖土豆的机器人吧 🤖🥔
+          No agents yet. Build one to help dig the potatoes 🤖🥔
         </div>
       ) : (
         <div className="space-y-4">

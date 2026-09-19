@@ -50,7 +50,7 @@ vi.mock("@pierre/diffs/react", () => ({
 // Independent expected document: importing the production template would hide
 // broken blank lines and field numbering from this assertion.
 const BLOCK =
-  "<details>\n<summary>\n\n标题\n\n</summary>\n\n正文\n\n</details>\n";
+  "<details>\n<summary>\n\nTitle\n\n</summary>\n\nBody\n\n</details>\n";
 const settle = () => delay(200);
 
 function editor(onCancel?: () => void) {
@@ -139,11 +139,11 @@ describe("details completion and snippet fields", () => {
     ).toEqual(["<details>"]);
     cmPressKey(container, "Tab");
     expect(cmGetValue(container)).toBe(BLOCK);
-    expect(selected(container)).toBe("标题");
+    expect(selected(container)).toBe("Title");
     cmPressKey(container, "Tab");
-    expect(selected(container)).toBe("正文");
+    expect(selected(container)).toBe("Body");
     cmPressKey(container, "Tab", { shiftKey: true });
-    expect(selected(container)).toBe("标题");
+    expect(selected(container)).toBe("Title");
     cmPressKey(container, "Tab");
     cmPressKey(container, "Tab");
     expect(cmView(container).state.selection.main.head).toBe(BLOCK.length);
@@ -219,11 +219,11 @@ describe("details completion and snippet fields", () => {
       const rendered = await preview(cmGetValue(container));
       expect(rendered.querySelectorAll("details")).toHaveLength(1);
       expect(rendered.querySelector("li details > p")?.textContent).toBe(
-        "正文",
+        "Body",
       );
       expect(
         rendered.querySelector("li details summary")?.textContent,
-      ).toContain("标题");
+      ).toContain("Title");
     },
   );
 
@@ -233,12 +233,12 @@ describe("details completion and snippet fields", () => {
     act(() => cmInput(container, "@ali"));
     await active(container);
     cmPressKey(container, "Tab");
-    expect(cmGetValue(container)).toBe(BLOCK.replace("标题", "@alice "));
+    expect(cmGetValue(container)).toBe(BLOCK.replace("Title", "@alice "));
     expect(pendingSpaceAt(cmView(container).state)).not.toBeNull();
     act(() => expect(cmInput(container, "，")).toBe(true));
-    expect(cmGetValue(container)).toBe(BLOCK.replace("标题", "@alice，"));
+    expect(cmGetValue(container)).toBe(BLOCK.replace("Title", "@alice，"));
     cmPressKey(container, "Tab");
-    expect(selected(container)).toBe("正文");
+    expect(selected(container)).toBe("Body");
   });
 
   it("still trims a pending mention space on Enter inside the template", async () => {
@@ -247,9 +247,9 @@ describe("details completion and snippet fields", () => {
     act(() => cmInput(container, "@ali"));
     await active(container);
     cmPressKey(container, "Enter");
-    expect(cmGetValue(container)).toBe(BLOCK.replace("标题", "@alice "));
+    expect(cmGetValue(container)).toBe(BLOCK.replace("Title", "@alice "));
     cmPressKey(container, "Enter");
-    expect(cmGetValue(container)).toBe(BLOCK.replace("标题", "@alice\n"));
+    expect(cmGetValue(container)).toBe(BLOCK.replace("Title", "@alice\n"));
   });
 
   it("spends Escape on the panel, then snippet, then the enclosing cancel action", async () => {

@@ -170,7 +170,7 @@ function renderSwitcher(
 }
 
 async function openSwitcher() {
-  const trigger = await screen.findByRole("button", { name: "切换项目" });
+  const trigger = await screen.findByRole("button", { name: "Switch project" });
   fireEvent.click(trigger);
   await waitFor(() => expect(screen.getByRole("listbox")).toBeTruthy());
   return trigger;
@@ -232,7 +232,7 @@ describe("ProjectSwitcher", () => {
     await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(1));
     fireEvent.change(input, { target: { value: "no-such" } });
     await waitFor(() =>
-      expect(screen.getByText("没有匹配的项目")).toBeTruthy(),
+      expect(screen.getByText("No projects match")).toBeTruthy(),
     );
   });
 
@@ -391,14 +391,16 @@ describe("ProjectSwitcher unread badges (T-202)", () => {
       unread_counts: { beta: 2 },
     });
     await openSwitcher();
-    expect(screen.getByRole("option", { name: "beta — 2 未读" })).toBeTruthy();
+    expect(
+      screen.getByRole("option", { name: "beta — 2 unread" }),
+    ).toBeTruthy();
     // No count means no aria-label, so this row is announced by its own
     // content — the name and the spelling token, and nothing about unreads.
     const alpha = screen
       .getAllByRole("option")
       .find((el) => el.textContent?.includes("alpha"));
     expect(alpha?.getAttribute("aria-label")).toBe(null);
-    expect(alpha?.textContent).not.toContain("未读");
+    expect(alpha?.textContent).not.toContain("unread");
   });
 });
 

@@ -208,8 +208,8 @@ export function InboxPage() {
       {groups.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
           {data.items.length === 0
-            ? "收件箱清空了 🥔"
-            : "No issues match. 地里很干净 🥔"}
+            ? "Inbox all dug out 🥔"
+            : "No issues match. Nothing but clean dirt 🥔"}
         </div>
       ) : (
         <div className="space-y-6">

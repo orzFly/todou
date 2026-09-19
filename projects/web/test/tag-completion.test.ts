@@ -114,7 +114,7 @@ describe("templatesFor", () => {
         label: "<details>",
         detail: "Collapsible block",
         template:
-          "<details>\n<summary>\n\n${1:标题}\n\n</summary>\n\n${2:正文}\n\n</details>\n${0}",
+          "<details>\n<summary>\n\n${1:Title}\n\n</summary>\n\n${2:Body}\n\n</details>\n${0}",
       },
     ]);
   });

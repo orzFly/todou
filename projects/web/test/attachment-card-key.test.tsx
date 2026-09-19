@@ -212,7 +212,7 @@ describe("the issue page's attachment section, keyed by card", () => {
     expect(
       within(sectionFor(8) as HTMLElement).getByTestId("attachment-fold-toggle")
         .textContent,
-    ).toContain("展开其余 3 个");
+    ).toContain("Show 3 more");
   });
 
   it("leaves no section behind when the reader jumps on", async () => {

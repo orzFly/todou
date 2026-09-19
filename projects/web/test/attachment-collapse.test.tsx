@@ -73,7 +73,7 @@ describe("the attachment section folds a long list", () => {
     expect(
       toggle.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(toggle.textContent).toContain("展开其余 3 个");
+    expect(toggle.textContent).toContain("Show 3 more");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -89,14 +89,14 @@ describe("the attachment section folds a long list", () => {
       expect(view.container.querySelectorAll("li")).toHaveLength(8),
     );
     expect(filenames(view.container)[0]).toBe("shot-1.png");
-    expect(toggle.textContent).toContain("收起");
+    expect(toggle.textContent).toContain("Show less");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
     fireEvent.click(toggle);
     await waitFor(() =>
       expect(view.container.querySelectorAll("li")).toHaveLength(5),
     );
-    expect(toggle.textContent).toContain("展开其余 3 个");
+    expect(toggle.textContent).toContain("Show 3 more");
   });
 
   it("leaves seven files alone — folding them would save nothing", async () => {

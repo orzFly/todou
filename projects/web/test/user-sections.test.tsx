@@ -472,14 +472,14 @@ describe("UserIssuesSection (T-374)", () => {
     await waitFor(() =>
       expect(
         view
-          .getByRole("heading", { name: "Ta 的卡" })
+          .getByRole("heading", { name: "Their cards" })
           .closest("section")
           ?.querySelector('[role="status"]')?.textContent,
       ).toContain("cards refresh failed"),
     );
 
     const section = view
-      .getByRole("heading", { name: "Ta 的卡" })
+      .getByRole("heading", { name: "Their cards" })
       .closest("section");
     expect(section).not.toBeNull();
     const cards = within(section as HTMLElement);
@@ -558,14 +558,14 @@ describe("UserProjectsSection (T-374)", () => {
     await waitFor(() =>
       expect(
         view
-          .getByRole("heading", { name: "Ta 的项目" })
+          .getByRole("heading", { name: "Their projects" })
           .closest("section")
           ?.querySelector('[role="status"]')?.textContent,
       ).toContain("projects refresh failed"),
     );
 
     const section = view
-      .getByRole("heading", { name: "Ta 的项目" })
+      .getByRole("heading", { name: "Their projects" })
       .closest("section");
     expect(section).not.toBeNull();
     const memberships = within(section as HTMLElement);
@@ -640,12 +640,12 @@ describe("User profile section failures (T-420)", () => {
 
     const cards = within(
       view
-        .getByRole("heading", { name: "Ta 的卡" })
+        .getByRole("heading", { name: "Their cards" })
         .closest("section") as HTMLElement,
     );
     const memberships = within(
       view
-        .getByRole("heading", { name: "Ta 的项目" })
+        .getByRole("heading", { name: "Their projects" })
         .closest("section") as HTMLElement,
     );
     expect(
@@ -727,7 +727,7 @@ describe("User profile section failures (T-420)", () => {
 
       const cards = within(
         view
-          .getByRole("heading", { name: "Ta 的卡" })
+          .getByRole("heading", { name: "Their cards" })
           .closest("section") as HTMLElement,
       );
       expect(
@@ -770,19 +770,21 @@ describe("User profile section failures (T-420)", () => {
       );
     const client = clientWithUser();
     const view = renderAt("/users/alice", client);
-    await view.findByRole("heading", { name: "Ta 的卡" });
+    await view.findByRole("heading", { name: "Their cards" });
     const cards = within(
       view
-        .getByRole("heading", { name: "Ta 的卡" })
+        .getByRole("heading", { name: "Their cards" })
         .closest("section") as HTMLElement,
     );
     const memberships = within(
       view
-        .getByRole("heading", { name: "Ta 的项目" })
+        .getByRole("heading", { name: "Their projects" })
         .closest("section") as HTMLElement,
     );
-    expect(await cards.findByText("没有你能看到的卡 🥔")).toBeTruthy();
-    expect(await memberships.findByText("没有你们都在的项目 🥔")).toBeTruthy();
+    expect(await cards.findByText("No cards you can see 🥔")).toBeTruthy();
+    expect(
+      await memberships.findByText("No projects you are both in 🥔"),
+    ).toBeTruthy();
     await waitFor(() => expect(client.isFetching()).toBe(0));
 
     const cardsKey = userIssuesQuery({
@@ -798,8 +800,10 @@ describe("User profile section failures (T-420)", () => {
       ]);
     });
 
-    expect(cards.getByText("没有你能看到的卡 🥔")).toBeTruthy();
-    expect(memberships.getByText("没有你们都在的项目 🥔")).toBeTruthy();
+    expect(cards.getByText("No cards you can see 🥔")).toBeTruthy();
+    expect(
+      memberships.getByText("No projects you are both in 🥔"),
+    ).toBeTruthy();
     expect(
       await cards.findByText(
         /Couldn't refresh these cards \(empty cards 500\)/,
@@ -878,7 +882,7 @@ describe("User profile section failures (T-420)", () => {
     fireEvent.click(view.getByRole("tab", { name: "Assigned" }));
     const cards = within(
       view
-        .getByRole("heading", { name: "Ta 的卡" })
+        .getByRole("heading", { name: "Their cards" })
         .closest("section") as HTMLElement,
     );
     expect(
@@ -964,10 +968,10 @@ describe("User profile section failures (T-420)", () => {
       .mockImplementationOnce(async () => retry);
     vi.spyOn(api, "listUserProjects").mockResolvedValue(noProjects());
     const view = renderAt("/users/alice", clientWithUser());
-    await view.findByRole("heading", { name: "Ta 的卡" });
+    await view.findByRole("heading", { name: "Their cards" });
     const cards = within(
       view
-        .getByRole("heading", { name: "Ta 的卡" })
+        .getByRole("heading", { name: "Their cards" })
         .closest("section") as HTMLElement,
     );
     expect(

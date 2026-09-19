@@ -150,26 +150,26 @@ describe("Insights controls", () => {
     render(
       <InsightsControls search={search} context={context} onChange={change} />,
     );
-    const ranges = screen.getByRole("group", { name: "时间范围" });
-    const grains = screen.getByRole("group", { name: "统计粒度" });
+    const ranges = screen.getByRole("group", { name: "Time range" });
+    const grains = screen.getByRole("group", { name: "Granularity" });
     expect(
       within(ranges)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["24h", "7天", "30天", "90天", "自定义"]);
+    ).toEqual(["24h", "7d", "30d", "90d", "Custom"]);
     expect(
       within(grains)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["自动", "1h", "6h", "12h", "1天", "1周"]);
+    ).toEqual(["Auto", "1h", "6h", "12h", "1d", "1w"]);
     expect(
       within(ranges)
-        .getByRole("button", { name: "30天" })
+        .getByRole("button", { name: "30d" })
         .getAttribute("aria-pressed"),
     ).toBe("true");
     expect(
       within(grains)
-        .getByRole("button", { name: "自动" })
+        .getByRole("button", { name: "Auto" })
         .getAttribute("aria-pressed"),
     ).toBe("true");
     fireEvent.click(within(ranges).getByRole("button", { name: "24h" }));
@@ -185,8 +185,8 @@ describe("Insights controls", () => {
       grain: "6h",
     });
     expect(screen.queryByLabelText("时区")).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "时间范围" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "统计粒度" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Time range" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Granularity" })).toBeNull();
   });
 
   it("seeds Custom with calendar dates and inclusive end", () => {
@@ -195,10 +195,10 @@ describe("Insights controls", () => {
       <InsightsControls search={search} context={context} onChange={change} />,
     );
     fireEvent.click(
-      within(screen.getByRole("group", { name: "时间范围" })).getByRole(
+      within(screen.getByRole("group", { name: "Time range" })).getByRole(
         "button",
         {
-          name: "自定义",
+          name: "Custom",
         },
       ),
     );
@@ -219,21 +219,21 @@ describe("Insights controls", () => {
     render(
       <InsightsControls search={custom} context={context} onChange={change} />,
     );
-    fireEvent.change(screen.getByLabelText("开始日期"), {
+    fireEvent.change(screen.getByLabelText("Start date"), {
       target: { value: "2026-09-18" },
     });
-    fireEvent.change(screen.getByLabelText("结束日期"), {
+    fireEvent.change(screen.getByLabelText("End date"), {
       target: { value: "2026-09-17" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "应用日期" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply dates" }));
     expect(screen.getByRole("alert").textContent).toContain(
       "valid dates in order",
     );
     expect(change).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("结束日期"), {
+    fireEvent.change(screen.getByLabelText("End date"), {
       target: { value: "2026-09-18" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "应用日期" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply dates" }));
     expect(change).toHaveBeenCalledWith({
       range: "custom",
       grain: "auto",
@@ -250,14 +250,14 @@ describe("Insights controls", () => {
     const view = render(
       <InsightsControls search={search} context={context} onChange={change} />,
     );
-    const grain = screen.getByRole("group", { name: "统计粒度" });
+    const grain = screen.getByRole("group", { name: "Granularity" });
     const unavailable = within(grain).getByRole("button", { name: "1h" });
     expect(unavailable).toHaveProperty("disabled", true);
     expect(unavailable.getAttribute("title")).toBeNull();
     expect(unavailable.getAttribute("aria-label")).toBeNull();
     fireEvent.click(unavailable);
     expect(change).not.toHaveBeenCalled();
-    expect(view.container.textContent).not.toMatch(/桶|bucket|400|自动\s*→/i);
+    expect(view.container.textContent).not.toMatch(/bucket|400|Auto\s*→/i);
     expect(screen.queryByRole("combobox")).toBeNull();
     view.rerender(
       <InsightsControls
@@ -293,7 +293,7 @@ describe("Insights page", () => {
       view.client.getQueryData(insightsKeys.burnRequest("x", expected, "v1")),
     ).toEqual(data);
     fireEvent.click(
-      within(screen.getByRole("group", { name: "统计粒度" })).getByRole(
+      within(screen.getByRole("group", { name: "Granularity" })).getByRole(
         "button",
         { name: "6h" },
       ),
@@ -336,7 +336,7 @@ describe("Insights page", () => {
       tz: "Asia/Tokyo",
     });
     expect(screen.queryByLabelText("时区")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "7天" }));
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
     await waitFor(() =>
       expect(view.router.state.location.search.range).toBe("7d"),
     );
@@ -349,15 +349,15 @@ describe("Insights page", () => {
     expect(
       new URLSearchParams(view.router.state.location.searchStr).has("tz"),
     ).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "自定义" }));
-    await screen.findByLabelText("开始日期");
-    fireEvent.change(screen.getByLabelText("开始日期"), {
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    await screen.findByLabelText("Start date");
+    fireEvent.change(screen.getByLabelText("Start date"), {
       target: { value: "2026-09-16" },
     });
-    fireEvent.change(screen.getByLabelText("结束日期"), {
+    fireEvent.change(screen.getByLabelText("End date"), {
       target: { value: "2026-09-18" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "应用日期" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply dates" }));
     await waitFor(() =>
       expect(view.router.state.location.search).toEqual({
         range: "custom",

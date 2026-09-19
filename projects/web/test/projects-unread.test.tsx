@@ -180,10 +180,10 @@ describe("ProjectsPage unread badges (T-382)", () => {
     );
     expect(alpha.getAttribute("aria-label")).toBeNull();
     expect(
-      screen.getByRole("link", { name: /Alpha description.*2 未读/ }),
+      screen.getByRole("link", { name: /Alpha description.*2 unread/ }),
     ).toBe(alpha);
     expect(actionOf(quiet)).toBeNull();
-    expect(quiet.textContent).not.toContain("未读");
+    expect(quiet.textContent).not.toContain("unread");
   });
 
   it("keeps cards and hrefs visible without badges while the inbox is loading", async () => {
@@ -294,11 +294,11 @@ describe("ProjectsPage unread badges (T-382)", () => {
       actionOf(cardOf(container, "beta"))?.querySelector("span[aria-hidden]")
         ?.textContent,
     ).toBe("3");
-    fireEvent.click(screen.getByRole("button", { name: "切换项目" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch project" }));
     const alphaOption = await screen.findByRole("option", {
-      name: "alpha — 120 未读",
+      name: "alpha — 120 unread",
     });
-    const betaOption = screen.getByRole("option", { name: "beta — 3 未读" });
+    const betaOption = screen.getByRole("option", { name: "beta — 3 unread" });
     expect(alphaOption.querySelector("span[aria-hidden]")?.textContent).toBe(
       "99+",
     );

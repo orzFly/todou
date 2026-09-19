@@ -849,7 +849,7 @@ describe("question landing through the real issue route", () => {
     await refetchTail(view);
     await view.findByText("comment body 4");
     expect(scroll.bottoms()).toBe(1);
-    expect(view.getByRole("button", { name: "新消息" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "New messages" })).toBeTruthy();
     expect(view.getByText(LOCATE_FAILURE)).toBeTruthy();
     expect(view.router.state.location.hash).toBe(ENTRY);
     expect(scroll.events.some((event) => event.startsWith("reveal:"))).toBe(
@@ -1392,7 +1392,7 @@ describe("question landing through the real issue route", () => {
     await refetchTail(view);
     await view.findByText("comment body 4");
     expect(scroll.bottoms()).toBe(2);
-    expect(view.getByRole("button", { name: "新消息" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "New messages" })).toBeTruthy();
     expect(server.questions()).toHaveLength(0);
   });
 

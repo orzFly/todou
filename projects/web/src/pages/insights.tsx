@@ -123,19 +123,19 @@ export function InsightsPage() {
 
 const RANGE_OPTIONS = [
   ["24h", "24h"],
-  ["7d", "7天"],
-  ["30d", "30天"],
-  ["90d", "90天"],
-  ["custom", "自定义"],
+  ["7d", "7d"],
+  ["30d", "30d"],
+  ["90d", "90d"],
+  ["custom", "Custom"],
 ] as const;
 
 const GRAIN_LABELS: Record<GrainValue, string> = {
-  auto: "自动",
+  auto: "Auto",
   "1h": "1h",
   "6h": "6h",
   "12h": "12h",
-  "1d": "1天",
-  "1w": "1周",
+  "1d": "1d",
+  "1w": "1w",
 };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -204,8 +204,8 @@ export function InsightsControls({
       }}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-between">
-        <fieldset aria-label="时间范围" className="min-w-0 space-y-2">
-          <legend className="text-sm text-muted-foreground">时间范围</legend>
+        <fieldset aria-label="Time range" className="min-w-0 space-y-2">
+          <legend className="text-sm text-muted-foreground">Time range</legend>
           <div className={segmentClass}>
             {RANGE_OPTIONS.map(([range, label]) => (
               <button
@@ -228,8 +228,8 @@ export function InsightsControls({
             ))}
           </div>
         </fieldset>
-        <fieldset aria-label="统计粒度" className="min-w-0 space-y-2">
-          <legend className="text-sm text-muted-foreground">统计粒度</legend>
+        <fieldset aria-label="Granularity" className="min-w-0 space-y-2">
+          <legend className="text-sm text-muted-foreground">Granularity</legend>
           <div className={segmentClass}>
             {Grain.options.map((grain) => {
               const label = GRAIN_LABELS[grain];
@@ -259,7 +259,7 @@ export function InsightsControls({
       {search.range === "custom" && (
         <div className="flex flex-wrap items-end gap-2">
           <label className="grid gap-1 text-sm">
-            开始日期
+            Start date
             <input
               className={`${controlClass} max-w-32`}
               type="date"
@@ -269,7 +269,7 @@ export function InsightsControls({
             />
           </label>
           <label className="grid gap-1 text-sm">
-            结束日期
+            End date
             <input
               className={`${controlClass} max-w-32`}
               type="date"
@@ -279,7 +279,7 @@ export function InsightsControls({
             />
           </label>
           <Button type="submit" variant="outline" size="sm">
-            应用日期
+            Apply dates
           </Button>
         </div>
       )}

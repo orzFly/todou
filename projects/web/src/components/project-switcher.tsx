@@ -60,10 +60,10 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
           trailing: <UnreadBadge count={count} className="shrink-0" />,
           // Only when there is something to announce: the badge is
           // aria-hidden (a bare number reads as noise), and an unconditional
-          // label would put "— 0 未读" into every activedescendant
+          // label would put "— 0 unread" into every activedescendant
           // announcement while arrowing the list.
           ariaLabel:
-            count > 0 ? `${item.project.name} — ${count} 未读` : undefined,
+            count > 0 ? `${item.project.name} — ${count} unread` : undefined,
         };
       }),
     [ordered, counts, target],
@@ -84,7 +84,7 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
           size="icon"
           className="size-6 shrink-0 text-muted-foreground"
           aria-haspopup="listbox"
-          aria-label="切换项目"
+          aria-label="Switch project"
         >
           <ChevronsUpDownIcon className="size-3.5" />
         </Button>
@@ -102,10 +102,10 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
           ref={listbox}
           options={options}
           selected={slug}
-          label="切换项目"
+          label="Switch project"
           idPrefix="project-option"
-          searchPlaceholder="搜索项目…"
-          emptyText="没有匹配的项目"
+          searchPlaceholder="Search projects…"
+          emptyText="No projects match"
           className="flex min-h-0 flex-col"
           onSelect={(option) => {
             setOpen(false);

@@ -67,7 +67,7 @@ describe("the sidebar attachment section", () => {
       seeded(8),
     );
     const section = await view.findByTestId("attachment-sidebar");
-    const jump = within(section).getByText("全部 8 个 ↓");
+    const jump = within(section).getByText("All 8 ↓");
     expect(jump.tagName).toBe("A");
     expect(jump.getAttribute("href")).toBe("#attachments");
     // The target exists and is the body list, not this section.
@@ -86,7 +86,7 @@ describe("the sidebar attachment section", () => {
     );
     const section = await view.findByTestId("attachment-sidebar");
     await waitFor(() => expect(section.querySelectorAll("li")).toHaveLength(4));
-    expect(within(section).queryByText(/^全部 \d+ 个/)).toBeNull();
+    expect(within(section).queryByText(/^All \d+/)).toBeNull();
   });
 
   it("keeps the jump row while files are missing from it", async () => {
@@ -98,7 +98,7 @@ describe("the sidebar attachment section", () => {
     );
     const section = await view.findByTestId("attachment-sidebar");
     await waitFor(() => expect(section.querySelectorAll("li")).toHaveLength(4));
-    expect(within(section).getByText(/^全部 \d+ 个/)).toBeTruthy();
+    expect(within(section).getByText(/^All \d+/)).toBeTruthy();
   });
 
   it("makes the heading itself the way down to the body list", async () => {

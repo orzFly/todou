@@ -134,12 +134,12 @@ export function AttachmentList({
           {folded ? (
             <>
               <ChevronDownIcon className="size-3.5" />
-              展开其余 {items.length - CAP} 个
+              Show {items.length - CAP} more
             </>
           ) : (
             <>
               <ChevronUpIcon className="size-3.5" />
-              收起
+              Show less
             </>
           )}
         </button>
@@ -285,7 +285,7 @@ export function AttachmentSidebarSection({
           href="#attachments"
           className="text-xs text-muted-foreground hover:underline"
         >
-          全部 {items.length} 个 ↓
+          All {items.length} ↓
         </a>
       )}
       <AttachmentViewerDialog

@@ -491,7 +491,7 @@ export function Composer({
           key={entry.key}
           className="flex items-center justify-between rounded-md border border-destructive/40 px-3 py-1.5 text-sm text-destructive"
         >
-          <span className="truncate">发送失败：{entry.comment.body}</span>
+          <span className="truncate">Failed to send: {entry.comment.body}</span>
           <Button
             variant="outline"
             size="sm"

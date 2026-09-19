@@ -92,10 +92,11 @@ export class SearchCommand extends ProjectCommand {
       "Search a project's issues, comments and spec documents (T-141)",
     details: `
       Terms are ANDed and each is a **case-insensitive substring** — so
-      \`搜索\` finds it inside a longer run of Chinese, and \`WordDiff\`
-      finds \`coalescedWordDiff\`. Quote a phrase to keep it together;
-      without quotes the words may land anywhere in the same hit, and for an
-      issue that means the title and the body count as one place.
+      \`WordDiff\` finds \`coalescedWordDiff\`, and the same rule is what
+      makes Chinese, Japanese and Korean searchable, since those scripts
+      leave no spaces to split a query on. Quote a phrase to keep it
+      together; without quotes the words may land anywhere in the same hit,
+      and for an issue that means the title and the body count as one place.
 
       Every line is \`<ref>  <where>  <snippet>\`, where \`<where>\` is the
       id to read next — \`#comment-<id>\`, \`spec <path>\`, or plain
@@ -118,7 +119,7 @@ export class SearchCommand extends ProjectCommand {
       Commas are any-of and repeating a key is all-of, so \`label:a,b\` is
       either label and \`label:a label:b\` is both. A leading \`-\` inverts
       one expression — and since that also looks like a flag, put it after
-      \`--\`: \`todou search -p x -- -harness:codex 部署\`. \`harness:\` and
+      \`--\`: \`todou search -p x -- -harness:codex deploy\`. \`harness:\` and
       \`session:\` follow **the text that matched**, not the card: a comment
       answers for whoever wrote it, a spec for whoever pushed the version, an
       issue body for whoever opened the card.
@@ -136,18 +137,21 @@ export class SearchCommand extends ProjectCommand {
       it exits 0.
     `,
     examples: [
-      ["Anywhere in the project", "$0 search 全文搜索"],
-      ["Two words, any distance apart", "$0 search cursor 语义"],
-      ["One phrase, exactly", '$0 search "中文分词"'],
+      ["Anywhere in the project", "$0 search migration"],
+      ["Two words, any distance apart", "$0 search cursor semantics"],
+      ["One phrase, exactly", '$0 search "word diff"'],
       ["Only what was said in comments", "$0 search pg_trgm --in comments"],
       [
         "What one agent said about deployment",
-        "$0 search harness:codex is:comment 部署",
+        "$0 search harness:codex is:comment deploy",
       ],
-      ["Open cards carrying a label", "$0 search state:open label:kind:bug 慢"],
+      [
+        "Open cards carrying a label",
+        "$0 search state:open label:kind:bug slow",
+      ],
       [
         "Everything except one agent's writing",
-        "$0 search -- -harness:codex 慢",
+        "$0 search -- -harness:codex slow",
       ],
     ],
   });
