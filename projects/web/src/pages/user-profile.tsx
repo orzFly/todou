@@ -2,8 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Navigate } from "@tanstack/react-router";
 import type { UserIssueRole, UserIssueState } from "@todou/shared";
 import { CalendarIcon } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { meQuery } from "@/api/queries.ts";
 import { userQuery, userSearchSchema } from "@/api/users.ts";
+import type { ActivityDayChangeOptions } from "@/components/activity-calendar/activity-calendar-section.tsx";
 import {
   LoadFailure,
   RefreshFailure,
@@ -12,9 +15,21 @@ import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserIssuesSection } from "@/components/user/user-issues-section.tsx";
 import { UserProjectsSection } from "@/components/user/user-projects-section.tsx";
+import {
+  type ActivityDateSearch,
+  activityToday,
+  browserActivityTimezone,
+  resolveActivityDateSearch,
+} from "@/lib/activity-calendar-search.ts";
 import { statusOf } from "@/lib/http-status";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
+
+const ActivityCalendarSection = lazy(() =>
+  import("@/components/activity-calendar/activity-calendar-section.tsx").then(
+    (module) => ({ default: module.ActivityCalendarSection }),
+  ),
+);
 
 /**
  * The user page: who this is (T-373), then the cards they are involved in
@@ -29,17 +44,45 @@ export function UserProfilePage({
   ref,
   role = "any",
   state = "open",
+  activity_year,
+  activity_day,
+  activity_invalid,
   onFilters = () => undefined,
+  onActivityDateChange = () => undefined,
   redirectToLogin = false,
 }: {
   ref: string;
   role?: UserIssueRole;
   state?: UserIssueState;
   onFilters?: (next: { role?: UserIssueRole; state?: UserIssueState }) => void;
+  onActivityDateChange?: (
+    next: ActivityDateSearch,
+    options?: ActivityDayChangeOptions,
+  ) => void;
   redirectToLogin?: boolean;
-}) {
+} & ActivityDateSearch) {
   const query = userQuery(ref);
   const user = useQuery(query);
+  const viewer = useQuery({ ...meQuery, enabled: !redirectToLogin });
+  const [activityContext] = useState(() => ({
+    now: new Date(),
+    timezone: browserActivityTimezone(),
+  }));
+  const activity = resolveActivityDateSearch(
+    { activity_year, activity_day, activity_invalid },
+    activityContext,
+  );
+  const activityInvalidNotified = useRef(false);
+  useEffect(() => {
+    if (
+      activity.invalid &&
+      !activityInvalidNotified.current &&
+      !redirectToLogin
+    ) {
+      activityInvalidNotified.current = true;
+      toast("Invalid activity date was reset.");
+    }
+  }, [activity.invalid, redirectToLogin]);
   const data = user.data;
   const hasContent = data !== undefined;
   const { replace, notice } = useReadFailure(
@@ -52,6 +95,8 @@ export function UserProfilePage({
   // are up; a restore measuring this page while that section still shows its
   // skeleton would find nothing to anchor to and retire itself (T-407).
   const [rowsReady, setRowsReady] = useState(false);
+  // Calendar loading changes the position of the card rows beneath it.
+  const [calendarReady, setCalendarReady] = useState(false);
   // The canonical login, never the id half of the address: `/users/12`
   // replaces itself with `/users/<login>`, and a snapshot naming the id would
   // send the reader back through that redirect. It is also the accessible
@@ -65,10 +110,15 @@ export function UserProfilePage({
       // whichever filter still sits at its default. The URL carries only
       // what the reader changed, so a target spelling the defaults out would
       // not describe the page it returns to.
-      search: userSearchSchema({ role, state }),
+      search: userSearchSchema({
+        role,
+        state,
+        activity_year,
+        activity_day,
+      }),
     },
     userLabel: login,
-    ready: rowsReady,
+    ready: rowsReady && calendarReady,
   });
 
   if (!replace && !hasContent) {
@@ -153,6 +203,48 @@ export function UserProfilePage({
           </p>
         </div>
       </div>
+
+      {viewer.data && (
+        <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+          <ActivityCalendarSection
+            viewerId={viewer.data.id}
+            scope={{ kind: "user", subjectId: me.id }}
+            year={activity.year}
+            day={activity.day}
+            timezone={activityContext.timezone}
+            today={activityToday(activityContext.now, activityContext.timezone)}
+            onReady={setCalendarReady}
+            onInvalidDay={(day) => {
+              if (!activityInvalidNotified.current) {
+                activityInvalidNotified.current = true;
+                toast("Invalid activity date was reset.");
+              }
+              onActivityDateChange(
+                {
+                  activity_year: activity.year,
+                  activity_day: day,
+                },
+                { replace: true },
+              );
+            }}
+            onYearChange={(year) =>
+              onActivityDateChange({
+                activity_year: year,
+                activity_day: undefined,
+              })
+            }
+            onDayChange={(day, options) =>
+              onActivityDateChange(
+                {
+                  activity_year: Number(day.slice(0, 4)),
+                  activity_day: day,
+                },
+                options,
+              )
+            }
+          />
+        </Suspense>
+      )}
 
       {/* Keyed on the login: arriving by id renders this page once against
           the id before the redirect lands, and a stale section would

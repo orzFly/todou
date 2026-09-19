@@ -161,10 +161,9 @@ type Filters = {
  * stay behind as nulls, which is how a client tells "redacted" apart from
  * "an old event that never carried this".
  *
- * It also strips `id_map` from every `moved_in`. That map is the
- * cross-database protocol's only durable record of which copy became which,
- * so it has to live in the payload — but it is nobody's contract, and no
- * response may carry it.
+ * It also strips `id_map` and `activity_imported_max_ids` from every
+ * `moved_in`. Recovery needs the map and activity classification needs the
+ * imported row boundaries, but both are internal metadata.
  *
  * Reference events are not redacted here at all since T-266: the SQL
  * predicate decides them whole, and a move no longer rewrites one, so there
@@ -200,6 +199,7 @@ export function redactEventPayloads<T extends TimelineItem>(
     switch (item.event_type) {
       case "moved_in":
         delete payload.id_map;
+        delete payload.activity_imported_max_ids;
         if (!seen(payload.from_project_id)) {
           blank(payload, ["from_project_id", "from_project", "from_number"]);
         }

@@ -19,6 +19,7 @@ import {
   SSE_PING_EVENT,
 } from "@todou/shared";
 import { useEffect } from "react";
+import { activityKeys } from "@/api/activity-calendar.ts";
 import { insightsKeys } from "@/api/insights.ts";
 import { invalidateIssueRefQueries } from "@/api/issue-refs.ts";
 import { issueListDescriptorOf } from "@/api/issues-cache.ts";
@@ -131,6 +132,26 @@ export function invalidationsFor(
   event: ChangeEvent,
   slug: string,
 ): Invalidation[] {
+  const invalidations = entityInvalidations(event, slug);
+  switch (event.entity) {
+    case "issue":
+    case "comment":
+    case "timeline":
+    case "status":
+    case "project":
+    case "member":
+      // These pointers have no actor. Personal activity spans every readable
+      // project, including ones unrelated to the profile or currently open tab.
+      // Membership events also carry the user's own access grant/revocation.
+      invalidations.push(
+        refetch(activityKeys.project(slug)),
+        refetch(activityKeys.user()),
+      );
+  }
+  return invalidations;
+}
+
+function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
   switch (event.entity) {
     case "issue":
       return event.issue_number === undefined
@@ -905,6 +926,8 @@ export function reconnectInvalidations(): QueryKeyLike[] {
     ["issue-metadata"],
     insightsKeys.settings(),
     insightsKeys.burn(),
+    activityKeys.project(),
+    activityKeys.user(),
     ["statuses"],
     ["labels"],
     ["members"],

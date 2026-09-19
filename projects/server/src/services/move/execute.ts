@@ -20,7 +20,12 @@ import { type ProjectRow, routeInfoOf } from "../access.ts";
 import { announceBlockChanges, evaluateBlockerStatus } from "../blocks.ts";
 import { getIssue } from "../issues.ts";
 import { lineageOf, recordAliases, registerMove } from "../relocation.ts";
-import { clearIssueChildren, copyIssueTree, type IdMap } from "./copy.ts";
+import {
+  type ActivityImportedMaxIds,
+  clearIssueChildren,
+  copyIssueTree,
+  type IdMap,
+} from "./copy.ts";
 import { type MovePlan, planMove } from "./plan.ts";
 
 /**
@@ -542,6 +547,7 @@ async function findMovedIn(
       comments?: Record<string, number>;
       attachments?: Record<string, number>;
     };
+    activity_imported_max_ids?: ActivityImportedMaxIds;
   };
   const toMap = (raw: Record<string, number> | undefined) =>
     new Map(Object.entries(raw ?? {}).map(([k, v]) => [Number(k), v]));
@@ -551,6 +557,12 @@ async function findMovedIn(
       issueId: row.issueId,
       comments: toMap(payload.id_map?.comments),
       attachments: toMap(payload.id_map?.attachments),
+      // Recovery must reuse the committed copy boundary, even if new
+      // destination activity has arrived since the move was interrupted.
+      // Do not turn a legacy missing field into three null maxima.
+      ...(Object.hasOwn(payload, "activity_imported_max_ids")
+        ? { activityImportedMaxIds: payload.activity_imported_max_ids }
+        : {}),
     },
   };
 }
@@ -670,6 +682,9 @@ async function writeMovedIn(
           comments: Object.fromEntries(idMap.comments),
           attachments: Object.fromEntries(idMap.attachments),
         },
+        ...(idMap.activityImportedMaxIds === undefined
+          ? {}
+          : { activity_imported_max_ids: idMap.activityImportedMaxIds }),
       },
       // biome-ignore lint/suspicious/noExplicitAny: explicit created_at
     } as any)

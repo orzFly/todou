@@ -639,7 +639,7 @@ export async function settleHiddenInTx(
           issueId: args.issueId,
           actorId: args.actorId,
           type: "question_answered",
-          payload: { comment_id: row.id, answers },
+          payload: { comment_id: row.id, answers, via: "hide" },
           agentContext: args.agentContext,
         })
         .returning();

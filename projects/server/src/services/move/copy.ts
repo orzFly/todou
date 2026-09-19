@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, max, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { Db } from "../../db/driver.ts";
 import {
@@ -22,11 +22,21 @@ import { microIso } from "../timeline.ts";
 /** Rows per read; a card's spec files are the reason this is not unbounded. */
 const BATCH = 500;
 
+/** Destination-local ids, captured before this move's `moved_in` event. */
+export type ActivityImportedMaxIds = {
+  v: 1;
+  events: number | null;
+  comments: number | null;
+  revisions: number | null;
+};
+
 export type IdMap = {
   issueId: number;
   /** Old comment id → new. Also what the `moved_ids` aliases are built from. */
   comments: Map<number, number>;
   attachments: Map<number, number>;
+  /** Absent only when recovering a move written before watermarks existed. */
+  activityImportedMaxIds?: ActivityImportedMaxIds;
 };
 
 /**
@@ -332,7 +342,49 @@ export async function copyIssueTree(
   });
   await copyMetadata(src, dst, { targetId, oldIssueId, issueId });
 
-  return { issueId, comments: commentMap, attachments: attachmentMap };
+  // Revisions have polymorphic subjects rather than an issue foreign key.
+  // All maxima describe this destination issue only, including no-row nulls.
+  const revisionSubjects = or(
+    and(
+      eq(revisions.subjectType, "issue_body"),
+      eq(revisions.subjectId, issueId),
+    ),
+    and(
+      eq(revisions.subjectType, "comment"),
+      inArray(
+        revisions.subjectId,
+        dst
+          .select({ id: comments.id })
+          .from(comments)
+          .where(eq(comments.issueId, issueId)),
+      ),
+    ),
+  );
+  const [eventRows, commentRows, revisionRows] = await Promise.all([
+    dst
+      .select({ id: max(issueEvents.id) })
+      .from(issueEvents)
+      .where(eq(issueEvents.issueId, issueId)),
+    dst
+      .select({ id: max(comments.id) })
+      .from(comments)
+      .where(eq(comments.issueId, issueId)),
+    dst
+      .select({ id: max(revisions.id) })
+      .from(revisions)
+      .where(and(eq(revisions.projectId, targetId), revisionSubjects)),
+  ]);
+  return {
+    issueId,
+    comments: commentMap,
+    attachments: attachmentMap,
+    activityImportedMaxIds: {
+      v: 1,
+      events: eventRows[0]?.id ?? null,
+      comments: commentRows[0]?.id ?? null,
+      revisions: revisionRows[0]?.id ?? null,
+    },
+  };
 }
 
 /**

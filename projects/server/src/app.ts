@@ -156,6 +156,17 @@ export function createApp(ctx: AppContext) {
         "boards and agents are first-class machine users.",
     },
   });
+  // Calendar responses are private even when authentication or canonical
+  // project lookup fails before their route handlers can run.
+  for (const path of [
+    "/projects/:slug/insights/activity",
+    "/users/:ref/activity",
+  ]) {
+    api.use(path, async (c, next) => {
+      c.header("Cache-Control", "private, no-store");
+      await next();
+    });
+  }
   api.use("*", authMiddleware(ctx));
   api.use("*", agentContextMiddleware());
   // Both shapes: the bare project endpoints and everything nested under one.

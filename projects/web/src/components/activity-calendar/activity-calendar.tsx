@@ -1,0 +1,456 @@
+import type { ActivityDay, ActivitySelection } from "@todou/shared";
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
+
+export interface ActivityCalendarProps {
+  /** Gregorian year, 1–9998. The parent owns URL state and data fetching. */
+  year: number;
+  /** Complete DTO days for year; [] while no snapshot is available. Counts are never inferred. */
+  days: readonly ActivityDay[];
+  /** Selection from the same snapshot as days. Only its date is used here. */
+  selection: ActivitySelection | null;
+  /** YYYY-MM-DD at the response cutoff in its timezone, supplied by the parent. */
+  today: string;
+  /** Requests a year in 1..min(9998, today's year); does not choose a day. */
+  onYearChange: (year: number) => void;
+  /** Requests a recorded date. Moving keyboard focus never calls this callback. */
+  onDayChange: (date: string) => void;
+  /** True for initial loading or refresh; an existing snapshot stays visible. */
+  loading?: boolean;
+  /** Safe request error text. Errors never become a calendar of zeroes. */
+  error?: string | null;
+  /** Retry the parent-owned request. */
+  onRetry: () => void;
+}
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+const LEVELS = [
+  { label: "0", className: "bg-muted" },
+  { label: "1–3", className: "bg-primary/25" },
+  { label: "4–6", className: "bg-primary/45" },
+  { label: "7–9", className: "bg-primary/70" },
+  { label: "10+", className: "bg-primary" },
+];
+const ARROW_STEPS: Record<string, number | undefined> = {
+  ArrowUp: -1,
+  ArrowDown: 1,
+  ArrowLeft: -7,
+  ArrowRight: 7,
+};
+
+function level(count: number): number {
+  return count === 0 ? 0 : count <= 3 ? 1 : count <= 6 ? 2 : count <= 9 ? 3 : 4;
+}
+
+// Gregorian geometry only: no local Date midnight, timestamps, or timezone
+// conversion. DTO date strings remain the identity of each server-side bucket.
+function yearGeometry(year: number) {
+  const prior = year - 1;
+  const offset =
+    (prior +
+      Math.floor(prior / 4) -
+      Math.floor(prior / 100) +
+      Math.floor(prior / 400)) %
+    7;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const prefix = String(year).padStart(4, "0");
+  const dates = lengths.flatMap((length, month) =>
+    Array.from(
+      { length },
+      (_, day) =>
+        `${prefix}-${String(month + 1).padStart(2, "0")}-${String(day + 1).padStart(2, "0")}`,
+    ),
+  );
+  return { dates, offset, weeks: Math.ceil((dates.length + offset) / 7) };
+}
+
+function dayLabel(date: string, day: ActivityDay | undefined, today: string) {
+  const value = !day
+    ? "No data"
+    : day.state === "recorded"
+      ? `${day.count} active ${day.count === 1 ? "card" : "cards"}`
+      : day.state === "future"
+        ? "Future date"
+        : "Not applicable";
+  return `${date}: ${value}${date === today ? ", today" : ""}`;
+}
+
+/** Pure display and interaction: callers atomically supply a calendar snapshot. */
+export function ActivityCalendar({
+  year,
+  days,
+  selection,
+  today,
+  onYearChange,
+  onDayChange,
+  loading = false,
+  error = null,
+  onRetry,
+}: ActivityCalendarProps) {
+  const id = useId();
+  const yearInput = useRef<HTMLInputElement>(null);
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  const calendar = useRef<HTMLFieldSetElement>(null);
+  const restoreRemovedFocus = useRef(false);
+  const { dates, offset, weeks } = yearGeometry(year);
+  const byDate = new Map(days.map((day) => [day.date, day]));
+  const recorded = dates.filter(
+    (date) => byDate.get(date)?.state === "recorded",
+  );
+  const selectedDate = selection?.date ?? null;
+  const defaultDate =
+    selectedDate && recorded.includes(selectedDate)
+      ? selectedDate
+      : recorded.includes(today)
+        ? today
+        : (recorded.at(-1) ?? null);
+  const [rovingDate, setRovingDate] = useState<string | null>(defaultDate);
+  const [inspectedDate, setInspectedDate] = useState<string | null>(null);
+  const activeDate =
+    rovingDate && recorded.includes(rovingDate) ? rovingDate : defaultDate;
+
+  // A changed controlled selection (including back/forward) resets the tab stop.
+  // Move DOM focus only if the user was already navigating the dates.
+  useEffect(() => {
+    const focused = document.activeElement;
+    // A parent clears selection while the requested day's cards load. Keep
+    // the reader on that date until the new controlled selection arrives.
+    const retained =
+      selectedDate === null &&
+      focused instanceof HTMLButtonElement &&
+      calendar.current?.contains(focused) &&
+      !focused.disabled
+        ? focused.dataset.date
+        : undefined;
+    const next = retained ?? defaultDate;
+    setRovingDate(next);
+    setInspectedDate(null);
+    if (next && calendar.current?.contains(focused)) {
+      buttons.current.get(next)?.focus();
+    }
+  }, [defaultDate, selectedDate]);
+
+  // Ref cleanup runs before a focused date is removed on a year change.
+  // After removal activeElement is body, so a post-commit contains() cannot
+  // tell whether this calendar owned focus. Never steal it from another control.
+  useEffect(() => {
+    if (!restoreRemovedFocus.current) return;
+    if (document.activeElement !== document.body) {
+      restoreRemovedFocus.current = false;
+    } else if (activeDate) {
+      restoreRemovedFocus.current = false;
+      buttons.current.get(activeDate)?.focus();
+    }
+  });
+
+  useEffect(() => {
+    const releaseFocus = (event: FocusEvent) => {
+      if (
+        event.target instanceof Node &&
+        !calendar.current?.contains(event.target)
+      ) {
+        restoreRemovedFocus.current = false;
+      }
+    };
+    document.addEventListener("focusin", releaseFocus);
+    return () => document.removeEventListener("focusin", releaseFocus);
+  }, []);
+
+  useEffect(() => {
+    const focused = document.activeElement;
+    if (activeDate === null) {
+      const ownedFocus =
+        calendar.current?.contains(focused) ||
+        (restoreRemovedFocus.current && focused === document.body);
+      if (!loading && !error && ownedFocus) {
+        restoreRemovedFocus.current = false;
+        yearInput.current?.focus();
+      }
+    } else {
+      if (
+        calendar.current?.contains(focused) &&
+        focused instanceof HTMLButtonElement &&
+        focused.disabled
+      ) {
+        buttons.current.get(activeDate)?.focus();
+      }
+    }
+  }, [activeDate, loading, error]);
+
+  function focusDate(date: string) {
+    setRovingDate(date);
+    setInspectedDate(date);
+    buttons.current.get(date)?.focus();
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (!event.repeat) onDayChange(dates[index]);
+      return;
+    }
+    let next = index;
+    const step = ARROW_STEPS[event.key];
+    if (step !== undefined) {
+      next += step;
+      while (
+        next >= 0 &&
+        next < dates.length &&
+        byDate.get(dates[next])?.state !== "recorded"
+      ) {
+        next += step;
+      }
+    } else if (event.key === "Home" || event.key === "End") {
+      const start = index - ((index + offset) % 7);
+      const first = Math.max(0, start);
+      const last = Math.min(dates.length - 1, start + 6);
+      const direction = event.key === "Home" ? 1 : -1;
+      next = direction === 1 ? first : last;
+      while (
+        next >= first &&
+        next <= last &&
+        byDate.get(dates[next])?.state !== "recorded"
+      ) {
+        next += direction;
+      }
+    } else {
+      return;
+    }
+    event.preventDefault();
+    if (
+      next >= 0 &&
+      next < dates.length &&
+      byDate.get(dates[next])?.state === "recorded"
+    ) {
+      focusDate(dates[next]);
+    }
+  }
+
+  const readDate =
+    inspectedDate && dates.includes(inspectedDate) ? inspectedDate : activeDate;
+  const maxYear = Math.min(9998, Number(today.slice(0, 4)));
+
+  return (
+    <section
+      aria-labelledby={`${id}-heading`}
+      aria-busy={loading}
+      className="w-full min-w-0 max-w-full space-y-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id={`${id}-heading`} className="font-semibold">
+          Activity
+        </h2>
+        <label className="flex items-center gap-2 text-sm">
+          Year
+          <input
+            ref={yearInput}
+            type="number"
+            min={1}
+            max={maxYear}
+            step={1}
+            value={year}
+            className="w-24 rounded-md border bg-background px-2 py-1 focus-visible:outline-2 focus-visible:outline-ring"
+            onChange={(event) => {
+              const next = event.currentTarget.valueAsNumber;
+              if (
+                Number.isInteger(next) &&
+                next >= 1 &&
+                next <= maxYear &&
+                next !== year
+              )
+                onYearChange(next);
+            }}
+          />
+        </label>
+      </div>
+      {loading && (
+        <p
+          role="status"
+          className="animate-pulse text-sm text-muted-foreground"
+        >
+          Loading activity…
+        </p>
+      )}
+      {loading && days.length === 0 && (
+        <div
+          aria-hidden="true"
+          className="h-40 w-full animate-pulse rounded bg-muted"
+        />
+      )}
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 text-sm">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={loading}
+            className="rounded border px-2 py-1 disabled:opacity-50"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      <p id={`${id}-instructions`} className="sr-only">
+        Up and Down move one day; Left and Right move one week. Home and End
+        move to the first and last available day of the week. Enter or Space
+        selects a day.
+      </p>
+      {days.length > 0 && (
+        <div
+          className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain"
+          data-activity-scroll
+        >
+          <fieldset
+            ref={calendar}
+            aria-label={`${year} activity dates`}
+            aria-describedby={`${id}-instructions`}
+            className="m-0 grid w-max min-w-0 gap-1 border-0 p-1"
+            style={{
+              gridTemplateColumns: `2.5rem repeat(${weeks}, 1rem)`,
+              gridTemplateRows: "1rem repeat(7, 1rem)",
+            }}
+          >
+            {WEEKDAYS.map((name, index) => (
+              <span
+                key={name}
+                aria-hidden="true"
+                className="text-[10px] text-muted-foreground"
+                style={{ gridColumn: 1, gridRow: index + 2 }}
+              >
+                {name}
+              </span>
+            ))}
+            {dates.map((date, index) => {
+              const day = byDate.get(date);
+              const enabled = day?.state === "recorded";
+              const intensity = enabled ? level(day.count) : undefined;
+              const label = dayLabel(date, day, today);
+              const column = Math.floor((index + offset) / 7) + 2;
+              return (
+                <span key={date} className="contents">
+                  {date.endsWith("-01") && (
+                    <span
+                      aria-hidden="true"
+                      className="text-[10px] text-muted-foreground"
+                      style={{ gridColumn: `${column} / span 3`, gridRow: 1 }}
+                    >
+                      {MONTHS[Number(date.slice(5, 7)) - 1]}
+                    </span>
+                  )}
+                  <span
+                    className="inline-flex"
+                    style={{
+                      gridColumn: column,
+                      gridRow: ((index + offset) % 7) + 2,
+                    }}
+                    onPointerEnter={() => setInspectedDate(date)}
+                    onPointerLeave={(event) => {
+                      if (event.pointerType !== "touch") setInspectedDate(null);
+                    }}
+                    onPointerDown={(event) => {
+                      if (event.pointerType === "touch") setInspectedDate(date);
+                    }}
+                  >
+                    <button
+                      ref={(node) => {
+                        if (node) buttons.current.set(date, node);
+                        else {
+                          if (
+                            buttons.current.get(date) === document.activeElement
+                          ) {
+                            restoreRemovedFocus.current = true;
+                          }
+                          buttons.current.delete(date);
+                        }
+                      }}
+                      type="button"
+                      disabled={!enabled}
+                      tabIndex={enabled && activeDate === date ? 0 : -1}
+                      aria-label={label}
+                      aria-pressed={enabled ? selectedDate === date : undefined}
+                      aria-current={date === today ? "date" : undefined}
+                      aria-describedby={
+                        readDate === date ? `${id}-readout` : undefined
+                      }
+                      data-date={date}
+                      data-state={day?.state ?? "unavailable"}
+                      data-level={intensity}
+                      className={cn(
+                        "size-4 shrink-0 rounded-xs border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                        intensity !== undefined
+                          ? LEVELS[intensity].className
+                          : "bg-transparent",
+                        day?.state === "future" && "border-dashed opacity-50",
+                        day?.state === "not_applicable" &&
+                          "border-transparent bg-muted/30",
+                        date === today &&
+                          "ring-1 ring-foreground ring-offset-1 ring-offset-background",
+                        enabled &&
+                          selectedDate === date &&
+                          "outline-2 outline-offset-2 outline-primary",
+                      )}
+                      onFocus={() => {
+                        setRovingDate(date);
+                        setInspectedDate(date);
+                      }}
+                      onKeyDown={(event) => onKeyDown(event, index)}
+                      onClick={() => {
+                        focusDate(date);
+                        onDayChange(date);
+                      }}
+                    />
+                  </span>
+                </span>
+              );
+            })}
+          </fieldset>
+        </div>
+      )}
+      {readDate && (
+        <p
+          id={`${id}-readout`}
+          role="tooltip"
+          aria-live="polite"
+          className="text-sm text-muted-foreground"
+        >
+          {dayLabel(readDate, byDate.get(readDate), today)}
+        </p>
+      )}
+      {!loading && !error && recorded.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          No available dates in {year}.
+        </p>
+      )}
+      <ul
+        aria-label="Active cards per day"
+        className="flex flex-wrap gap-3 text-xs text-muted-foreground"
+      >
+        {LEVELS.map((entry) => (
+          <li key={entry.label} className="inline-flex items-center gap-1">
+            <span
+              aria-hidden="true"
+              className={cn("size-3 rounded-xs border", entry.className)}
+            />
+            {entry.label}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}

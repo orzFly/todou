@@ -1,5 +1,8 @@
 import type { Question } from "@todou/shared";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { issueEvents } from "../src/db/project-schema.ts";
+import { routeInfoOf } from "../src/services/access.ts";
 import { makeTestApp, PLACEMENTS, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -27,6 +30,7 @@ describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
   let t: TestApp;
   let cookie: string;
   let slug: string;
+  let projectId: number;
   const headers = () => ({ "content-type": "application/json", cookie });
 
   beforeAll(async () => {
@@ -39,13 +43,14 @@ describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
       body: JSON.stringify({ slug, name: "Questions" }),
     });
     expect(res.status).toBe(201);
+    projectId = (await json(res)).id;
   });
 
   afterAll(async () => {
     await t.cleanup();
   });
 
-  async function createIssue(): Promise<{ number: number }> {
+  async function createIssue(): Promise<{ id: number; number: number }> {
     const res = await t.app.request(`/api/projects/${slug}/issues`, {
       method: "POST",
       headers: headers(),
@@ -94,6 +99,24 @@ describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
         headers: { cookie },
       }),
     );
+  }
+
+  async function expectOpenQuestions(number: number, expected: number) {
+    expect((await getIssue(number)).open_questions).toBe(expected);
+    const res = await t.app.request(
+      `/api/projects/${slug}/issues?numbers=${number}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const listed = await json(res);
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]).toMatchObject({
+      number,
+      open_questions: expected,
+    });
+    const status = await getQuestions(number);
+    expect(status.open).toBe(expected);
+    return status;
   }
 
   const GOOD_ANSWERS = [
@@ -184,47 +207,98 @@ describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
     expect(after.component.questions).toHaveLength(2);
   });
 
-  it("answers atomically: label snapshots, event, counter down", async () => {
-    const issue = await createIssue();
-    const comment = await json(await ask(issue.number));
+  it.each([false, true])(
+    "answers atomically: label snapshots, event, counter down (legacy: %s)",
+    async (legacy) => {
+      const issue = await createIssue();
+      const comment = await json(await ask(issue.number));
+      await expectOpenQuestions(issue.number, 2);
 
-    // Submission order differs from component order; storage normalizes.
-    const res = await answer(issue.number, comment.id, [
-      GOOD_ANSWERS[1],
-      GOOD_ANSWERS[0],
-    ]);
-    expect(res.status).toBe(201);
-    const event = await json(res);
-    expect(event.event_type).toBe("question_answered");
-    expect(event.payload.comment_id).toBe(comment.id);
-    expect(event.payload.answers).toEqual([
-      {
-        key: "schema",
-        selected: [{ index: 1, label: "Inline in comments" }],
-        other: "and keep it strict",
-        declined: false,
-      },
-      {
-        key: "q2",
-        selected: [
-          { index: 0, label: "dev" },
-          { index: 1, label: "acme" },
-        ],
-        other: null,
-        declined: false,
-      },
-    ]);
+      // Submission order differs from component order; storage normalizes.
+      const res = await answer(issue.number, comment.id, [
+        GOOD_ANSWERS[1],
+        GOOD_ANSWERS[0],
+      ]);
+      expect(res.status).toBe(201);
+      const event = await json(res);
+      const expectedAnswers = [
+        {
+          key: "schema",
+          selected: [{ index: 1, label: "Inline in comments" }],
+          other: "and keep it strict",
+          declined: false,
+        },
+        {
+          key: "q2",
+          selected: [
+            { index: 0, label: "dev" },
+            { index: 1, label: "acme" },
+          ],
+          other: null,
+          declined: false,
+        },
+      ];
+      expect(event.event_type).toBe("question_answered");
+      expect(event.payload).toEqual({
+        comment_id: comment.id,
+        answers: expectedAnswers,
+        via: "answer",
+      });
 
-    expect((await getIssue(issue.number)).open_questions).toBe(0);
-    const status = await getQuestions(issue.number);
-    expect(status.open).toBe(0);
-    expect(status.items[0].answer.event_id).toBe(event.id);
+      if (legacy) {
+        const db = await t.ctx.router.forProject(
+          routeInfoOf({ id: projectId, slug, databaseUrl: null } as Parameters<
+            typeof routeInfoOf
+          >[0]),
+        );
+        const stored = await db
+          .update(issueEvents)
+          .set({
+            payload: { comment_id: comment.id, answers: expectedAnswers },
+          })
+          .where(eq(issueEvents.id, event.id))
+          .returning({ payload: issueEvents.payload });
+        expect(stored).toEqual([
+          { payload: { comment_id: comment.id, answers: expectedAnswers } },
+        ]);
+        expect(stored[0]?.payload).not.toHaveProperty("via");
+      }
 
-    // Answer-once: the second submission conflicts, whatever it carries.
-    const again = await answer(issue.number, comment.id, GOOD_ANSWERS);
-    expect(again.status).toBe(409);
-    expect((await json(again)).error.message).toContain("already answered");
-  });
+      const status = await expectOpenQuestions(issue.number, 0);
+      expect(status.items).toHaveLength(1);
+      expect(status.items[0].comment_id).toBe(comment.id);
+      expect(status.items[0].answer).toEqual({
+        event_id: event.id,
+        actor: event.actor,
+        created_at: event.created_at,
+        answers: expectedAnswers,
+      });
+      expect(
+        status.items
+          .filter((item: { answer: unknown }) => item.answer === null)
+          .map((item: { comment_id: number }) => item.comment_id),
+      ).toEqual([]);
+
+      // Answer-once: the second submission conflicts, whatever it carries.
+      const again = await answer(issue.number, comment.id, GOOD_ANSWERS);
+      expect(again.status).toBe(409);
+      expect((await json(again)).error.message).toContain("already answered");
+      await expectOpenQuestions(issue.number, 0);
+
+      // A remaining open comment exposes an erroneous second counter refund.
+      const openComment = await json(await ask(issue.number));
+      await expectOpenQuestions(issue.number, 2);
+      const deleted = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments/${comment.id}`,
+        { method: "DELETE", headers: { cookie } },
+      );
+      expect(deleted.status).toBe(204);
+      const after = await expectOpenQuestions(issue.number, 2);
+      expect(after.items).toHaveLength(1);
+      expect(after.items[0].comment_id).toBe(openComment.id);
+      expect(after.items[0].answer).toBeNull();
+    },
+  );
 
   it("validates answers against the component, readably", async () => {
     const issue = await createIssue();
@@ -269,10 +343,24 @@ describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
       expect((await json(res)).error.message).toContain(wants);
     }
     // Still unanswered after all those rejections.
-    expect((await getIssue(issue.number)).open_questions).toBe(2);
+    const status = await expectOpenQuestions(issue.number, 2);
+    expect(status.items).toHaveLength(1);
+    expect(status.items[0].answer).toBeNull();
+    const db = await t.ctx.router.forProject(
+      routeInfoOf({ id: projectId, slug, databaseUrl: null } as Parameters<
+        typeof routeInfoOf
+      >[0]),
+    );
+    const events = await db
+      .select()
+      .from(issueEvents)
+      .where(eq(issueEvents.issueId, issue.id));
+    expect(
+      events.filter((event) => event.type === "question_answered"),
+    ).toEqual([]);
   });
 
-  it("accepts a decline with a reason", async () => {
+  it("records a decline with a reason via answer and keeps it settled", async () => {
     const issue = await createIssue();
     const comment = await json(await ask(issue.number));
     const res = await answer(issue.number, comment.id, [
@@ -281,12 +369,37 @@ describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
     ]);
     expect(res.status).toBe(201);
     const event = await json(res);
-    expect(event.payload.answers[0]).toEqual({
-      key: "schema",
-      selected: [],
-      other: "not applicable here",
-      declined: true,
+    const expectedAnswers = [
+      {
+        key: "schema",
+        selected: [],
+        other: "not applicable here",
+        declined: true,
+      },
+      {
+        key: "q2",
+        selected: [{ index: 2, label: "prod" }],
+        other: null,
+        declined: false,
+      },
+    ];
+    expect(event.payload).toEqual({
+      comment_id: comment.id,
+      answers: expectedAnswers,
+      via: "answer",
     });
+    const status = await expectOpenQuestions(issue.number, 0);
+    expect(status.items).toHaveLength(1);
+    expect(status.items[0].comment_id).toBe(comment.id);
+    expect(status.items[0].answer).toMatchObject({
+      event_id: event.id,
+      answers: expectedAnswers,
+    });
+
+    const again = await answer(issue.number, comment.id, GOOD_ANSWERS);
+    expect(again.status).toBe(409);
+    expect((await json(again)).error.message).toContain("already answered");
+    await expectOpenQuestions(issue.number, 0);
   });
 
   it("deleting an unanswered question comment refunds the counter", async () => {

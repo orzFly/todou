@@ -399,7 +399,8 @@ const userRoute = createRoute({
 
 function UserPage() {
   const { ref } = userRoute.useParams();
-  const { role = "any", state = "open" } = userRoute.useSearch();
+  const search = userRoute.useSearch();
+  const { role = "any", state = "open" } = search;
   const navigate = useNavigate();
   if (/^\d{1,15}$/.test(ref)) return <UserRedirectPage ref={ref} />;
   return (
@@ -407,6 +408,21 @@ function UserPage() {
       ref={ref}
       role={role}
       state={state}
+      activity_year={search.activity_year}
+      activity_day={search.activity_day}
+      activity_invalid={search.activity_invalid}
+      onActivityDateChange={(next, options) =>
+        void navigate({
+          to: "/users/$ref",
+          params: { ref },
+          search: userSearchSchema({
+            ...search,
+            ...next,
+            activity_invalid: undefined,
+          }),
+          replace: options?.replace ?? false,
+        })
+      }
       // Filter controls rewriting their own page's search params: the case
       // AGENTS.md leaves to navigate() rather than requiring a link.
       onFilters={(next) =>
@@ -418,6 +434,7 @@ function UserPage() {
           // only what the reader actually changed. validateSearch does not
           // run on a programmatic navigate, so stripping has to happen here.
           search: userSearchSchema({
+            ...search,
             role: next.role ?? role,
             state: next.state ?? state,
           }),

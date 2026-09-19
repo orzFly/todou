@@ -215,7 +215,11 @@ describe("copyIssueTree", () => {
     expect(map.attachments.get(attachmentId)).toBeDefined();
 
     const copiedComments = await db
-      .select({ body: comments.body, ts: microIso(comments.createdAt) })
+      .select({
+        id: comments.id,
+        body: comments.body,
+        ts: microIso(comments.createdAt),
+      })
       .from(comments)
       .where(eq(comments.issueId, map.issueId));
     expect(copiedComments).toHaveLength(3);
@@ -240,7 +244,7 @@ describe("copyIssueTree", () => {
     ]);
 
     const copiedBodyRevisions = await db
-      .select({ body: revisions.body })
+      .select({ id: revisions.id, body: revisions.body })
       .from(revisions)
       .where(
         and(
@@ -253,7 +257,7 @@ describe("copyIssueTree", () => {
 
     const editedNewId = map.comments.get(commentIds[0] as number) as number;
     const copiedCommentRevisions = await db
-      .select({ body: revisions.body })
+      .select({ id: revisions.id, body: revisions.body })
       .from(revisions)
       .where(
         and(
@@ -265,13 +269,29 @@ describe("copyIssueTree", () => {
     expect(copiedCommentRevisions.map((r) => r.body)).toEqual(["one"]);
 
     const copiedEvents = await db
-      .select({ type: issueEvents.type, payload: issueEvents.payload })
+      .select({
+        id: issueEvents.id,
+        type: issueEvents.type,
+        payload: issueEvents.payload,
+      })
       .from(issueEvents)
       .where(eq(issueEvents.issueId, map.issueId));
     expect(copiedEvents).toHaveLength(before.events.length);
     const added = copiedEvents.find((e) => e.type === "attachment_added");
     const payload = added?.payload as { attachment?: { id?: number } };
     expect(payload.attachment?.id).toBe(map.attachments.get(attachmentId));
+
+    expect(map.activityImportedMaxIds).toStrictEqual({
+      v: 1,
+      events: Math.max(...copiedEvents.map((event) => event.id)),
+      comments: Math.max(...copiedComments.map((comment) => comment.id)),
+      revisions: Math.max(
+        ...copiedBodyRevisions.map((revision) => revision.id),
+        ...copiedCommentRevisions.map((revision) => revision.id),
+      ),
+    });
+    expect(copiedBodyRevisions).toHaveLength(1);
+    expect(copiedCommentRevisions).toHaveLength(1);
 
     // Neither of the two travels, and the copy must not invent rows either.
     expect(
@@ -286,6 +306,65 @@ describe("copyIssueTree", () => {
         .from(pendingUploads)
         .where(eq(pendingUploads.issueId, map.issueId)),
     ).toHaveLength(0);
+  });
+
+  it("keeps all-null copy boundaries distinct from unrelated activity and rolls them back atomically", async () => {
+    const source = await json(
+      await req(`/projects/${A}/issues`, {
+        method: "POST",
+        body: JSON.stringify({ title: "empty source", body: "" }),
+      }),
+    );
+    // The destination already contains the first test's copied history.
+    // None of its nonempty tables belongs in this issue's empty watermark.
+    expect(await db.select().from(comments)).not.toHaveLength(0);
+    expect(await db.select().from(revisions)).not.toHaveLength(0);
+    expect(await db.select().from(issueEvents)).not.toHaveLength(0);
+    await db.delete(issueEvents).where(eq(issueEvents.issueId, source.id));
+    const [row] = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, source.id));
+    const [status] = await db
+      .select()
+      .from(statuses)
+      .where(eq(statuses.projectId, idB))
+      .limit(1);
+    if (row === undefined || status === undefined) throw new Error("fixture");
+    const plan = {
+      row,
+      source: { project: { id: idA } },
+      target: { project: { id: idB } },
+      status: { to: { id: status.id } },
+      labelIds: [],
+      assigneeIds: [],
+      movedAt: new Date(),
+      sameProjectDb: true,
+    };
+    const empty = { v: 1, events: null, comments: null, revisions: null };
+    await expect(
+      db.transaction(async (tx) => {
+        const copied = await copyIssueTree(tx, tx, plan, {
+          number: 2,
+          reinhabit: false,
+        });
+        expect(copied.activityImportedMaxIds).toStrictEqual(empty);
+        throw new Error("rollback after captured boundary");
+      }),
+    ).rejects.toThrow("rollback after captured boundary");
+    expect(
+      await db
+        .select()
+        .from(issues)
+        .where(and(eq(issues.projectId, idB), eq(issues.number, 2))),
+    ).toHaveLength(0);
+    const copied = await db.transaction((tx) =>
+      copyIssueTree(tx, tx, plan, { number: 2, reinhabit: false }),
+    );
+    expect(copied.activityImportedMaxIds).toStrictEqual(empty);
+    expect(Object.hasOwn(copied, "activityImportedMaxIds")).toBe(true);
+    expect(copied.comments.size).toBe(0);
+    expect(copied.attachments.size).toBe(0);
   });
 
   it("leaves nothing under the source once the children are cleared", async () => {

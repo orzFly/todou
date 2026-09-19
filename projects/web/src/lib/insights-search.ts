@@ -1,10 +1,14 @@
 import { BurnQuery, Grain, type Grain as InsightsGrain } from "@todou/shared";
+import {
+  type ActivityDateSearch,
+  parseActivityDateSearch,
+} from "@/lib/activity-calendar-search.ts";
 
 export const INSIGHTS_PRESETS = ["24h", "7d", "30d", "90d"] as const;
 export type InsightsPreset = (typeof INSIGHTS_PRESETS)[number];
 export type InsightsRange = InsightsPreset | "custom";
 
-export type InsightsSearch = {
+export type InsightsSearch = ActivityDateSearch & {
   range?: InsightsRange;
   from?: string;
   /** Inclusive calendar date in the URL; requests use the following day. */
@@ -78,6 +82,7 @@ export function parseInsightsSearch(
     to,
     grain: grain.success ? grain.data : undefined,
     ...(invalid ? { invalid: true as const } : {}),
+    ...parseActivityDateSearch(search),
   };
 }
 
