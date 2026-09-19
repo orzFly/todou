@@ -85,15 +85,37 @@ function text(entry: Entry, node = entry.node): string {
     .trim();
 }
 
-function scope(parents: t.Node[]): t.Node {
+function scope(parents: t.Node[], functionScoped = false): t.Node {
   const found = parents.find(
     (node) =>
       node.type === "Program" ||
-      node.type === "BlockStatement" ||
-      /Function|Method/.test(node.type),
+      /Function|Method/.test(node.type) ||
+      (!functionScoped &&
+        (node.type === "BlockStatement" ||
+          node.type === "ForStatement" ||
+          node.type === "ForInStatement" ||
+          node.type === "ForOfStatement" ||
+          node.type === "CatchClause" ||
+          node.type === "SwitchStatement")),
   );
   if (!found) throw new Error("AST binding has no lexical scope");
   return found;
+}
+
+/** Names only: destructuring shadows a mapping without inferring its value. */
+function boundNames(node: t.Node): t.Identifier[] {
+  if (node.type === "Identifier") return [node];
+  if (node.type === "AssignmentPattern") return boundNames(node.left);
+  if (node.type === "RestElement") return boundNames(node.argument);
+  if (node.type === "ArrayPattern")
+    return node.elements.flatMap((item) => (item ? boundNames(item) : []));
+  if (node.type === "ObjectPattern")
+    return node.properties.flatMap((property) =>
+      boundNames(
+        property.type === "RestElement" ? property.argument : property.value,
+      ),
+    );
+  return [];
 }
 
 function recordType(node: t.Node | null | undefined): boolean {
@@ -173,34 +195,48 @@ export function scanSources(sources: Source[]): Site[] {
         entries.push(entry);
         byNode.set(entry.node, entry);
         const { node, parents } = entry;
-        if (node.type === "VariableDeclarator" && node.id.type === "Identifier")
-          bindings.push({
-            ...entry,
-            name: node.id.name,
-            scope: scope(parents),
-          });
+        if (node.type === "VariableDeclarator") {
+          const declaration = parents.find(
+            (parent) => parent.type === "VariableDeclaration",
+          );
+          for (const identifier of boundNames(node.id))
+            bindings.push({
+              ...entry,
+              // Only simple declarations retain resolvable initializers.
+              node: node.id.type === "Identifier" ? node : identifier,
+              name: identifier.name,
+              scope: scope(parents, declaration?.kind === "var"),
+            });
+        }
         if (node.type === "FunctionDeclaration" && node.id)
           bindings.push({
             ...entry,
             name: node.id.name,
             scope: scope(parents),
           });
-        if (node.type === "ImportSpecifier")
+        if (
+          node.type === "ImportSpecifier" ||
+          node.type === "ImportDefaultSpecifier" ||
+          node.type === "ImportNamespaceSpecifier"
+        )
           bindings.push({
             ...entry,
             name: node.local.name,
             scope: ast.program,
           });
+        if (node.type === "CatchClause" && node.param) {
+          for (const identifier of boundNames(node.param))
+            bindings.push({
+              ...entry,
+              node: identifier,
+              name: identifier.name,
+              scope: node,
+            });
+        }
         // Parameters shadow module-level maps; never attribute their reads to that map.
         if (/Function|Method/.test(node.type) && "params" in node) {
           for (const parameter of node.params) {
-            const identifier =
-              parameter.type === "AssignmentPattern"
-                ? parameter.left
-                : parameter.type === "RestElement"
-                  ? parameter.argument
-                  : parameter;
-            if (identifier.type === "Identifier")
+            for (const identifier of boundNames(parameter))
               bindings.push({
                 ...entry,
                 node: identifier,
@@ -213,7 +249,8 @@ export function scanSources(sources: Source[]): Site[] {
       source,
     );
   }
-  // Preserve Array.find's first-binding behavior, including duplicate names.
+  // Keep first-binding resolution, except an initialized var may share a
+  // parameter's binding: its initializer must not disappear behind that name.
   // Scope nodes belong to a single source file, so their identity also scopes
   // the file: a lookup never needs to search bindings from unrelated modules.
   const byScope = new Map<t.Node, Map<string, Binding>>();
@@ -224,7 +261,18 @@ export function scanSources(sources: Source[]): Site[] {
       names = new Map();
       byScope.set(binding.scope, names);
     }
-    if (!names.has(binding.name)) names.set(binding.name, binding);
+    const existing = names.get(binding.name);
+    if (
+      !existing ||
+      (existing.node.type === "Identifier" &&
+        binding.node.type === "VariableDeclarator" &&
+        binding.node.init &&
+        binding.parents.some(
+          (parent) =>
+            parent.type === "VariableDeclaration" && parent.kind === "var",
+        ))
+    )
+      names.set(binding.name, binding);
     if (!byDeclaration.has(binding.node))
       byDeclaration.set(binding.node, binding);
   }
@@ -263,11 +311,6 @@ export function scanSources(sources: Source[]): Site[] {
     const program = modules.get(file);
     if (!program) return undefined;
     for (const statement of program.body) {
-      if (statement.type === "ExportAllDeclaration") {
-        const target = resolveModule(file, statement.source.value);
-        const result = target && findExport(target, name, seen);
-        if (result) return result;
-      }
       if (statement.type !== "ExportNamedDeclaration") continue;
       if (
         statement.declaration?.type === "FunctionDeclaration" &&
@@ -293,11 +336,18 @@ export function scanSources(sources: Source[]): Site[] {
         const local = specifier.local.name;
         if (statement.source) {
           const target = resolveModule(file, statement.source.value);
-          if (target) return findExport(target, local, seen);
+          return target ? findExport(target, local, seen) : undefined;
         } else {
           return byScope.get(program)?.get(local);
         }
       }
+    }
+    // Explicit exports win regardless of where export * appears in the file.
+    for (const statement of program.body) {
+      if (statement.type !== "ExportAllDeclaration") continue;
+      const target = resolveModule(file, statement.source.value);
+      const result = target && findExport(target, name, seen);
+      if (result) return result;
     }
     return undefined;
   }

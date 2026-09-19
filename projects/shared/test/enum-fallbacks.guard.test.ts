@@ -528,6 +528,163 @@ describe("repository enum fallback source guard", () => {
     expect(sites).toEqual([]);
   });
 
+  it.each([
+    'import Object from "./opaque";',
+    'import * as Object from "./opaque";',
+    "const { Object } = opaque;",
+    "const { nested: { factory: Object = fallback } } = opaque;",
+    "const [Object] = opaque;",
+    "const [...Object] = opaque;",
+    "const { ...Object } = opaque;",
+  ])(
+    "treats %s as an opaque shadow, without inferring a factory",
+    (binding) => {
+      expect(
+        scanSources(
+          fixture(`${binding}
+          const values = Object.fromEntries(entries);
+          consume(values[index]);`),
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    "function local({ Object }) { BODY }",
+    "function local([Object] = fallback) { BODY }",
+    "try {} catch (Object) { BODY }",
+    "try {} catch ({ factory: Object }) { BODY }",
+    "{ const { Object } = opaque; BODY }",
+    "for (const Object of objects) { BODY }",
+    "for (let Object in objects) { BODY }",
+    "for (let Object = opaque; ready; step()) { BODY }",
+    "for (const { Object } of objects) { BODY }",
+  ])("keeps an opaque shadow local to %s", (local) => {
+    const body = `
+      const values = Object.fromEntries(entries);
+      consume(values[index]);`;
+    const sites = scanSources(
+      fixture(`
+      ${local.replace("BODY", body)}
+      const labels = Object.fromEntries(entries);
+      consume(labels[wire]);
+    `),
+    );
+    expect(sites.map((site) => site.id.split(" :: ")[1])).toEqual([
+      "mapping labels #1",
+      "read labels[wire] #1",
+    ]);
+    expect(declarationErrors(sites, {})).toEqual([
+      expect.stringContaining("UNDECLARED"),
+    ]);
+  });
+
+  it("keeps var loop bindings in the function but out of the module", () => {
+    const sites = scanSources(
+      fixture(`
+      function local() {
+        for (var Object of objects) {}
+        const values = Object.fromEntries(entries);
+        consume(values[index]);
+      }
+      const labels = Object.fromEntries(entries);
+      consume(labels[wire]);
+    `),
+    );
+    expect(sites.map((site) => site.id.split(" :: ")[1])).toEqual([
+      "mapping labels #1",
+      "read labels[wire] #1",
+    ]);
+  });
+
+  it.each(['{ a: "A" }', "Object.fromEntries(entries)"])(
+    "retains an initialized var %s that shares a parameter binding",
+    (initializer) => {
+      const sites = scanSources(
+        fixture(`
+        function local(labels) {
+          var labels = ${initializer};
+          consume(labels[wire]);
+        }
+      `),
+      );
+      expect(sites.map((site) => site.id.split(" :: ")[1])).toEqual([
+        "mapping labels #1",
+        "read labels[wire] #1",
+      ]);
+      expect(declarationErrors(sites, {})).toEqual([
+        expect.stringContaining("read labels[wire] #1"),
+      ]);
+    },
+  );
+
+  it("does not resolve an uninitialized var redeclaration of a parameter", () => {
+    expect(
+      scanSources(
+        fixture(`
+      function local(Object) {
+        var Object;
+        const values = Object.fromEntries(entries);
+        consume(values[index]);
+      }
+    `),
+      ),
+    ).toEqual([]);
+  });
+
+  it.each(["before", "after"])(
+    "prefers an explicit factory over a star placed %s it",
+    (order) => {
+      const star = 'export * from "./other";';
+      const explicit =
+        "export function make(): Record<string, string> { return opaque; }";
+      const sites = scanSources([
+        {
+          file: "projects/web/src/other.ts",
+          text: 'export function make() { return ["ordinary array"]; }',
+        },
+        {
+          file: "projects/web/src/barrel.ts",
+          text: order === "before" ? star + explicit : explicit + star,
+        },
+        {
+          file: "projects/web/src/use.ts",
+          text: 'import { make } from "./barrel"; const labels = make(); consume(labels[wire]);',
+        },
+      ]);
+      expect(declarationErrors(sites, {})).toEqual([
+        expect.stringContaining("read labels[wire] #1"),
+      ]);
+    },
+  );
+
+  it.each([
+    "export function make() { return opaque; }",
+    "const local = () => opaque; export { local as make };",
+    'export { local as make } from "./explicit";',
+    'export { local as make } from "./unresolved";',
+  ])("does not let a star factory override %s", (explicit) => {
+    const sites = scanSources([
+      {
+        file: "projects/web/src/other.ts",
+        text: "export function make(): Record<string, string> { return opaque; }",
+      },
+      {
+        file: "projects/web/src/explicit.ts",
+        text: "export function local() { return opaque; }",
+      },
+      {
+        file: "projects/web/src/barrel.ts",
+        text: `export * from "./other"; ${explicit}`,
+      },
+      {
+        file: "projects/web/src/use.ts",
+        text: 'import { make } from "./barrel"; const values = make(); consume(values[index]);',
+      },
+    ]);
+    expect(sites).toEqual([]);
+  });
+
   it("keeps factory safe reads local and expires their old declarations", () => {
     const sites = scanSources(
       fixture(`
