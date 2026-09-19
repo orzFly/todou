@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
+  enumLookup,
+  enumValue,
   formatAnchorRange,
   formatRef,
   isHidden,
@@ -8,6 +10,7 @@ import {
   type SlugClaimEntry,
   type SpecCommentItem,
   SpecCommentsResolvedPayload,
+  type SpecReviewVerdict,
   type TimelineEvent,
 } from "@todou/shared";
 import {
@@ -15,6 +18,7 @@ import {
   BookOpenTextIcon,
   CheckIcon,
   CircleDotIcon,
+  CircleHelpIcon,
   CirclePauseIcon,
   CirclePlayIcon,
   CircleSlashIcon,
@@ -261,6 +265,7 @@ export function renderEvent(
   event: TimelineEvent,
   ctx: EventRenderContext,
 ): { node: ReactNode; text: string } {
+  enumValue(event.event_type, "event_type");
   const { payload } = event;
   const { entities } = ctx;
   const seg = (text: string, commentId?: number): ReactNode =>
@@ -449,12 +454,17 @@ export function renderEvent(
       return { node: text, text };
     }
     case "spec_review": {
-      const verdict =
-        {
-          approve: "approved",
-          request_changes: "requested changes on",
-          comment: "commented on",
-        }[String(payload.verdict)] ?? "reviewed";
+      const labels: Record<SpecReviewVerdict, string> = {
+        approve: "approved",
+        request_changes: "requested changes on",
+        comment: "commented on",
+      };
+      const verdict = enumLookup(
+        labels,
+        enumValue(payload.verdict, "review verdict"),
+        () => "reviewed",
+        "verdict",
+      );
       const count = Number(payload.annotation_count ?? 0);
       const suffix =
         count > 0 ? ` with ${count} comment${count === 1 ? "" : "s"}` : "";
@@ -597,6 +607,11 @@ export function renderEvent(
         text: `${verb}${other.text}`,
       };
     }
+    default:
+      return {
+        node: `logged an unknown event: ${event.event_type}`,
+        text: `logged an unknown event: ${event.event_type}`,
+      };
   }
 }
 
@@ -696,6 +711,10 @@ export function referenceSource(
   };
 }
 
+const UNKNOWN_EVENT_ICON = (
+  <CircleHelpIcon className="size-3.5 text-muted-foreground" />
+);
+
 export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   opened: <CircleDotIcon className="size-3.5 text-green-600" />,
   closed: <CircleSlashIcon className="size-3.5 text-purple-600" />,
@@ -723,6 +742,10 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   block_cleared: <CirclePlayIcon className="size-3.5 text-green-600" />,
   block_reblocked: <CirclePauseIcon className="size-3.5" />,
 };
+
+export function iconForEvent(eventType: string): ReactNode {
+  return enumLookup(ICONS, eventType, () => UNKNOWN_EVENT_ICON, "event_type");
+}
 
 /**
  * Replace #N tokens with issue links; the rest stays literal text.
@@ -785,7 +808,7 @@ export function EventRow({
     >
       {/* Text aligns on its baseline; icons and controls center independently. */}
       <span className="inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center">
-        {ICONS[event.event_type]}
+        {iconForEvent(event.event_type)}
       </span>{" "}
       {!hideActor && (
         <>

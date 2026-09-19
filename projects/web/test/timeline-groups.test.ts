@@ -92,6 +92,24 @@ const assignees = {
   newcomer: { id: 4, login: "newcomer" },
 };
 
+describe("future timeline event types", () => {
+  it.each(["future_event", "constructor", "__proto__"])(
+    "keeps unknown %s standalone",
+    (value) => {
+      const type = value as TimelineEvent["event_type"];
+      expect(familyOf(type)).toBeNull();
+      expect(
+        kinds(
+          groupTimeline([
+            event({ event_type: type }),
+            event({ event_type: type }),
+          ]),
+        ),
+      ).toEqual(["item", "item"]);
+    },
+  );
+});
+
 const assign = (
   type: "assigned" | "unassigned",
   user: unknown,

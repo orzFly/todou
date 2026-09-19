@@ -19,6 +19,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@babel/parser": "7.29.8",
+    "@babel/types": "7.29.8",
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

@@ -1,4 +1,4 @@
-import { type MemberRole, ROLE_RANK } from "@todou/shared";
+import { enumLookup, type MemberRole, roleRankOf } from "@todou/shared";
 
 /**
  * The dot colour each role is drawn with. Visual grouping only — every badge
@@ -16,6 +16,12 @@ export const ROLE_DOT: Record<MemberRole, string> = {
   reader: "bg-muted-foreground",
 };
 
+const UNKNOWN_ROLE_DOT = "bg-muted-foreground";
+
+export function roleDotOf(role: string): string {
+  return enumLookup(ROLE_DOT, role, () => UNKNOWN_ROLE_DOT, "role");
+}
+
 /**
  * The most of `want` a ceiling allows, or null when it allows nothing at all
  * (T-340). A machine's role is capped at its owner's, and both places that
@@ -27,11 +33,17 @@ export const ROLE_DOT: Record<MemberRole, string> = {
  * It reads as null rather than as "no limit", because the client parses no
  * schema at runtime and a missing field would otherwise arrive as an
  * unbounded one.
+ * Future desired roles and ceilings cannot produce a known grant either.
+ * Validate the required desired role even when the ceiling is absent.
  */
 export function cappedRole(
   want: MemberRole,
   ceiling: MemberRole | null | undefined,
 ): MemberRole | null {
-  if (ceiling == null) return null;
-  return ROLE_RANK[want] <= ROLE_RANK[ceiling] ? want : ceiling;
+  const wantRank = roleRankOf(want);
+  const ceilingRank = ceiling == null ? undefined : roleRankOf(ceiling);
+  if (wantRank === undefined || ceilingRank === undefined || ceiling == null) {
+    return null;
+  }
+  return wantRank <= ceilingRank ? want : ceiling;
 }

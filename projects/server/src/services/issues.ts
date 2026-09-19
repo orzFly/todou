@@ -15,7 +15,7 @@ import type {
   Status,
   UserRef,
 } from "@todou/shared";
-import { minRoleOf, ROLE_RANK } from "@todou/shared";
+import { can, minRoleOf } from "@todou/shared";
 import {
   and,
   asc,
@@ -423,8 +423,7 @@ async function validateAssigneeIds(
  * reporter may otherwise call. So the capability is enforced per field, at
  * both endpoints, rather than at either one's door.
  */
-const mayTriage = (role: MemberRole): boolean =>
-  ROLE_RANK[role] >= ROLE_RANK[minRoleOf("issue.triage")];
+const mayTriage = (role: MemberRole): boolean => can(role, "issue.triage");
 
 /**
  * Refused rather than quietly dropped: a 201 carrying a status the caller

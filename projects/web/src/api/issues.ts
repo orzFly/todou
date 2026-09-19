@@ -10,6 +10,7 @@ import type {
   IssueListPage,
   Status,
 } from "@todou/shared";
+import { enumValue } from "@todou/shared";
 import { toast } from "sonner";
 import { z } from "zod";
 import { invalidateIssueRefQueries } from "@/api/issue-refs.ts";
@@ -366,6 +367,8 @@ export function patchCountsMove(
   from: Status,
   to: Status,
 ): IssueCounts {
+  enumValue(from.category, "from.category");
+  enumValue(to.category, "to.category");
   if (from.id === to.id) return counts;
   const by_status = { ...counts.by_status };
   const fromKey = String(from.id);
@@ -374,8 +377,12 @@ export function patchCountsMove(
   by_status[toKey] = (by_status[toKey] ?? 0) + 1;
   const next = { ...counts, by_status };
   if (from.category !== to.category) {
-    next[from.category] = Math.max(0, next[from.category] - 1);
-    next[to.category] += 1;
+    if (from.category === "open" || from.category === "closed") {
+      next[from.category] = Math.max(0, next[from.category] - 1);
+    }
+    if (to.category === "open" || to.category === "closed") {
+      next[to.category] += 1;
+    }
   }
   return next;
 }

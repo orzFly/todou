@@ -14,7 +14,9 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import type { SpecReviewResult } from "@todou/shared";
 import { StrictMode } from "react";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import {
@@ -171,6 +173,47 @@ function renderReentrySession() {
 }
 
 describe("confirming an atomic spec review", () => {
+  it.each(["future_verdict", "constructor"])(
+    "shows a readable toast for a newer review result %s",
+    async (verdict) => {
+      const response = {
+        event_id: 1,
+        version: 1,
+        verdict,
+        summary_comment_id: null,
+        comment_ids: [],
+      } as SpecReviewResult;
+      vi.spyOn(api, "submitSpecReview").mockResolvedValue(response);
+      const success = vi.spyOn(toast, "success");
+      renderReentrySession();
+      fireEvent.click(await screen.findByRole("button", { name: "submit" }));
+      await waitFor(() =>
+        expect(success).toHaveBeenCalledWith(`Reviewed ("${verdict}") spec v1`),
+      );
+      expect(screen.getByTestId("session-pending").textContent).toBe("idle");
+    },
+  );
+
+  it("reports a missing required review verdict instead of announcing success", async () => {
+    const response = {
+      event_id: 1,
+      version: 1,
+      summary_comment_id: null,
+      comment_ids: [],
+    } as unknown as SpecReviewResult;
+    vi.spyOn(api, "submitSpecReview").mockResolvedValue(response);
+    const success = vi.spyOn(toast, "success");
+    const failure = vi.spyOn(toast, "error");
+    renderReentrySession();
+    fireEvent.click(await screen.findByRole("button", { name: "submit" }));
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith(
+        "verdict must be a non-empty string",
+      ),
+    );
+    expect(success).not.toHaveBeenCalled();
+  });
+
   it("deletes an unchanged submitted draft", () => {
     localStorage.setItem(
       "todou-spec-review:demo:7",

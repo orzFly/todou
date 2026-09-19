@@ -4,7 +4,7 @@ import type {
   TimelineEvent,
   TimelineItem,
 } from "@todou/shared";
-import { isHidden } from "@todou/shared";
+import { enumLookup, isHidden } from "@todou/shared";
 
 /**
  * Merging (T-92) is a pure view over the raw timeline: the server keeps
@@ -87,7 +87,7 @@ const FAMILY_BY_TYPE: Partial<Record<IssueEventType, MergeFamily>> = {
 };
 
 export function familyOf(type: IssueEventType): MergeFamily | null {
-  return FAMILY_BY_TYPE[type] ?? null;
+  return enumLookup(FAMILY_BY_TYPE, type, () => null, "event_type") ?? null;
 }
 
 /**

@@ -1120,6 +1120,65 @@ describe("spec review", () => {
       expect(run.stdout).toBe("");
     },
   );
+
+  it.each([
+    ["approve", "approved"],
+    ["request_changes", "requested changes on"],
+    ["comment", "commented on"],
+    ["future_review_verdict", 'reviewed ("future_review_verdict")'],
+    ["constructor", 'reviewed ("constructor")'],
+    ["__proto__", 'reviewed ("__proto__")'],
+  ])("renders the server review verdict %s", async (verdict, wording) => {
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/proj/issues/23/spec/reviews",
+        {
+          event_id: 99,
+          version: 3,
+          verdict,
+          summary_comment_id: null,
+          comment_ids: [],
+        },
+      ],
+    ]);
+    const run = await runCli(
+      ["spec", "review", "23", "--version", "3", "--approve"],
+      { fetchImpl, env: ENV },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.stdout).toBe(`${wording} spec v3\n`);
+    expect(JSON.parse(String(calls[0]?.init.body)).verdict).toBe("approve");
+  });
+
+  it.each([undefined, null, "", 42])(
+    "rejects a missing or malformed response verdict: %s",
+    async (verdict) => {
+      const { fetchImpl } = fakeFetch([
+        [
+          "POST",
+          "/api/projects/proj/issues/23/spec/reviews",
+          {
+            event_id: 99,
+            version: 3,
+            verdict,
+            summary_comment_id: null,
+            comment_ids: [],
+          },
+        ],
+      ]);
+      const run = await runCli(
+        ["spec", "review", "23", "--version", "3", "--approve"],
+        { fetchImpl, env: ENV },
+      );
+
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("verdict must be a non-empty string");
+      expect(run.stdout).toBe("");
+    },
+  );
 });
 
 // T-277: the CLI half of inline review. Everything a local check can catch

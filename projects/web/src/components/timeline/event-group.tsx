@@ -15,8 +15,8 @@ import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   EventRow,
-  ICONS,
   IN_SENTENCE,
+  iconForEvent,
   referenceSource,
   resolvedAnnotations,
   useEventRenderContext,
@@ -328,7 +328,7 @@ function ListGroup({
     <div data-testid="event-group">
       <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2">
         <span className="inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center">
-          {ICONS[first.event_type]}
+          {iconForEvent(first.event_type)}
         </span>{" "}
         <UserChip
           user={first.actor}
@@ -600,7 +600,7 @@ function CollapsedGroup({
             dim,
           )}
         >
-          {summary.icon ?? ICONS[first.event_type]}
+          {summary.icon ?? iconForEvent(first.event_type)}
         </span>{" "}
         <UserChip
           user={first.actor}

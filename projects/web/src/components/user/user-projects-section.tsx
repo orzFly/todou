@@ -12,7 +12,7 @@ import {
 } from "@/components/shared/project-card.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ROLE_DOT } from "@/lib/roles.ts";
+import { roleDotOf } from "@/lib/roles.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
@@ -91,7 +91,7 @@ export function UserProjectsSection({ login }: { login: string }) {
                     <span
                       className={cn(
                         "size-1.5 rounded-full",
-                        ROLE_DOT[item.role],
+                        roleDotOf(item.role),
                       )}
                       aria-hidden="true"
                     />

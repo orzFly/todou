@@ -10,9 +10,11 @@ import { dirname, join } from "node:path";
 import type {
   SpecFileInput,
   SpecReviewStatus,
+  SpecReviewVerdict,
   TodouClient,
 } from "@todou/shared";
 import {
+  enumLookup,
   formatRef,
   SPEC_MAX_FILE_CHARS,
   SPEC_MAX_FILES,
@@ -44,13 +46,19 @@ import {
  * the list, the status command and the card header cannot drift apart on
  * what `changes_requested` is called.
  */
-export function specVerdict(status: SpecReviewStatus | null): string {
-  return {
+export function specVerdict(status: string | null): string {
+  const verdicts: Record<SpecReviewStatus, string> = {
     unreviewed: "awaiting review",
     approved: "approved",
     changes_requested: "changes requested",
     withdrawn: "withdrawn · reworking",
-  }[status ?? "unreviewed"];
+  };
+  return enumLookup(
+    verdicts,
+    status === null ? "unreviewed" : status,
+    (value) => `unknown status: ${value}`,
+    "review_status",
+  );
 }
 
 const WRONG_DIR_HINT =
@@ -715,11 +723,17 @@ export class SpecReviewCommand extends ProjectCommand {
       comments,
     });
     this.output(result, () => {
-      const what = {
+      const verdicts: Record<SpecReviewVerdict, string> = {
         approve: "approved",
         request_changes: "requested changes on",
         comment: "commented on",
-      }[result.verdict];
+      };
+      const what = enumLookup(
+        verdicts,
+        result.verdict,
+        (value) => `reviewed ("${value}")`,
+        "verdict",
+      );
       const n = comments.length;
       const annotated = n === 0 ? "" : ` (${n} ${plural(n, "annotation")})`;
       return `${what} spec v${result.version}${annotated}`;

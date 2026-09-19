@@ -329,6 +329,9 @@ describe("issue view/list --metadata", () => {
     labels: [],
     created_at: "2026-09-07T10:00:00Z",
     updated_at: "2026-09-07T11:00:00Z",
+    spec_version: null,
+    spec_review_status: null,
+    spec_unresolved_comments: 0,
     ...(metadata === undefined ? {} : { metadata }),
   });
 

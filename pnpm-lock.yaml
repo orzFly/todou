@@ -312,6 +312,12 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@babel/parser':
+        specifier: 7.29.8
+        version: 7.29.8
+      '@babel/types':
+        specifier: 7.29.8
+        version: 7.29.8
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0

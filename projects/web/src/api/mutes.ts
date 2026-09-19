@@ -1,6 +1,11 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { IssueMuteMode, MuteList } from "@todou/shared";
+import {
+  enumLookup,
+  enumValue,
+  type IssueMuteMode,
+  type MuteList,
+} from "@todou/shared";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 /**
@@ -19,6 +24,15 @@ export const issueMuteLabels: Record<IssueMuteMode, string> = {
   until_activity: "Quiet until new activity",
 };
 
+export function muteLabelOf(mode: string): string {
+  return enumLookup(
+    issueMuteLabels,
+    mode,
+    (value) => `unknown mute mode ("${value}")`,
+    "mode",
+  );
+}
+
 /**
  * The setting one card carries, looked up out of the cached list.
  */
@@ -30,7 +44,9 @@ export function muteOf(
   const row = mutes?.issues?.find(
     (i) => i.project.slug === slug && i.number === number,
   );
-  return row?.mode;
+  if (row === undefined) return undefined;
+  enumValue(row.mode, "mute mode");
+  return row.mode;
 }
 
 /**

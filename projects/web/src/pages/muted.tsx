@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { formatRef, type MutedIssue, type MutedProject } from "@todou/shared";
 import {
-  issueMuteLabels,
+  muteLabelOf,
   mutesQuery,
   useUnmuteIssue,
   useUnmuteProject,
@@ -144,7 +144,7 @@ export function MutedIssueRow({ issue }: { issue: MutedIssue }) {
           {issue.project.name} {formatRef(prefix, issue.number)} — {issue.title}
         </Link>
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span>{issueMuteLabels[issue.mode]}</span>
+          <span>{muteLabelOf(issue.mode)}</span>
           <time dateTime={issue.muted_at} title={issue.muted_at}>
             {new Date(issue.muted_at).toLocaleString()}
           </time>

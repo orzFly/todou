@@ -34,6 +34,22 @@ function mount(mutes: MuteList) {
 }
 
 describe("muted page (T-380)", () => {
+  it("renders a newer server mute mode without losing the unmute action", async () => {
+    const mode = "future_mute_mode" as MuteList["issues"][number]["mode"];
+    const mutes = {
+      ...full,
+      issues: full.issues.map((issue) => ({ ...issue, mode })),
+    };
+    mount(mutes);
+    expect(
+      await screen.findByText('unknown mute mode ("future_mute_mode")'),
+    ).toBeTruthy();
+    const row = screen.getByRole("link", { name: /noisy card/ }).closest("li");
+    if (!row) throw new Error("Missing muted row");
+    expect(within(row).getByRole("button", { name: "Unmute" })).toBeTruthy();
+    expect(row.textContent).not.toContain("undefined");
+  });
+
   it("renders both lists and unmutes the project from its row", async () => {
     const unmuteProject = vi
       .spyOn(api, "unmuteProject")

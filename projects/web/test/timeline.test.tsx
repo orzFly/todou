@@ -28,6 +28,7 @@ import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import {
   type EventRenderContext,
   EventRow,
+  iconForEvent,
   renderEvent,
 } from "../src/components/timeline/event-row.tsx";
 import { Timeline } from "../src/components/timeline/timeline.tsx";
@@ -132,6 +133,23 @@ const ctxWith = (...items: SpecCommentItem[]): EventRenderContext => ({
 });
 
 describe("renderEvent text mirror", () => {
+  it("degrades an event type added by a newer server", () => {
+    const event = eventOf("future_event" as TimelineEvent["event_type"], {});
+    expect(() => renderEvent(event, BARE_CTX)).not.toThrow();
+    expect(renderEvent(event, BARE_CTX).text).toBe(
+      "logged an unknown event: future_event",
+    );
+    expect(iconForEvent("future_event")).toBeTruthy();
+  });
+
+  it.each([undefined, null, "", 42])(
+    "does not disguise a missing event_type as a future event: %j",
+    (value) => {
+      const type = value as TimelineEvent["event_type"];
+      expect(() => renderEvent(eventOf(type, {}), BARE_CTX)).toThrow(TypeError);
+      expect(() => iconForEvent(type)).toThrow(TypeError);
+    },
+  );
   it("covers the GitHub-style action vocabulary", () => {
     expect(textOf("opened")).toBe("opened this issue");
     expect(textOf("closed", { to: { name: "Done" } })).toBe(
@@ -441,6 +459,20 @@ describe("timeline paging helpers", () => {
 });
 
 describe("timeline rendering", () => {
+  it("renders a future event as a complete row with its original type and time", async () => {
+    // The row destructures renderEvent's result, exactly as on the issue timeline.
+    const event = eventOf("future_event" as TimelineEvent["event_type"], {});
+    const view = renderWithRouter(<EventRow event={event} />);
+    const summary = await view.findByTitle("logged an unknown event: future_event");
+    expect(summary.textContent).toBe("logged an unknown event: future_event");
+    const time = view.getByTitle(event.created_at);
+    expect(time.textContent).toBe(new Date(event.created_at).toLocaleString());
+    expect(
+      summary.parentElement?.firstElementChild?.querySelector("svg"),
+    ).toBeTruthy();
+    expect(view.container.textContent).not.toContain("undefined");
+  });
+
   it("renders comments with markdown bodies", async () => {
     const { getByText } = renderWithRouter(
       <CommentItem

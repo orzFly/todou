@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { SpecReviewStatus } from "@todou/shared";
+import { enumLookup, type SpecReviewStatus } from "@todou/shared";
 import { ArrowDownIcon, BookOpenTextIcon, FileTextIcon } from "lucide-react";
 import { specVersionStatsQuery, useIssueSpec } from "@/api/spec.ts";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
@@ -29,6 +29,22 @@ const STATUS_LABEL: Record<SpecReviewStatus, string> = {
   withdrawn: "withdrawn · reworking",
 };
 
+const UNKNOWN_STATUS_STYLE =
+  "border-muted-foreground/40 bg-muted text-muted-foreground";
+
+export function specStatusStyle(status: string): string {
+  return enumLookup(STATUS_STYLE, status, () => UNKNOWN_STATUS_STYLE, "review_status");
+}
+
+export function specStatusLabel(status: string): string {
+  return enumLookup(
+    STATUS_LABEL,
+    status,
+    (value) => `unknown status: ${value}`,
+    "review_status",
+  );
+}
+
 export function SpecStatusBadge({
   status,
   className,
@@ -40,11 +56,11 @@ export function SpecStatusBadge({
     <span
       className={cn(
         "inline-flex items-center rounded-full border px-2 py-0.5 text-xs",
-        STATUS_STYLE[status],
+        specStatusStyle(status),
         className,
       )}
     >
-      {STATUS_LABEL[status]}
+      {specStatusLabel(status)}
     </span>
   );
 }

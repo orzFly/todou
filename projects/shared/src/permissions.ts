@@ -1,3 +1,4 @@
+import { enumLookup } from "./enum-fallback.ts";
 import type { MemberRole } from "./schemas/project.ts";
 
 /**
@@ -12,6 +13,16 @@ export const ROLE_RANK: Record<MemberRole, number> = {
   writer: 2,
   admin: 3,
 };
+
+/** Future roles have no rank: callers must refuse to compare them. */
+export function roleRankOf(role: string): number | undefined {
+  return enumLookup<MemberRole, number | undefined>(
+    ROLE_RANK,
+    role,
+    () => undefined,
+    "role",
+  );
+}
 
 type Capability = {
   id: string;
@@ -175,11 +186,17 @@ export function capabilityOf(id: CapabilityId): Capability {
 }
 
 export function minRoleOf(id: CapabilityId): MemberRole {
-  return BY_ID[id].minRole;
+  const role = BY_ID[id].minRole;
+  if (roleRankOf(role) === undefined) {
+    throw new TypeError(`Unknown minimum role for capability "${id}": ${role}`);
+  }
+  return role;
 }
 
 /** Null is a non-member, who holds nothing — not even the reader floor. */
-export function can(role: MemberRole | null, id: CapabilityId): boolean {
+export function can(role: string | null, id: CapabilityId): boolean {
   if (role === null) return false;
-  return ROLE_RANK[role] >= ROLE_RANK[minRoleOf(id)];
+  const rank = roleRankOf(role);
+  const min = minRoleOf(id);
+  return rank !== undefined && rank >= ROLE_RANK[min];
 }

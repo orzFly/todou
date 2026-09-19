@@ -3,7 +3,7 @@ import {
   type MemberRole,
   minRoleOf,
   PROJECT_NOT_FOUND,
-  ROLE_RANK,
+  roleRankOf,
 } from "@todou/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
@@ -118,7 +118,12 @@ export async function requireProject(
   const project = await getProjectByRef(ctx, slug);
   const role = await projectRoleOf(ctx, project, user);
   if (role === null) throw new NotFoundError(PROJECT_NOT_FOUND);
-  if (ROLE_RANK[role] < ROLE_RANK[minRole]) {
+  const rank = roleRankOf(role);
+  const minRank = roleRankOf(minRole);
+  if (minRank === undefined) {
+    throw new TypeError(`Unknown minimum project role: ${minRole}`);
+  }
+  if (rank === undefined || rank < minRank) {
     // Naming the capability turns the 403 into the one line of the catalog
     // to go read, rather than a role the reader must then hunt for.
     const detail = cap === undefined ? "" : ` (${cap})`;

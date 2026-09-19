@@ -34,6 +34,9 @@ const issue = {
   labels: [],
   created_at: "2026-08-11T10:00:00Z",
   updated_at: "2026-08-11T11:00:00Z",
+  spec_version: null,
+  spec_review_status: null,
+  spec_unresolved_comments: 0,
 };
 
 const comment = (

@@ -6,8 +6,9 @@ import {
   capabilityOf,
   minRoleOf,
   ROLE_RANK,
+  roleRankOf,
 } from "../src/permissions.ts";
-import { MEMBER_ROLES } from "../src/schemas/project.ts";
+import { MEMBER_ROLES, type MemberRole } from "../src/schemas/project.ts";
 
 describe("ROLE_RANK", () => {
   it("covers every value of the MemberRole enum", () => {
@@ -28,6 +29,26 @@ describe("ROLE_RANK", () => {
   it("places reporter between reader and writer", () => {
     expect(ROLE_RANK.reader).toBeLessThan(ROLE_RANK.reporter);
     expect(ROLE_RANK.reporter).toBeLessThan(ROLE_RANK.writer);
+  });
+
+  it("does not assign future or inherited names a comparable rank", () => {
+    for (const role of [
+      "future-role",
+      "constructor",
+      "__proto__",
+      "toString",
+    ]) {
+      expect(roleRankOf(role)).toBeUndefined();
+    }
+    for (const role of MEMBER_ROLES) {
+      expect(roleRankOf(role)).toBe(ROLE_RANK[role]);
+    }
+  });
+
+  it("does not hide missing required role data as an unknown role", () => {
+    for (const role of [undefined, null, "", 0]) {
+      expect(() => roleRankOf(role as string)).toThrow(TypeError);
+    }
   });
 });
 
@@ -60,6 +81,46 @@ describe("spec.withdraw", () => {
 });
 
 describe("can", () => {
+  it("refuses an unknown existing role every capability", () => {
+    for (const role of [
+      "future-role",
+      "constructor",
+      "__proto__",
+      "toString",
+    ]) {
+      for (const cap of CAPABILITIES) {
+        expect(can(role, cap.id)).toBe(false);
+      }
+    }
+  });
+
+  it("does not hide a missing required role or capability", () => {
+    expect(() => can(undefined as unknown as string, "project.read")).toThrow(
+      TypeError,
+    );
+    expect(() =>
+      can("future-role", undefined as unknown as CapabilityId),
+    ).toThrow(TypeError);
+  });
+
+  it("rejects an invalid local minimum instead of making it the lowest role", () => {
+    const capability = capabilityOf("project.read");
+    const original = capability.minRole;
+    try {
+      for (const invalid of ["future-role", "constructor", undefined]) {
+        capability.minRole = invalid as MemberRole;
+        expect(() => minRoleOf(capability.id as CapabilityId)).toThrow(
+          TypeError,
+        );
+        for (const role of ["reader", "admin", "future-role"]) {
+          expect(() => can(role, "project.read")).toThrow(TypeError);
+        }
+      }
+    } finally {
+      capability.minRole = original;
+    }
+  });
+
   it("refuses a non-member everything", () => {
     for (const cap of CAPABILITIES) {
       expect(can(null, cap.id)).toBe(false);

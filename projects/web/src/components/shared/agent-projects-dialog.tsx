@@ -5,6 +5,7 @@ import {
   type ManageableProject,
   MemberRole,
   ROLE_RANK,
+  roleRankOf,
 } from "@todou/shared";
 import { PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -32,7 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cappedRole, ROLE_DOT } from "@/lib/roles.ts";
+import { cappedRole, roleDotOf } from "@/lib/roles.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
@@ -138,7 +139,7 @@ function ProjectBadges({ memberships }: { memberships: AgentMembership[] }) {
           aria-label={`${m.project.name} · ${m.role}`}
         >
           <span
-            className={cn("size-1.5 rounded-full", ROLE_DOT[m.role])}
+            className={cn("size-1.5 rounded-full", roleDotOf(m.role))}
             aria-hidden="true"
           />
           {/* Only a real image: two fallback letters at 14px are a smudge,
@@ -338,13 +339,18 @@ function MembershipRow({
   onRemove: () => void;
 }) {
   const { project, role } = membership;
+  const rank = roleRankOf(role);
+  const ceilingRank = ceiling === undefined ? undefined : roleRankOf(ceiling);
+  const locked = rank === undefined || ceilingRank === undefined;
   // The clamp has to land here as well as on Add. Widening `manageable` past
   // admins means a reader owner now sees their own agent's row — and left
   // unclamped it would still offer admin, so the ordinary path would walk
   // into the 409 the ceiling exists to keep off the screen.
   const overCeiling = (option: MemberRole) =>
-    ceiling === undefined ||
-    (ROLE_RANK[option] > ROLE_RANK[ceiling] && option !== role);
+    locked ||
+    (ceilingRank !== undefined &&
+      ROLE_RANK[option] > ceilingRank &&
+      option !== role);
   return (
     <div className="flex items-center gap-2">
       <ProjectIcon
@@ -361,7 +367,7 @@ function MembershipRow({
         <>
           <Select
             value={role}
-            disabled={ceiling === undefined}
+            disabled={locked}
             onValueChange={(next) => onRole(next as MemberRole)}
           >
             <SelectTrigger

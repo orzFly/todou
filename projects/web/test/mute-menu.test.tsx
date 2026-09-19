@@ -40,6 +40,17 @@ async function mount(mutes: MuteList) {
 const entry = (name: RegExp) => screen.getByRole("menuitem", { name });
 
 describe("MuteMenu (T-372)", () => {
+  it("labels a future stored mode without checking a known option", async () => {
+    const mode = "future_mute_mode" as IssueMuteMode;
+    const trigger = await mount(list(mode));
+    expect(trigger.textContent).toContain(
+      'unknown mute mode ("future_mute_mode")',
+    );
+    for (const item of screen.getAllByRole("menuitem")) {
+      expect(item.querySelector("svg.ml-auto")).toBeNull();
+    }
+  });
+
   it("checks the stored setting, whichever of the three it is", async () => {
     await mount(list("forever"));
     expect(

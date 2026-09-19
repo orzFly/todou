@@ -4,6 +4,7 @@ import type { IssueMuteMode } from "@todou/shared";
 import { BellOffIcon, BellRingIcon, CheckIcon } from "lucide-react";
 import {
   issueMuteLabels,
+  muteLabelOf,
   muteOf,
   mutesQuery,
   useMuteIssue,
@@ -90,7 +91,7 @@ export function MuteMenu({
             )}
             {mode === undefined || mode === null
               ? "Notifying"
-              : issueMuteLabels[mode]}
+              : muteLabelOf(mode)}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-auto" align="start">

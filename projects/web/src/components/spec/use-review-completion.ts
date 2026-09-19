@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import type { SpecReviewResult } from "@todou/shared";
+import { enumLookup, type SpecReviewResult, type SpecReviewVerdict } from "@todou/shared";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { meQuery } from "@/api/queries.ts";
@@ -9,6 +9,21 @@ import { prepareSpecReviewTarget } from "@/api/spec-review-target.ts";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import type { ReturnLinkState } from "@/lib/return-view-history.ts";
 import { eventAnchor } from "@/lib/timeline-anchors.ts";
+
+const REVIEW_VERDICT_LABELS: Record<SpecReviewVerdict, string> = {
+  approve: "Approved",
+  request_changes: "Requested changes on",
+  comment: "Commented on",
+};
+
+export function specReviewVerdictLabel(verdict: string): string {
+  return enumLookup(
+    REVIEW_VERDICT_LABELS,
+    verdict,
+    (value) => `Reviewed ("${value}")`,
+    "verdict",
+  );
+}
 
 export type ReviewCompletion = {
   isCurrent: () => boolean;
@@ -57,6 +72,14 @@ export function useReviewCompletion(slug: string, issueNumber: number) {
       return {
         isCurrent,
         complete: async (result, settle) => {
+          let label: string;
+          try {
+            label = specReviewVerdictLabel(result.verdict);
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Invalid review verdict");
+            settle();
+            return;
+          }
           // Start the bounded wait at the successful POST, before any cache
           // refresh can consume its budget. Its rejection cannot fail the POST.
           const targetPromise = prepareSpecReviewTarget({
@@ -101,13 +124,7 @@ export function useReviewCompletion(slug: string, issueNumber: number) {
             settled = false;
           }
           toast.success(
-            `${
-              {
-                approve: "Approved",
-                request_changes: "Requested changes on",
-                comment: "Commented on",
-              }[result.verdict]
-            } spec v${result.version}`,
+            `${label} spec v${result.version}`,
           );
           if (
             !settled ||

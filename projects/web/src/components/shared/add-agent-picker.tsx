@@ -31,7 +31,7 @@ export function AddAgentPicker({
   /** User ids already on the project. */
   memberIds: ReadonlySet<number>;
   onAdd: (agent: Agent) => void;
-  /** A membership write is in flight: grey the list out and swallow clicks. */
+  /** A write is pending or unavailable: disable the trigger and choices. */
   busy?: boolean;
   /** Test-only, as on LabelPicker. */
   defaultOpen?: boolean;
@@ -100,7 +100,12 @@ export function AddAgentPicker({
   return (
     <Popover open={open} onOpenChange={reset}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" aria-haspopup="listbox">
+        <Button
+          variant="outline"
+          size="sm"
+          aria-haspopup="listbox"
+          disabled={busy}
+        >
           <PlusIcon className="size-3.5" /> Add agent
         </Button>
       </PopoverTrigger>
@@ -143,6 +148,7 @@ export function AddAgentPicker({
               key={agent.id}
               id={`add-agent-option-${agent.id}`}
               data-idx={idx}
+              disabled={busy}
               role="option"
               aria-selected={false}
               tabIndex={-1}

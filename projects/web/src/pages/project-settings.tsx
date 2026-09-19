@@ -13,6 +13,7 @@ import {
   type MemberRole,
   type ProjectUpdateInput,
   ROLE_RANK,
+  roleRankOf,
   type Status,
   type StatusUpdateInput,
   type TodouError,
@@ -597,7 +598,7 @@ export function MembersSection({ slug }: { slug: string }) {
         <AddAgentPicker
           agents={agents.data}
           memberIds={memberIds}
-          busy={setRole.isPending}
+          busy={setRole.isPending || addAgentRole === null}
           onAdd={(agent) => {
             // Null means no role of my own to hand down; the picker is not
             // offered a write it cannot make.
@@ -867,18 +868,23 @@ function RoleCell({
 }) {
   const isMachine = member.user.kind === "machine";
   const ceiling = isMachine ? member.owner_role : undefined;
-  // Null and undefined both mean "no ceiling to check a role against": the
-  // owner holds nothing here, or the server never said. Either way the role
-  // cannot be written, only the row removed.
-  const locked = isMachine && ceiling == null;
+  const rank = roleRankOf(member.role);
+  const ceilingRank = ceiling == null ? undefined : roleRankOf(ceiling);
+  // Missing or future ceilings cannot authorize a machine role. A future
+  // stored role is displayed as-is, but cannot be submitted by this client.
+  const locked = rank === undefined || (isMachine && ceilingRank === undefined);
   const overCeiling =
-    ceiling != null && ROLE_RANK[member.role] > ROLE_RANK[ceiling];
+    rank !== undefined && ceilingRank !== undefined && rank > ceilingRank;
 
   if (locked) {
     return (
       <span
         className="text-sm text-muted-foreground"
-        title="No ceiling can be worked out for this machine, so its role cannot be changed — only the row removed."
+        title={
+          rank === undefined
+            ? "This role is not supported by this client, so it cannot be changed."
+            : "No ceiling can be worked out for this machine, so its role cannot be changed — only the row removed."
+        }
       >
         {member.role} <span className="opacity-70">(locked)</span>
       </span>
@@ -913,13 +919,13 @@ function RoleCell({
               // the ceiling, or the control would show a role the project
               // does not hold. Writing it back is the server's to refuse.
               disabled={
-                ceiling != null &&
-                ROLE_RANK[role] > ROLE_RANK[ceiling] &&
+                ceilingRank !== undefined &&
+                ROLE_RANK[role] > ceilingRank &&
                 role !== member.role
               }
             >
               {role}
-              {ceiling != null && ROLE_RANK[role] > ROLE_RANK[ceiling]
+              {ceilingRank !== undefined && ROLE_RANK[role] > ceilingRank
                 ? " — above the owner"
                 : ""}
             </SelectItem>

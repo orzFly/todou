@@ -44,6 +44,43 @@ describe("patchCountsMove", () => {
     expect(drained.by_status).toEqual({ "1": 0, "2": 1 });
   });
 
+  it("does not create invalid aggregate counts for a newer category", () => {
+    const future = {
+      ...status(9, "open"),
+      category: "future",
+    } as unknown as Status;
+    expect(patchCountsMove(base, status(1, "open"), future)).toEqual({
+      open: 4,
+      closed: 2,
+      by_status: { "1": 2, "2": 2, "9": 1 },
+    });
+  });
+
+  it("patches only known category buckets in the reverse direction", () => {
+    const future = {
+      ...status(9, "open"),
+      category: "future",
+    } as unknown as Status;
+    expect(patchCountsMove(base, future, status(1, "open"))).toEqual({
+      open: 6,
+      closed: 2,
+      by_status: { "1": 4, "2": 2, "9": 0 },
+    });
+  });
+
+  it.each([undefined, null, "", 42])(
+    "rejects a missing required category: %j",
+    (value) => {
+      const malformed = { ...status(9, "open"), category: value } as Status;
+      expect(() => patchCountsMove(base, malformed, status(1, "open"))).toThrow(
+        TypeError,
+      );
+      expect(() => patchCountsMove(base, status(1, "open"), malformed)).toThrow(
+        TypeError,
+      );
+    },
+  );
+
   it("is a no-op for a same-status move", () => {
     expect(patchCountsMove(base, status(1, "open"), status(1, "open"))).toBe(
       base,
