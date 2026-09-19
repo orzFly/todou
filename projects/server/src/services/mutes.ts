@@ -12,6 +12,7 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
+import { projectIconUrlOf } from "./projects.ts";
 import { live } from "./trash.ts";
 
 /** One stored issue mute; `mutedAt` is the `until_activity` boundary. */
@@ -329,6 +330,7 @@ export async function listMutes(
       return {
         slug: project?.slug ?? "",
         name: project?.name ?? "",
+        icon_url: project ? projectIconUrlOf(project) : null,
         muted_at: r.mutedAt.toISOString(),
       };
     }),

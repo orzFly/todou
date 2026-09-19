@@ -9,6 +9,7 @@ import {
 } from "@/api/mutes.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -87,15 +88,21 @@ export function MutedPage() {
 
 export function MutedProjectRow({ project }: { project: MutedProject }) {
   const unmute = useUnmuteProject();
+  const prefix = useRefPrefix(project.slug);
   return (
     <li className="flex items-center justify-between gap-4 py-2">
       <div className="min-w-0 space-y-1">
         <Link
           to="/projects/$slug"
           params={{ slug: project.slug }}
-          className="block truncate text-sm underline-offset-2 hover:underline"
+          className="flex min-w-0 items-center gap-2 text-sm underline-offset-2 hover:underline"
         >
-          {project.name}
+          <ProjectIcon
+            project={{ name: project.name, prefix, icon_url: project.icon_url }}
+            aria-hidden="true"
+            className="size-5 shrink-0"
+          />
+          <span className="truncate">{project.name}</span>
         </Link>
         <time
           dateTime={project.muted_at}

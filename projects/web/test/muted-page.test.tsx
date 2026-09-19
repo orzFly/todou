@@ -1,4 +1,10 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { MuteList } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mutesQuery } from "../src/api/mutes.ts";
@@ -7,7 +13,10 @@ import { referenceConfigQuery } from "../src/api/references.ts";
 import { MutedPage } from "../src/pages/muted.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 const full: MuteList = {
   issues: [
@@ -20,7 +29,12 @@ const full: MuteList = {
     },
   ],
   projects: [
-    { slug: "q", name: "Quiet Project", muted_at: "2026-01-01T00:00:00Z" },
+    {
+      slug: "q",
+      name: "Quiet Project",
+      icon_url: null,
+      muted_at: "2026-01-01T00:00:00Z",
+    },
   ],
 };
 
@@ -34,6 +48,80 @@ function mount(mutes: MuteList) {
 }
 
 describe("muted page (T-380)", () => {
+  it("keeps the exact project link name while initials become the REF fallback (T-441)", async () => {
+    const { client } = mount(full);
+    const link = await screen.findByRole("link", {
+      name: "Quiet Project",
+    });
+    expect(link.getAttribute("href")).toBe("/projects/q");
+    expect(within(link).getByText("QP")).toBeTruthy();
+    expect(link.querySelector("img")).toBeNull();
+
+    await act(async () => {
+      client.setQueryData(referenceConfigQuery("q").queryKey, {
+        format: { prefix: "QUIET", history: [] },
+        autolinks: [],
+      });
+    });
+    await waitFor(() => expect(within(link).getByText("QUI")).toBeTruthy());
+    expect(screen.getByRole("link", { name: "Quiet Project" })).toBe(link);
+    const row = link.closest("li");
+    if (!row) throw new Error("Missing muted project row");
+    expect(within(row).getByRole("button", { name: "Unmute" })).toBeTruthy();
+  });
+
+  it("loads the uploaded project icon without changing the link name (T-441)", async () => {
+    class LoadedImage extends EventTarget {
+      complete = true;
+      naturalWidth = 20;
+      crossOrigin: string | null = null;
+      referrerPolicy = "";
+      src = "";
+    }
+    vi.stubGlobal("Image", LoadedImage);
+    const iconUrl = "/api/projects/2/icon?v=muted";
+    mount({
+      issues: [],
+      projects: [{ ...full.projects[0], icon_url: iconUrl }],
+    });
+    const link = await screen.findByRole("link", {
+      name: "Quiet Project",
+    });
+    await waitFor(() =>
+      expect(link.querySelector("img")?.getAttribute("src")).toBe(iconUrl),
+    );
+    expect(within(link).queryByText("QP")).toBeNull();
+    expect(screen.getByRole("link", { name: "Quiet Project" })).toBe(link);
+  });
+
+  it("keeps the fallback and actionable name when an uploaded icon cannot load (T-441)", async () => {
+    const requested: string[] = [];
+    class FailedImage extends EventTarget {
+      complete = true;
+      naturalWidth = 0;
+      crossOrigin: string | null = null;
+      referrerPolicy = "";
+      set src(value: string) {
+        requested.push(value);
+      }
+    }
+    vi.stubGlobal("Image", FailedImage);
+    mount({
+      issues: [],
+      projects: [
+        { ...full.projects[0], icon_url: "/api/projects/2/icon?v=missing" },
+      ],
+    });
+    const link = await screen.findByRole("link", {
+      name: "Quiet Project",
+    });
+    await waitFor(() =>
+      expect(requested).toContain("/api/projects/2/icon?v=missing"),
+    );
+    expect(within(link).getByText("QP")).toBeTruthy();
+    expect(link.querySelector("img")).toBeNull();
+  });
+
   it("renders a newer server mute mode without losing the unmute action", async () => {
     const mode = "future_mute_mode" as MuteList["issues"][number]["mode"];
     const mutes = {

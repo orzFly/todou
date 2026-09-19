@@ -75,6 +75,7 @@ export function ProjectCard({
             )}
           >
             <ProjectIcon
+              aria-hidden="true"
               project={{
                 name: project.name,
                 prefix: project.prefix,

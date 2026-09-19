@@ -50,12 +50,17 @@ function readQuestionsFile(path: string): string {
   }
 }
 
+// Event responses can gain metadata before the CLI is upgraded. Validate the
+// fields we render without rejecting additions (T-465's `via`); submission
+// schemas remain strict, and JSON output keeps the original event payload.
+const AnswerEventPayload = QuestionAnsweredPayload.loose();
+
 /** Payload of a question_answered event, or null for any other event. */
 export function decodeAnswerEvent(
   item: TimelineEvent,
 ): { comment_id: number; answers: QuestionAnswer[] } | null {
   if (item.event_type !== "question_answered") return null;
-  const parsed = QuestionAnsweredPayload.safeParse(item.payload);
+  const parsed = AnswerEventPayload.safeParse(item.payload);
   return parsed.success ? parsed.data : null;
 }
 

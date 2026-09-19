@@ -22,7 +22,14 @@ const list = (mode: IssueMuteMode | null, projectMuted = false): MuteList => ({
           },
         ],
   projects: projectMuted
-    ? [{ slug: "p", name: "Project", muted_at: "2026-01-01T00:00:00Z" }]
+    ? [
+        {
+          slug: "p",
+          name: "Project",
+          icon_url: null,
+          muted_at: "2026-01-01T00:00:00Z",
+        },
+      ]
     : [],
 });
 

@@ -1,3 +1,4 @@
+import { MuteList } from "@todou/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { silenced } from "../src/services/mutes.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
@@ -395,6 +396,139 @@ describe("mutes T-372", () => {
     const theirs = await mutesOf(outsider.headers);
     expect(theirs.issues).toHaveLength(0);
     expect(theirs.projects).toHaveLength(0);
+  });
+
+  describe("muted project icons", () => {
+    const createProject = async (slug: string) => {
+      const res = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug, name: `Project ${slug}` }),
+      });
+      expect(res.status).toBe(201);
+      return json(res);
+    };
+
+    const uploadIcon = async (slug: string) => {
+      const form = new FormData();
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+      form.set("file", new File([bytes], "icon.png", { type: "image/png" }));
+      const res = await t.app.request(`/api/projects/${slug}/icon`, {
+        method: "POST",
+        headers: { cookie },
+        body: form,
+      });
+      expect(res.status).toBe(200);
+      return (await json(res)).icon_url as string;
+    };
+
+    it("returns the current versioned icon URL and keeps inline issue references iconless", async () => {
+      const slug = "muted-icon-uploaded";
+      const project = await createProject(slug);
+      const firstIcon = await uploadIcon(slug);
+      expect(firstIcon).toContain(`/api/projects/${project.id}/icon?v=`);
+      expect((await muteProject(slug)).status).toBe(204);
+      const number = await createIssueAs(slug, headers(), "Muted icon issue");
+      expect((await mute(slug, number, "forever")).status).toBe(204);
+
+      const first = await mutesOf();
+      expect(first.projects).toContainEqual({
+        slug,
+        name: project.name,
+        icon_url: firstIcon,
+        muted_at: expect.any(String),
+      });
+      expect(MuteList.parse(first)).toEqual(first);
+      expect(
+        first.issues.find(
+          (issue: { number: number; project: { slug: string } }) =>
+            issue.project.slug === slug && issue.number === number,
+        ).project,
+      ).toEqual({ slug, name: project.name });
+
+      const secondIcon = await uploadIcon(slug);
+      expect(secondIcon).not.toBe(firstIcon);
+      const updated = await mutesOf();
+      expect(updated.projects).toContainEqual(
+        expect.objectContaining({ slug, icon_url: secondIcon }),
+      );
+      expect(MuteList.parse(updated)).toEqual(updated);
+    });
+
+    it("returns explicit null before upload and after icon deletion", async () => {
+      const slug = "muted-icon-fallback";
+      const project = await createProject(slug);
+      expect((await muteProject(slug)).status).toBe(204);
+      const initial = await mutesOf();
+      expect(initial.projects).toContainEqual({
+        slug,
+        name: project.name,
+        icon_url: null,
+        muted_at: expect.any(String),
+      });
+      expect(MuteList.parse(initial)).toEqual(initial);
+
+      const icon_url = await uploadIcon(slug);
+      expect((await mutesOf()).projects).toContainEqual(
+        expect.objectContaining({ slug, icon_url }),
+      );
+      const removed = await t.app.request(`/api/projects/${slug}/icon`, {
+        method: "DELETE",
+        headers: { cookie },
+      });
+      expect(removed.status).toBe(200);
+      const afterDelete = await mutesOf();
+      expect(afterDelete.projects).toContainEqual(
+        expect.objectContaining({ slug, icon_url: null }),
+      );
+      expect(MuteList.parse(afterDelete)).toEqual(afterDelete);
+    });
+
+    it("scopes icon-bearing mutes to their user and currently readable projects", async () => {
+      const slug = "muted-icon-scoped";
+      const ownerOnly = "muted-icon-owner";
+      await createProject(slug);
+      await createProject(ownerOnly);
+      const icon_url = await uploadIcon(slug);
+      await uploadIcon(ownerOnly);
+      const reader = await addUserWithToken(t.ctx, "muted-icon-reader");
+      for (const s of [slug, ownerOnly]) {
+        const granted = await t.app.request(
+          `/api/projects/${s}/members/${reader.user.id}`,
+          {
+            method: "PUT",
+            headers: headers(),
+            body: JSON.stringify({ role: "reader" }),
+          },
+        );
+        expect([200, 204]).toContain(granted.status);
+      }
+      expect((await muteProject(ownerOnly)).status).toBe(204);
+      expect((await muteProject(slug, reader.headers)).status).toBe(204);
+
+      const theirs = await mutesOf(reader.headers);
+      expect(theirs.projects).toEqual([
+        {
+          slug,
+          name: `Project ${slug}`,
+          icon_url,
+          muted_at: expect.any(String),
+        },
+      ]);
+      expect(MuteList.parse(theirs)).toEqual(theirs);
+      expect((await mutesOf()).projects).not.toContainEqual(
+        expect.objectContaining({ slug }),
+      );
+
+      const revoked = await t.app.request(
+        `/api/projects/${slug}/members/${reader.user.id}`,
+        { method: "DELETE", headers: { cookie } },
+      );
+      expect(revoked.status).toBe(204);
+      const hidden = await mutesOf(reader.headers);
+      expect(hidden.projects).toEqual([]);
+      expect(MuteList.parse(hidden)).toEqual(hidden);
+    });
   });
 
   it("the silenced() truth table", () => {

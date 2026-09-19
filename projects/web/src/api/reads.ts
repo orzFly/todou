@@ -61,16 +61,31 @@ export function clearAllUnread(page: IssueListPage): IssueListPage {
  * keep-check: being read retires only the unread reason, so a row still
  * waiting on my spec review or carrying open questions stays — it just
  * loses its marker. Rows that had nothing else to say leave.
+ *
+ * `unread_counts` counts all attention rows, including those other reasons,
+ * before the per-project limit. Subtract only rows we actually remove:
+ * unreturned rows may still need review, so their contribution stays until
+ * the authoritative refetch. For a complete project this leaves its exact
+ * survivor count; a trimmed project's optimistic count is an upper bound.
  */
 export function clearInboxUnread(page: InboxPage, slug?: string): InboxPage {
-  return {
-    ...page,
-    items: page.items.flatMap((item) => {
-      if (slug !== undefined && item.project.slug !== slug) return [item];
-      if (!item.pending_spec_review && item.open_questions === 0) return [];
-      return [{ ...item, unread: false, unread_comments: 0 }];
-    }),
-  };
+  const counts = { ...page.unread_counts };
+  const items = page.items.flatMap((item) => {
+    if (slug !== undefined && item.project.slug !== slug) return [item];
+    if (!item.pending_spec_review && item.open_questions === 0) {
+      const project = item.project.slug;
+      const count = counts[project];
+      if (count !== undefined) {
+        if (count <= 1) delete counts[project];
+        else counts[project] = count - 1;
+      }
+      return [];
+    }
+    return [
+      { ...item, unread: false, unread_comments: 0, mentions_you: false },
+    ];
+  });
+  return { ...page, items, unread_counts: counts };
 }
 
 /**

@@ -30,6 +30,12 @@ import {
 } from "./questions.ts";
 import type { SelfFilter } from "./watch-loop.ts";
 
+// Read-side copies only: added event metadata must not hide structured detail
+// from an older CLI. Known fields still validate; raw JSON is never replaced.
+const SpecPushedEventPayload = SpecPushedPayload.loose();
+const SpecWithdrawnEventPayload = SpecWithdrawnPayload.loose();
+const SpecReviewEventPayload = SpecReviewPayload.loose();
+
 /**
  * Reading and printing one issue's timeline. Extracted from
  * `commands/issue.ts` (T-243): the watch, comment, question and spec-wait
@@ -540,7 +546,7 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
         ? scalarDetail(payload)
         : nested(payload.attachment, "filename");
     case "spec_pushed": {
-      const spec = SpecPushedPayload.safeParse(payload);
+      const spec = SpecPushedEventPayload.safeParse(payload);
       if (!spec.success) return scalarDetail(payload);
       const files = (
         [
@@ -557,13 +563,13 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       return `v${spec.data.version}${files ? `: ${files}` : ""}${message} · ${specPullHint(ctx, spec.data.version)}`;
     }
     case "spec_withdrawn": {
-      const withdrawal = SpecWithdrawnPayload.safeParse(payload);
+      const withdrawal = SpecWithdrawnEventPayload.safeParse(payload);
       if (!withdrawal.success) return scalarDetail(payload);
       const { version, reason } = withdrawal.data;
       return `v${version}${reason === null ? "" : ` — ${reason}`}`;
     }
     case "spec_review": {
-      const review = SpecReviewPayload.safeParse(payload);
+      const review = SpecReviewEventPayload.safeParse(payload);
       if (!review.success) return scalarDetail(payload);
       const { version, verdict, annotation_count } = review.data;
       const outcome = {

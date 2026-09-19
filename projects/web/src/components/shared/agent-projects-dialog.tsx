@@ -146,6 +146,7 @@ function ProjectBadges({ memberships }: { memberships: AgentMembership[] }) {
               and this chip already carries the slug beside it. */}
           {m.project.icon_url && (
             <ProjectIcon
+              aria-hidden="true"
               project={{ name: m.project.name, icon_url: m.project.icon_url }}
               className="size-3.5"
             />
@@ -354,6 +355,7 @@ function MembershipRow({
   return (
     <div className="flex items-center gap-2">
       <ProjectIcon
+        aria-hidden="true"
         project={{ name: project.name, prefix, icon_url: project.icon_url }}
         className="size-6 shrink-0"
       />

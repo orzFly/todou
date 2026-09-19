@@ -28,6 +28,8 @@ export type MutedIssue = z.infer<typeof MutedIssue>;
 export const MutedProject = z.object({
   slug: ProjectSlug,
   name: z.string(),
+  /** Versioned project icon URL; null means draw the fallback. */
+  icon_url: z.string().nullable(),
   muted_at: Timestamp,
 });
 export type MutedProject = z.infer<typeof MutedProject>;

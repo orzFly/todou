@@ -211,7 +211,7 @@ describe("clearInboxUnread", () => {
   const page = (): InboxPage => ({
     items: [
       inboxItem("greenhouse", 1),
-      inboxItem("greenhouse", 2, { open_questions: 3 }),
+      inboxItem("greenhouse", 2, { open_questions: 3, mentions_you: true }),
       inboxItem("greenhouse", 3, { pending_spec_review: true }),
       inboxItem("orchard", 4),
     ],
@@ -222,6 +222,7 @@ describe("clearInboxUnread", () => {
   it("drops rows whose only reason was unread activity", () => {
     const patched = clearInboxUnread(page(), "greenhouse");
     expect(patched.items.map((i) => i.number)).toEqual([2, 3, 4]);
+    expect(patched.unread_counts).toEqual({ greenhouse: 2, orchard: 1 });
   });
 
   it("keeps the other reasons but clears their markers", () => {
@@ -230,6 +231,7 @@ describe("clearInboxUnread", () => {
       number: 2,
       unread: false,
       unread_comments: 0,
+      mentions_you: false,
       muted: null,
       blocked_by: [],
       blocks: [],
@@ -252,10 +254,58 @@ describe("clearInboxUnread", () => {
       blocked_by: [],
       blocks: [],
     });
+    expect(patched.unread_counts.orchard).toBe(1);
   });
 
   it("empties every project when the scope is global", () => {
     const patched = clearInboxUnread(page());
     expect(patched.items.map((i) => i.number)).toEqual([2, 3]);
+    expect(patched.unread_counts).toEqual({ greenhouse: 2 });
+  });
+
+  it("clears complete plain-unread projects without mutating the snapshot", () => {
+    const original: InboxPage = {
+      items: [
+        inboxItem("greenhouse", 1),
+        inboxItem("greenhouse", 2),
+        inboxItem("orchard", 3),
+      ],
+      unread_counts: { greenhouse: 2, orchard: 1 },
+      truncated: false,
+    };
+    const snapshot = structuredClone(original);
+    expect(clearInboxUnread(original)).toEqual({
+      items: [],
+      unread_counts: {},
+      truncated: false,
+    });
+    expect(original).toEqual(snapshot);
+  });
+
+  it("preserves unreturned rows' provisional counts per project, not just visible survivors", () => {
+    const original: InboxPage = {
+      ...page(),
+      unread_counts: { greenhouse: 100, orchard: 1, unseen: 50 },
+      truncated: true,
+    };
+    const patched = clearInboxUnread(original);
+    expect(patched.items.map((item) => item.number)).toEqual([2, 3]);
+    // Only one greenhouse row is known to leave; the 97 unreturned
+    // rows could still need attention. Orchard is complete and clears.
+    expect(patched.unread_counts).toEqual({ greenhouse: 99, unseen: 50 });
+    expect(patched.truncated).toBe(true);
+    // Applying the sweep again cannot subtract the same row twice.
+    expect(clearInboxUnread(patched)).toEqual(patched);
+    expect(original.unread_counts).toEqual({
+      greenhouse: 100,
+      orchard: 1,
+      unseen: 50,
+    });
+  });
+
+  it("does not invent counts for an older server's missing count map", () => {
+    const patched = clearInboxUnread({ ...page(), unread_counts: {} });
+    expect(patched.items.map((item) => item.number)).toEqual([2, 3]);
+    expect(patched.unread_counts).toEqual({});
   });
 });

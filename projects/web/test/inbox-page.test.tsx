@@ -617,7 +617,9 @@ describe("InboxPage", () => {
     };
     const mutes = {
       issues: [issue, { ...issue, number: 8 }],
-      projects: [{ slug: "q", name: "Quiet", muted_at: issue.muted_at }],
+      projects: [
+        { slug: "q", name: "Quiet", icon_url: null, muted_at: issue.muted_at },
+      ],
     };
     vi.mocked(api.getMutes).mockResolvedValue(mutes);
     client.setQueryData(mutesQuery.queryKey, mutes);

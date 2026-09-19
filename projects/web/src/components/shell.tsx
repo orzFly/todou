@@ -162,6 +162,7 @@ export function AppShell({
                       className="flex min-w-0 items-center gap-1.5 font-semibold hover:underline"
                     >
                       <ProjectIcon
+                        aria-hidden="true"
                         project={{
                           name: project.data?.name ?? slug,
                           prefix: refs.get(slug)?.prefix ?? null,

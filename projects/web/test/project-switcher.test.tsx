@@ -354,7 +354,10 @@ function badgeOf(name: string) {
     .getAllByRole("option")
     .find((el) => el.textContent?.includes(name));
   if (!option) throw new Error(`no option for ${name}`);
-  return option.querySelector("span[aria-hidden]")?.textContent ?? null;
+  return (
+    option.querySelector('[data-slot="project-spelling"] + span[aria-hidden]')
+      ?.textContent ?? null
+  );
 }
 
 describe("ProjectSwitcher unread badges (T-202)", () => {

@@ -281,6 +281,7 @@ function Row({
         note={option.note}
         icon={
           <ProjectIcon
+            aria-hidden="true"
             project={{
               name: option.project.name,
               prefix,

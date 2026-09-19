@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { InboxButton } from "../src/components/inbox-button.tsx";
 import { ProjectSwitcher } from "../src/components/project-switcher.tsx";
+import { InboxPage as InboxPageView } from "../src/pages/inbox.tsx";
 import { ProjectsPage } from "../src/pages/projects.tsx";
 import { testQueryClient } from "./render.tsx";
 
@@ -56,16 +57,66 @@ function page(
   };
 }
 
+function inboxItem(slug: string, number: number): InboxPage["items"][number] {
+  return {
+    id: number,
+    number,
+    title: `issue ${number}`,
+    status: {
+      id: 1,
+      name: "Todo",
+      category: "open",
+      color: "#000000",
+      position: 1,
+      is_default: false,
+    },
+    author: me,
+    assignees: [],
+    labels: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    body_edited_at: null,
+    open_questions: 0,
+    spec_version: null,
+    spec_review_status: null,
+    spec_unresolved_comments: 0,
+    deleted_at: null,
+    deleted_by: null,
+    unread: true,
+    unread_comments: 1,
+    muted: null,
+    blocked_by: [],
+    blocks: [],
+    moves: [],
+    project: project(slug),
+    last_activity_at: "2026-01-02T00:00:00Z",
+    pending_spec_review: false,
+    mentions_you: false,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 /** As in projects-order, the route id is /authed/projects for useSearch. */
 function renderProjects({
   projects,
   inbox,
   includeNav = false,
+  includeInbox = false,
   getInbox,
 }: {
   projects: Project[];
   inbox?: InboxPage;
   includeNav?: boolean;
+  includeInbox?: boolean;
   getInbox?: () => Promise<InboxPage>;
 }) {
   const client = testQueryClient();
@@ -77,6 +128,14 @@ function renderProjects({
     client.setQueryData(["inbox"], inbox);
     // Keep the seeded snapshot stable: cache updates must not depend on HTTP.
     client.setQueryDefaults(["inbox"], { staleTime: Infinity });
+  }
+  if (includeInbox) {
+    client.setQueryData(["mutes"], { issues: [], projects: [] });
+    client.setQueryDefaults(["mutes"], { staleTime: Infinity });
+    vi.spyOn(api, "getReferenceDirectory").mockResolvedValue({
+      entries: [],
+      contested: [],
+    });
   }
   const inboxSpy = vi
     .spyOn(api, "getInbox")
@@ -92,6 +151,7 @@ function renderProjects({
           </nav>
         )}
         <ProjectsPage />
+        {includeInbox && <InboxPageView />}
       </>
     );
   }
@@ -239,41 +299,7 @@ describe("ProjectsPage unread badges (T-382)", () => {
   it("uses exact truncated unread_counts for navbar total, switcher row, and home card", async () => {
     // One returned alpha row cannot explain the 120-server-count badge;
     // summing items or grouping them by slug must fail here.
-    const alphaRow = {
-      id: 1,
-      number: 1,
-      title: "issue 1",
-      status: {
-        id: 1,
-        name: "Todo",
-        category: "open" as const,
-        color: "#000000",
-        position: 1,
-        is_default: false,
-      },
-      author: me,
-      assignees: [],
-      labels: [],
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-      body_edited_at: null,
-      open_questions: 0,
-      spec_version: null,
-      spec_review_status: null,
-      spec_unresolved_comments: 0,
-      deleted_at: null,
-      deleted_by: null,
-      unread: true,
-      unread_comments: 1,
-      muted: null,
-      blocked_by: [],
-      blocks: [],
-      moves: [],
-      project: { id: 5, slug: "alpha", name: "alpha" },
-      last_activity_at: "2026-01-02T00:00:00Z",
-      pending_spec_review: false,
-      mentions_you: false,
-    } satisfies InboxPage["items"][number];
+    const alphaRow = inboxItem("alpha", 1);
     const { container, inboxSpy } = renderProjects({
       projects: [project("alpha"), project("beta")],
       inbox: page({ alpha: 120, beta: 3 }, [alphaRow]),
@@ -299,12 +325,155 @@ describe("ProjectsPage unread badges (T-382)", () => {
       name: "alpha — 120 unread",
     });
     const betaOption = screen.getByRole("option", { name: "beta — 3 unread" });
-    expect(alphaOption.querySelector("span[aria-hidden]")?.textContent).toBe(
-      "99+",
-    );
-    expect(betaOption.querySelector("span[aria-hidden]")?.textContent).toBe(
-      "3",
-    );
+    expect(
+      alphaOption.querySelector(
+        '[data-slot="project-spelling"] + span[aria-hidden]',
+      )?.textContent,
+    ).toBe("99+");
+    expect(
+      betaOption.querySelector(
+        '[data-slot="project-spelling"] + span[aria-hidden]',
+      )?.textContent,
+    ).toBe("3");
     expect(inboxSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("Mark all read badge coherence (T-444)", () => {
+  function expectCounts(container: HTMLElement, alpha: number, beta = 0) {
+    const total = alpha + beta;
+    const navbar = screen.getByRole("link", {
+      name: total > 0 ? `Inbox — ${total} unread` : "Inbox",
+    });
+    expect(navbar.querySelector("span[aria-hidden]")?.textContent).toBe(
+      total > 0 ? String(total) : undefined,
+    );
+    for (const [slug, count] of [
+      ["alpha", alpha],
+      ["beta", beta],
+    ] as const) {
+      const option = screen.getByRole("option", {
+        name: count > 0 ? `${slug} — ${count} unread` : `${slug} ${slug}`,
+      });
+      expect(
+        option.querySelector(
+          '[data-slot="project-spelling"] + span[aria-hidden]',
+        )?.textContent,
+      ).toBe(count > 0 ? String(count) : undefined);
+      const action = actionOf(cardOf(container, slug));
+      if (count === 0) expect(action).toBeNull();
+      else {
+        expect(action?.querySelector("span[aria-hidden]")?.textContent).toBe(
+          String(count),
+        );
+      }
+    }
+  }
+
+  it("clears all three badge surfaces before the sweep responds and accepts later server counts", async () => {
+    const sweep = deferred<void>();
+    const refresh = deferred<InboxPage>();
+    const mark = vi.spyOn(api, "markAllRead").mockReturnValue(sweep.promise);
+    const { container, client, inboxSpy } = renderProjects({
+      projects: [project("alpha"), project("beta")],
+      inbox: page(
+        { alpha: 3 },
+        [1, 2, 3].map((number) => inboxItem("alpha", number)),
+      ),
+      includeNav: true,
+      includeInbox: true,
+      getInbox: () => refresh.promise,
+    });
+    await screen.findByText("issue 3");
+    fireEvent.click(screen.getByRole("button", { name: "Switch project" }));
+    await screen.findByRole("option", { name: "alpha — 3 unread" });
+    expectCounts(container, 3);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Mark the inbox as read" }),
+    );
+
+    // Separate the row assertion from the badge assertion: reverting only
+    // the count patch must leave an empty inbox here but turn the test red.
+    await screen.findByText(/Inbox all dug out/);
+    expect(client.getQueryData<InboxPage>(["inbox"])?.items).toEqual([]);
+    await waitFor(() => expectCounts(container, 0));
+    expect(mark).toHaveBeenCalledWith({});
+    expect(inboxSpy).not.toHaveBeenCalled();
+    expect(
+      screen
+        .getByRole("button", { name: "Mark the inbox as read" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+
+    await act(async () => sweep.resolve());
+    await waitFor(() => expect(inboxSpy).toHaveBeenCalledTimes(1));
+    // The success response alone must not resurrect the old counts while
+    // its invalidated GET is still pending.
+    expectCounts(container, 0);
+    expect(screen.getByText(/Inbox all dug out/)).toBeTruthy();
+
+    await act(async () =>
+      refresh.resolve(
+        page({ alpha: 2, beta: 1 }, [
+          inboxItem("alpha", 4),
+          inboxItem("alpha", 5),
+          inboxItem("beta", 6),
+        ]),
+      ),
+    );
+    await screen.findByText("issue 6");
+    await waitFor(() => expectCounts(container, 2, 1));
+    expect(screen.queryByText(/Inbox all dug out/)).toBeNull();
+  });
+
+  it("rolls back rows and all badges on failure, preserving other projects and cached inbox variants", async () => {
+    const sweep = deferred<void>();
+    const refresh = deferred<InboxPage>();
+    const mark = vi.spyOn(api, "markAllRead").mockReturnValue(sweep.promise);
+    const original = page({ alpha: 3, beta: 1 }, [
+      ...[1, 2, 3].map((number) => inboxItem("alpha", number)),
+      inboxItem("beta", 4),
+    ]);
+    const { container, client, inboxSpy } = renderProjects({
+      projects: [project("alpha"), project("beta")],
+      inbox: original,
+      includeNav: true,
+      includeInbox: true,
+      getInbox: () => refresh.promise,
+    });
+    const limitedKey = ["inbox", { projects: ["alpha"], limit: 1 }];
+    const limited = page({ alpha: 3 }, [inboxItem("alpha", 1)]);
+    const otherKey = ["inbox", { projects: ["beta"] }];
+    const other = page({ beta: 1 }, [inboxItem("beta", 4)]);
+    client.setQueryData(limitedKey, limited);
+    client.setQueryData(otherKey, other);
+    await screen.findByText("issue 3");
+    fireEvent.click(screen.getByRole("button", { name: "Switch project" }));
+    await screen.findByRole("option", { name: "alpha — 3 unread" });
+    expectCounts(container, 3, 1);
+    fireEvent.click(screen.getByRole("button", { name: "Mark alpha as read" }));
+    await waitFor(() => expectCounts(container, 0, 1));
+    expect(screen.queryByText("issue 1")).toBeNull();
+    expect(screen.getByText("issue 4")).toBeTruthy();
+    expect(mark).toHaveBeenCalledWith({ projects: ["alpha"] });
+    expect(inboxSpy).not.toHaveBeenCalled();
+    // This cached variant did not return two rows. Their reasons are
+    // unknown, so the provisional count must not claim they disappeared.
+    expect(client.getQueryData<InboxPage>(limitedKey)).toEqual({
+      items: [],
+      unread_counts: { alpha: 2 },
+      truncated: true,
+    });
+    expect(client.getQueryData(otherKey)).toEqual(other);
+
+    await act(async () => sweep.reject(new Error("read failed")));
+    await waitFor(() => expect(inboxSpy).toHaveBeenCalledTimes(1));
+    // The retry GET remains deferred, so this recovery is the rollback.
+    await waitFor(() => expectCounts(container, 3, 1));
+    expect(screen.getByText("issue 1")).toBeTruthy();
+    expect(client.getQueryData(["inbox"])).toEqual(original);
+    expect(client.getQueryData(limitedKey)).toEqual(limited);
+    expect(client.getQueryData(otherKey)).toEqual(other);
+    await act(async () => refresh.resolve(original));
   });
 });
