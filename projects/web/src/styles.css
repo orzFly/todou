@@ -51,6 +51,11 @@
 
 :root {
     color-scheme: light;
+    /* Projection of @pierre/diffs 1.3.5 / @shikijs/themes 4.4.3:
+       gitDecoration → terminal ANSI → Pierre's light/dark fallback.
+       Browser color checks compare these with real Pierre rendering. */
+    --diff-addition: #18a46c;
+    --diff-deletion: #d52c36;
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
@@ -87,6 +92,8 @@
 
 .dark {
     color-scheme: dark;
+    --diff-addition: #07c480;
+    --diff-deletion: #ff2e3f;
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);
@@ -172,6 +179,8 @@ diffs-container {
    block here. Adding a theme = one THEMES entry in lib/theme.ts + one block. */
 
 :root[data-theme="pico-light"] {
+    --diff-addition: #18a46c;
+    --diff-deletion: #d52c36;
     --background: oklch(0.986 0.003 250);
     --foreground: oklch(0.22 0.025 255);
     --card: oklch(1 0 0);
@@ -206,6 +215,8 @@ diffs-container {
 }
 
 :root[data-theme="solarized-light"] {
+    --diff-addition: #859900;
+    --diff-deletion: #dc322f;
     --background: oklch(0.965 0.036 92);
     --foreground: oklch(0.42 0.03 210);
     --card: oklch(0.985 0.028 92);
@@ -240,6 +251,8 @@ diffs-container {
 }
 
 :root[data-theme="vs-light"] {
+    --diff-addition: #0dbe4e;
+    --diff-deletion: #ff2e3f;
     --background: oklch(0.985 0.001 250);
     --foreground: oklch(0.27 0.005 260);
     --card: oklch(1 0 0);
@@ -274,6 +287,8 @@ diffs-container {
 }
 
 :root[data-theme="github-light"] {
+    --diff-addition: #28a745;
+    --diff-deletion: #d73a49;
     --background: oklch(0.985 0.002 250);
     --foreground: oklch(0.25 0.02 260);
     --card: oklch(1 0 0);
@@ -308,6 +323,8 @@ diffs-container {
 }
 
 :root[data-theme="catppuccin-latte"] {
+    --diff-addition: #40a02b;
+    --diff-deletion: #d20f39;
     --background: oklch(0.955 0.007 280);
     --foreground: oklch(0.42 0.04 285);
     --card: oklch(0.97 0.005 280);
@@ -342,6 +359,9 @@ diffs-container {
 }
 
 :root[data-theme="gruvbox-light"] {
+    /* Gruvbox intentionally uses near-ink additions, as its code theme does. */
+    --diff-addition: #3c3836;
+    --diff-deletion: #cc241d;
     --background: oklch(0.93 0.045 92);
     --foreground: oklch(0.35 0.02 80);
     --card: oklch(0.95 0.04 95);
@@ -376,6 +396,8 @@ diffs-container {
 }
 
 :root[data-theme="tera-dark"] {
+    --diff-addition: #07c480;
+    --diff-deletion: #ff2e3f;
     --background: oklch(0.19 0.02 255);
     --foreground: oklch(0.93 0.012 255);
     --card: oklch(0.22 0.02 255);
@@ -410,6 +432,8 @@ diffs-container {
 }
 
 :root[data-theme="solarized-dark"] {
+    --diff-addition: #859900;
+    --diff-deletion: #dc322f;
     --background: oklch(0.26 0.035 210);
     --foreground: oklch(0.82 0.02 205);
     --card: oklch(0.3 0.035 210);
@@ -444,6 +468,8 @@ diffs-container {
 }
 
 :root[data-theme="vs-dark"] {
+    --diff-addition: #5ecc71;
+    --diff-deletion: #ff6762;
     --background: oklch(0.23 0.004 250);
     --foreground: oklch(0.93 0.004 250);
     --card: oklch(0.26 0.004 250);
@@ -478,6 +504,8 @@ diffs-container {
 }
 
 :root[data-theme="github-dark"] {
+    --diff-addition: #34d058;
+    --diff-deletion: #ea4a5a;
     --background: oklch(0.17 0.015 265);
     --foreground: oklch(0.93 0.012 250);
     --card: oklch(0.2 0.015 260);
@@ -512,6 +540,8 @@ diffs-container {
 }
 
 :root[data-theme="dracula"] {
+    --diff-addition: #50fa7b;
+    --diff-deletion: #ff5555;
     --background: oklch(0.28 0.028 285);
     --foreground: oklch(0.95 0.012 95);
     --card: oklch(0.31 0.028 285);
@@ -546,6 +576,8 @@ diffs-container {
 }
 
 :root[data-theme="nord"] {
+    --diff-addition: #a3be8c;
+    --diff-deletion: #bf616a;
     --background: oklch(0.3 0.022 250);
     --foreground: oklch(0.93 0.012 230);
     --card: oklch(0.33 0.022 250);
@@ -580,6 +612,8 @@ diffs-container {
 }
 
 :root[data-theme="tokyo-night"] {
+    --diff-addition: #449dab;
+    --diff-deletion: #914c54;
     --background: oklch(0.21 0.025 272);
     --foreground: oklch(0.86 0.04 270);
     --card: oklch(0.24 0.025 270);
@@ -614,6 +648,8 @@ diffs-container {
 }
 
 :root[data-theme="one-dark"] {
+    --diff-addition: #8cc265;
+    --diff-deletion: #e05561;
     --background: oklch(0.28 0.012 265);
     --foreground: oklch(0.86 0.012 265);
     --card: oklch(0.31 0.012 265);
@@ -648,6 +684,8 @@ diffs-container {
 }
 
 :root[data-theme="monokai"] {
+    --diff-addition: #86b42b;
+    --diff-deletion: #c4265e;
     --background: oklch(0.24 0.012 110);
     --foreground: oklch(0.96 0.008 100);
     --card: oklch(0.27 0.012 110);
@@ -682,6 +720,8 @@ diffs-container {
 }
 
 :root[data-theme="catppuccin-mocha"] {
+    --diff-addition: #a6e3a1;
+    --diff-deletion: #f38ba8;
     --background: oklch(0.23 0.03 285);
     --foreground: oklch(0.9 0.03 285);
     --card: oklch(0.26 0.03 285);
@@ -716,6 +756,9 @@ diffs-container {
 }
 
 :root[data-theme="gruvbox-dark"] {
+    /* Preserve the code theme's near-ink addition color here too. */
+    --diff-addition: #ebdbb2;
+    --diff-deletion: #cc241d;
     --background: oklch(0.25 0.008 90);
     --foreground: oklch(0.89 0.035 95);
     --card: oklch(0.28 0.008 90);
@@ -799,6 +842,29 @@ diffs-container {
 }
 
 @layer components {
+  /* Diff statistics share the code palette; foreground keeps small text legible.
+     Review verdicts, moved/modified badges and neutral cells are separate roles. */
+  .diff-addition-text,
+  .diff-addition-badge {
+    color: color-mix(in oklab, var(--foreground) 75%, var(--diff-addition));
+  }
+  .diff-deletion-text,
+  .diff-deletion-badge {
+    color: color-mix(in oklab, var(--foreground) 75%, var(--diff-deletion));
+  }
+  .diff-addition-badge {
+    background-color: color-mix(in oklab, var(--diff-addition) 15%, transparent);
+  }
+  .diff-deletion-badge {
+    background-color: color-mix(in oklab, var(--diff-deletion) 15%, transparent);
+  }
+  .diff-addition-cell {
+    background-color: var(--diff-addition);
+  }
+  .diff-deletion-cell {
+    background-color: var(--diff-deletion);
+  }
+
   /* GitHub-flavoured markdown typography (T-32). One plain-CSS block —
      theme tokens make it track light/dark for free, and element swaps in
      the renderer (react-markdown `components`) don't need class surgery.
@@ -1082,15 +1148,18 @@ diffs-container {
   /* A field the new version no longer has, put back where it stood. The grid
      sets every cell's `background` to transparent above, so the row's own wash
      and its strike-through have to be spelled out here rather than inherited
-     from the table rules `tr.spec-del-row td` carries elsewhere. */
+     from the table rules `tr.spec-del-row td` carries elsewhere. Match the
+     deleted key's typography selector so its muted color cannot override
+     the deletion mix; live keys keep their normal muted color. */
   .markdown-body table.markdown-frontmatter tr.spec-del-row th,
+  .markdown-body table.markdown-frontmatter tr.spec-del-row td:first-child,
   .markdown-body table.markdown-frontmatter tr.spec-del-row td {
     background-color: color-mix(
       in oklab,
-      var(--color-red-500) 10%,
+      var(--diff-deletion) 10%,
       transparent
     );
-    color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
+    color: color-mix(in oklab, var(--foreground) 55%, var(--diff-deletion));
     text-decoration: line-through;
     text-decoration-thickness: 1px;
   }
@@ -1134,11 +1203,11 @@ diffs-container {
   }
   .spec-changed {
     border-left: 3px solid
-      color-mix(in oklab, var(--color-emerald-500) 60%, transparent);
+      color-mix(in oklab, var(--diff-addition) 60%, transparent);
     padding-left: 0.5rem;
     background-color: color-mix(
       in oklab,
-      var(--color-emerald-500) 6%,
+      var(--diff-addition) 6%,
       transparent
     );
   }
@@ -1146,7 +1215,7 @@ diffs-container {
     border-left-color: color-mix(
       in oklab,
       var(--color-amber-500) 60%,
-      var(--color-emerald-500)
+      var(--diff-addition)
     );
   }
   /* A fence drawn as a diff says which of its lines moved, in red and green
@@ -1168,12 +1237,12 @@ diffs-container {
      mark that has to shout from inside an otherwise unchanged block. */
   .markdown-body .spec-ins-block {
     border-left: 3px solid
-      color-mix(in oklab, var(--color-emerald-500) 60%, transparent);
+      color-mix(in oklab, var(--diff-addition) 60%, transparent);
     padding-left: 0.5rem;
     border-radius: var(--radius-sm);
     background-color: color-mix(
       in oklab,
-      var(--color-emerald-500) 12%,
+      var(--diff-addition) 12%,
       transparent
     );
   }
@@ -1181,7 +1250,7 @@ diffs-container {
     border-left-color: color-mix(
       in oklab,
       var(--color-amber-500) 60%,
-      var(--color-emerald-500)
+      var(--diff-addition)
     );
   }
 
@@ -1195,7 +1264,7 @@ diffs-container {
     padding: 0 0.1em;
     background-color: color-mix(
       in oklab,
-      var(--color-emerald-500) 24%,
+      var(--diff-addition) 24%,
       transparent
     );
   }
@@ -1205,10 +1274,10 @@ diffs-container {
     text-decoration-thickness: 1px;
     background-color: color-mix(
       in oklab,
-      var(--color-red-500) 16%,
+      var(--diff-deletion) 16%,
       transparent
     );
-    color: color-mix(in oklab, var(--foreground) 65%, var(--color-red-500));
+    color: color-mix(in oklab, var(--foreground) 65%, var(--diff-deletion));
   }
   /* Structural removals — a paragraph, a table row, a whole table — have no
      line left to strike through, so they degrade to a marker that shows the
@@ -1221,14 +1290,14 @@ diffs-container {
     margin: 0.35rem 0;
     padding: 0.1rem 0.5rem;
     border-left: 3px solid
-      color-mix(in oklab, var(--color-red-500) 60%, transparent);
+      color-mix(in oklab, var(--diff-deletion) 60%, transparent);
     border-radius: var(--radius-sm);
     background-color: color-mix(
       in oklab,
-      var(--color-red-500) 10%,
+      var(--diff-deletion) 10%,
       transparent
     );
-    color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
+    color: color-mix(in oklab, var(--foreground) 55%, var(--diff-deletion));
     font-size: 0.85em;
     text-decoration-thickness: 1px;
   }
@@ -1236,18 +1305,18 @@ diffs-container {
      Decoration must reach each nested inline node: links and inline code
      otherwise paint over a strike set only on their block ancestor. */
   .markdown-body :is(.spec-del-structure, .spec-del-structure :where(*)) {
-    color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
+    color: color-mix(in oklab, var(--foreground) 55%, var(--diff-deletion));
     text-decoration-line: line-through;
-    text-decoration-color: var(--color-red-500);
+    text-decoration-color: var(--diff-deletion);
     text-decoration-thickness: 1px;
   }
   .markdown-body .spec-del-structure {
     border-left: 3px solid
-      color-mix(in oklab, var(--color-red-500) 60%, transparent);
+      color-mix(in oklab, var(--diff-deletion) 60%, transparent);
     border-radius: var(--radius-sm);
     background-color: color-mix(
       in oklab,
-      var(--color-red-500) 10%,
+      var(--diff-deletion) 10%,
       transparent
     );
   }
@@ -1258,7 +1327,7 @@ diffs-container {
   .markdown-body pre.spec-del-structure {
     background-color: color-mix(
       in oklab,
-      var(--color-red-500) 12%,
+      var(--diff-deletion) 12%,
       var(--muted)
     );
   }
@@ -1290,13 +1359,13 @@ diffs-container {
   .markdown-body tr.spec-del-row td {
     background-color: color-mix(
       in oklab,
-      var(--color-red-500) 10%,
+      var(--diff-deletion) 10%,
       transparent
     );
-    color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
+    color: color-mix(in oklab, var(--foreground) 55%, var(--diff-deletion));
   }
   .markdown-body th.spec-del-cell {
-    background-color: color-mix(in oklab, var(--color-red-500) 14%, var(--muted));
+    background-color: color-mix(in oklab, var(--diff-deletion) 14%, var(--muted));
   }
   /* An old image the table put back into a cell (T-229). The height cap is the
      whole rule: `.markdown-body table` is `width: max-content`, so a screenshot

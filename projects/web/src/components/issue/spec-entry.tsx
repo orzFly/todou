@@ -105,10 +105,10 @@ export function SpecEntryRow({
       {stats.data && (totals.plus > 0 || totals.minus > 0) && (
         <span className="space-x-1 font-mono text-xs">
           {totals.plus > 0 && (
-            <span className="text-green-600">+{totals.plus}</span>
+            <span className="diff-addition-text">+{totals.plus}</span>
           )}
           {totals.minus > 0 && (
-            <span className="text-red-600">−{totals.minus}</span>
+            <span className="diff-deletion-text">−{totals.minus}</span>
           )}
         </span>
       )}

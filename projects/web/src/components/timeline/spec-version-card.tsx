@@ -24,9 +24,9 @@ const CHANGE_BADGE: Record<
   SpecFileStat["change"],
   { glyph: string; className: string }
 > = {
-  added: { glyph: "A", className: "bg-green-600/15 text-green-700" },
+  added: { glyph: "A", className: "diff-addition-badge" },
   modified: { glyph: "M", className: "bg-yellow-500/20 text-yellow-700" },
-  removed: { glyph: "D", className: "bg-red-600/15 text-red-700" },
+  removed: { glyph: "D", className: "diff-deletion-badge" },
   renamed: { glyph: "R", className: "bg-blue-600/15 text-blue-700" },
 };
 
@@ -148,12 +148,12 @@ function SpecVersionCardBody({
           {stats.data ? (
             <>
               {totals.plus > 0 && (
-                <span className="font-semibold text-green-600">
+                <span className="diff-addition-text font-semibold">
                   +{totals.plus}
                 </span>
               )}
               {totals.minus > 0 && (
-                <span className="font-semibold text-red-600">
+                <span className="diff-deletion-text font-semibold">
                   −{totals.minus}
                 </span>
               )}
@@ -333,9 +333,13 @@ function ReviewCallToAction({
 export function StatNumbers({ stat }: { stat: SpecFileStat }) {
   return (
     <span className="font-mono group-hover:underline">
-      {stat.plus > 0 && <span className="text-green-600">+{stat.plus}</span>}
+      {stat.plus > 0 && (
+        <span className="diff-addition-text">+{stat.plus}</span>
+      )}
       {stat.plus > 0 && stat.minus > 0 && " "}
-      {stat.minus > 0 && <span className="text-red-600">−{stat.minus}</span>}
+      {stat.minus > 0 && (
+        <span className="diff-deletion-text">−{stat.minus}</span>
+      )}
       {stat.plus === 0 && stat.minus === 0 && (
         <span className="text-muted-foreground">±0</span>
       )}
@@ -352,8 +356,8 @@ export function DiffstatBar({ stat }: { stat: SpecFileStat }) {
           key={i}
           className={cn(
             "size-1.5 rounded-[1.5px]",
-            cell === "plus" && "bg-green-600",
-            cell === "minus" && "bg-red-600",
+            cell === "plus" && "diff-addition-cell",
+            cell === "minus" && "diff-deletion-cell",
             cell === "none" && "bg-border",
           )}
         />
