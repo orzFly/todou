@@ -95,6 +95,7 @@ const COVERAGE_FAILURES = new Set([
   "wheel-target-not-retargeted",
   "no-touch-delivered",
   "touch-target-not-retargeted",
+  "no-second-finger",
   "no-drag-room",
   "page-cannot-scroll",
   "page-already-at-top",
@@ -306,6 +307,34 @@ function probeSource(fault) {
       const probe = new TouchEvent('touchmove');
       probe.stopPropagation();
       return { applied: probe.cancelBubble === false };
+    }
+    if (FAULT === 'second-finger-drops-origin') {
+      // What dialog.tsx used to do, put back: a touchstart carrying anything
+      // other than one finger dropped the drag's origin, and only a fresh
+      // touchstart ever wrote it again, so the release stood down for the rest
+      // of the gesture. Reproduced here as the effect rather than the field —
+      // capture on document runs before React's own listener, so neutering
+      // stopPropagation on the event leaves the release running and useless,
+      // exactly as an absent origin did.
+      let dropped = false;
+      document.addEventListener('touchstart', event => {
+        dropped = event.touches.length !== 1;
+      }, { capture: true, passive: true });
+      document.addEventListener('touchmove', event => {
+        if (dropped)
+          Object.defineProperty(event, 'stopPropagation',
+            { value() {}, configurable: true });
+      }, { capture: true, passive: true });
+      const finger = target => new Touch({ identifier: 1, target });
+      document.dispatchEvent(new TouchEvent('touchstart',
+        { touches: [finger(document.body), new Touch({ identifier: 2, target: document.body })] }));
+      const probe = new TouchEvent('touchmove', { touches: [finger(document.body)] });
+      document.dispatchEvent(probe);
+      probe.stopPropagation();
+      const neutered = probe.cancelBubble === false;
+      // Leave the page as a fresh single-finger gesture would find it.
+      document.dispatchEvent(new TouchEvent('touchstart', { touches: [finger(document.body)] }));
+      return { applied: neutered && dropped === false };
     }
     if (FAULT === 'scroll-lock-removed') {
       // Both halves of the modal lock, for both gestures: the events it
@@ -519,12 +548,14 @@ function probeSource(fault) {
     wheelVerdicts: () => window.__t425.wheelSettled,
     touchSeen: [],
     touchSettled: [],
+    touchPhases: [],
     // The same two-listener split as watchWheel, for the same reason: a
     // released touchmove never reaches the bubbling listener where
     // defaultPrevented is final, so only the capturing count can say it came.
     watchTouch: () => {
       window.__t425.touchSeen = [];
       window.__t425.touchSettled = [];
+      window.__t425.touchPhases = [];
       if (window.__t425.touchWatching) return true;
       window.__t425.touchWatching = true;
       window.addEventListener('touchmove', event => {
@@ -537,10 +568,20 @@ function probeSource(fault) {
         window.__t425.touchSettled.push({ cancelable: event.cancelable,
           defaultPrevented: event.defaultPrevented });
       }, { passive: true });
+      // How many fingers the page saw, and when. A drag that was supposed to
+      // gain one and lose it again is graded on what dialog.tsx does *after*
+      // that, so a run where the extra finger never landed has to say so
+      // rather than pass (T-490).
+      for (const type of ['touchstart', 'touchend', 'touchcancel'])
+        window.addEventListener(type, event => {
+          window.__t425.touchPhases.push({ type, touches: event.touches.length,
+            changed: event.changedTouches.length });
+        }, { passive: true, capture: true });
       return true;
     },
     touchEvents: () => window.__t425.touchSeen,
     touchVerdicts: () => window.__t425.touchSettled,
+    touchPhaseLog: () => window.__t425.touchPhases,
     /**
      * Where a finger starts and ends, in viewport coordinates. Sideways it
      * stays inside the diff box: at 390px the box is narrower than the 600px
@@ -757,26 +798,71 @@ async function wheelOver(page, x, y, xDistance, yDistance) {
  * and no scroll, with or without touch emulation — so the sequence is dispatched
  * by hand, which does both. The steps are paced so the drag passes Chromium's
  * slop distance early and the compositor treats it as a scroll rather than a tap.
+ *
+ * `interlude` drops a second finger onto the glass and lifts it again without
+ * the first ever leaving, which is the gesture T-490 is about. It goes in
+ * before the drag has travelled Chromium's slop distance, and that placement is
+ * the whole difference between a graded check and a decorative one: once the
+ * compositor is scrolling it stops asking, so every touchmove after that point
+ * is uncancelable and the scroll arrives whether the release ran or not. The
+ * first measured attempt put the extra finger halfway along, and the fault that
+ * removes the release produced no failure at all there. The finger that is
+ * already down still makes one sub-slop move first, so this is a gesture the
+ * bookkeeping has already seen rather than a fresh touchstart.
+ *
+ * `Input.dispatchTouchEvent`'s `touchEnd` takes the points that *lift*, not the
+ * ones that stay: measured here, listing the remaining finger ends that finger
+ * and turns the drag's next move into a fresh `touchstart`, which would grade
+ * something else entirely.
  */
-async function dragOver(page, from, to, steps = 20) {
+async function dragOver(
+  page,
+  from,
+  to,
+  { steps = 20, interlude = false } = {},
+) {
   await evaluate(page, () => window.__t425.watchTouch());
+  const at = (step) => ({
+    x: Math.round(from.x + ((to.x - from.x) * step) / steps),
+    y: Math.round(from.y + ((to.y - from.y) * step) / steps),
+    id: 1,
+  });
   await page.send("Input.dispatchTouchEvent", {
     type: "touchStart",
-    touchPoints: [{ x: from.x, y: from.y, id: 1 }],
+    touchPoints: [at(0)],
   });
-  for (let step = 1; step <= steps; step += 1) {
+  if (interlude) {
+    const towards = (axis) => Math.sign(to[axis] - from[axis]) * 4;
+    const nudged = {
+      x: from.x + towards("x"),
+      y: from.y + towards("y"),
+      id: 1,
+    };
     await page.send("Input.dispatchTouchEvent", {
       type: "touchMove",
-      touchPoints: [
-        {
-          x: Math.round(from.x + ((to.x - from.x) * step) / steps),
-          y: Math.round(from.y + ((to.y - from.y) * step) / steps),
-          id: 1,
-        },
-      ],
+      touchPoints: [nudged],
+    });
+    await sleep(16);
+    const second = { x: nudged.x, y: nudged.y + 60, id: 2 };
+    await page.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [nudged, second],
+    });
+    await sleep(16);
+    await page.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [second],
     });
     await sleep(16);
   }
+  for (let step = 1; step <= steps; step += 1) {
+    await page.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [at(step)],
+    });
+    await sleep(16);
+  }
+  // Empty lifts whatever is left, one `touchend` per finger.
   await page.send("Input.dispatchTouchEvent", {
     type: "touchEnd",
     touchPoints: [],
@@ -785,6 +871,7 @@ async function dragOver(page, from, to, steps = 20) {
   return {
     arrived: await evaluate(page, () => window.__t425.touchEvents()),
     settled: await evaluate(page, () => window.__t425.touchVerdicts()),
+    phases: await evaluate(page, () => window.__t425.touchPhaseLog()),
   };
 }
 
@@ -801,6 +888,13 @@ async function dragOver(page, from, to, steps = 20) {
  * compositor is scrolling, Chromium stops asking. That is why the sideways
  * verdict is `scrollLeft`, not a cancellation count, while the downward one —
  * where nothing ever starts scrolling — can count cancellations directly.
+ *
+ * The sideways drag is made twice. The second one gains a finger and loses it
+ * mid-gesture (T-490), which used to leave the rest of that drag with no origin
+ * to subtract and so no release at all; the plain one beside it is what tells
+ * a regression in the release apart from a regression in that bookkeeping. The
+ * cancelability rule above is why the extra finger arrives before the drag has
+ * travelled far enough to start a scroll — see `dragOver`.
  */
 async function probeTouch(page) {
   await evaluate(page, () => window.__t425.resetCodeScroll());
@@ -816,6 +910,17 @@ async function probeTouch(page) {
   );
   const left = await dragOver(page, sideways.from, sideways.to);
   const end = await evaluate(page, () => window.__t425.codeScroll());
+
+  // The same sideways drag again, this time with a finger joining and leaving
+  // it (T-490). It is its own gesture rather than a flag on the one above,
+  // because the plain drag is the control: a run where both are blocked is a
+  // regression in the release itself, and only this one going red is T-490.
+  await evaluate(page, () => window.__t425.resetCodeScroll());
+  const regripStart = await evaluate(page, () => window.__t425.codeScroll());
+  const regrip = await dragOver(page, sideways.from, sideways.to, {
+    interlude: true,
+  });
+  const regripEnd = await evaluate(page, () => window.__t425.codeScroll());
 
   const box = await evaluate(page, () => window.__t425.scrollBoxToBottom());
   await evaluate(page, () => window.__t425.parkPageAtBottom());
@@ -834,6 +939,24 @@ async function probeTouch(page) {
       arrived: left.arrived.length,
       retargeted: left.arrived.every((event) => event.retargeted),
       cancelled: left.settled.filter((event) => event.defaultPrevented).length,
+    },
+    regrip: {
+      from: regripStart.scrollLeft,
+      to: regripEnd.scrollLeft,
+      max: regripEnd.max,
+      distance: sideways.distance,
+      arrived: regrip.arrived.length,
+      cancelled: regrip.settled.filter((event) => event.defaultPrevented)
+        .length,
+      // The interlude, as the page saw it: a touchstart that took the count to
+      // two, and a touchend that put it back to one with the drag still live.
+      secondFinger: regrip.phases.some(
+        (phase) => phase.type === "touchstart" && phase.touches === 2,
+      ),
+      liftedBackToOne: regrip.phases.some(
+        (phase) => phase.type === "touchend" && phase.touches === 1,
+      ),
+      phases: regrip.phases,
     },
     vertical: {
       distance: downwards.distance,
@@ -998,12 +1121,16 @@ function checkTouch(result, viewport, entry, baselineHeight) {
   const at = { viewport: viewport.name, entry, gesture: "touch" };
   if (result.error) return [failure("no-scrolling-line", result.error, at)];
   const failures = [];
-  const { horizontal, vertical } = result;
-  if (horizontal.arrived === 0 || vertical.arrived === 0)
+  const { horizontal, vertical, regrip } = result;
+  if (
+    horizontal.arrived === 0 ||
+    vertical.arrived === 0 ||
+    regrip.arrived === 0
+  )
     return [
       failure(
         "no-touch-delivered",
-        `${horizontal.arrived} sideways, ${vertical.arrived} downwards`,
+        `${horizontal.arrived} sideways, ${vertical.arrived} downwards, ${regrip.arrived} sideways across a second finger`,
         at,
       ),
     ];
@@ -1035,6 +1162,26 @@ function checkTouch(result, viewport, entry, baselineHeight) {
       failure(
         "horizontal-touch-blocked",
         `scrollLeft stayed at ${horizontal.to} of ${horizontal.max} over a ${horizontal.distance}px drag; ${horizontal.cancelled} of ${horizontal.arrived} touchmoves cancelled`,
+        at,
+      ),
+    );
+  // T-490, and a chain of its own on purpose: the plain drag above is this
+  // one's control, so a run has to be able to say that only the regripped
+  // gesture was blocked. Folding either verdict into the other's `else if`
+  // would hide exactly the difference this grades.
+  if (!regrip.secondFinger || !regrip.liftedBackToOne)
+    failures.push(
+      failure(
+        "no-second-finger",
+        `the interlude never happened: ${JSON.stringify(regrip.phases)}`,
+        at,
+      ),
+    );
+  else if (regrip.max >= 1 && regrip.to <= regrip.from)
+    failures.push(
+      failure(
+        "horizontal-touch-blocked-after-second-finger",
+        `scrollLeft stayed at ${regrip.to} of ${regrip.max} over a ${regrip.distance}px drag that gained and lost a finger; ${regrip.cancelled} of ${regrip.arrived} touchmoves cancelled`,
         at,
       ),
     );
@@ -1903,6 +2050,10 @@ const FAULTS = [
   { fault: "prose-rewrapped", expect: "prose-whiteSpace-changed" },
   { fault: "wheel-release-disabled", expect: "horizontal-wheel-blocked" },
   { fault: "touch-release-disabled", expect: "horizontal-touch-blocked" },
+  {
+    fault: "second-finger-drops-origin",
+    expect: "horizontal-touch-blocked-after-second-finger",
+  },
   { fault: "scroll-lock-removed", expect: "page-scrolled-behind-dialog" },
 ];
 

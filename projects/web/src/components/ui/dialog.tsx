@@ -81,8 +81,8 @@ function releaseShadowDrag(
   origin: { x: number; y: number } | null,
 ) {
   // A second finger is the lock's pinch-zoom case, which it answers before it
-  // ever asks about scrollers; `origin` is dropped for the same reason. With
-  // the one finger left, `touches[0]` is the same point the lock reads out of
+  // ever asks about scrollers, so this one leaves too. With the one finger
+  // left, `touches[0]` is the same point the lock reads out of
   // `changedTouches`.
   if (origin === null || event.touches.length !== 1) return;
   const touch = event.touches[0];
@@ -159,10 +159,19 @@ function DialogContent({
         }}
         onTouchStart={(event) => {
           onTouchStart?.(event);
-          dragOrigin.current =
-            event.touches.length === 1
-              ? { x: event.touches[0].clientX, y: event.touches[0].clientY }
-              : null;
+          // Rebaselined by a single finger, and never cleared by the others:
+          // the lock's `scrollTouchStart` keeps judging across an extra finger,
+          // so dropping the origin there left the rest of that gesture with
+          // nothing to subtract and no release at all — one finger down, a
+          // second tapped and lifted, and the drag it was in the middle of went
+          // back to being cancelled until every finger came up (T-490). While
+          // the extra finger is down the pinch-zoom branch in
+          // `releaseShadowDrag` is what stands the release down.
+          if (event.touches.length === 1)
+            dragOrigin.current = {
+              x: event.touches[0].clientX,
+              y: event.touches[0].clientY,
+            };
         }}
         onTouchMove={(event) => {
           onTouchMove?.(event);
