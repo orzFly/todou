@@ -271,26 +271,6 @@ async function openReview(summary = SUMMARY) {
   act(() => cmSetValue(screen.getByRole("dialog"), summary));
 }
 
-async function submitControl(width: number, verdict: SpecReviewVerdict) {
-  if (width < 640) {
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Submit" }), {
-      button: 0,
-      pointerType: "mouse",
-    });
-    const menu = await screen.findByRole("menu", {}, WAIT);
-    expect(
-      within(menu)
-        .getAllByRole("menuitem")
-        .map((item) => item.textContent),
-    ).toEqual(["Comment only", "Request changes", "Approve"]);
-    return within(menu).getByRole("menuitem", {
-      name: verdict === "comment" ? "Comment only" : LABEL[verdict],
-    });
-  }
-  expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
-  return screen.getByRole("button", { name: LABEL[verdict] });
-}
-
 function noLocatingCopy() {
   // Deliberately include hidden DOM; a visually hidden status still regresses.
   expect(document.body.textContent).not.toMatch(/locating/i);
@@ -299,38 +279,18 @@ function noLocatingCopy() {
   ).toBeNull();
 }
 
-function pendingControls(width: number) {
-  const dialog = screen.getByRole("dialog", { hidden: true });
-  const buttons = [...dialog.querySelectorAll<HTMLButtonElement>("button")];
-  const busy = buttons.filter((button) =>
-    button.textContent?.includes("Submitting…"),
-  );
-  expect(busy.length).toBeGreaterThan(0);
-  for (const button of busy) expect(button.disabled).toBe(true);
-  const menu = screen.queryByRole("menu");
-  if (menu !== null) {
-    const choices = within(menu).getAllByRole("menuitem");
-    expect(choices).toHaveLength(3);
-    for (const choice of choices) {
-      expect(choice.getAttribute("aria-disabled")).toBe("true");
-      fireEvent.click(choice);
-    }
-  }
-  // The wide controls remain in the DOM on mobile. Checking all three catches
-  // an unlocked verdict even while the mobile trigger itself is disabled.
-  const panel = dialog.querySelector(".sm\\:flex");
-  expect(panel).not.toBeNull();
-  const actions = [...(panel?.querySelectorAll("button") ?? [])].slice(1);
+function pendingControls() {
+  const dialog = screen.getByRole("dialog");
+  const actions = within(dialog).getAllByRole("button", {
+    name: /^(Comment|Request changes|Approve|Submitting…)$/,
+  });
   expect(actions).toHaveLength(3);
+  expect(
+    within(dialog).getAllByRole("button", { name: "Submitting…" }).length,
+  ).toBeGreaterThan(0);
   for (const action of actions) {
-    expect(action.disabled).toBe(true);
+    expect((action as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(action);
-  }
-  if (width < 640) {
-    const trigger = dialog.querySelector<HTMLButtonElement>(
-      '[data-slot="dropdown-menu-trigger"]',
-    );
-    expect(trigger?.disabled).toBe(true);
   }
   expect(server.posts).toHaveLength(1);
   noLocatingCopy();
@@ -388,7 +348,7 @@ async function startTimedSubmit(
 ) {
   const view = mountBranch(branch, width);
   await openReview();
-  const button = await submitControl(width, verdict);
+  const button = screen.getByRole("button", { name: LABEL[verdict] });
   const response = held<Response>();
   server.postReply = () => response.promise;
   vi.useFakeTimers({
@@ -456,7 +416,7 @@ describe.each(WIDTHS)("review navigation at %ipx", (width) => {
           }),
         );
         await openReview();
-        fireEvent.click(await submitControl(width, verdict));
+        fireEvent.click(screen.getByRole("button", { name: LABEL[verdict] }));
         const target = await expectLanding(view.router);
         ordinarySuccess(verdict);
         expect(server.posts[0]?.body).toMatchObject({
@@ -571,17 +531,17 @@ describe.each(WIDTHS)("review navigation at %ipx", (width) => {
         const view = await startTimedSubmit(branch, width, verdict);
         const start = await releasePost(view.response, verdict);
         expect(requests).toHaveLength(1);
-        pendingControls(width);
+        pendingControls();
         await at(start, 1249);
         expect(requests).toHaveLength(1);
         await at(start, 1250);
-        pendingControls(width);
+        pendingControls();
         await at(start, 1749);
         expect(requests).toHaveLength(1);
         await at(start, 1750);
         expect(requests).toHaveLength(2);
         await at(start, 2999);
-        pendingControls(width);
+        pendingControls();
         expect(success).not.toHaveBeenCalled();
         expect(href(view.router)).toBe(SPEC_URL);
         expect(tail(view.client)).toBeUndefined();
@@ -627,7 +587,7 @@ describe.each(BRANCHES)("%s completion failure boundaries", (branch) => {
     });
     const before = view.client.getQueryData(key);
     const revision = view.client.getQueryState(key)?.dataUpdateCount ?? 0;
-    fireEvent.click(await submitControl(1280, "approve"));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(server.posts).toHaveLength(1), WAIT);
     let freshReads = 0;
     server.specReply = async () => {
@@ -712,7 +672,7 @@ describe.each(BRANCHES)("%s completion failure boundaries", (branch) => {
     expect(tail(view.client)).toBeUndefined();
     expect(href(view.router)).toBe(SPEC_URL);
     expect(success).not.toHaveBeenCalled();
-    pendingControls(1280);
+    pendingControls();
     await at(start, 2000);
     await act(async () => {
       current.release(json(reviewPages("comment").older));
@@ -783,7 +743,7 @@ describe.each(BRANCHES)("%s completion failure boundaries", (branch) => {
       .mockImplementationOnce(() => {
         throw new Error("history write rejected");
       });
-    fireEvent.click(await submitControl(1280, "comment"));
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
     await waitFor(() => expect(push).toHaveBeenCalled(), WAIT);
     await waitFor(() => ordinarySuccess("comment"), WAIT);
     expect(href(view.router)).toBe(SPEC_URL);
@@ -798,7 +758,7 @@ describe.each(BRANCHES)("%s completion failure boundaries", (branch) => {
   it("3000ms never completes a pending POST, and POST failure preserves input", async () => {
     const view = await startTimedSubmit(branch, 1280, "comment");
     await tick(5000);
-    pendingControls(1280);
+    pendingControls();
     expect(server.timelineReads).toHaveLength(0);
     expect(success).not.toHaveBeenCalled();
     expect(href(view.router)).toBe(SPEC_URL);
@@ -839,7 +799,7 @@ describe("controlled session ownership", () => {
       server.timelineReply = () => target.promise;
       const view = mountBranch("controlled");
       await openReview();
-      fireEvent.click(await submitControl(1280, "comment"));
+      fireEvent.click(screen.getByRole("button", { name: "Comment" }));
       await waitFor(() => expect(server.posts).toHaveLength(1), WAIT);
       if (phase === "GET") {
         await act(async () => {
@@ -860,7 +820,7 @@ describe("controlled session ownership", () => {
         });
       });
       await openReview("new visit summary");
-      pendingControls(1280);
+      pendingControls();
       await act(async () => {
         post.release(json(reviewResult("comment"), 201));
         target.release(json(reviewPages("comment").older));
@@ -883,7 +843,7 @@ describe("controlled session ownership", () => {
     server.postReply = () => post.promise;
     const view = mountBranch("controlled");
     await openReview();
-    fireEvent.click(await submitControl(1280, "comment"));
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
     await leaveSpec(view.router);
     const entry = view.router.history.location.state.__TSR_index;
     await act(async () => {
@@ -900,7 +860,7 @@ describe("controlled session ownership", () => {
     server.postReply = () => post.promise;
     const view = mountBranch("controlled");
     await openReview();
-    fireEvent.click(await submitControl(1280, "comment"));
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
     act(() =>
       cmSetValue(screen.getByRole("dialog"), "new unsubmitted summary"),
     );
@@ -1028,7 +988,7 @@ describe("T-407 real application origins and browser history", () => {
       const specHref = addressBar();
       const index = appRouter.history.location.state.__TSR_index;
       await openReview();
-      fireEvent.click(await submitControl(390, "comment"));
+      fireEvent.click(screen.getByRole("button", { name: "Comment" }));
       await expectLanding(appRouter);
       expect(addressBar()).toBe(`${ISSUE_URL}#event-901`);
       expect(appRouter.history.location.state.__TSR_index).toBe(index + 1);
@@ -1072,7 +1032,7 @@ describe("T-407 real application origins and browser history", () => {
     await screen.findByRole("button", { name: /finish review/i }, WAIT);
     expect(readCurrentReturnEntry(appRouter, ME.id).origin).toBeUndefined();
     await openReview();
-    fireEvent.click(await submitControl(1280, "comment"));
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
     await expectLanding(appRouter);
     const back = await backControlNamed("Back to Issues");
     expect(back.getAttribute("href")).toBe("/projects/demo");
@@ -1096,7 +1056,7 @@ describe("real review rows, MarkdownView permalinks and highlight lifetime", () 
   it("uses the actual two-second flash on event901 and leaves event Markdown href/text plain", async () => {
     const view = mountBranch("controlled");
     await openReview();
-    fireEvent.click(await submitControl(1280, "comment"));
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
     const target = await expectLanding(view.router);
     const summary = document.getElementById("comment-902");
     expect(summary).not.toBeNull();

@@ -5,7 +5,6 @@ import {
   type SpecReviewVerdict,
   TodouError,
 } from "@todou/shared";
-import { ChevronDownIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
@@ -30,12 +29,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import {
   confirmSubmittedSpecReviewDrafts,
@@ -177,7 +170,7 @@ export function ReviewSubmitDialog({
     controlledPendingVerdict ?? (legacySubmit.isPending ? localVerdict : null);
   const pending = pendingVerdict !== null;
   const saysNothing = summary.trim() === "" && drafts.length === 0;
-  // Both responsive forms and the submit guard share these conditions.
+  // The buttons and submit guard share these conditions.
   const commentDisabled = pending || staleVersion || saysNothing;
   const verdictDisabled = pending || staleVersion || withdrawn || isPusher;
   const approveDisabled = verdictDisabled || approvedInCurrentRound;
@@ -296,13 +289,19 @@ export function ReviewSubmitDialog({
           extensions={refCompletion}
         />
 
-        <div className="hidden justify-end gap-2 sm:flex">
-          <Button variant="ghost" size="sm" onClick={onClose}>
+        <div className="flex min-w-0 justify-end gap-1 sm:gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="hidden sm:inline-flex"
+            onClick={onClose}
+          >
             Cancel
           </Button>
           <Button
             size="sm"
             variant="outline"
+            className="h-9 px-2 text-xs sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
             disabled={commentDisabled}
             title={commentTitle}
             onClick={() => submit("comment")}
@@ -312,7 +311,7 @@ export function ReviewSubmitDialog({
           <Button
             size="sm"
             variant="outline"
-            className="border-red-500/60 text-red-700 dark:text-red-400"
+            className="h-9 border-red-500/60 px-2 text-xs text-red-700 sm:h-7 sm:px-2.5 sm:text-[0.8rem] dark:text-red-400"
             disabled={verdictDisabled}
             title={verdictTitle}
             onClick={() => submit("request_changes")}
@@ -323,52 +322,13 @@ export function ReviewSubmitDialog({
           </Button>
           <Button
             size="sm"
-            className="bg-green-700 text-white hover:bg-green-800"
+            className="h-9 bg-green-700 px-2 text-xs text-white hover:bg-green-800 sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
             disabled={approveDisabled}
             title={approveTitle}
             onClick={() => submit("approve")}
           >
             {pendingVerdict === "approve" ? "Submitting…" : "Approve"}
           </Button>
-        </div>
-
-        <div className="flex min-w-0 justify-end sm:hidden">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" disabled={pending}>
-                {pending ? "Submitting…" : "Submit"}
-                <ChevronDownIcon aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-48 max-w-[calc(100vw-1rem)]"
-            >
-              <DropdownMenuItem
-                disabled={commentDisabled}
-                title={commentTitle}
-                onSelect={() => submit("comment")}
-              >
-                Comment only
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-red-700 focus:bg-red-50 focus:text-red-700 data-disabled:text-muted-foreground dark:text-red-400 dark:focus:bg-red-950 dark:focus:text-red-400 dark:data-disabled:text-muted-foreground"
-                disabled={verdictDisabled}
-                title={verdictTitle}
-                onSelect={() => submit("request_changes")}
-              >
-                Request changes
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-green-700 focus:bg-green-50 focus:text-green-700 data-disabled:text-muted-foreground dark:text-green-400 dark:focus:bg-green-950 dark:focus:text-green-400 dark:data-disabled:text-muted-foreground"
-                disabled={approveDisabled}
-                title={approveTitle}
-                onSelect={() => submit("approve")}
-              >
-                Approve
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
       </DialogContent>
     </Dialog>

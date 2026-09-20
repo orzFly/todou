@@ -121,59 +121,40 @@ async function mount(
   return { onSubmit, onClose };
 }
 
-async function actions(width: number) {
-  if (width < 640 && screen.queryByRole("menu") === null) {
-    const trigger = screen.getByRole("button", { name: "Submit" });
-    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
-    await screen.findByRole("menu");
-  }
-  const role = width < 640 ? "menuitem" : "button";
+function actions() {
   return {
-    approve: screen.getByRole(role, { name: "Approve" }),
-    request: screen.getByRole(role, { name: "Request changes" }),
-    comment: screen.getByRole(role, {
-      name: width < 640 ? "Comment only" : "Comment",
-    }),
+    approve: screen.getByRole("button", { name: "Approve" }),
+    request: screen.getByRole("button", { name: "Request changes" }),
+    comment: screen.getByRole("button", { name: "Comment" }),
   };
 }
 
 function expectDisabled(element: HTMLElement, disabled: boolean) {
-  if (element.getAttribute("role") === "menuitem") {
-    expect(element.getAttribute("aria-disabled") === "true").toBe(disabled);
-    expect(element.hasAttribute("data-disabled")).toBe(disabled);
-  } else {
-    expect(element.tagName).toBe("BUTTON");
-    expect((element as HTMLButtonElement).disabled).toBe(disabled);
-  }
+  expect(element.tagName).toBe("BUTTON");
+  expect((element as HTMLButtonElement).disabled).toBe(disabled);
 }
 
 // These are mutation counterexamples, not just helper checks:
 // - Folding personal approval into verdictDisabled breaks request_changes.
 // - Treating review_status as personal approval breaks both disagreeing states.
-// - Removing desktop buttons (or keeping only the menu) fails the 640/1280 cases.
-// Exercise both layouts and both sides of the sm boundary with visible roles.
+// - Hiding direct verdict buttons fails at every viewport.
+// Exercise both sides of the sm boundary with visible roles.
 describe.each([390, 639, 640, 1280])("personal approval at %ipx", (width) => {
   it("preserves the visible verdict controls for this breakpoint", async () => {
     reviewViewport(width);
     const { onClose } = await mount(specInfo());
-    if (width < 640) {
-      expect(screen.getByRole("button", { name: "Submit" })).toBeTruthy();
-      for (const name of ["Cancel", "Comment", "Request changes", "Approve"]) {
-        expect(screen.queryByRole("button", { name })).toBeNull();
-      }
-      await actions(width);
-      expect(
-        screen.getAllByRole("menuitem").map((item) => item.textContent),
-      ).toEqual(["Comment only", "Request changes", "Approve"]);
-    } else {
-      for (const name of ["Cancel", "Comment", "Request changes", "Approve"]) {
-        expect(screen.getByRole("button", { name })).toBeTruthy();
-      }
-      expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
-      expect(screen.queryByRole("menuitem")).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      expect(onClose).toHaveBeenCalledTimes(1);
+    for (const name of ["Comment", "Request changes", "Approve"]) {
+      expect(screen.getByRole("button", { name })).toBeTruthy();
     }
+    expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
+    expect(screen.queryByRole("menuitem")).toBeNull();
+    if (width < 640) {
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    }
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it.each(["approved", "unreviewed"] as const)(
@@ -181,7 +162,7 @@ describe.each([390, 639, 640, 1280])("personal approval at %ipx", (width) => {
     async (review_status) => {
       reviewViewport(width);
       const { onSubmit } = await mount(specInfo({ review_status }));
-      const { approve, request, comment } = await actions(width);
+      const { approve, request, comment } = actions();
       expectDisabled(approve, true);
       expect(approve.title).toBe(APPROVED_TITLE);
       expectDisabled(request, false);
@@ -198,8 +179,7 @@ describe.each([390, 639, 640, 1280])("personal approval at %ipx", (width) => {
       await waitFor(() =>
         expect(onSubmit).toHaveBeenCalledExactlyOnceWith("request_changes"),
       );
-      const reopened = await actions(width);
-      fireEvent.click(reopened.comment);
+      fireEvent.click(actions().comment);
       await waitFor(() =>
         expect(onSubmit.mock.calls).toEqual([["request_changes"], ["comment"]]),
       );
@@ -221,7 +201,7 @@ describe.each([390, 639, 640, 1280])("personal approval at %ipx", (width) => {
     async ({ viewer_review }) => {
       reviewViewport(width);
       const { onSubmit } = await mount(specInfo({ viewer_review }));
-      const { approve, request, comment } = await actions(width);
+      const { approve, request, comment } = actions();
       expectDisabled(approve, false);
       expect(approve.title).toBe("");
       expectDisabled(request, false);
@@ -237,7 +217,7 @@ describe.each([390, 639, 640, 1280])("personal approval at %ipx", (width) => {
     reviewViewport(width);
     const { onSubmit } = await mount(specInfo({ current_version: 4 }));
     expect(screen.getByRole("status").textContent).toBe(STALE_TITLE);
-    const { approve, request, comment } = await actions(width);
+    const { approve, request, comment } = actions();
     for (const control of [approve, request, comment]) {
       expectDisabled(control, true);
       expect(control.title).toBe(STALE_TITLE);
@@ -273,7 +253,7 @@ describe.each([390, 640])("T-428 title precedence at %ipx", (width) => {
           versions: pusher ? pushedByReader() : specInfo().versions,
         }),
       );
-      const { approve, request, comment } = await actions(width);
+      const { approve, request, comment } = actions();
       for (const control of [approve, request]) {
         expectDisabled(control, true);
         expect(control.title).toBe(title);
@@ -296,7 +276,7 @@ describe.each([390, 640])("T-428 title precedence at %ipx", (width) => {
       specInfo({ review_status: "withdrawn", versions: pushedByReader() }),
       { drafts: [], summary: "Please keep this clarification." },
     );
-    const { comment } = await actions(width);
+    const { comment } = actions();
     expectDisabled(comment, false);
     fireEvent.click(comment);
     await waitFor(() =>
@@ -310,7 +290,7 @@ describe.each([390, 640])("T-428 title precedence at %ipx", (width) => {
       drafts: [],
       summary: "   ",
     });
-    const { comment, request } = await actions(width);
+    const { comment, request } = actions();
     expectDisabled(comment, true);
     expect(comment.title).toBe("Write a summary or stage a comment first");
     fireEvent.click(comment);

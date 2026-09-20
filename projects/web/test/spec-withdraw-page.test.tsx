@@ -108,7 +108,6 @@ function pageFixture(options: FixtureOptions = {}) {
   const writes: Array<{ path: string; body: unknown }> = [];
   const reviews: SpecReviewSubmitInput[] = [];
   let reviewConflict: "withdrawn" | "newer" | null = null;
-  let withdrawalConflict = false;
 
   function advance() {
     spec = {
@@ -144,17 +143,6 @@ function pageFixture(options: FixtureOptions = {}) {
     if (method !== "GET") {
       const body: unknown = JSON.parse(String(init?.body));
       writes.push({ path, body });
-      if (path === `${base}/spec/withdraw`) {
-        if (withdrawalConflict) return conflict();
-        const unchanged = spec.review_status === "withdrawn";
-        spec = { ...spec, review_status: "withdrawn" };
-        return Response.json({
-          version: spec.current_version,
-          review_status: "withdrawn",
-          unchanged,
-          cursor: "withdrawn-cursor",
-        });
-      }
       if (path === `${base}/spec/reviews`) {
         const review = body as SpecReviewSubmitInput;
         reviews.push(review);
@@ -252,9 +240,6 @@ function pageFixture(options: FixtureOptions = {}) {
     conflictOnReview(next: "withdrawn" | "newer") {
       reviewConflict = next;
     },
-    conflictOnWithdrawal() {
-      withdrawalConflict = true;
-    },
   };
 }
 
@@ -334,33 +319,19 @@ function expectDrafts(dialog: HTMLElement, storageKey: string) {
   ]);
 }
 
-async function controls(width: number) {
-  // These inverse assertions are deliberate: merely finding the active branch
-  // would pass if both branches became visible, or one branch were deleted.
-  const desktopNames = ["Cancel", "Comment", "Request changes", "Approve"];
+function controls(width: number) {
+  const dialog = within(
+    screen.getByRole("dialog", { name: "Finish review — spec v1" }),
+  );
   if (width >= 640) {
-    for (const name of desktopNames) {
-      expect(screen.getByRole("button", { name })).toBeTruthy();
-    }
-    expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
+    expect(dialog.getByRole("button", { name: "Cancel" })).toBeTruthy();
   } else {
-    for (const name of desktopNames) {
-      expect(screen.queryByRole("button", { name })).toBeNull();
-    }
-    const trigger = screen.getByRole("button", { name: "Submit" });
-    expect(trigger.hasAttribute("disabled")).toBe(false);
-    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
-    await screen.findByRole("menu");
-    expect(
-      screen.getAllByRole("menuitem").map((item) => item.textContent),
-    ).toEqual(["Comment only", "Request changes", "Approve"]);
+    expect(dialog.queryByRole("button", { name: "Cancel" })).toBeNull();
   }
-  const action = (name: string) =>
-    screen.getByRole(width < 640 ? "menuitem" : "button", { name });
   return {
-    comment: action(width < 640 ? "Comment only" : "Comment"),
-    changes: action("Request changes"),
-    approve: action("Approve"),
+    comment: dialog.getByRole("button", { name: "Comment" }),
+    changes: dialog.getByRole("button", { name: "Request changes" }),
+    approve: dialog.getByRole("button", { name: "Approve" }),
   };
 }
 
@@ -369,13 +340,6 @@ function expectDisabled(element: HTMLElement, disabled: boolean) {
     element.hasAttribute("disabled") ||
       element.getAttribute("aria-disabled") === "true",
   ).toBe(disabled);
-}
-
-async function closeMenu() {
-  if (screen.queryByRole("menu") !== null) {
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  }
 }
 
 type RefreshedPage = {
@@ -404,19 +368,16 @@ async function expectRefreshed(
 
 describe("withdrawal on the actual SpecViewPage and review session", () => {
   it.each([true, false])(
-    "offers withdrawal to a writer (pusher=%s)",
+    "does not offer withdrawal to a writer (pusher=%s)",
     async (pusher) => {
       const page = await mountPage({ pusher });
-      fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
-      expect(
-        await screen.findByRole("dialog", { name: "Withdraw spec v1" }),
-      ).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Withdraw" })).toBeNull();
       expect(page.writes).toHaveLength(0);
     },
   );
 
   it.each(["reader", "reporter"] as const)(
-    "denies withdrawal to a %s, even the pusher",
+    "does not offer withdrawal to a %s, even the pusher",
     async (role) => {
       const page = await mountPage({ role, pusher: true });
       expect(screen.queryByRole("button", { name: "Withdraw" })).toBeNull();
@@ -429,127 +390,10 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
     { status: "withdrawn" as const },
     { status: "changes_requested" as const },
     { version: 2, viewedVersion: 1 },
-  ])("hides the entry for an ineligible version: %j", async (options) => {
+  ])("has no withdrawal entry for spec state %j", async (options) => {
     await mountPage(options);
     expect(screen.queryByRole("button", { name: "Withdraw" })).toBeNull();
   });
-
-  it("posts the captured withdrawal version and retains the reason after a newer-version 409", async () => {
-    const page = await mountPage();
-    fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
-    let dialog = await screen.findByRole("dialog", {
-      name: "Withdraw spec v1",
-    });
-    const reason = "Keep this withdrawal reason\nincluding its second line";
-    fireEvent.change(within(dialog).getByLabelText("Reason (optional)"), {
-      target: { value: reason },
-    });
-    const before = page.specReads();
-    // The server advances while the v1 confirmation remains open. Only the
-    // real mutation's 409 invalidation can reveal that change to the page.
-    page.advance();
-    page.conflictOnWithdrawal();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Withdraw" }));
-    expect(await within(dialog).findByRole("alert")).toHaveProperty(
-      "textContent",
-      "Spec changed during review",
-    );
-    await expectRefreshed(page, before, 2, "unreviewed");
-    dialog = await screen.findByRole("dialog", { name: "Withdraw spec v1" });
-    expect(
-      within(dialog).getByRole("heading", { name: "Withdraw spec v1" }),
-    ).toBeTruthy();
-    expect(within(dialog).getByLabelText("Reason (optional)")).toHaveProperty(
-      "value",
-      reason,
-    );
-    expect((await within(dialog).findByRole("status")).textContent).toContain(
-      "no longer current",
-    );
-    const submit = within(dialog).getByRole("button", { name: "Withdraw" });
-    expectDisabled(submit, true);
-    expect(submit.title).toContain("no longer current");
-    fireEvent.click(submit);
-    await act(async () => {});
-    expect(page.writes).toEqual([
-      { path: `${page.base}/spec/withdraw`, body: { version: 1, reason } },
-    ]);
-  });
-
-  it.each(["withdrawn", "approved", "changes_requested"] as const)(
-    "explains a live %s transition while the withdrawal dialog stays open",
-    async (status) => {
-      const page = await mountPage();
-      fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
-      const dialog = await screen.findByRole("dialog", {
-        name: "Withdraw spec v1",
-      });
-      const reason = "Keep my local reason";
-      fireEvent.change(within(dialog).getByLabelText("Reason (optional)"), {
-        target: { value: reason },
-      });
-      const before = page.specReads();
-      page.setStatus(status);
-      await act(async () => {
-        await page.client.invalidateQueries({
-          queryKey: ["spec", "demo", page.issueNumber],
-        });
-      });
-      await expectRefreshed(page, before, 1, status);
-      const message = await within(dialog).findByRole("status");
-      expect(within(dialog).getByLabelText("Reason (optional)")).toHaveProperty(
-        "value",
-        reason,
-      );
-      const submit = within(dialog).getByRole("button", { name: "Withdraw" });
-      if (status === "withdrawn") {
-        expect(message.textContent).toContain("keeps the original reason");
-        expectDisabled(submit, false);
-        fireEvent.click(submit);
-        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-        expect(page.writes).toEqual([
-          { path: `${page.base}/spec/withdraw`, body: { version: 1, reason } },
-        ]);
-      } else {
-        expect(message.textContent).toContain("already been reviewed");
-        expectDisabled(submit, true);
-        expect(submit.title).toBe(message.textContent);
-        fireEvent.click(submit);
-        fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
-        await act(async () => {});
-        expect(page.writes).toHaveLength(0);
-      }
-    },
-  );
-
-  it.each(["", "  Superseded design  "])(
-    "withdraws successfully with reason %j and creates no review or comment",
-    async (reason) => {
-      const page = await mountPage({ pusher: true });
-      const before = page.specReads();
-      fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
-      const dialog = await screen.findByRole("dialog", {
-        name: "Withdraw spec v1",
-      });
-      fireEvent.change(within(dialog).getByLabelText("Reason (optional)"), {
-        target: { value: reason },
-      });
-      fireEvent.click(within(dialog).getByRole("button", { name: "Withdraw" }));
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      await expectRefreshed(page, before, 1, "withdrawn");
-      expect(screen.queryByRole("button", { name: "Withdraw" })).toBeNull();
-      expect(page.reviews).toHaveLength(0);
-      expect(page.writes).toEqual([
-        {
-          path: `${page.base}/spec/withdraw`,
-          body: {
-            version: 1,
-            ...(reason.trim() ? { reason: reason.trim() } : {}),
-          },
-        },
-      ]);
-    },
-  );
 
   for (const width of [639, 640]) {
     it.each(["empty", "summary", "annotation"] as const)(
@@ -562,7 +406,7 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
         });
         const dialog = await openReview();
         act(() => cmSetValue(dialog, content === "summary" ? SUMMARY : " \n "));
-        const actions = await controls(width);
+        const actions = controls(width);
         expectDisabled(actions.comment, content === "empty");
         for (const verdict of [actions.changes, actions.approve]) {
           expectDisabled(verdict, true);
@@ -573,9 +417,33 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
         if (content === "empty") fireEvent.click(actions.comment);
         await act(async () => {});
         expect(page.writes).toHaveLength(0);
-        await closeMenu();
       },
     );
+
+    it(`at ${width}px a server-driven withdrawal updates an open review and retains both drafts`, async () => {
+      reviewViewport(width);
+      const page = await mountPage({ staged: true });
+      const dialog = await openReview();
+      act(() => cmSetValue(dialog, SUMMARY));
+      const before = page.specReads();
+      page.setStatus("withdrawn");
+      await act(async () => {
+        await page.client.invalidateQueries({
+          queryKey: ["spec", "demo", page.issueNumber],
+        });
+      });
+      await expectRefreshed(page, before, 1, "withdrawn");
+      expectDrafts(dialog, page.storageKey);
+      const actions = controls(width);
+      expectDisabled(actions.comment, false);
+      for (const verdict of [actions.changes, actions.approve]) {
+        expectDisabled(verdict, true);
+        expect(verdict.title).toBe("This spec has been withdrawn");
+        fireEvent.click(verdict);
+      }
+      await act(async () => {});
+      expect(page.writes).toHaveLength(0);
+    });
 
     it(`at ${width}px the real provider refreshes on 409, retains both drafts, and Comments on the withdrawn version`, async () => {
       reviewViewport(width);
@@ -586,7 +454,7 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       expectDrafts(dialog, page.storageKey);
       const before = page.specReads();
       page.conflictOnReview("withdrawn");
-      const initial = await controls(width);
+      const initial = controls(width);
       const verdict = width < 640 ? "request_changes" : "approve";
       fireEvent.click(width < 640 ? initial.changes : initial.approve);
       await expectRefreshed(page, before, 1, "withdrawn");
@@ -596,7 +464,7 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
         { version: 1, verdict, body: SUMMARY, comments: COMMENTS },
       ]);
 
-      const refreshed = await controls(width);
+      const refreshed = controls(width);
       expectDisabled(refreshed.changes, true);
       expectDisabled(refreshed.approve, true);
       expectDisabled(refreshed.comment, false);
@@ -626,7 +494,7 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       act(() => cmSetValue(dialog, SUMMARY));
       const before = page.specReads();
       page.conflictOnReview("newer");
-      fireEvent.click((await controls(width)).approve);
+      fireEvent.click(controls(width).approve);
       await expectRefreshed(page, before, 2, "unreviewed");
       expect(errorToast).toHaveBeenCalledWith("Spec changed during review");
       // Without a pinned session version the refreshed page silently offers a
@@ -645,7 +513,7 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       expect(within(dialog).getByRole("status").textContent).toContain(
         "Spec v1 is no longer current",
       );
-      const actions = await controls(width);
+      const actions = controls(width);
       for (const action of [
         actions.comment,
         actions.changes,
@@ -660,7 +528,6 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
         { version: 1, verdict: "approve", body: SUMMARY, comments: COMMENTS },
       ]);
       expect(page.writes).toHaveLength(1);
-      await closeMenu();
       expectDrafts(dialog, page.storageKey);
     });
 
@@ -683,7 +550,7 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
         name: "Finish review — spec v1",
       });
       expectDrafts(retained, page.storageKey);
-      const actions = await controls(width);
+      const actions = controls(width);
       for (const action of [
         actions.comment,
         actions.changes,
@@ -694,7 +561,6 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       }
       await act(async () => {});
       expect(page.writes).toHaveLength(0);
-      await closeMenu();
     });
   }
 });

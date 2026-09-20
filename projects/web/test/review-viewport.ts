@@ -10,6 +10,7 @@ styles.textContent = `
   [role="dialog"] .flex { display: flex; }
   @media (min-width: 640px) {
     [role="dialog"] .sm\\:flex { display: flex; }
+    [role="dialog"] .sm\\:inline-flex { display: inline-flex; }
     [role="dialog"] .sm\\:hidden { display: none; }
   }
 `;

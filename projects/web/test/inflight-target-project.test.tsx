@@ -911,11 +911,12 @@ describe("a review submit the dialog then left", () => {
   it("posts the verdict onto the issue the dialog opened on", async () => {
     const calls = stubReviewFetch();
     const view = reviewView();
-    const trigger = await view.findByRole("button", { name: "Submit" });
-    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
-    const requestChanges = await view.findByRole("menuitem", {
+    const requestChanges = await view.findByRole("button", {
       name: "Request changes",
     });
+    await waitFor(() =>
+      expect((requestChanges as HTMLButtonElement).disabled).toBe(false),
+    );
 
     onlineManager.setOnline(false);
     fireEvent.click(requestChanges);
@@ -946,13 +947,14 @@ describe("a review submit the dialog then left", () => {
   it("carries the summary the reviewer submitted, not a later one", async () => {
     const calls = stubReviewFetch();
     const view = reviewView();
-    const trigger = await view.findByRole("button", { name: "Submit" });
-    cmSetValue(view.baseElement, "overall fine");
-
-    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
-    const requestChanges = await view.findByRole("menuitem", {
+    const requestChanges = await view.findByRole("button", {
       name: "Request changes",
     });
+    await waitFor(() =>
+      expect((requestChanges as HTMLButtonElement).disabled).toBe(false),
+    );
+    cmSetValue(view.baseElement, "overall fine");
+
     onlineManager.setOnline(false);
     fireEvent.click(requestChanges);
     await letTheLoopRun();

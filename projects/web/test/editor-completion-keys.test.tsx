@@ -236,7 +236,7 @@ describe("the completion panel's keys", () => {
       />,
       seededClient(),
     );
-    await view.findByRole("button", { name: "Submit" });
+    await view.findByRole("button", { name: "Comment" });
     await panelFor(view.baseElement, "see T-");
 
     cmPressKey(view.baseElement, "Escape");

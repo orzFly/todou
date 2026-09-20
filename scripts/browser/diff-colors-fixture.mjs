@@ -1217,84 +1217,34 @@ export async function openDiffPage(browser, base, fixture, options = {}) {
         "open review dialog",
         draft ? "Finish review (1 staged)" : "Finish review",
       );
-      if (width < 640) {
-        await waitFor(page, "mobile verdict menu trigger", () => {
-          const trigger = [
-            ...document.querySelectorAll('[role="dialog"] button'),
-          ].find(
-            (node) =>
-              node.textContent.trim() === "Submit" &&
-              node.getAttribute("aria-haspopup") === "menu" &&
-              node.getBoundingClientRect().height > 0 &&
-              !node.disabled,
-          );
-          if (!trigger) return { ready: false };
-          trigger.scrollIntoView({ block: "center", behavior: "instant" });
-          trigger.focus();
-          return { ready: document.activeElement === trigger };
-        });
-        // Radix DropdownMenu opens on pointerdown or ArrowDown, not on a
-        // synthetic element.click(). Use its real keyboard activation path.
-        await page.send("Input.dispatchKeyEvent", {
-          type: "keyDown",
-          key: "ArrowDown",
-          code: "ArrowDown",
-          windowsVirtualKeyCode: 40,
-          nativeVirtualKeyCode: 40,
-        });
-        await page.send("Input.dispatchKeyEvent", {
-          type: "keyUp",
-          key: "ArrowDown",
-          code: "ArrowDown",
-          windowsVirtualKeyCode: 40,
-          nativeVirtualKeyCode: 40,
-        });
-      }
-      await waitFor(
-        page,
-        "review verdict controls",
-        (mobile) => {
-          const controls = [
-            ...document.querySelectorAll(
-              mobile ? '[role="menuitem"]' : '[role="dialog"] button',
-            ),
-          ];
-          const visible = (node) =>
-            !!node &&
-            node.getBoundingClientRect().height > 0 &&
-            !node.disabled &&
-            !node.hasAttribute("data-disabled");
-          return {
-            ready: ["Approve", "Request changes"].every((text) =>
+      await waitFor(page, "review verdict controls", () => {
+        const controls = [
+          ...document.querySelectorAll('[role="dialog"] button'),
+        ];
+        const visible = (node) =>
+          !!node && node.getBoundingClientRect().height > 0;
+        return {
+          ready:
+            ["Comment", "Approve", "Request changes"].every((text) =>
               controls.some(
                 (node) => node.textContent.trim() === text && visible(node),
               ),
-            ),
-            controls: controls.map((node) => ({
-              text: node.textContent.trim(),
-              disabled: node.disabled || node.hasAttribute("data-disabled"),
-              height: node.getBoundingClientRect().height,
-              html: node.outerHTML.slice(0, 1000),
-            })),
-            triggers: [
-              ...document.querySelectorAll(
-                '[role="dialog"] button[aria-haspopup="menu"]',
+            ) &&
+            ["Approve", "Request changes"].every((text) =>
+              controls.some(
+                (node) => node.textContent.trim() === text && !node.disabled,
               ),
-            ].map((node) => ({
-              text: node.textContent,
-              expanded: node.getAttribute("aria-expanded"),
-              state: node.getAttribute("data-state"),
-              html: node.outerHTML.slice(0, 1000),
-            })),
-            activeElement: document.activeElement?.outerHTML.slice(0, 1000),
-            menus: [...document.querySelectorAll('[role="menu"]')].map((node) =>
-              node.outerHTML.slice(0, 2000),
             ),
-            body: document.body.innerText.slice(-2500),
-          };
-        },
-        width < 640,
-      );
+          controls: controls.map((node) => ({
+            text: node.textContent.trim(),
+            disabled: node.disabled,
+            height: node.getBoundingClientRect().height,
+            html: node.outerHTML.slice(0, 1000),
+          })),
+          activeElement: document.activeElement?.outerHTML.slice(0, 1000),
+          body: document.body.innerText.slice(-2500),
+        };
+      });
     }
     if (surface === "files") {
       await waitFor(page, "open mobile Files", () => {

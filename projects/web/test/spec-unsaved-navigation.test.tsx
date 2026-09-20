@@ -343,13 +343,7 @@ describe("spec review drafts across navigation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Stage comment" }));
     fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
-    fireEvent.pointerDown(
-      await screen.findByRole("button", { name: "Submit" }),
-      { button: 0, pointerType: "mouse" },
-    );
-    fireEvent.click(
-      await screen.findByRole("menuitem", { name: "Comment only" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Comment" }));
     expect(submit).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
@@ -385,20 +379,10 @@ describe("spec review drafts across navigation", () => {
       });
     });
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Submit" }).hasAttribute("disabled"),
-      ).toBe(false),
+      expect(screen.queryByRole("button", { name: "Submitting…" })).toBeNull(),
     );
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Submit" }), {
-      button: 0,
-      pointerType: "mouse",
-    });
     expect(
-      (
-        await screen.findByRole("menuitem", {
-          name: "Comment only",
-        })
-      ).getAttribute("aria-disabled"),
-    ).toBe("true");
+      screen.getByRole("button", { name: "Comment" }).hasAttribute("disabled"),
+    ).toBe(true);
   });
 });
