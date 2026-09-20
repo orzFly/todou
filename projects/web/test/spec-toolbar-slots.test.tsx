@@ -737,6 +737,37 @@ describe("spec toolbar fixed slots (T-190)", () => {
 const slot = (view: { container: HTMLElement }, name: string) =>
   view.container.querySelector<HTMLElement>(`[data-toolbar-slot="${name}"]`);
 
+/**
+ * `useMediaQuery` reads its snapshot during render and happy-dom fires no
+ * change event for a resize, so a width has to be set before the mount.
+ */
+const setViewportWidth = (width: number) =>
+  (
+    window as unknown as {
+      happyDOM: { setViewport: (viewport: { width: number }) => void };
+    }
+  ).happyDOM.setViewport({ width });
+
+/**
+ * What a class list adds to each horizontal edge, in Tailwind's quarter-rem
+ * steps — padding as written, margin against it. happy-dom runs no CSS, so a
+ * suite cannot measure where a box lands; what it can read is whether the two
+ * declarations cancel, which is the whole of what "the ref does not move"
+ * comes to.
+ */
+function horizontalInset(className: string): { left: number; right: number } {
+  const inset = { left: 0, right: 0 };
+  for (const token of className.split(/\s+/)) {
+    const match = /^(-?)[pm](x|l|r)-(\d+(?:\.\d+)?)$/.exec(token);
+    if (match === null) continue;
+    const [, negative, edge, size] = match;
+    const value = Number(size) * (negative === "-" ? -1 : 1);
+    if (edge !== "r") inset.left += value;
+    if (edge !== "l") inset.right += value;
+  }
+  return inset;
+}
+
 describe("the way back and the identity beside it (T-407)", () => {
   it("goes to this spec's own issue, in one step", async () => {
     const view = await toolbar("?v=2&file=design.md");
@@ -751,11 +782,17 @@ describe("the way back and the identity beside it (T-407)", () => {
     // accessible name has to carry it too (WCAG 2.5.3).
     expect(back?.getAttribute("aria-label")).toBe("Back to T-1");
     expect(back?.textContent).toBe("T-1");
-    // No button box and no padding, unlike the issue page's copy: the
-    // requirement the merge has to keep is that the ref stays at the pixel it
-    // would sit at without it, and a `Button` would push it across the row.
+    // No button box, unlike the issue page's copy: the requirement the merge
+    // has to keep is that the ref stays at the pixel it would sit at without
+    // it, and a `Button`'s padding would push it across the row. Padding
+    // itself is allowed back as long as it moves nothing — the hover tint
+    // T-470 asks for needs somewhere to sit — so what the case holds is the
+    // net inset rather than the absence of a declaration.
     expect(back?.dataset.slot).toBeUndefined();
-    expect(back?.className).not.toMatch(/(^|\s)px-/);
+    expect(horizontalInset(back?.className ?? "")).toEqual({
+      left: 0,
+      right: 0,
+    });
   });
 
   it("says the number once, and in the control that goes there", async () => {
@@ -792,6 +829,24 @@ describe("the way back and the identity beside it (T-407)", () => {
       expect(title.closest("a")).toBeNull();
     },
   );
+
+  it("hangs the merged arrow off the row, not the toolbar (T-470)", async () => {
+    setViewportWidth(1441);
+    try {
+      const view = await toolbar("?v=2&file=design.md");
+      const back = slot(view, "back");
+      const arrow = back?.querySelector("svg")?.parentElement;
+      expect(arrow?.className).toMatch(/(^|\s)absolute\b/);
+      // The row the ref sits in, never the toolbar around it. `backdrop-blur`
+      // makes the toolbar a containing block whether or not anyone asked, and
+      // that box is `-mx-2` — eight pixels outside the text column, which is
+      // the whole of why this gutter gap measured 16px where the issue page's
+      // measured 12px for the same offset.
+      expect(arrow?.closest(".relative")).toBe(back?.parentElement);
+    } finally {
+      setViewportWidth(1024);
+    }
+  });
 
   it("truncates the identity on a narrow screen instead of hiding it", async () => {
     const view = await toolbar("?v=2&file=design.md");

@@ -1056,7 +1056,12 @@ function SpecViewBody({
             (T-206). Wrapping stays on below lg, where every item but the
             identity is shrink-0: one shrinkable item cannot absorb a narrow
             viewport on its own, so a wrap is the only graceful answer left. */}
-        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+        {/* `relative` so the gutter arrow measures from the text column
+            (T-470). The toolbar around this row would be the containing block
+            otherwise — `backdrop-blur` makes one of it — and it is `-mx-2`,
+            which put the arrow 8px further out here than on the issue page
+            for the same `mr-2`. */}
+        <div className="relative flex flex-wrap items-center gap-2 lg:flex-nowrap">
           {mergedBack ? (
             <SpecIssueReturnLink
               slug={slug}

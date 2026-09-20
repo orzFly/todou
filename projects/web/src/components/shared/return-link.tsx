@@ -253,9 +253,12 @@ export function SpecReturnLink({
  * halves are not adjacent, and one button spanning them would swallow the
  * whole title — see the caller, which is where that choice is made.
  *
- * No padding and no resting background, because the ref not moving is the
- * requirement: hover tints both halves through `currentColor`, which is what
- * says the arrow out in the margin and the number in the row are one control.
+ * No resting background, because the ref not moving is the requirement. The
+ * hover one is back (T-470): its padding is cancelled by an equal negative
+ * margin, so the tint has room to sit in while the ref keeps the pixel it
+ * would occupy without a button around it. Out in the gutter the arrow tints
+ * as its own box — the two halves are too far apart for one — which is what
+ * the whole control lighting up at once comes to there.
  */
 export function SpecIssueReturnLink({
   slug,
@@ -281,11 +284,24 @@ export function SpecIssueReturnLink({
       // control with nothing to say (WCAG 2.5.3).
       aria-label={`Back to ${reference}`}
       data-toolbar-slot={slot}
-      className="inline-flex shrink-0 items-center gap-2 text-sm text-muted-foreground tabular-nums hover:text-foreground"
+      className={cn(
+        "group/back -my-1 inline-flex shrink-0 items-center gap-2 rounded-md py-1 text-sm text-muted-foreground tabular-nums hover:bg-muted hover:text-foreground",
+        // Left padding only while the arrow is still in the row: in the gutter
+        // it would run the two tints together across the column's edge.
+        floating ? "-mr-2 pr-2" : "-mx-2 px-2",
+      )}
     >
-      <ArrowLeftIcon
-        className={cn("size-4", floating && "absolute right-full mr-2")}
-      />
+      {/* The same 4px of slack the icon buttons give a `size-4` arrow, so the
+          gutter offset is one number for every host that hangs one (T-470). */}
+      <span
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center",
+          floating &&
+            "absolute right-full mr-2 size-6 rounded-md group-hover/back:bg-muted",
+        )}
+      >
+        <ArrowLeftIcon className="size-4" />
+      </span>
       {reference}
     </Link>
   );
