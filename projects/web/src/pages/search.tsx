@@ -25,6 +25,7 @@ import {
   withDomains,
 } from "@/api/search.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { JumpRowBody } from "@/components/search/jump-row.tsx";
 import { hasQualifier } from "@/components/search/suggestions.ts";
 import { SearchHighlight } from "@/components/search-highlight.tsx";
 import {
@@ -428,12 +429,18 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
               rel="noreferrer"
               className={JUMP_BOX}
             >
-              <ExternalLinkIcon
-                className="size-4 shrink-0 text-muted-foreground"
-                aria-hidden
+              <JumpRowBody
+                icon={
+                  <ExternalLinkIcon
+                    className="size-4 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                }
+                spelled={row.text}
+                identity={null}
+                text={row.host}
+                textClassName="text-muted-foreground"
               />
-              <span className="shrink-0 font-mono text-xs">{row.text}</span>
-              <span className="truncate text-muted-foreground">{row.host}</span>
             </a>
           );
         }
@@ -445,23 +452,30 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
               params={{ slug: row.slug }}
               className={JUMP_BOX}
             >
-              <ArrowRightIcon
-                className="size-4 shrink-0 text-muted-foreground"
-                aria-hidden
+              <JumpRowBody
+                icon={
+                  <ArrowRightIcon
+                    className="size-4 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                }
+                spelled={row.spelled}
+                identity={null}
+                refClassName="text-muted-foreground"
+                lead={
+                  <ProjectIcon
+                    project={{
+                      name: row.name,
+                      prefix: row.prefix,
+                      icon_url: row.icon_url,
+                    }}
+                    className="size-5 shrink-0"
+                    aria-hidden
+                  />
+                }
+                text={row.name}
+                textClassName="font-medium"
               />
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                {row.spelled}
-              </span>
-              <ProjectIcon
-                project={{
-                  name: row.name,
-                  prefix: row.prefix,
-                  icon_url: row.icon_url,
-                }}
-                className="size-5"
-                aria-hidden
-              />
-              <span className="truncate font-medium">{row.name}</span>
             </Link>
           );
         }
@@ -482,20 +496,30 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
             state={linkState}
             className={JUMP_BOX}
           >
-            <ArrowRightIcon
-              className="size-4 shrink-0 text-muted-foreground"
-              aria-hidden
+            <JumpRowBody
+              icon={
+                <ArrowRightIcon
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+              }
+              spelled={row.spelled}
+              identity={{
+                slug: row.slug,
+                prefix: row.prefix,
+                number: row.number,
+                ...(row.commentId === undefined
+                  ? {}
+                  : { commentId: row.commentId }),
+              }}
+              refClassName="text-muted-foreground"
+              text={row.item.title}
+              textClassName="font-medium"
+              author={row.commentBy}
+              trailing={
+                <StatusPill status={row.item.status} className="shrink-0" />
+              }
             />
-            <span className="shrink-0 font-mono text-xs text-muted-foreground">
-              {row.spelled}
-            </span>
-            <span className="truncate font-medium">{row.item.title}</span>
-            {row.commentBy !== null && (
-              <span className="shrink-0 text-muted-foreground">
-                · by {row.commentBy}
-              </span>
-            )}
-            <StatusPill status={row.item.status} className="ml-auto shrink-0" />
           </Link>
         );
       })}

@@ -35,6 +35,7 @@ import {
   highlightParts,
   type KnownValues,
 } from "@/components/search/highlight.tsx";
+import { JumpRowBody } from "@/components/search/jump-row.tsx";
 import {
   type CaretPosition,
   QualifierInput,
@@ -728,23 +729,31 @@ export function SearchBox({
                     onMouseMove={() => setHighlight(idx)}
                     onClick={closeUnlessNewTab}
                   >
-                    <ArrowRightIcon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
+                    <JumpRowBody
+                      icon={
+                        <ArrowRightIcon
+                          className="size-3.5 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                      }
+                      spelled={row.spelled}
+                      // What the reader typed, not a card: nothing to take
+                      // apart, so the whole token is the one elidable run.
+                      identity={null}
+                      refClassName="text-muted-foreground"
+                      lead={
+                        <ProjectIcon
+                          project={{
+                            name: row.name,
+                            prefix: row.prefix,
+                            icon_url: row.icon_url,
+                          }}
+                          className="size-5 shrink-0"
+                          aria-hidden
+                        />
+                      }
+                      text={row.name}
                     />
-                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                      {row.spelled}
-                    </span>
-                    <ProjectIcon
-                      project={{
-                        name: row.name,
-                        prefix: row.prefix,
-                        icon_url: row.icon_url,
-                      }}
-                      className="size-5"
-                      aria-hidden
-                    />
-                    <span className="truncate">{row.name}</span>
                   </Link>
                 );
               }
@@ -759,17 +768,25 @@ export function SearchBox({
                     onMouseMove={() => setHighlight(idx)}
                     onClick={closeUnlessNewTab}
                   >
-                    {/* Where the arrow goes on every other row. These cards
-                      are offered rather than asked for, and the empty
-                      column is what says so — one indent, no new glyph. */}
-                    <span className="size-3.5 shrink-0" aria-hidden />
-                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                      {row.spelled}
-                    </span>
-                    <span className="truncate">{row.item.title}</span>
-                    <StatusPill
-                      status={row.item.status}
-                      className="ml-auto shrink-0"
+                    <JumpRowBody
+                      icon={
+                        /* Where the arrow goes on every other row. These cards
+                           are offered rather than asked for, and the empty
+                           column is what says so — one indent, no new glyph. */
+                        <span className="size-3.5 shrink-0" aria-hidden />
+                      }
+                      spelled={row.spelled}
+                      // The reader's own spelling carried on, not a format:
+                      // `accel/1` and `ACC-1` are both this row's token.
+                      identity={null}
+                      refClassName="text-muted-foreground"
+                      text={row.item.title}
+                      trailing={
+                        <StatusPill
+                          status={row.item.status}
+                          className="shrink-0"
+                        />
+                      }
                     />
                   </Link>
                 );
@@ -787,16 +804,19 @@ export function SearchBox({
                     onMouseMove={() => setHighlight(idx)}
                     onClick={closeUnlessNewTab}
                   >
-                    <ExternalLinkIcon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
+                    <JumpRowBody
+                      icon={
+                        <ExternalLinkIcon
+                          className="size-3.5 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                      }
+                      spelled={row.text}
+                      // An autolink's own text, which todou never spelled.
+                      identity={null}
+                      text={row.host}
+                      textClassName="text-muted-foreground"
                     />
-                    <span className="shrink-0 font-mono text-xs">
-                      {row.text}
-                    </span>
-                    <span className="truncate text-muted-foreground">
-                      {row.host}
-                    </span>
                   </a>
                 );
               }
@@ -837,22 +857,31 @@ export function SearchBox({
                   onMouseMove={() => setHighlight(idx)}
                   onClick={closeUnlessNewTab}
                 >
-                  <ArrowRightIcon
-                    className="size-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    {row.spelled}
-                  </span>
-                  <span className="truncate">{row.item.title}</span>
-                  {row.commentBy !== null && (
-                    <span className="shrink-0 text-muted-foreground">
-                      · by {row.commentBy}
-                    </span>
-                  )}
-                  <StatusPill
-                    status={row.item.status}
-                    className="ml-auto shrink-0"
+                  <JumpRowBody
+                    icon={
+                      <ArrowRightIcon
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                    }
+                    spelled={row.spelled}
+                    identity={{
+                      slug: row.slug,
+                      prefix: row.prefix,
+                      number: row.number,
+                      ...(row.commentId === undefined
+                        ? {}
+                        : { commentId: row.commentId }),
+                    }}
+                    refClassName="text-muted-foreground"
+                    text={row.item.title}
+                    author={row.commentBy}
+                    trailing={
+                      <StatusPill
+                        status={row.item.status}
+                        className="shrink-0"
+                      />
+                    }
                   />
                 </Link>
               );
