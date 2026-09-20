@@ -98,10 +98,15 @@ const COVERAGE_FAILURES = new Set([
   "no-second-finger",
   "no-drag-room",
   "page-cannot-scroll",
-  "page-already-at-top",
+  "page-not-at-top",
+  "page-no-downward-room",
+  "scroll-box-not-at-bottom",
+  "gesture-fixture-not-confirmed",
   "self-test-baseline-not-clean",
   "self-test-no-new-failure",
   "self-test-fresh-restoration",
+  "self-test-checker-mismatch",
+  "self-test-fault-matrix",
 ]);
 
 async function seedFixture(serverPort) {
@@ -202,6 +207,11 @@ function fixtureShapeFailures(fixture) {
 function probeSource(fault) {
   return `(() => {
   const FAULT = ${JSON.stringify(fault)};
+  const faults = new Set((FAULT ?? '').split('+'));
+  const hasFault = name => faults.has(name);
+  let gestureRoot = null;
+  let gestureStage = null;
+  let secondFingerVerify = null;
   const round = v => Number.isFinite(v) ? Number(v.toFixed(2)) : null;
   const rectOf = e => { const r = e.getBoundingClientRect();
     return { x: round(r.x), y: round(r.y), w: round(r.width), h: round(r.height),
@@ -226,9 +236,49 @@ function probeSource(fault) {
   const visualLineCount = node => new Set(visualRects(node).map(r => r.top)).size;
   const dialog = () => document.querySelector('[data-slot="dialog-content"]');
   const container = () => dialog()?.querySelector('diffs-container') ?? null;
-  const shadow = () => container()?.shadowRoot ?? null;
+  const shadow = () => gestureRoot ?? container()?.shadowRoot ?? null;
   const wrapButton = () => dialog()?.querySelector('button[aria-label="wrap long lines"]') ?? null;
   const scrollBox = () => dialog()?.querySelector('.overflow-auto') ?? null;
+  const boxState = () => {
+    const box = scrollBox();
+    if (!box) return { error: 'no box' };
+    const max = box.scrollHeight - box.clientHeight;
+    return { scrollTop: round(box.scrollTop), max,
+      atBottom: max > 0 && Math.abs(max - box.scrollTop) <= 1,
+      clientHeight: box.clientHeight, scrollHeight: box.scrollHeight, rect: rectOf(box) };
+  };
+  // Clip against every scrolling ancestor, not the centre of the tall code.
+  // Coordinates remain on actual visible code at the scroll box's bottom.
+  const visibleCode = () => {
+    const code = shadow()?.querySelector('[data-code]');
+    if (!code) return null;
+    const r = code.getBoundingClientRect();
+    let left = Math.max(0, r.left + code.clientLeft);
+    let right = Math.min(innerWidth, r.left + code.clientLeft + code.clientWidth);
+    let top = Math.max(0, r.top + code.clientTop);
+    let bottom = Math.min(innerHeight, r.top + code.clientTop + code.clientHeight);
+    for (let node = code; node; node = node.parentElement ?? node.getRootNode().host) {
+      const cs = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      if (/(auto|scroll|hidden|clip)/.test(cs.overflowY)) {
+        top = Math.max(top, rect.top + node.clientTop);
+        bottom = Math.min(bottom, rect.top + node.clientTop + node.clientHeight);
+      }
+      if (/(auto|scroll|hidden|clip)/.test(cs.overflowX)) {
+        left = Math.max(left, rect.left + node.clientLeft);
+        right = Math.min(right, rect.left + node.clientLeft + node.clientWidth);
+      }
+    }
+    return { left: round(left), right: round(right), top: round(top), bottom: round(bottom),
+      w: round(Math.max(0, right - left)), h: round(Math.max(0, bottom - top)) };
+  };
+  const restoreStyle = (node, value) => {
+    if (value === null) node.removeAttribute('style');
+    else node.setAttribute('style', value);
+  };
+  // Chromium can materialize style="" after removing the last declaration.
+  // Compare declarations, while still requiring every nonempty original verbatim.
+  const sameStyle = (node, value) => (node.getAttribute('style') ?? '') === (value ?? '');
   const settle = async () => { for (let i = 0; i < 3; i += 1) await new Promise(r => requestAnimationFrame(r)); };
 
   const applyFault = () => {
@@ -236,16 +286,21 @@ function probeSource(fault) {
     const s = shadow();
     if (FAULT === 'gutter-unshared-rows') {
       if (!s) return { applied: false, reason: 'no shadow root' };
+      s.querySelector('style[data-t425-fault]')?.remove();
       const style = document.createElement('style');
       style.dataset.t425Fault = FAULT;
       // Take the gutter off the shared subgrid: every number falls back to
       // one text line while the content rows still grow with the wrapping.
       style.textContent = '[data-gutter]{display:block !important;grid-template-rows:none !important}[data-column-number]{height:20px !important;display:block !important}';
       s.appendChild(style);
-      return { applied: !!s.querySelector('style[data-t425-fault]') };
+      const gutters = [...s.querySelectorAll('[data-gutter]')];
+      return { applied: gutters.length > 0 && gutters.every(node =>
+        getComputedStyle(node).display === 'block'), gutters: gutters.length };
     }
     if (FAULT === 'copy-inserts-breaks') {
       if (!s) return { applied: false, reason: 'no shadow root' };
+      const existing = s.querySelectorAll('br[data-t425-fault]');
+      if (existing.length) return { applied: true, touched: existing.length };
       // Rewrite the line the way the design rejects: real <br> elements at
       // the soft wrap points, which the clipboard then serialises as newlines.
       let touched = 0;
@@ -260,7 +315,9 @@ function probeSource(fault) {
           if (node.data.length < 30) continue;
           const half = Math.floor(node.data.length / 2);
           const tail = node.splitText(half);
-          tail.parentNode.insertBefore(document.createElement('br'), tail);
+          const br = document.createElement('br');
+          br.dataset.t425Fault = FAULT;
+          tail.parentNode.insertBefore(br, tail);
           touched += 1;
         }
       }
@@ -268,6 +325,7 @@ function probeSource(fault) {
     }
     if (FAULT === 'scroll-clipped' || FAULT === 'scroll-hidden') {
       if (!s) return { applied: false, reason: 'no shadow root' };
+      s.querySelector('style[data-t425-fault]')?.remove();
       const style = document.createElement('style');
       style.dataset.t425Fault = FAULT;
       // Two different ways to "solve" a long line by not showing it: clip
@@ -277,7 +335,9 @@ function probeSource(fault) {
         ? '[data-code]{overflow-x:clip !important}'
         : '[data-code]{overflow-x:hidden !important}';
       s.appendChild(style);
-      return { applied: !!s.querySelector('style[data-t425-fault]') };
+      const code = s.querySelector('[data-code]');
+      const overflowX = code && getComputedStyle(code).overflowX;
+      return { applied: overflowX === (FAULT === 'scroll-clipped' ? 'clip' : 'hidden'), overflowX };
     }
     if (FAULT === 'wrap-over-close') {
       const button = wrapButton();
@@ -298,7 +358,7 @@ function probeSource(fault) {
       probe.stopPropagation();
       return { applied: probe.cancelBubble === false };
     }
-    if (FAULT === 'touch-release-disabled') {
+    if (hasFault('touch-release-disabled')) {
       // The touchmove half of what dialog.tsx added, taken away again. Kept
       // apart from the wheel fault so that each gesture's release is graded
       // by a fault only it can feel.
@@ -308,7 +368,7 @@ function probeSource(fault) {
       probe.stopPropagation();
       return { applied: probe.cancelBubble === false };
     }
-    if (FAULT === 'second-finger-drops-origin') {
+    if (hasFault('second-finger-drops-origin')) {
       // What dialog.tsx used to do, put back: a touchstart carrying anything
       // other than one finger dropped the drag's origin, and only a fresh
       // touchstart ever wrote it again, so the release stood down for the rest
@@ -316,6 +376,7 @@ function probeSource(fault) {
       // capture on document runs before React's own listener, so neutering
       // stopPropagation on the event leaves the release running and useless,
       // exactly as an absent origin did.
+      if (secondFingerVerify) return secondFingerVerify();
       let dropped = false;
       document.addEventListener('touchstart', event => {
         dropped = event.touches.length !== 1;
@@ -325,16 +386,19 @@ function probeSource(fault) {
           Object.defineProperty(event, 'stopPropagation',
             { value() {}, configurable: true });
       }, { capture: true, passive: true });
-      const finger = target => new Touch({ identifier: 1, target });
-      document.dispatchEvent(new TouchEvent('touchstart',
-        { touches: [finger(document.body), new Touch({ identifier: 2, target: document.body })] }));
-      const probe = new TouchEvent('touchmove', { touches: [finger(document.body)] });
-      document.dispatchEvent(probe);
-      probe.stopPropagation();
-      const neutered = probe.cancelBubble === false;
-      // Leave the page as a fresh single-finger gesture would find it.
-      document.dispatchEvent(new TouchEvent('touchstart', { touches: [finger(document.body)] }));
-      return { applied: neutered && dropped === false };
+      secondFingerVerify = () => {
+        const finger = target => new Touch({ identifier: 1, target });
+        document.dispatchEvent(new TouchEvent('touchstart',
+          { touches: [finger(document.body), new Touch({ identifier: 2, target: document.body })] }));
+        const probe = new TouchEvent('touchmove', { touches: [finger(document.body)] });
+        document.dispatchEvent(probe);
+        probe.stopPropagation();
+        const neutered = probe.cancelBubble === false;
+        // Leave the page as a fresh single-finger gesture would find it.
+        document.dispatchEvent(new TouchEvent('touchstart', { touches: [finger(document.body)] }));
+        return { applied: neutered && dropped === false, neutered, originReset: !dropped };
+      };
+      return secondFingerVerify();
     }
     if (FAULT === 'scroll-lock-removed') {
       // Both halves of the modal lock, for both gestures: the events it
@@ -343,15 +407,21 @@ function probeSource(fault) {
       for (const constructor of [WheelEvent, TouchEvent])
         Object.defineProperty(constructor.prototype, 'preventDefault',
           { value() {}, configurable: true, writable: true });
-      for (const node of [document.documentElement, document.body])
+      for (const node of [document.documentElement, document.body]) {
         node.style.setProperty('overflow', 'auto', 'important');
+        node.style.setProperty('overscroll-behavior', 'auto', 'important');
+      }
       const wheel = new WheelEvent('wheel', { cancelable: true });
       wheel.preventDefault();
       const touch = new TouchEvent('touchmove', { cancelable: true });
       touch.preventDefault();
+      const css = [document.documentElement, document.body].map(node => ({
+        overflowY: getComputedStyle(node).overflowY,
+        overscrollY: getComputedStyle(node).overscrollBehaviorY,
+      }));
       return { applied: wheel.defaultPrevented === false &&
         touch.defaultPrevented === false &&
-        getComputedStyle(document.body).overflowY !== 'hidden' };
+        css.every(style => style.overflowY === 'auto' && style.overscrollY === 'auto'), css };
     }
     if (FAULT === 'prose-rewrapped') {
       const style = document.createElement('style');
@@ -362,15 +432,117 @@ function probeSource(fault) {
       document.head.appendChild(style);
       return { applied: !!document.head.querySelector('style[data-t425-fault]') };
     }
+    if (hasFault('touch-short-vertical') || hasFault('wheel-not-retargeted') ||
+        hasFault('touch-not-retargeted'))
+      return { applied: false, deferred: true, reason: 'measured during gesture stage' };
     return { applied: false, reason: 'unknown fault' };
   };
 
   window.__t425 = {
+    applyFault,
+    boxState,
+    prepareGesture: async gesture => {
+      if (gestureStage) throw new Error('gesture stage already active');
+      const box = scrollBox(), host = container(), root = host?.shadowRoot;
+      if (!box || !root?.querySelector('[data-code]'))
+        return { applied: false, error: 'no real diff or scroll box' };
+      const spacer = document.createElement('div');
+      spacer.dataset.t425GestureSpacer = '';
+      spacer.style.cssText = 'height:' + Math.max(innerHeight * 2, box.clientHeight * 3) +
+        'px;min-height:1px;flex-shrink:0;pointer-events:none';
+      const short = gesture === 'touch' && hasFault('touch-short-vertical');
+      const light = hasFault(gesture + '-not-retargeted');
+      gestureStage = { box, host, root, spacer, boxStyle: box.getAttribute('style'),
+        hostStyle: host.getAttribute('style'), scrollTop: box.scrollTop,
+        scrollLeft: root.querySelector('[data-code]').scrollLeft, styled: [], nodes: [] };
+      // Keep the temporary clipping height integral so the bottom measurement
+      // and the visible gesture rectangle use the same pixel boundary.
+      const maxHeight = Number.parseFloat(getComputedStyle(box).maxHeight);
+      if (Number.isFinite(maxHeight))
+        box.style.setProperty('max-height', Math.floor(maxHeight) + 'px', 'important');
+      box.prepend(spacer);
+      if (light) {
+        // Move the real rendered nodes, keeping their text and computed styles.
+        // A sibling in light DOM exposes the actual scroller to remove-scroll;
+        // leaving children under a slot-less shadow host would make them invisible.
+        const wrapper = document.createElement('div');
+        wrapper.dataset.t425LightDiff = '';
+        const elements = [host, ...root.querySelectorAll('*')].filter(node => node.tagName !== 'STYLE');
+        const computed = elements.map(node => {
+          const cs = getComputedStyle(node);
+          return { node, css: [...cs].map(name => [name, cs.getPropertyValue(name)]) };
+        });
+        gestureStage.nodes = [...root.childNodes];
+        gestureStage.wrapper = wrapper;
+        host.after(wrapper);
+        for (const { node, css } of computed) {
+          const target = node === host ? wrapper : node;
+          if (node !== host) gestureStage.styled.push([node, node.getAttribute('style')]);
+          for (const [name, value] of css) target.style.setProperty(name, value, 'important');
+        }
+        for (const node of gestureStage.nodes)
+          if (node.nodeName !== 'STYLE') wrapper.append(node);
+        host.style.setProperty('display', 'none', 'important');
+        gestureRoot = wrapper;
+      }
+      if (short) {
+        // Compress the real clipping box in Y only. The horizontal drag and
+        // overflow must remain measurable while the vertical path is <40px.
+        for (const name of ['height', 'min-height', 'max-height'])
+          box.style.setProperty(name, '48px', 'important');
+        box.style.setProperty('flex', 'none', 'important');
+      }
+      await settle();
+      const bottom = await window.__t425.scrollBoxToBottom();
+      const horizontal = window.__t425.dragPath('h');
+      const vertical = window.__t425.dragPath('v');
+      const code = shadow().querySelector('[data-code]');
+      const evidence = { gesture, short, light, box: bottom, visible: visibleCode(),
+        horizontalDistance: horizontal.distance, verticalDistance: vertical.distance,
+        codeMax: code.scrollWidth - code.clientWidth, overflowX: getComputedStyle(code).overflowX,
+        lines: shadow().querySelectorAll('[data-line]').length,
+        lightDOM: code.getRootNode() === document, spacerHeight: spacer.getBoundingClientRect().height };
+      evidence.applied = bottom.atBottom && bottom.max > 0 &&
+        (!short || (vertical.distance > 0 && vertical.distance < 40 && horizontal.distance >= 40)) &&
+        (!light || (evidence.lightDOM && evidence.lines > 0 &&
+          evidence.codeMax > 0 && /^(auto|scroll)$/.test(evidence.overflowX)));
+      return evidence;
+    },
+    restoreGesture: async () => {
+      const stage = gestureStage;
+      if (!stage) return { restored: true };
+      gestureRoot = null;
+      for (const node of stage.nodes) stage.root.append(node);
+      for (const [node, style] of stage.styled) restoreStyle(node, style);
+      stage.wrapper?.remove();
+      stage.spacer.remove();
+      restoreStyle(stage.box, stage.boxStyle);
+      restoreStyle(stage.host, stage.hostStyle);
+      stage.box.scrollTop = stage.scrollTop;
+      const code = stage.root.querySelector('[data-code]');
+      if (code) code.scrollLeft = stage.scrollLeft;
+      gestureStage = null;
+      await settle();
+      const originalOrder = stage.nodes.length === 0 ||
+        (stage.root.childNodes.length === stage.nodes.length &&
+          stage.nodes.every((node, index) => stage.root.childNodes[index] === node));
+      return { restored: !!code && code.getRootNode() === stage.root && originalOrder &&
+        sameStyle(stage.box, stage.boxStyle) &&
+        sameStyle(stage.host, stage.hostStyle) &&
+        stage.styled.every(([node, style]) => sameStyle(node, style)) &&
+        !document.querySelector('[data-t425-gesture-spacer],[data-t425-light-diff]'),
+        originalOrder, box: boxState(), codeScrollLeft: code?.scrollLeft ?? null };
+    },
     faultApplied: null,
     openEntry: async (which) => {
       const marks = [...document.querySelectorAll('button')].filter(b => b.textContent === '(edited)');
       const mark = which === 'description' ? marks[0] : marks[marks.length - 1];
       if (!mark) return { ok: false, reason: 'no (edited) marker', markers: marks.length };
+      // Set this before the modal lock can clamp window.scrollTo. Opening the
+      // popover programmatically does not need its trigger scrolled into view.
+      window.scrollTo(0, 0);
+      await settle();
+      window.__t425.unlockedPage = window.__t425.pageScroll();
       if (marks.length < 2) return { ok: false, reason: 'fixture has fewer than two edited markers', markers: marks.length };
       mark.click();
       let row = null;
@@ -384,7 +556,7 @@ function probeSource(fault) {
       for (let i = 0; i < 200; i += 1) {
         if (shadow()?.querySelector('[data-line]')) {
           await settle();
-          if (FAULT && !window.__t425.faultApplied) window.__t425.faultApplied = applyFault();
+          window.__t425.faultApplied = applyFault();
           await settle();
           return { ok: true, title: dialog()?.querySelector('[data-slot="dialog-title"]')?.textContent ?? null };
         }
@@ -583,37 +755,38 @@ function probeSource(fault) {
     touchVerdicts: () => window.__t425.touchSettled,
     touchPhaseLog: () => window.__t425.touchPhases,
     /**
-     * Where a finger starts and ends, in viewport coordinates. Sideways it
-     * stays inside the diff box: at 390px the box is narrower than the 600px
-     * the wheel gesture travels, and a touch point off the left edge of the
-     * screen is not a gesture the browser will route here. Downwards is the
-     * direction that scrolls the page *up*, which is the one the lock has to
-     * keep holding.
+     * Both paths stay in the visible intersection with the real scroll box.
+     * At its bottom the finger moves UP to ask for more DOWNWARD content
+     * scroll, just like the wheel's negative CDP yDistance.
      */
     dragPath: axis => {
-      const code = shadow()?.querySelector('[data-code]');
-      if (!code) return { error: 'no code' };
-      const r = code.getBoundingClientRect();
-      const mid = { x: round(r.left + r.width / 2), y: round(r.top + r.height / 2) };
+      const r = visibleCode();
+      if (!r || r.w <= 0 || r.h <= 0) return { error: 'no visible code' };
+      const mid = { x: round((r.left + r.right) / 2), y: round((r.top + r.bottom) / 2) };
       if (axis === 'h') {
-        const from = { x: round(r.right - 8), y: mid.y };
-        const to = { x: round(r.left + 8), y: mid.y };
-        return { from, to, distance: round(from.x - to.x) };
+        const inset = Math.min(8, r.w / 4);
+        const from = { x: round(r.right - inset), y: mid.y };
+        const to = { x: round(r.left + inset), y: mid.y };
+        return { from, to, distance: round(from.x - to.x), visible: r };
       }
-      const room = Math.min(240, innerHeight - mid.y - 8);
-      return { from: mid, to: { x: mid.x, y: round(mid.y + room) }, distance: round(room) };
+      const inset = Math.min(8, r.h / 4);
+      // Start above the EOF marker/scrollbar edge when there is room.
+      const bottomInset = r.h >= 96 ? 48 : inset;
+      const room = Math.max(0, Math.min(240, r.h - inset - bottomInset));
+      const from = { x: mid.x, y: round(r.bottom - bottomInset) };
+      return { from, to: { x: mid.x, y: round(from.y - room) }, distance: round(room), visible: r };
     },
     pageScroll: () => ({
       y: Math.round(window.scrollY),
       max: Math.round(document.documentElement.scrollHeight - window.innerHeight),
+      unlockedMax: window.__t425.unlockedPage?.max ?? null,
     }),
-    // probeWheel's vertical gesture scrolls the page up, so an entry that left
-    // the page at 0 hands the next one a sample that holds still whatever the
-    // lock does. Under a working lock this call moves nothing — and a working
-    // lock is also why the page was never pushed to 0 to begin with.
-    parkPageAtBottom: () => {
-      window.scrollTo(0, document.documentElement.scrollHeight);
-      return Math.round(window.scrollY);
+    // Before opening, openEntry already parks at zero without a lock. Repeat
+    // for every segment: the lock-removal fault lets the previous one move it.
+    parkPageAtTop: async () => {
+      window.scrollTo(0, 0);
+      await settle();
+      return window.__t425.pageScroll();
     },
     pointTarget: (x, y) => {
       const top = document.elementFromPoint(x, y);
@@ -633,7 +806,8 @@ function probeSource(fault) {
         }, null);
       return {
         rect: rectOf(code),
-        centre: { x: round(box.left + box.width / 2), y: round(box.top + box.height / 2) },
+        visible: visibleCode(),
+        lightDOM: code.getRootNode() === document,
         scrollLeft: round(code.scrollLeft),
         max: code.scrollWidth - code.clientWidth,
         overflowX: getComputedStyle(code).overflowX,
@@ -662,7 +836,7 @@ function probeSource(fault) {
       if (!box) return { error: 'no box' };
       box.scrollTop = box.scrollHeight;
       await settle();
-      return { scrollTop: round(box.scrollTop), max: box.scrollHeight - box.clientHeight };
+      return boxState();
     },
     /** B4: the header's three occupants, and the toggle's keyboard surface. */
     headerLayout: () => {
@@ -843,7 +1017,8 @@ async function dragOver(
       touchPoints: [nudged],
     });
     await sleep(16);
-    const second = { x: nudged.x, y: nudged.y + 60, id: 2 };
+    // Stay inside the same visible row even when the real box is compressed.
+    const second = { x: nudged.x - 12, y: nudged.y, id: 2 };
     await page.send("Input.dispatchTouchEvent", {
       type: "touchStart",
       touchPoints: [nudged, second],
@@ -886,8 +1061,8 @@ async function dragOver(
  *
  * Only the first touchmove of a scrolling gesture stays cancelable: once the
  * compositor is scrolling, Chromium stops asking. That is why the sideways
- * verdict is `scrollLeft`, not a cancellation count, while the downward one —
- * where nothing ever starts scrolling — can count cancellations directly.
+ * verdict is `scrollLeft`, not a cancellation count, while an upward finger
+ * at the box's bottom asks for downward overscroll that the lock must cancel.
  *
  * The sideways drag is made twice. The second one gains a finger and loses it
  * mid-gesture (T-490), which used to leave the rest of that drag with no origin
@@ -897,74 +1072,89 @@ async function dragOver(
  * travelled far enough to start a scroll — see `dragOver`.
  */
 async function probeTouch(page) {
+  const result = {};
+  // At 390px, a preceding horizontal touch suppressed unlocked page travel
+  // despite touchEnd; a fresh vertical touch and wheel-then-touch both scroll.
+  // Grade it first, keeping the plain horizontal drag as regrip's control.
+  for (const phase of ["vertical", "horizontal", "regrip"]) {
+    const segment = await probeGestureSegment(page, "touch", phase);
+    result[phase] = segment;
+  }
+  result.target = result.horizontal.target;
+  return result;
+}
+
+async function probeGestureSegment(page, gesture, phase) {
+  await evaluate(page, () => window.__t425.parkPageAtTop());
   await evaluate(page, () => window.__t425.resetCodeScroll());
+  const box = await evaluate(page, () => window.__t425.scrollBoxToBottom());
   const start = await evaluate(page, () => window.__t425.codeScroll());
-  if (start.error) return { error: start.error };
-  const sideways = await evaluate(page, () => window.__t425.dragPath("h"));
-  if (sideways.error) return { error: sideways.error };
+  const path = await evaluate(
+    page,
+    (axis) => window.__t425.dragPath(axis),
+    phase === "vertical" ? "v" : "h",
+  );
+  if (start.error || path.error) return { error: start.error ?? path.error };
   const target = await evaluate(
     page,
     (x, y) => window.__t425.pointTarget(x, y),
-    sideways.from.x,
-    sideways.from.y,
+    path.from.x,
+    path.from.y,
   );
-  const left = await dragOver(page, sideways.from, sideways.to);
-  const end = await evaluate(page, () => window.__t425.codeScroll());
-
-  // The same sideways drag again, this time with a finger joining and leaving
-  // it (T-490). It is its own gesture rather than a flag on the one above,
-  // because the plain drag is the control: a run where both are blocked is a
-  // regression in the release itself, and only this one going red is T-490.
-  await evaluate(page, () => window.__t425.resetCodeScroll());
-  const regripStart = await evaluate(page, () => window.__t425.codeScroll());
-  const regrip = await dragOver(page, sideways.from, sideways.to, {
-    interlude: true,
-  });
-  const regripEnd = await evaluate(page, () => window.__t425.codeScroll());
-
-  const box = await evaluate(page, () => window.__t425.scrollBoxToBottom());
-  await evaluate(page, () => window.__t425.parkPageAtBottom());
-  const downwards = await evaluate(page, () => window.__t425.dragPath("v"));
   const pageBefore = await evaluate(page, () => window.__t425.pageScroll());
-  const down = await dragOver(page, downwards.from, downwards.to);
+  const events =
+    gesture === "touch"
+      ? await dragOver(page, path.from, path.to, {
+          interlude: phase === "regrip",
+        })
+      : await wheelOver(
+          page,
+          path.from.x,
+          path.from.y,
+          phase === "vertical" ? 0 : -600,
+          phase === "vertical" ? -600 : 0,
+        );
+  const end = await evaluate(page, () => window.__t425.codeScroll());
   const pageAfter = await evaluate(page, () => window.__t425.pageScroll());
-
+  const boxAfter = await evaluate(page, () => window.__t425.boxState());
   return {
     target,
-    horizontal: {
-      from: start.scrollLeft,
-      to: end.scrollLeft,
-      max: end.max,
-      distance: sideways.distance,
-      arrived: left.arrived.length,
-      retargeted: left.arrived.every((event) => event.retargeted),
-      cancelled: left.settled.filter((event) => event.defaultPrevented).length,
+    from: start.scrollLeft,
+    to: end.scrollLeft,
+    max: start.max,
+    distance: gesture === "touch" ? path.distance : 600,
+    path,
+    start,
+    end,
+    arrived: events.arrived.length,
+    retargeted:
+      events.arrived.length > 0 &&
+      events.arrived.every((event) => event.retargeted),
+    unretargeted:
+      events.arrived.length > 0 &&
+      events.arrived.every((event) => event.retargeted === false),
+    cancelled: events.settled.filter((event) => event.defaultPrevented).length,
+    events,
+    box,
+    boxAfter,
+    page: {
+      before: pageBefore.y,
+      after: pageAfter.y,
+      max: pageBefore.max,
+      unlockedMax: pageBefore.unlockedMax,
+      afterMax: pageAfter.max,
     },
-    regrip: {
-      from: regripStart.scrollLeft,
-      to: regripEnd.scrollLeft,
-      max: regripEnd.max,
-      distance: sideways.distance,
-      arrived: regrip.arrived.length,
-      cancelled: regrip.settled.filter((event) => event.defaultPrevented)
-        .length,
-      // The interlude, as the page saw it: a touchstart that took the count to
-      // two, and a touchend that put it back to one with the drag still live.
-      secondFinger: regrip.phases.some(
-        (phase) => phase.type === "touchstart" && phase.touches === 2,
-      ),
-      liftedBackToOne: regrip.phases.some(
-        (phase) => phase.type === "touchend" && phase.touches === 1,
-      ),
-      phases: regrip.phases,
-    },
-    vertical: {
-      distance: downwards.distance,
-      arrived: down.arrived.length,
-      cancelled: down.settled.filter((event) => event.defaultPrevented).length,
-      box,
-      page: { before: pageBefore.y, after: pageAfter.y, max: pageBefore.max },
-    },
+    ...(phase === "regrip"
+      ? {
+          secondFinger: events.phases.some(
+            (event) => event.type === "touchstart" && event.touches === 2,
+          ),
+          liftedBackToOne: events.phases.some(
+            (event) => event.type === "touchend" && event.touches === 1,
+          ),
+          phases: events.phases,
+        }
+      : {}),
   };
 }
 
@@ -979,58 +1169,20 @@ async function probeTouch(page) {
  * has nowhere left to go, which is the half of the lock this card must not
  * have widened its way through — hence `scrollBoxToBottom` first, and the
  * box's own travel is recorded beside the verdict, because a box with none
- * could not have absorbed the gesture from either end. That gesture scrolls
- * the page *up* — CDP reads a positive yDistance as scroll-up — so the page is
- * parked at its bottom first, where it has somewhere to be pushed.
+ * could not have absorbed the gesture from either end. Negative CDP
+ * yDistance scrolls content DOWN, beyond the bottom already reached; the
+ * background page starts at its top with downward room for the lock to hold.
  */
 async function probeWheel(page) {
-  // From the left edge: the travel check above leaves it at the far end,
-  // where a working wheel would have nowhere to go either.
-  await evaluate(page, () => window.__t425.resetCodeScroll());
-  const start = await evaluate(page, () => window.__t425.codeScroll());
-  if (start.error) return { error: start.error };
-  const target = await evaluate(
-    page,
-    (x, y) => window.__t425.pointTarget(x, y),
-    start.centre.x,
-    start.centre.y,
-  );
-  const sideways = await wheelOver(
-    page,
-    start.centre.x,
-    start.centre.y,
-    -600,
-    0,
-  );
-  const end = await evaluate(page, () => window.__t425.codeScroll());
-
-  const box = await evaluate(page, () => window.__t425.scrollBoxToBottom());
-  await evaluate(page, () => window.__t425.parkPageAtBottom());
-  const pageBefore = await evaluate(page, () => window.__t425.pageScroll());
-  const upwards = await wheelOver(page, start.centre.x, start.centre.y, 0, 600);
-  const pageAfter = await evaluate(page, () => window.__t425.pageScroll());
-
+  const horizontal = await probeGestureSegment(page, "wheel", "horizontal");
+  const vertical = await probeGestureSegment(page, "wheel", "vertical");
   return {
-    target,
+    target: horizontal.target,
     scrollLocked: await evaluate(page, () =>
       document.body.hasAttribute("data-scroll-locked"),
     ),
-    horizontal: {
-      from: start.scrollLeft,
-      to: end.scrollLeft,
-      max: end.max,
-      arrived: sideways.arrived.length,
-      retargeted: sideways.arrived.every((event) => event.retargeted),
-      cancelled: sideways.settled.filter((event) => event.defaultPrevented)
-        .length,
-    },
-    vertical: {
-      arrived: upwards.arrived.length,
-      cancelled: upwards.settled.filter((event) => event.defaultPrevented)
-        .length,
-      box,
-      page: { before: pageBefore.y, after: pageAfter.y, max: pageBefore.max },
-    },
+    horizontal,
+    vertical,
   };
 }
 
@@ -1043,180 +1195,146 @@ async function probeWheel(page) {
  * is what makes this pair falsifiable rather than decorative.
  */
 function checkWheel(result, viewport, entry, baselineHeight) {
-  const at = { viewport: viewport.name, entry, gesture: "wheel" };
-  if (result.error) return [failure("no-scrolling-line", result.error, at)];
-  const failures = [];
-  const { horizontal, vertical } = result;
-  if (horizontal.arrived === 0 || vertical.arrived === 0)
-    return [
-      failure(
-        "no-wheel-delivered",
-        `${horizontal.arrived} sideways, ${vertical.arrived} upwards`,
-        at,
-      ),
-    ];
-  // Without the retargeting there is no T-450 to grade, and a green run would
-  // mean pierre had stopped using a shadow root rather than that this works.
-  if (!horizontal.retargeted)
-    failures.push(
-      failure(
-        "wheel-target-not-retargeted",
-        `wheels landed on ${JSON.stringify(result.target)} unretargeted`,
-        at,
-      ),
-    );
-  if (horizontal.max < 1)
-    failures.push(
-      failure("no-scrolling-line", "nothing to scroll sideways", at),
-    );
-  else if (horizontal.to <= horizontal.from)
-    failures.push(
-      failure(
-        "horizontal-wheel-blocked",
-        `scrollLeft stayed at ${horizontal.to} of ${horizontal.max}; ${horizontal.cancelled} of ${horizontal.arrived} wheels cancelled`,
-        at,
-      ),
-    );
-  if (vertical.cancelled === 0)
-    failures.push(
-      failure(
-        "vertical-wheel-not-cancelled",
-        `${vertical.arrived} upward wheels, none cancelled, with the dialog's own scroller at ${JSON.stringify(vertical.box)}`,
-        at,
-      ),
-    );
-  if (baselineHeight < 1)
-    failures.push(
-      failure(
-        "page-cannot-scroll",
-        `the issue page is ${baselineHeight}px short of scrolling, so the lock has nothing to hold`,
-        at,
-      ),
-    );
-  // `page-cannot-scroll` asks whether the page can scroll at all; this asks
-  // whether it could have scrolled *here*. The gesture goes up, so a page
-  // sitting at 0 holds still whether the lock works or not, and the outcome
-  // below would pass on a sample that never had anywhere to go.
-  else if (vertical.page.before < 1)
-    failures.push(
-      failure(
-        "page-already-at-top",
-        `the upward gesture started at 0 of ${vertical.page.max}, so there was nothing for the lock to prevent`,
-        at,
-      ),
-    );
-  else if (vertical.page.after !== vertical.page.before)
-    failures.push(
-      failure(
-        "page-scrolled-behind-dialog",
-        `window.scrollY ${vertical.page.before} → ${vertical.page.after}`,
-        at,
-      ),
-    );
-  return failures;
+  return checkGesturePhases(result, viewport, entry, baselineHeight, "wheel");
 }
 
 /** The same pair of questions asked of a finger; see `probeTouch`. */
 function checkTouch(result, viewport, entry, baselineHeight) {
-  const at = { viewport: viewport.name, entry, gesture: "touch" };
-  if (result.error) return [failure("no-scrolling-line", result.error, at)];
+  return checkGesturePhases(result, viewport, entry, baselineHeight, "touch");
+}
+
+/** Coverage gates only their own phase; missing vertical input cannot hide h/regrip. */
+function checkGesturePhases(result, viewport, entry, baselineHeight, gesture) {
   const failures = [];
-  const { horizontal, vertical, regrip } = result;
-  if (
-    horizontal.arrived === 0 ||
-    vertical.arrived === 0 ||
-    regrip.arrived === 0
-  )
-    return [
-      failure(
-        "no-touch-delivered",
-        `${horizontal.arrived} sideways, ${vertical.arrived} downwards, ${regrip.arrived} sideways across a second finger`,
-        at,
-      ),
-    ];
-  if (!horizontal.retargeted)
-    failures.push(
-      failure(
-        "touch-target-not-retargeted",
-        `drags landed on ${JSON.stringify(result.target)} unretargeted`,
-        at,
-      ),
-    );
-  // A finger cannot travel further than the box it starts in, so unlike the
-  // wheel this half can be starved of room by the layout rather than by the
-  // lock, and a green run would then mean nothing was asked.
-  if (horizontal.distance < 40 || vertical.distance < 40)
-    failures.push(
-      failure(
+  const at = { viewport: viewport.name, entry, gesture };
+  const phases =
+    gesture === "touch"
+      ? ["horizontal", "regrip", "vertical"]
+      : ["horizontal", "vertical"];
+  for (const phase of phases) {
+    const sample = result[phase];
+    const where = { ...at, phase };
+    const coverage = (name, detail) =>
+      failures.push(failure(name, detail, { ...where, coverage: true }));
+    const before = failures.length;
+    if (!sample || sample.error || result.error) {
+      coverage(
+        "no-scrolling-line",
+        sample?.error ?? result.error ?? `missing ${phase}`,
+      );
+      continue;
+    }
+    if (!(sample.arrived > 0))
+      coverage(
+        `no-${gesture}-delivered`,
+        `${sample.arrived ?? 0} events in ${phase}`,
+      );
+    if (gesture === "touch" && !(sample.distance >= 40))
+      coverage(
         "no-drag-room",
-        `${horizontal.distance}px sideways, ${vertical.distance}px downwards`,
-        at,
-      ),
-    );
-  else if (horizontal.max < 1)
-    failures.push(
-      failure("no-scrolling-line", "nothing to scroll sideways", at),
-    );
-  else if (horizontal.to <= horizontal.from)
-    failures.push(
-      failure(
-        "horizontal-touch-blocked",
-        `scrollLeft stayed at ${horizontal.to} of ${horizontal.max} over a ${horizontal.distance}px drag; ${horizontal.cancelled} of ${horizontal.arrived} touchmoves cancelled`,
-        at,
-      ),
-    );
-  // T-490, and a chain of its own on purpose: the plain drag above is this
-  // one's control, so a run has to be able to say that only the regripped
-  // gesture was blocked. Folding either verdict into the other's `else if`
-  // would hide exactly the difference this grades.
-  if (!regrip.secondFinger || !regrip.liftedBackToOne)
-    failures.push(
-      failure(
-        "no-second-finger",
-        `the interlude never happened: ${JSON.stringify(regrip.phases)}`,
-        at,
-      ),
-    );
-  else if (regrip.max >= 1 && regrip.to <= regrip.from)
-    failures.push(
-      failure(
-        "horizontal-touch-blocked-after-second-finger",
-        `scrollLeft stayed at ${regrip.to} of ${regrip.max} over a ${regrip.distance}px drag that gained and lost a finger; ${regrip.cancelled} of ${regrip.arrived} touchmoves cancelled`,
-        at,
-      ),
-    );
-  if (vertical.cancelled === 0)
-    failures.push(
-      failure(
-        "vertical-touch-not-cancelled",
-        `${vertical.arrived} downward touchmoves, none cancelled, with the dialog's own scroller at ${JSON.stringify(vertical.box)}`,
-        at,
-      ),
-    );
-  if (baselineHeight < 1)
-    failures.push(
-      failure(
+        `${sample.distance ?? 0}px in ${phase}; need at least 40px`,
+      );
+    // Retargeting must be witnessed by this gesture's own delivered events.
+    if (sample.arrived > 0 && sample.retargeted !== true)
+      coverage(
+        `${gesture}-target-not-retargeted`,
+        `${phase} target ${JSON.stringify(sample.target ?? result.target)} was not retargeted`,
+      );
+    if (phase !== "vertical") {
+      if (
+        !Number.isFinite(sample.from) ||
+        !Number.isFinite(sample.max) ||
+        sample.from < 0 ||
+        sample.max - sample.from < 1
+      )
+        coverage(
+          "no-scrolling-line",
+          `${phase} starts at ${sample.from} of ${sample.max}; less than 1px remains`,
+        );
+      if (
+        phase === "regrip" &&
+        (!sample.secondFinger || !sample.liftedBackToOne)
+      )
+        coverage(
+          "no-second-finger",
+          `interlude missing: ${JSON.stringify(sample.phases)}`,
+        );
+      if (failures.length === before && !(sample.to > sample.from))
+        failures.push(
+          failure(
+            phase === "regrip"
+              ? "horizontal-touch-blocked-after-second-finger"
+              : `horizontal-${gesture}-blocked`,
+            `scrollLeft ${sample.from} → ${sample.to} of ${sample.max}; ${sample.cancelled} of ${sample.arrived} events cancelled`,
+            where,
+          ),
+        );
+      continue;
+    }
+    const { box, page } = sample;
+    for (const [moment, boundary] of [
+      ["before", box],
+      ["after", sample.boxAfter],
+    ]) {
+      if (
+        boundary?.error ||
+        !Number.isFinite(boundary?.max) ||
+        !Number.isFinite(boundary?.scrollTop) ||
+        boundary.max <= 0 ||
+        boundary.scrollTop <= 0 ||
+        boundary.atBottom !== true ||
+        Math.abs(boundary.max - boundary.scrollTop) > EPSILON
+      )
+        coverage(
+          "scroll-box-not-at-bottom",
+          `need a real scrollable box at bottom ${moment} the gesture: ${JSON.stringify(boundary)}`,
+        );
+    }
+    if (
+      !Number.isFinite(baselineHeight) ||
+      baselineHeight < 1 ||
+      !Number.isFinite(page?.unlockedMax) ||
+      page.unlockedMax <= 0 ||
+      !Number.isFinite(page?.before) ||
+      !Number.isFinite(page?.after)
+    )
+      coverage(
         "page-cannot-scroll",
-        `the issue page is ${baselineHeight}px short of scrolling, so the lock has nothing to hold`,
-        at,
-      ),
-    );
-  else if (vertical.page.before < 1)
-    failures.push(
-      failure(
-        "page-already-at-top",
-        `the downward drag started at 0 of ${vertical.page.max}, so there was nothing for the lock to prevent`,
-        at,
-      ),
-    );
-  else if (vertical.page.after !== vertical.page.before)
-    failures.push(
-      failure(
-        "page-scrolled-behind-dialog",
-        `window.scrollY ${vertical.page.before} → ${vertical.page.after}`,
-        at,
-      ),
-    );
+        `baseline ${baselineHeight}; page ${JSON.stringify(page)}`,
+      );
+    if (Number.isFinite(page?.before) && page.before !== 0)
+      coverage(
+        "page-not-at-top",
+        `downward scroll must start at page top: ${JSON.stringify(page)}`,
+      );
+    if (
+      !Number.isFinite(page?.max) ||
+      !Number.isFinite(page?.before) ||
+      page.max - page.before < 1
+    )
+      coverage(
+        "page-no-downward-room",
+        `less than 1px of downward page room: ${JSON.stringify(page)}`,
+      );
+    // Both lock assertions need real input, a real boundary and downward page room.
+    if (failures.length !== before) continue;
+    if (sample.cancelled === 0)
+      failures.push(
+        failure(
+          `vertical-${gesture}-not-cancelled`,
+          `${sample.arrived} events, none cancelled; dialog ${JSON.stringify(box)}`,
+          where,
+        ),
+      );
+    if (page.after !== page.before)
+      failures.push(
+        failure(
+          "page-scrolled-behind-dialog",
+          `window.scrollY ${page.before} → ${page.after}`,
+          where,
+        ),
+      );
+  }
   return failures;
 }
 
@@ -1698,7 +1816,7 @@ async function runPass({ browser, stack, fixture, fault, label }) {
   const failures = [];
   const notes = {
     fault: fault ?? null,
-    faultApplied: null,
+    faultApplied: [],
     wheel: [],
     touch: [],
   };
@@ -1747,11 +1865,12 @@ async function runPass({ browser, stack, fixture, fault, label }) {
             );
             continue;
           }
-          if (fault && notes.faultApplied === null)
-            notes.faultApplied = await evaluate(
-              page,
-              () => window.__t425.faultApplied,
-            );
+          const faultEvidence = {
+            viewport: viewport.name,
+            entry,
+            opened: await evaluate(page, () => window.__t425.faultApplied),
+            stages: [],
+          };
           // wrap on (the default) → off → on again.
           for (const wrap of [true, false, true]) {
             if (
@@ -1782,6 +1901,14 @@ async function runPass({ browser, stack, fixture, fault, label }) {
                 );
             }
             await evaluate(page, () => window.__t425.settle());
+            // pierre can rebuild its contents when wrap changes. Reapply the
+            // DOM faults to this entry and measure each relevant mode anew.
+            if (fault) {
+              const injection = await evaluate(page, () =>
+                window.__t425.applyFault(),
+              );
+              faultEvidence.stages.push({ wrap, ...injection });
+            }
             failures.push(
               ...checkHeader(
                 await evaluate(page, () => window.__t425.headerLayout()),
@@ -1795,7 +1922,7 @@ async function runPass({ browser, stack, fixture, fault, label }) {
                 await evaluate(page, () => window.__t425.lineNumbers()),
                 wrap,
                 viewport,
-              ),
+              ).map((item) => ({ ...item, entry })),
             );
             const state = await evaluate(page, () =>
               window.__t425.scrollState(),
@@ -1804,21 +1931,88 @@ async function runPass({ browser, stack, fixture, fault, label }) {
               ? await evaluate(page, () => window.__t425.scrollBoxToBottom())
               : await scrollCodeToEnd(page);
             failures.push(
-              ...checkScroll(state, scrolled, wrap, viewport, baselineWidth),
+              ...checkScroll(
+                state,
+                scrolled,
+                wrap,
+                viewport,
+                baselineWidth,
+              ).map((item) => ({ ...item, entry })),
             );
             if (!wrap) {
-              const wheel = await probeWheel(page);
-              notes.wheel.push({ viewport: viewport.name, entry, ...wheel });
-              failures.push(
-                ...checkWheel(wheel, viewport, entry, baselineHeight),
-              );
-              const touch = await probeTouch(page);
-              notes.touch.push({ viewport: viewport.name, entry, ...touch });
-              failures.push(
-                ...checkTouch(touch, viewport, entry, baselineHeight),
-              );
+              for (const gesture of ["wheel", "touch"]) {
+                let fixture;
+                try {
+                  fixture = await evaluate(
+                    page,
+                    (kind) => window.__t425.prepareGesture(kind),
+                    gesture,
+                  );
+                  const result =
+                    gesture === "wheel"
+                      ? await probeWheel(page)
+                      : await probeTouch(page);
+                  const phases =
+                    gesture === "touch"
+                      ? ["horizontal", "regrip", "vertical"]
+                      : ["horizontal", "vertical"];
+                  // Check the roots after every segment too: pierre may
+                  // reclaim its pre during a render while the gesture runs.
+                  fixture.afterLightDOM = await evaluate(
+                    page,
+                    () => window.__t425.codeScroll().lightDOM,
+                  );
+                  if (fixture.light) {
+                    fixture.liveLightDOM =
+                      phases.every(
+                        (phase) =>
+                          result[phase]?.start?.lightDOM === true &&
+                          result[phase]?.end?.lightDOM === true &&
+                          result[phase]?.unretargeted === true,
+                      ) && fixture.afterLightDOM === true;
+                    fixture.applied = fixture.applied && fixture.liveLightDOM;
+                  }
+                  notes[gesture].push({
+                    viewport: viewport.name,
+                    entry,
+                    fixture,
+                    ...result,
+                  });
+                  if (!fixture.applied)
+                    failures.push(
+                      failure(
+                        "gesture-fixture-not-confirmed",
+                        JSON.stringify(fixture),
+                        { viewport: viewport.name, entry, gesture },
+                      ),
+                    );
+                  failures.push(
+                    ...(gesture === "wheel" ? checkWheel : checkTouch)(
+                      result,
+                      viewport,
+                      entry,
+                      baselineHeight,
+                    ),
+                  );
+                  if (fixture.short || fixture.light)
+                    faultEvidence.stages.push({ gesture, ...fixture });
+                } finally {
+                  const restored = await evaluate(page, () =>
+                    window.__t425.restoreGesture(),
+                  );
+                  if (fixture) fixture.restoration = restored;
+                  if (!restored.restored)
+                    failures.push(
+                      failure(
+                        "gesture-fixture-not-confirmed",
+                        "gesture DOM restoration failed",
+                        { viewport: viewport.name, entry, gesture },
+                      ),
+                    );
+                }
+              }
             }
-            if (wrap && entry === "description") {
+            if (wrap) {
               for (const side of ["deletion", "addition"]) {
                 failures.push(
                   ...checkCopy(
@@ -1826,7 +2020,7 @@ async function runPass({ browser, stack, fixture, fault, label }) {
                     side,
                     "within-line",
                     viewport,
-                  ),
+                  ).map((item) => ({ ...item, entry })),
                 );
                 failures.push(
                   ...checkCopy(
@@ -1834,10 +2028,32 @@ async function runPass({ browser, stack, fixture, fault, label }) {
                     side,
                     "across-lines",
                     viewport,
-                  ),
+                  ).map((item) => ({ ...item, entry })),
                 );
               }
             }
+          }
+          if (fault) {
+            const measured = faultEvidence.stages.filter(
+              (stage) => !stage.deferred,
+            );
+            // The BR fault needs wrapped lines; its unwrapped stage is not
+            // an injection opportunity. All other stages must confirm.
+            const relevant = measured.filter(
+              (stage) =>
+                fault !== "copy-inserts-breaks" || stage.wrap !== false,
+            );
+            faultEvidence.applied =
+              relevant.length > 0 &&
+              relevant.every((stage) => stage.applied === true);
+            notes.faultApplied.push(faultEvidence);
+            if (!faultEvidence.applied)
+              failures.push(
+                failure("fault-not-confirmed", JSON.stringify(faultEvidence), {
+                  viewport: viewport.name,
+                  entry,
+                }),
+              );
           }
           // Leave it off, so the reload and new-page checks have something
           // other than the default to prove.
@@ -1879,10 +2095,6 @@ async function runPass({ browser, stack, fixture, fault, label }) {
         await page.close().catch(() => {});
       }
     }
-    if (fault && notes.faultApplied?.applied !== true)
-      failures.push(
-        failure("fault-not-confirmed", JSON.stringify(notes.faultApplied)),
-      );
     return { name: `revision-history-wrap:${label}`, failures, notes };
   } finally {
     await context.close().catch(() => {});
@@ -2041,77 +2253,809 @@ async function checkPersistence(
   return failures;
 }
 
+// These signatures are handwritten oracles, never derived from checker output.
+const WHEEL_BLOCKED = ["horizontal-wheel-blocked", "wheel", "horizontal"];
+const TOUCH_BLOCKED = ["horizontal-touch-blocked", "touch", "horizontal"];
+const REGRIP_BLOCKED = [
+  "horizontal-touch-blocked-after-second-finger",
+  "touch",
+  "regrip",
+];
+const WHEEL_UNLOCKED = ["vertical-wheel-not-cancelled", "wheel", "vertical"];
+const TOUCH_UNLOCKED = ["vertical-touch-not-cancelled", "touch", "vertical"];
+const WHEEL_PAGE_MOVED = ["page-scrolled-behind-dialog", "wheel", "vertical"];
+const TOUCH_PAGE_MOVED = ["page-scrolled-behind-dialog", "touch", "vertical"];
+const VERTICAL_BEHAVIOR = [
+  WHEEL_UNLOCKED,
+  TOUCH_UNLOCKED,
+  WHEEL_PAGE_MOVED,
+  TOUCH_PAGE_MOVED,
+];
+const GESTURE_BEHAVIOR = [
+  WHEEL_BLOCKED,
+  TOUCH_BLOCKED,
+  REGRIP_BLOCKED,
+  ...VERTICAL_BEHAVIOR,
+];
+const SHORT_VERTICAL = ["no-drag-room", "touch", "vertical"];
+const NO_VERTICAL_TOUCH = ["no-touch-delivered", "touch", "vertical"];
+const WHEEL_LIGHT = [
+  ["wheel-target-not-retargeted", "wheel", "horizontal"],
+  ["wheel-target-not-retargeted", "wheel", "vertical"],
+];
+const TOUCH_LIGHT = [
+  ["touch-target-not-retargeted", "touch", "horizontal"],
+  ["touch-target-not-retargeted", "touch", "regrip"],
+  ["touch-target-not-retargeted", "touch", "vertical"],
+];
+
 const FAULTS = [
-  { fault: "gutter-unshared-rows", expect: "line-number-misaligned" },
-  { fault: "copy-inserts-breaks", expect: "copy-text-differs" },
-  { fault: "scroll-clipped", expect: "horizontal-scroll-blocked" },
-  { fault: "scroll-hidden", expect: "scroll-mode-overflow-style" },
-  { fault: "wrap-over-close", expect: "wrap-overlaps-close" },
-  { fault: "prose-rewrapped", expect: "prose-whiteSpace-changed" },
-  { fault: "wheel-release-disabled", expect: "horizontal-wheel-blocked" },
-  { fault: "touch-release-disabled", expect: "horizontal-touch-blocked" },
+  {
+    fault: "gutter-unshared-rows",
+    expected: [["line-number-misaligned"]],
+    strict: false,
+  },
+  {
+    fault: "copy-inserts-breaks",
+    expected: [["copy-text-differs"]],
+    strict: false,
+  },
+  {
+    fault: "scroll-clipped",
+    expected: [["horizontal-scroll-blocked"]],
+    strict: false,
+  },
+  {
+    fault: "scroll-hidden",
+    expected: [["scroll-mode-overflow-style"]],
+    strict: false,
+  },
+  {
+    fault: "wrap-over-close",
+    expected: [["wrap-overlaps-close"]],
+    strict: false,
+  },
+  {
+    fault: "prose-rewrapped",
+    expected: [["prose-whiteSpace-changed"]],
+    strict: false,
+    scope: "viewport",
+  },
+  {
+    fault: "wheel-release-disabled",
+    expected: [WHEEL_BLOCKED],
+    forbidden: [TOUCH_BLOCKED, REGRIP_BLOCKED, ...VERTICAL_BEHAVIOR],
+  },
+  {
+    fault: "touch-release-disabled",
+    expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+    forbidden: [WHEEL_BLOCKED, ...VERTICAL_BEHAVIOR],
+  },
   {
     fault: "second-finger-drops-origin",
-    expect: "horizontal-touch-blocked-after-second-finger",
+    expected: [REGRIP_BLOCKED],
+    forbidden: [WHEEL_BLOCKED, TOUCH_BLOCKED, ...VERTICAL_BEHAVIOR],
+    control: "plain-touch",
   },
-  { fault: "scroll-lock-removed", expect: "page-scrolled-behind-dialog" },
+  {
+    fault: "scroll-lock-removed",
+    expected: VERTICAL_BEHAVIOR,
+    forbidden: [WHEEL_BLOCKED, TOUCH_BLOCKED, REGRIP_BLOCKED],
+  },
+  {
+    fault: "touch-short-vertical",
+    expected: [SHORT_VERTICAL],
+    allowedCoverage: [SHORT_VERTICAL, NO_VERTICAL_TOUCH],
+    forbidden: GESTURE_BEHAVIOR,
+    short: true,
+  },
+  {
+    fault: "touch-short-vertical+touch-release-disabled",
+    expected: [SHORT_VERTICAL, TOUCH_BLOCKED, REGRIP_BLOCKED],
+    allowedCoverage: [SHORT_VERTICAL, NO_VERTICAL_TOUCH],
+    forbidden: [WHEEL_BLOCKED, ...VERTICAL_BEHAVIOR],
+    short: true,
+  },
+  {
+    fault: "touch-short-vertical+second-finger-drops-origin",
+    expected: [SHORT_VERTICAL, REGRIP_BLOCKED],
+    allowedCoverage: [SHORT_VERTICAL, NO_VERTICAL_TOUCH],
+    forbidden: [WHEEL_BLOCKED, TOUCH_BLOCKED, ...VERTICAL_BEHAVIOR],
+    short: true,
+    control: "plain-touch",
+  },
+  {
+    fault: "wheel-not-retargeted",
+    expected: WHEEL_LIGHT,
+    allowedCoverage: WHEEL_LIGHT,
+    forbidden: GESTURE_BEHAVIOR,
+    light: "wheel",
+  },
+  {
+    fault: "touch-not-retargeted",
+    expected: TOUCH_LIGHT,
+    allowedCoverage: TOUCH_LIGHT,
+    forbidden: GESTURE_BEHAVIOR,
+    light: "touch",
+  },
 ];
 
 function isCoverageFailure(entry) {
-  return COVERAGE_FAILURES.has(entry.name);
+  // A newly named prerequisite must remain coverage even before the registry
+  // is updated. Strict fault matrices also reject every undeclared behavior.
+  return entry.coverage === true || COVERAGE_FAILURES.has(entry.name);
 }
 
 async function runSelfTest(options) {
-  const passes = [];
-  const failures = [];
-  const baseline = await runPass({
-    ...options,
-    fault: null,
-    label: "baseline",
-  });
-  passes.push(baseline);
-  if (baseline.failures.length)
-    failures.push(
-      failure(
-        "self-test-baseline-not-clean",
-        `a dirty baseline cannot prove anything: ${baseline.failures
-          .map((entry) => entry.name)
-          .join(", ")}`,
-      ),
-    );
-  const baselineNames = new Set(baseline.failures.map((entry) => entry.name));
-  for (const { fault, expect } of FAULTS) {
-    const pass = await runPass({ ...options, fault, label: fault });
-    passes.push(pass);
-    const names = new Set(pass.failures.map((entry) => entry.name));
-    if (pass.failures.some((entry) => entry.name === "fault-not-confirmed"))
-      failures.push(
-        failure("fault-not-confirmed", `${fault} was not applied to the page`),
+  const fixed = runFixedCheckerSelfTests();
+  const passes = [fixed];
+  const failures = [...fixed.failures];
+  let passNumber = 0;
+  const total = 1 + FAULTS.length * 2;
+  const run = async (fault, label) => {
+    const number = ++passNumber;
+    console.error(`[self-test ${number}/${total}] start ${label}`);
+    try {
+      const pass = await runPass({ ...options, fault, label });
+      passes.push(pass);
+      console.error(
+        `[self-test ${number}/${total}] end ${label}: ${pass.failures.length} findings`,
       );
-    else if (!names.has(expect) || baselineNames.has(expect))
+      return pass;
+    } catch (error) {
+      console.error(`[self-test ${number}/${total}] end ${label}: exception`);
+      const pass = {
+        name: `revision-history-wrap:${label}`,
+        failures: [failure("case-exception", error.stack ?? String(error))],
+        notes: { fault, wheel: [], touch: [], faultApplied: [] },
+      };
+      passes.push(pass);
+      return pass;
+    }
+  };
+  const requireClean = (pass, name) => {
+    const cells = [];
+    for (const viewport of VIEWPORTS) {
+      for (const entry of ["description", "comment"]) {
+        const actual = pass.failures.filter(
+          (item) =>
+            (!item.viewport || item.viewport === viewport.name) &&
+            (!item.entry || item.entry === entry),
+        );
+        const sampled = ["wheel", "touch"].every(
+          (gesture) =>
+            pass.notes?.[gesture]?.filter(
+              (item) => item.viewport === viewport.name && item.entry === entry,
+            ).length === 1,
+        );
+        cells.push({
+          viewport: viewport.name,
+          entry,
+          status: actual.length === 0 && sampled ? "green" : "red",
+          actual,
+          sampled,
+        });
+      }
+    }
+    pass.notes ??= {};
+    pass.notes.selfTestMatrix = cells;
+    if (pass.failures.length || cells.some((cell) => cell.status === "red"))
       failures.push(
         failure(
-          "self-test-no-new-failure",
-          `${fault} was expected to produce ${expect}; got ${[...names].join(", ") || "nothing"}`,
+          name,
+          `${pass.name}: clean pass has failures or missing samples`,
+          { matrix: cells, actual: pass.failures },
         ),
       );
+  };
+  const baseline = await run(null, "baseline");
+  requireClean(baseline, "self-test-baseline-not-clean");
+  for (const spec of FAULTS) {
+    const pass = await run(spec.fault, spec.fault);
+    const matrix = checkFaultMatrix(pass, spec);
+    pass.notes ??= {};
+    pass.notes.selfTestMatrix = matrix.cells;
+    failures.push(...matrix.failures);
+    // runPass creates a fresh browser context; do this after every fault,
+    // including a failed or throwing fault, so restoration is independently graded.
+    const restored = await run(null, `restored-after-${spec.fault}`);
+    requireClean(restored, "self-test-fresh-restoration");
   }
-  const restored = await runPass({
-    ...options,
-    fault: null,
-    label: "restored",
-  });
-  passes.push(restored);
-  if (restored.failures.length)
+  return { passes, failures };
+}
+
+function matchesFailure(item, [name, gesture, phase]) {
+  return (
+    item.name === name &&
+    (gesture === undefined || item.gesture === gesture) &&
+    (phase === undefined || item.phase === phase)
+  );
+}
+
+/** Four explicit sample verdicts; no union of pass-wide failure names. */
+function checkFaultMatrix(pass, spec) {
+  const cells = [];
+  const failures = [];
+  const allowedCoverage = spec.allowedCoverage ?? [];
+  for (const viewport of VIEWPORTS) {
+    for (const entry of ["description", "comment"]) {
+      const actual = pass.failures.filter(
+        (item) =>
+          item.viewport === viewport.name &&
+          (item.entry === entry ||
+            (spec.scope === "viewport" && item.entry === undefined)),
+      );
+      const missing = spec.expected.filter(
+        (want) => !actual.some((item) => matchesFailure(item, want)),
+      );
+      const forbidden = actual.filter((item) =>
+        (spec.forbidden ?? []).some((want) => matchesFailure(item, want)),
+      );
+      const unexpected = actual.filter((item) =>
+        isCoverageFailure(item)
+          ? !allowedCoverage.some((want) => matchesFailure(item, want))
+          : spec.strict !== false &&
+            !spec.expected.some((want) => matchesFailure(item, want)),
+      );
+      const evidence = {};
+      const problems = [];
+      for (const gesture of ["wheel", "touch"]) {
+        const samples =
+          pass.notes?.[gesture]?.filter(
+            (sample) =>
+              sample.viewport === viewport.name && sample.entry === entry,
+          ) ?? [];
+        if (samples.length !== 1)
+          problems.push(`${gesture}: expected exactly one recorded sample`);
+        evidence[gesture] = samples[0] ?? null;
+      }
+      const applied =
+        pass.notes?.faultApplied?.filter(
+          (sample) =>
+            sample.viewport === viewport.name && sample.entry === entry,
+        ) ?? [];
+      if (applied.length !== 1 || applied[0].applied !== true)
+        problems.push("fault application was not confirmed for this sample");
+      if (spec.control === "plain-touch") {
+        const horizontal = evidence.touch?.horizontal;
+        if (
+          !horizontal ||
+          !(horizontal.arrived > 0) ||
+          !(horizontal.distance >= 40) ||
+          horizontal.retargeted !== true ||
+          !(horizontal.max - horizontal.from >= 1) ||
+          !(horizontal.to > horizontal.from)
+        )
+          problems.push(
+            "ordinary touch drag did not scroll as the regrip control",
+          );
+      }
+      if (spec.short) {
+        const sample = evidence.touch;
+        if (
+          !(sample?.vertical?.distance > 0 && sample.vertical.distance < 40) ||
+          !(sample?.horizontal?.distance >= 40) ||
+          !(sample?.regrip?.distance >= 40)
+        )
+          problems.push(
+            "measured paths must keep both horizontal drags >=40px and vertical in (0,40)px",
+          );
+        if (
+          sample?.fixture?.applied !== true ||
+          sample?.fixture?.short !== true ||
+          !(sample?.fixture?.horizontalDistance >= 40) ||
+          !(
+            sample?.fixture?.verticalDistance > 0 &&
+            sample.fixture.verticalDistance < 40
+          )
+        )
+          problems.push("short-vertical fixture geometry was not confirmed");
+      }
+      if (spec.fault === "scroll-lock-removed") {
+        for (const gesture of ["wheel", "touch"]) {
+          const vertical = evidence[gesture]?.vertical;
+          if (!(vertical?.page?.after > vertical?.page?.before))
+            problems.push(`${gesture}: unlocked page did not move downward`);
+          const downward =
+            gesture === "wheel"
+              ? vertical?.events?.arrived?.length > 0 &&
+                vertical.events.arrived.every((event) => event.deltaY > 0)
+              : vertical?.path?.to?.y < vertical?.path?.from?.y;
+          if (!downward)
+            problems.push(`${gesture}: no measured downward scroll input`);
+        }
+      }
+      if (spec.light) {
+        const sample = evidence[spec.light];
+        const phases =
+          spec.light === "touch"
+            ? ["horizontal", "regrip", "vertical"]
+            : ["horizontal", "vertical"];
+        if (
+          sample?.fixture?.lightDOM !== true ||
+          sample?.fixture?.afterLightDOM !== true ||
+          sample?.fixture?.liveLightDOM !== true ||
+          sample?.fixture?.restoration?.restored !== true
+        )
+          problems.push(
+            "light DOM fixture did not survive the gesture or restore afterwards",
+          );
+        for (const phase of phases) {
+          const observed = sample?.[phase];
+          const events = observed?.events?.arrived;
+          if (
+            !observed ||
+            !(observed.arrived > 0) ||
+            observed.retargeted !== false ||
+            observed.unretargeted !== true ||
+            !Array.isArray(events) ||
+            events.length !== observed.arrived ||
+            !events.every((event) => event.retargeted === false)
+          )
+            problems.push(
+              `${spec.light}/${phase}: need all delivered events unretargeted`,
+            );
+          if (
+            observed?.start?.lightDOM !== true ||
+            observed?.end?.lightDOM !== true
+          )
+            problems.push(
+              `${spec.light}/${phase}: nodes did not stay in light DOM`,
+            );
+          if (phase !== "vertical" && !(observed?.to > observed?.from))
+            problems.push(
+              `${spec.light}/${phase}: light DOM control did not scroll`,
+            );
+        }
+      }
+      const cell = {
+        viewport: viewport.name,
+        entry,
+        status:
+          missing.length ||
+          forbidden.length ||
+          unexpected.length ||
+          problems.length
+            ? "red"
+            : "green",
+        expected: spec.expected,
+        forbiddenExpected: spec.forbidden ?? [],
+        allowedCoverage,
+        missing,
+        forbidden,
+        unexpected,
+        problems,
+        actual,
+        evidence,
+        faultApplied: applied,
+      };
+      cells.push(cell);
+      if (cell.status === "red")
+        failures.push(
+          failure(
+            "self-test-fault-matrix",
+            `${spec.fault}: ${viewport.name}/${entry}`,
+            { fault: spec.fault, ...cell },
+          ),
+        );
+    }
+  }
+  // Unattributed or unknown-sample failures must not disappear outside the grid.
+  const outside = pass.failures.filter(
+    (item) =>
+      (!VIEWPORTS.some((viewport) => viewport.name === item.viewport) ||
+        (!["description", "comment"].includes(item.entry) &&
+          !(spec.scope === "viewport" && item.entry === undefined))) &&
+      (isCoverageFailure(item) || spec.strict !== false),
+  );
+  if (outside.length)
     failures.push(
       failure(
-        "self-test-fresh-restoration",
-        `a clean rerun after the faults failed: ${restored.failures
-          .map((entry) => entry.name)
-          .join(", ")}`,
+        "self-test-fault-matrix",
+        `${spec.fault}: failures outside the four samples`,
+        { actual: outside },
       ),
     );
-  return { passes, failures };
+  return { cells, failures };
+}
+
+/** Fixed numbers plus handwritten expected failures: this oracle never calls a checker. */
+function fixedGestureInput() {
+  const horizontal = {
+    from: 0,
+    to: 80,
+    max: 300,
+    distance: 120,
+    arrived: 4,
+    retargeted: true,
+    cancelled: 0,
+  };
+  return {
+    target: { tag: "DIFFS-CONTAINER" },
+    horizontal: { ...horizontal },
+    regrip: {
+      ...horizontal,
+      secondFinger: true,
+      liftedBackToOne: true,
+      phases: [
+        { type: "touchstart", touches: 2 },
+        { type: "touchend", touches: 1 },
+      ],
+    },
+    vertical: {
+      distance: 100,
+      arrived: 4,
+      retargeted: true,
+      cancelled: 4,
+      box: { max: 200, scrollTop: 200, atBottom: true },
+      boxAfter: { max: 200, scrollTop: 200, atBottom: true },
+      page: { before: 0, after: 0, max: 500, unlockedMax: 500 },
+    },
+  };
+}
+
+function runFixedCheckerSelfTests() {
+  const noRegrip = ["no-touch-delivered", "touch", "regrip"];
+  const shortRegrip = ["no-drag-room", "touch", "regrip"];
+  const noRegripRoom = ["no-scrolling-line", "touch", "regrip"];
+  const blockedBoth = { horizontal: { to: 0 }, regrip: { to: 0 } };
+  const cases = [
+    { name: "healthy", expected: [] },
+    {
+      name: "touch-horizontal-and-regrip-blocked",
+      touch: blockedBoth,
+      expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+    },
+    {
+      name: "vertical-zero-keeps-both-horizontal-failures",
+      touch: { ...blockedBoth, vertical: { arrived: 0, cancelled: 0 } },
+      expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+      coverage: [NO_VERTICAL_TOUCH],
+    },
+    {
+      name: "vertical-short-keeps-both-horizontal-failures",
+      touch: { ...blockedBoth, vertical: { distance: 39, cancelled: 0 } },
+      expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+      coverage: [SHORT_VERTICAL],
+    },
+    {
+      name: "vertical-zero-and-short-keeps-both-horizontal-failures",
+      touch: {
+        ...blockedBoth,
+        vertical: { arrived: 0, distance: 0, cancelled: 0 },
+      },
+      expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+      coverage: [NO_VERTICAL_TOUCH, SHORT_VERTICAL],
+    },
+    {
+      name: "regrip-short",
+      touch: { regrip: { to: 0, distance: 39 } },
+      expected: [],
+      coverage: [shortRegrip],
+    },
+    {
+      name: "regrip-zero-events",
+      touch: { regrip: { to: 0, arrived: 0 } },
+      expected: [],
+      coverage: [noRegrip],
+    },
+    {
+      name: "regrip-zero-max",
+      touch: { regrip: { to: 0, max: 0 } },
+      expected: [],
+      coverage: [noRegripRoom],
+    },
+    {
+      name: "regrip-no-remaining-room",
+      touch: { regrip: { from: 299.5, to: 299.5 } },
+      expected: [],
+      coverage: [noRegripRoom],
+    },
+    {
+      name: "regrip-missing-second-finger",
+      touch: { regrip: { to: 0, secondFinger: false } },
+      expected: [],
+      coverage: [["no-second-finger", "touch", "regrip"]],
+    },
+    {
+      name: "regrip-missing-lift",
+      touch: { regrip: { to: 0, liftedBackToOne: false } },
+      expected: [],
+      coverage: [["no-second-finger", "touch", "regrip"]],
+    },
+    {
+      name: "regrip-own-retargeting",
+      touch: { regrip: { to: 0, retargeted: false } },
+      expected: [],
+      coverage: [["touch-target-not-retargeted", "touch", "regrip"]],
+    },
+    {
+      name: "plain-zero-keeps-regrip-failure",
+      touch: { horizontal: { arrived: 0, to: 0 }, regrip: { to: 0 } },
+      expected: [REGRIP_BLOCKED],
+      coverage: [["no-touch-delivered", "touch", "horizontal"]],
+    },
+    {
+      name: "plain-short-keeps-regrip-failure",
+      touch: { horizontal: { distance: 39, to: 0 }, regrip: { to: 0 } },
+      expected: [REGRIP_BLOCKED],
+      coverage: [["no-drag-room", "touch", "horizontal"]],
+    },
+    {
+      name: "plain-no-room-keeps-regrip-failure",
+      touch: { horizontal: { from: 300, to: 300 }, regrip: { to: 0 } },
+      expected: [REGRIP_BLOCKED],
+      coverage: [["no-scrolling-line", "touch", "horizontal"]],
+    },
+    {
+      name: "regrip-isolation",
+      touch: { regrip: { to: 0 } },
+      expected: [REGRIP_BLOCKED],
+    },
+    {
+      name: "wheel-isolation",
+      wheel: { horizontal: { to: 0 } },
+      expected: [WHEEL_BLOCKED],
+    },
+    {
+      name: "wheel-vertical-zero-keeps-horizontal-failure",
+      wheel: { horizontal: { to: 0 }, vertical: { arrived: 0, cancelled: 0 } },
+      expected: [WHEEL_BLOCKED],
+      coverage: [["no-wheel-delivered", "wheel", "vertical"]],
+    },
+    {
+      name: "wheel-horizontal-zero-keeps-vertical-failures",
+      wheel: {
+        horizontal: { arrived: 0, to: 0 },
+        vertical: {
+          cancelled: 0,
+          page: { before: 0, after: 30, max: 500, unlockedMax: 500 },
+        },
+      },
+      expected: [WHEEL_UNLOCKED, WHEEL_PAGE_MOVED],
+      coverage: [["no-wheel-delivered", "wheel", "horizontal"]],
+    },
+    {
+      name: "wheel-no-remaining-room",
+      wheel: { horizontal: { from: 299.5, to: 299.5 } },
+      expected: [],
+      coverage: [["no-scrolling-line", "wheel", "horizontal"]],
+    },
+    {
+      name: "vertical-box-zero-range",
+      touch: {
+        vertical: {
+          cancelled: 0,
+          box: { max: 0, scrollTop: 0, atBottom: true },
+        },
+      },
+      expected: [],
+      coverage: [["scroll-box-not-at-bottom", "touch", "vertical"]],
+    },
+    {
+      name: "vertical-box-not-at-bottom",
+      touch: {
+        vertical: {
+          cancelled: 0,
+          box: { max: 200, scrollTop: 198, atBottom: true },
+        },
+      },
+      expected: [],
+      coverage: [["scroll-box-not-at-bottom", "touch", "vertical"]],
+    },
+    {
+      name: "vertical-page-not-at-top",
+      touch: {
+        vertical: {
+          cancelled: 0,
+          page: { before: 20, after: 30, max: 500, unlockedMax: 500 },
+        },
+      },
+      expected: [],
+      coverage: [["page-not-at-top", "touch", "vertical"]],
+    },
+    {
+      name: "vertical-page-no-room",
+      touch: {
+        vertical: {
+          cancelled: 0,
+          page: { before: 0, after: 0, max: 0.5, unlockedMax: 500 },
+        },
+      },
+      expected: [],
+      coverage: [["page-no-downward-room", "touch", "vertical"]],
+    },
+    {
+      name: "vertical-page-no-unlocked-range",
+      touch: {
+        vertical: {
+          cancelled: 0,
+          page: { before: 0, after: 0, max: 500, unlockedMax: 0 },
+        },
+      },
+      expected: [],
+      coverage: [["page-cannot-scroll", "touch", "vertical"]],
+    },
+    {
+      name: "vertical-behavior-keeps-horizontal-control",
+      touch: {
+        vertical: {
+          cancelled: 0,
+          page: { before: 0, after: 30, max: 500, unlockedMax: 500 },
+        },
+      },
+      expected: [TOUCH_UNLOCKED, TOUCH_PAGE_MOVED],
+    },
+    {
+      name: "minimum-distance-and-room",
+      touch: {
+        horizontal: { distance: 40, max: 1, to: 1 },
+        regrip: { distance: 40, max: 1, to: 1 },
+        vertical: { distance: 40 },
+      },
+      expected: [],
+    },
+    {
+      name: "wheel-light-dom-isolation",
+      wheel: {
+        horizontal: { retargeted: false },
+        vertical: { retargeted: false },
+      },
+      expected: [],
+      coverage: WHEEL_LIGHT,
+    },
+    {
+      name: "touch-light-dom-isolation",
+      touch: {
+        horizontal: { retargeted: false },
+        regrip: { retargeted: false },
+        vertical: { retargeted: false },
+      },
+      expected: [],
+      coverage: TOUCH_LIGHT,
+    },
+    {
+      name: "regrip-all-coverage-keeps-plain-failure",
+      touch: {
+        horizontal: { to: 0 },
+        regrip: { arrived: 0, distance: 0, max: 0, to: 0, secondFinger: false },
+      },
+      expected: [TOUCH_BLOCKED],
+      coverage: [
+        noRegrip,
+        shortRegrip,
+        noRegripRoom,
+        ["no-second-finger", "touch", "regrip"],
+      ],
+    },
+    {
+      name: "missing-vertical-keeps-both-horizontal-failures",
+      touch: { ...blockedBoth, vertical: null },
+      expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+      coverage: [["no-scrolling-line", "touch", "vertical"]],
+    },
+    {
+      name: "vertical-error-keeps-both-horizontal-failures",
+      touch: { ...blockedBoth, vertical: { error: "no visible code" } },
+      expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+      coverage: [["no-scrolling-line", "touch", "vertical"]],
+    },
+    {
+      name: "box-subpixel-bottom-is-valid",
+      touch: {
+        vertical: { box: { max: 200, scrollTop: 199.5, atBottom: true } },
+      },
+      expected: [],
+    },
+    {
+      name: "box-one-pixel-bottom-is-valid",
+      touch: {
+        vertical: {
+          box: { max: 200, scrollTop: 199, atBottom: true },
+          boxAfter: { max: 200, scrollTop: 199, atBottom: true },
+        },
+      },
+      expected: [],
+    },
+    {
+      name: "box-top-zero-is-not-travel",
+      touch: {
+        vertical: { box: { max: 1, scrollTop: 0, atBottom: true } },
+      },
+      expected: [],
+      coverage: [["scroll-box-not-at-bottom", "touch", "vertical"]],
+    },
+    {
+      name: "box-left-bottom-after-gesture",
+      touch: {
+        ...blockedBoth,
+        vertical: {
+          boxAfter: { max: 200, scrollTop: 160, atBottom: false },
+        },
+      },
+      expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+      coverage: [["scroll-box-not-at-bottom", "touch", "vertical"]],
+    },
+    {
+      name: "baseline-zero-gates-only-vertical",
+      baselineHeight: 0,
+      touch: blockedBoth,
+      expected: [TOUCH_BLOCKED, REGRIP_BLOCKED],
+      coverage: [
+        ["page-cannot-scroll", "wheel", "vertical"],
+        ["page-cannot-scroll", "touch", "vertical"],
+      ],
+    },
+  ];
+  const cells = [];
+  const failures = [];
+  const key = (tuple, coverage) =>
+    `${tuple.join("/")}/${coverage ? "coverage" : "behavior"}`;
+  for (const test of cases) {
+    for (const viewport of VIEWPORTS) {
+      for (const entry of ["description", "comment"]) {
+        const actual = [];
+        const inputs = {};
+        for (const gesture of ["wheel", "touch"]) {
+          const input = fixedGestureInput();
+          for (const [phase, patch] of Object.entries(test[gesture] ?? {}))
+            input[phase] =
+              patch === null ? null : { ...input[phase], ...patch };
+          inputs[gesture] = input;
+          actual.push(
+            ...(gesture === "wheel" ? checkWheel : checkTouch)(
+              input,
+              viewport,
+              entry,
+              test.baselineHeight ?? 500,
+            ),
+          );
+        }
+        const expected = [
+          ...test.expected.map((tuple) => key(tuple, false)),
+          ...(test.coverage ?? []).map((tuple) => key(tuple, true)),
+        ].sort();
+        const got = actual
+          .map((item) =>
+            key([item.name, item.gesture, item.phase], isCoverageFailure(item)),
+          )
+          .sort();
+        const attribution = actual.every(
+          (item) => item.viewport === viewport.name && item.entry === entry,
+        );
+        const status =
+          JSON.stringify(expected) === JSON.stringify(got) && attribution
+            ? "green"
+            : "red";
+        const cell = {
+          case: test.name,
+          viewport: viewport.name,
+          entry,
+          status,
+          expected,
+          actual: got,
+          inputs,
+        };
+        cells.push(cell);
+        if (status === "red")
+          failures.push(
+            failure(
+              "self-test-checker-mismatch",
+              `${test.name}: ${viewport.name}/${entry}`,
+              cell,
+            ),
+          );
+      }
+    }
+  }
+  console.error(
+    `[self-test fixed checkers] ${cells.filter((cell) => cell.status === "green").length}/${cells.length} green`,
+  );
+  return {
+    name: "revision-history-wrap:fixed-checker-inputs",
+    failures,
+    notes: { checkerCases: cells },
+  };
 }
 
 function parseArgs(argv) {
