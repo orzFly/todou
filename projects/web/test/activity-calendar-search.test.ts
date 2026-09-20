@@ -12,6 +12,23 @@ import {
   rollingActivityWindow,
 } from "../src/lib/activity-calendar-search.ts";
 
+/**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 const context = {
   now: new Date("2026-01-01T01:00:00Z"),
   timezone: "America/Los_Angeles",
@@ -142,10 +159,30 @@ describe("activity date search", () => {
       read_finished_at: "2012-01-01T00:00:01Z",
       selection: null,
       days: [
-        { date: "2011-12-28", state: "not_applicable", count: null },
-        { date: "2011-12-29", state: "recorded", count: 3 },
-        { date: "2011-12-30", state: "not_applicable", count: null },
-        { date: "2011-12-31", state: "recorded", count: 0 },
+        {
+          date: "2011-12-28",
+          ...dayBounds("2011-12-28"),
+          state: "not_applicable",
+          count: null,
+        },
+        {
+          date: "2011-12-29",
+          ...dayBounds("2011-12-29"),
+          state: "recorded",
+          count: 3,
+        },
+        {
+          date: "2011-12-30",
+          ...dayBounds("2011-12-30"),
+          state: "not_applicable",
+          count: null,
+        },
+        {
+          date: "2011-12-31",
+          ...dayBounds("2011-12-31"),
+          state: "recorded",
+          count: 0,
+        },
       ],
     };
     expect(defaultActivityDay(response)).toBe("2011-12-31");
@@ -154,13 +191,27 @@ describe("activity date search", () => {
     expect(
       defaultActivityDay({
         ...response,
-        days: [{ date: "2011-12-30", state: "not_applicable", count: null }],
+        days: [
+          {
+            date: "2011-12-30",
+            ...dayBounds("2011-12-30"),
+            state: "not_applicable",
+            count: null,
+          },
+        ],
       }),
     ).toBeUndefined();
     expect(
       defaultActivityDay({
         ...response,
-        days: [{ date: "2011-12-31", state: "future", count: null }],
+        days: [
+          {
+            date: "2011-12-31",
+            ...dayBounds("2011-12-31"),
+            state: "future",
+            count: null,
+          },
+        ],
       }),
     ).toBeUndefined();
   });

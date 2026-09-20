@@ -21,6 +21,23 @@ import { api, meQuery, queryClient } from "../src/api/queries.ts";
 import { userQuery, userSearchSchema } from "../src/api/users.ts";
 import { router as appRouter } from "../src/router.tsx";
 
+/**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 vi.mock("sonner", async (importOriginal) => {
   const actual = await importOriginal<typeof sonner>();
   return {
@@ -432,11 +449,12 @@ function recordedCalendar(
     cutoff: "2026-09-19T12:00:00Z",
     read_started_at: "2026-09-19T12:00:00Z",
     read_finished_at: "2026-09-19T12:00:00Z",
-    days: Array.from({ length: count }, (_, index) => ({
-      date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
-      state: "recorded" as const,
-      count: 0,
-    })),
+    days: Array.from({ length: count }, (_, index) => {
+      const date = new Date(start + index * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      return { date, ...dayBounds(date), state: "recorded" as const, count: 0 };
+    }),
     selection: input.day
       ? {
           date: input.day,
@@ -727,6 +745,7 @@ describe("the registered user route's activity dates", () => {
               availability === "all unavailable" || day.date === "2026-03-04"
                 ? {
                     date: day.date,
+                    ...dayBounds(day.date),
                     state: "not_applicable" as const,
                     count: null,
                   }
@@ -774,6 +793,7 @@ describe("the registered user route's activity dates", () => {
           ...response,
           days: response.days.map((day) => ({
             date: day.date,
+            ...dayBounds(day.date),
             state: "not_applicable" as const,
             count: null,
           })),

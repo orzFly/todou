@@ -14,6 +14,23 @@ import {
 } from "../src/api/activity-calendar.ts";
 import { api } from "../src/api/queries.ts";
 
+/**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 const input: ProjectActivityCalendarRequest = {
   viewerId: 42,
   projectId: 1,
@@ -76,9 +93,10 @@ function response(
         .toISOString()
         .slice(0, 10);
       return date > "2026-03-02"
-        ? { date, state: "future", count: null }
+        ? { date, ...dayBounds(date), state: "future", count: null }
         : {
             date,
+            ...dayBounds(date),
             state: "recorded",
             count:
               date === input.day

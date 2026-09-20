@@ -104,23 +104,40 @@ export type ActivityCalendarQuery = z.infer<typeof ActivityCalendarQuery>;
 // the client API to an arbitrary query dictionary.
 export type ActivityCalendarQueryInput = z.input<typeof ActivityCalendarQuery>;
 
-export const ActivityDay = z.discriminatedUnion("state", [
-  z.object({
-    date: CalendarDate,
-    state: z.literal("recorded"),
-    count: NonNegativeSafeInteger,
-  }),
-  z.object({
-    date: CalendarDate,
-    state: z.literal("future"),
-    count: z.null(),
-  }),
-  z.object({
-    date: CalendarDate,
-    state: z.literal("not_applicable"),
-    count: z.null(),
-  }),
-]);
+// The instants a local date spans are the server's to state: it alone holds the
+// IANA rules, and a cell that has to line up with a time axis cannot be placed
+// by re-deriving midnight in the browser. `end` is the next date's `start`, so
+// a civil date that was skipped outright spans nothing and the two are equal.
+const DayBounds = {
+  start: Timestamp,
+  end: Timestamp,
+};
+
+export const ActivityDay = z
+  .discriminatedUnion("state", [
+    z.object({
+      date: CalendarDate,
+      state: z.literal("recorded"),
+      count: NonNegativeSafeInteger,
+      ...DayBounds,
+    }),
+    z.object({
+      date: CalendarDate,
+      state: z.literal("future"),
+      count: z.null(),
+      ...DayBounds,
+    }),
+    z.object({
+      date: CalendarDate,
+      state: z.literal("not_applicable"),
+      count: z.null(),
+      ...DayBounds,
+    }),
+  ])
+  .refine((day) => Date.parse(day.end) >= Date.parse(day.start), {
+    path: ["end"],
+    message: "end must be at or after start",
+  });
 export type ActivityDay = z.infer<typeof ActivityDay>;
 
 export const ActivityCard = z

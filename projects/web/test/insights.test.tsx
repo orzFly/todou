@@ -43,6 +43,23 @@ import {
 import { router } from "../src/router.tsx";
 import { testQueryClient } from "./render.tsx";
 
+/**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 vi.mock("sonner", async (importOriginal) => {
   const actual = await importOriginal<typeof sonner>();
   return {
@@ -143,14 +160,20 @@ function calendarSnapshot(
     const day = date.toISOString().slice(0, 10);
     days.push(
       day > "2026-09-18"
-        ? { date: day, state: "future", count: null }
+        ? { date: day, ...dayBounds(day), state: "future", count: null }
         : recorded && day >= "2025-09-17"
           ? {
               date: day,
+              ...dayBounds(day),
               state: "recorded",
               count: day.endsWith("-09-17") || day.endsWith("-09-18") ? 1 : 0,
             }
-          : { date: day, state: "not_applicable", count: null },
+          : {
+              date: day,
+              ...dayBounds(day),
+              state: "not_applicable",
+              count: null,
+            },
     );
     date.setUTCDate(date.getUTCDate() + 1);
   }

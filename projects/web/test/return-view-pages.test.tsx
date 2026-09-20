@@ -66,6 +66,23 @@ import { ProjectIssueListPage } from "../src/pages/issue-list.tsx";
 import { router as appRouter } from "../src/router.tsx";
 import { testQueryClient } from "./render.tsx";
 
+/**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 // Suspend only the user calendar in the lazy-layout case. Once released this
 // renders the real endpoint wrapper and calendar; no readiness is simulated.
 const userCalendarModule = vi.hoisted(() => ({
@@ -1324,7 +1341,9 @@ function userCalendar(
     cutoff: "2026-09-19T12:00:00Z",
     read_started_at: "2026-09-19T12:00:00Z",
     read_finished_at: "2026-09-19T12:00:00Z",
-    days: recorded ? [{ date, state: "recorded", count: 1 }] : [],
+    days: recorded
+      ? [{ date, ...dayBounds(date), state: "recorded", count: 1 }]
+      : [],
     selection:
       recorded && input.day
         ? {

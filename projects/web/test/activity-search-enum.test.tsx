@@ -14,6 +14,23 @@ import { ActivityCalendar } from "../src/components/activity-calendar/activity-c
 import { SearchResults } from "../src/pages/search.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
+/**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 const futureValues = ["future-state", "constructor", "__proto__"];
 const malformedValues = [undefined, null, "", 0, false, {}, []].map(
   (value) => ({
@@ -48,10 +65,30 @@ describe("ActivityCalendar state identity", () => {
     const onDayChange = vi.fn();
     calendar(
       [
-        { date: "2024-01-01", state: "recorded", count: 1 },
-        { date: "2024-01-02", state: "recorded", count: 3 },
-        { date: "2024-01-03", state: "future", count: null },
-        { date: "2024-01-04", state: "not_applicable", count: null },
+        {
+          date: "2024-01-01",
+          ...dayBounds("2024-01-01"),
+          state: "recorded",
+          count: 1,
+        },
+        {
+          date: "2024-01-02",
+          ...dayBounds("2024-01-02"),
+          state: "recorded",
+          count: 3,
+        },
+        {
+          date: "2024-01-03",
+          ...dayBounds("2024-01-03"),
+          state: "future",
+          count: null,
+        },
+        {
+          date: "2024-01-04",
+          ...dayBounds("2024-01-04"),
+          state: "not_applicable",
+          count: null,
+        },
       ],
       onDayChange,
     );

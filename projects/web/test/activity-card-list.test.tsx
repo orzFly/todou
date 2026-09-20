@@ -17,6 +17,23 @@ import {
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 /**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
+/**
  * The shared row resolves a ref from the project's reference config, the way
  * every other issue list does, so the prefix is seeded per slug rather than
  * carried on each card.
@@ -153,7 +170,12 @@ describe("ActivityCalendar and ActivityCardList shared selection", () => {
       const date = new Date(Date.UTC(2026, 0, index + 1))
         .toISOString()
         .slice(0, 10);
-      return { date, state: "recorded", count: date === "2026-07-02" ? 3 : 0 };
+      return {
+        date,
+        ...dayBounds(date),
+        state: "recorded",
+        count: date === "2026-07-02" ? 3 : 0,
+      };
     });
     let updateSelection: (value: ActivitySelection) => void;
     function Combined() {

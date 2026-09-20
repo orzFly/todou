@@ -27,6 +27,23 @@ import {
 } from "../src/components/activity-calendar/activity-calendar-section.tsx";
 import { ActivityCardList } from "../src/components/activity-calendar/activity-card-list.tsx";
 
+/**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 // Keep assertions at the wrapper boundary; the real query API and shared
 // transport entry points run under QueryClient. Leaves have their own UI tests.
 vi.mock("../src/components/activity-calendar/activity-calendar.tsx", () => ({
@@ -46,8 +63,8 @@ const scopes: ActivityCalendarSectionProps["scope"][] = [
 const day = "2026-03-01";
 const nextDay = "2026-03-02";
 const recorded: ActivityDay[] = [
-  { date: day, state: "recorded", count: 2 },
-  { date: nextDay, state: "recorded", count: 0 },
+  { date: day, ...dayBounds(day), state: "recorded", count: 2 },
+  { date: nextDay, ...dayBounds(nextDay), state: "recorded", count: 0 },
 ];
 
 function card(id: number): ActivityCard {
@@ -290,11 +307,20 @@ describe("ActivityCalendarSection", () => {
     { label: "current", days: recorded },
     {
       label: "historical",
-      days: [{ date: "2025-12-30", state: "recorded", count: 0 }],
+      days: [
+        {
+          date: "2025-12-30",
+          ...dayBounds("2025-12-30"),
+          state: "recorded",
+          count: 0,
+        },
+      ],
     },
     {
       label: "all disabled",
-      days: [{ date: day, state: "not_applicable", count: null }],
+      days: [
+        { date: day, ...dayBounds(day), state: "not_applicable", count: null },
+      ],
     },
     { label: "empty", days: [] },
   ] satisfies { label: string; days: ActivityDay[] }[])(
@@ -342,7 +368,9 @@ describe("ActivityCalendarSection", () => {
   it("clears an invalid explicit day once when every bucket is disabled", async () => {
     vi.spyOn(api, "getProjectActivityCalendar").mockResolvedValue({
       ...snapshot(),
-      days: [{ date: day, state: "not_applicable", count: null }],
+      days: [
+        { date: day, ...dayBounds(day), state: "not_applicable", count: null },
+      ],
     });
     const onReady = vi.fn();
     const value = props({ onInvalidDay: vi.fn(), onReady });
@@ -369,7 +397,10 @@ describe("ActivityCalendarSection", () => {
         .spyOn(api, "getProjectActivityCalendar")
         .mockResolvedValue({
           ...snapshot(),
-          days: [{ date: day, state, count: null }, recorded[1]!],
+          days: [
+            { date: day, ...dayBounds(day), state, count: null },
+            recorded[1]!,
+          ],
         });
       const value = props({ onInvalidDay: vi.fn() });
       mount(value);
@@ -845,7 +876,14 @@ describe("ActivityCalendarSection", () => {
       ...snapshot(),
       from: "2025-01-01",
       to: "2026-01-01",
-      days: [{ date: "2025-12-31", state: "recorded" as const, count: 0 }],
+      days: [
+        {
+          date: "2025-12-31",
+          ...dayBounds("2025-12-31"),
+          state: "recorded" as const,
+          count: 0,
+        },
+      ],
     };
     await act(async () => {
       pending.resolve(historic);

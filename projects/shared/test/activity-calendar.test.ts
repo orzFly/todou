@@ -10,6 +10,19 @@ import {
   TodouClient,
 } from "../src/index.ts";
 
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 const query = { from: "2024-01-01", to: "2025-01-01", tz: "UTC" };
 const day = "2024-02-29";
 const timestamp = "2024-02-29T12:34:56.123456Z";
@@ -47,7 +60,12 @@ const response = {
     const date = new Date(Date.UTC(2024, 0, index + 1))
       .toISOString()
       .slice(0, 10);
-    return { date, state: "recorded", count: date === day ? 1 : 0 };
+    return {
+      date,
+      ...dayBounds(date),
+      state: "recorded",
+      count: date === day ? 1 : 0,
+    };
   }),
   selection,
 };
@@ -119,7 +137,12 @@ describe("ActivityCalendarQuery", () => {
       ActivityCalendarQuery.safeParse({ ...query, from: date }).success,
     ).toBe(false);
     expect(
-      ActivityDay.safeParse({ date, state: "recorded", count: 0 }).success,
+      ActivityDay.safeParse({
+        date,
+        ...dayBounds(date),
+        state: "recorded",
+        count: 0,
+      }).success,
     ).toBe(false);
     expect(ActivitySelection.safeParse({ ...selection, date }).success).toBe(
       false,
@@ -249,19 +272,26 @@ describe("ActivityDay", () => {
     "accepts recorded count %i",
     (count) => {
       expect(
-        ActivityDay.parse({ date: day, state: "recorded", count }).count,
+        ActivityDay.parse({
+          date: day,
+          ...dayBounds(day),
+          state: "recorded",
+          count,
+        }).count,
       ).toBe(count);
     },
   );
 
   it.each(["future", "not_applicable"])("requires null for %s", (state) => {
     expect(
-      ActivityDay.parse({ date: day, state, count: null }).count,
+      ActivityDay.parse({ date: day, ...dayBounds(day), state, count: null })
+        .count,
     ).toBeNull();
     for (const count of [0, 1, "0", undefined]) {
-      expect(ActivityDay.safeParse({ date: day, state, count }).success).toBe(
-        false,
-      );
+      expect(
+        ActivityDay.safeParse({ date: day, ...dayBounds(day), state, count })
+          .success,
+      ).toBe(false);
     }
   });
 
@@ -277,17 +307,27 @@ describe("ActivityDay", () => {
     Number.MAX_SAFE_INTEGER + 1,
   ])("rejects invalid recorded count %j", (count) => {
     expect(
-      ActivityDay.safeParse({ date: day, state: "recorded", count }).success,
+      ActivityDay.safeParse({
+        date: day,
+        ...dayBounds(day),
+        state: "recorded",
+        count,
+      }).success,
     ).toBe(false);
   });
 
   it("rejects unknown states and narrows the count by state", () => {
     expect(
-      ActivityDay.safeParse({ date: day, state: "unknown", count: null })
-        .success,
+      ActivityDay.safeParse({
+        date: day,
+        ...dayBounds(day),
+        state: "unknown",
+        count: null,
+      }).success,
     ).toBe(false);
     const parsed = ActivityDay.parse({
       date: day,
+      ...dayBounds(day),
       state: "recorded",
       count: 0,
     });
@@ -506,7 +546,7 @@ describe("ActivitySelection and ActivityCalendarResponse", () => {
     { timezone: "x".repeat(101) },
     { timezone: null },
     { days: undefined },
-    { days: [{ date: day, state: "future", count: 0 }] },
+    { days: [{ date: day, ...dayBounds(day), state: "future", count: 0 }] },
     { selection: undefined },
     { selection: { ...selection, has_more: true } },
   ])("validates response fields and nested schemas %j", (patch) => {

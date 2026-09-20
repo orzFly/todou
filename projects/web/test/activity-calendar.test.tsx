@@ -6,20 +6,41 @@ import {
   type ActivityCalendarProps,
 } from "../src/components/activity-calendar/activity-calendar.tsx";
 
+/**
+ * The server states each cell's instants; fixtures spell out plain UTC ones so
+ * a test's own dates stay readable. Only the DST cases below vary them.
+ */
+function dayBounds(date: string): { start: string; end: string } {
+  // Cases that feed deliberately malformed dates still need a parseable pair:
+  // the assertion under test is about `date`, not about these.
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed))
+    return {
+      start: "2024-01-01T00:00:00.000Z",
+      end: "2024-01-02T00:00:00.000Z",
+    };
+  const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
+  return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
+}
+
 // Fixture generation uses UTC Date; the component uses integer Gregorian
 // geometry. Explicit weekday/leap/count oracles below do not copy its formula.
-function daysFor(year = 2024, overrides: ActivityDay[] = []): ActivityDay[] {
+// Omit over a union has to distribute, or every variant collapses into one
+// object whose `state` is the union and whose `count` is `number | null`.
+type WithoutBounds<T> = T extends unknown ? Omit<T, "start" | "end"> : never;
+type DayOverride = WithoutBounds<ActivityDay>;
+
+function daysFor(year = 2024, overrides: DayOverride[] = []): ActivityDay[] {
   const date = new Date(`${String(year).padStart(4, "0")}-01-01T00:00:00Z`);
   const days: ActivityDay[] = [];
   while (date.getUTCFullYear() === year) {
     const key = date.toISOString().slice(0, 10);
-    days.push(
-      overrides.find((day) => day.date === key) ?? {
-        date: key,
-        state: "recorded",
-        count: 0,
-      },
-    );
+    const day: DayOverride = overrides.find((entry) => entry.date === key) ?? {
+      date: key,
+      state: "recorded",
+      count: 0,
+    };
+    days.push({ ...day, ...dayBounds(key) } as ActivityDay);
     date.setUTCDate(date.getUTCDate() + 1);
   }
   return days;
@@ -636,6 +657,7 @@ describe("ActivityCalendar controlled state and recovery", () => {
     focus("2024-01-10");
     const days: ActivityDay[] = daysFor().map(({ date }) => ({
       date,
+      ...dayBounds(date),
       state: "not_applicable",
       count: null,
     }));
@@ -704,6 +726,7 @@ describe("ActivityCalendar controlled state and recovery", () => {
     focus("2024-01-10");
     const notApplicable = daysFor(2025).map(({ date }) => ({
       date,
+      ...dayBounds(date),
       state: "not_applicable" as const,
       count: null,
     }));
@@ -790,7 +813,14 @@ describe("ActivityCalendar controlled state and recovery", () => {
 
   it("never turns a missing date or a previous year's snapshot into zero", () => {
     const p = props({
-      days: [{ date: "2024-01-10", state: "recorded", count: 3 }],
+      days: [
+        {
+          date: "2024-01-10",
+          ...dayBounds("2024-01-10"),
+          state: "recorded",
+          count: 3,
+        },
+      ],
     });
     const { rerender } = render(<ActivityCalendar {...p} />);
     expect(tile("2024-01-11").disabled).toBe(true);

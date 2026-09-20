@@ -116,11 +116,11 @@ export async function buildActivityBuckets(
     fromDate: first,
     toDate: next,
     buckets,
-    days: buckets.map(
-      (bucket): ActivityDay =>
-        bucket.state === "recorded"
-          ? { date: bucket.date, state: "recorded", count: 0 }
-          : { date: bucket.date, state: bucket.state, count: null },
-    ),
+    days: buckets.map((bucket): ActivityDay => {
+      const bounds = { start: bucket.start, end: bucket.end };
+      return bucket.state === "recorded"
+        ? { date: bucket.date, state: "recorded", count: 0, ...bounds }
+        : { date: bucket.date, state: bucket.state, count: null, ...bounds };
+    }),
   };
 }
