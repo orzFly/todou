@@ -1,7 +1,7 @@
 import type { Member } from "@todou/shared";
 import { CheckIcon } from "lucide-react";
-import type { ReactNode } from "react";
-import { PICKER_ROW } from "@/components/issue/picker-row.ts";
+import { type ReactNode, useState } from "react";
+import { PICKER_ROW, usePickerOrder } from "@/components/issue/picker-row.ts";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
 import {
   DropdownMenu,
@@ -29,8 +29,15 @@ export function AssigneePicker({
   /** Test-only, as on LabelPicker. */
   defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const orderedMembers = usePickerOrder(
+    members,
+    selectedIds,
+    (member) => member.user.id,
+    open,
+  );
   return (
-    <DropdownMenu defaultOpen={defaultOpen}>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       {/* Name plus login needs more room than the trigger's width, which
           is what the menu defaults to. */}
@@ -42,7 +49,7 @@ export function AssigneePicker({
           that bound does not hold: DPR 0.5 has a 2px rounding grid, so even
           padding 8.5 can leave 7.5px clearance. The smoke measures DPR 1. */}
       <DropdownMenuContent className="w-auto" collisionPadding={8.5}>
-        {members.map((member) => {
+        {orderedMembers.map((member) => {
           const active = selectedIds.includes(member.user.id);
           return (
             <DropdownMenuItem

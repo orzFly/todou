@@ -5,7 +5,7 @@ import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { api, useCan } from "@/api/queries.ts";
 import { LabelChip, LabelInline } from "@/components/issue/label-chip.tsx";
-import { PICKER_ROW } from "@/components/issue/picker-row.ts";
+import { PICKER_ROW, usePickerOrder } from "@/components/issue/picker-row.ts";
 import {
   Popover,
   PopoverContent,
@@ -74,13 +74,20 @@ export function LabelPicker({
   const canonical = canonicalizeLabelName(query);
   const q = canonical.toLowerCase();
   const matches = allLabels.filter((l) => l.name.toLowerCase().includes(q));
+  const orderedMatches = usePickerOrder(
+    matches,
+    selected.map((label) => label.id),
+    (label) => label.id,
+    open,
+    query,
+  );
   const near =
     canonical === ""
       ? undefined
       : allLabels.find((l) => labelNearKey(l.name) === labelNearKey(canonical));
   const nearMismatch = near !== undefined && near.name !== canonical;
 
-  const rows: PickerRow[] = matches.map((label) => ({
+  const rows: PickerRow[] = orderedMatches.map((label) => ({
     kind: "toggle",
     label,
   }));
@@ -243,10 +250,12 @@ export function LabelPicker({
             >
               {row.kind === "toggle" ? (
                 <>
-                  <span className="w-4 shrink-0">
+                  <span className="flex min-w-0 overflow-hidden">
+                    <LabelInline label={row.label} />
+                  </span>
+                  <span className="ml-auto w-4 shrink-0">
                     {isSelected(row.label) && <CheckIcon className="size-4" />}
                   </span>
-                  <LabelInline label={row.label} />
                 </>
               ) : (
                 <>

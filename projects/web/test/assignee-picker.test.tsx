@@ -6,6 +6,7 @@ import {
   within,
 } from "@testing-library/react";
 import type { Member, UserKind } from "@todou/shared";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AssigneePicker } from "../src/components/issue/assignee-picker.tsx";
 
@@ -139,5 +140,238 @@ describe("AssigneePicker typeahead (T-353)", () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(rowFor(/Akira Sato/)),
     );
+  });
+});
+
+// Both partitions run backwards alphabetically and numerically. The selected
+// IDs also run opposite to their source order, so neither sorting by name/ID
+// nor iterating selectedIds can accidentally produce the expected rows.
+const ORDER_MEMBERS: Member[] = [
+  member(3, "charlie", "Charlie", "human", null),
+  member(4, "delta", "Delta", "human", null),
+  member(1, "alpha", "Alpha", "human", null),
+  member(2, "bravo", "Bravo", "human", null),
+];
+const OPEN_ORDER: [number, string][] = [
+  [4, "Delta"],
+  [2, "Bravo"],
+  [3, "Charlie"],
+  [1, "Alpha"],
+];
+
+function StatefulPicker({
+  members = ORDER_MEMBERS,
+  freshSelectedIds = false,
+}: {
+  members?: Member[];
+  freshSelectedIds?: boolean;
+}) {
+  const [selectedIds, setSelectedIds] = useState([2, 4]);
+  return (
+    <AssigneePicker
+      members={members}
+      selectedIds={freshSelectedIds ? [...selectedIds] : selectedIds}
+      onToggle={(id) =>
+        setSelectedIds((current) =>
+          current.includes(id)
+            ? current.filter((selectedId) => selectedId !== id)
+            : [...current, id],
+        )
+      }
+      trigger={<button type="button">Edit assignees</button>}
+    />
+  );
+}
+
+function openFromTrigger() {
+  fireEvent.keyDown(screen.getByRole("button", { name: "Edit assignees" }), {
+    key: "Enter",
+  });
+}
+
+function expectPickerRows(
+  expected: [number, string][],
+  selectedIds: number[],
+  members = ORDER_MEMBERS,
+) {
+  const found = rows();
+  expect(
+    found.map((row) => {
+      // Resolve IDs through the visible, unique login; React keys are not DOM
+      // attributes. Read the displayed name independently of the fixture.
+      const login = within(row).getByText(/^@/).textContent?.slice(1);
+      return [
+        members.find((candidate) => candidate.user.login === login)?.user.id,
+        row.children[1]?.textContent,
+      ];
+    }),
+  ).toEqual(expected);
+  expect(found.map((row) => row.lastElementChild?.childElementCount)).toEqual(
+    expected.map(([id]) => (selectedIds.includes(id) ? 1 : 0)),
+  );
+}
+
+function toggleWhileOpen() {
+  expectPickerRows(OPEN_ORDER, [2, 4]);
+  fireEvent.click(rowFor(/Alpha/));
+  expectPickerRows(OPEN_ORDER, [2, 4, 1]);
+  fireEvent.click(rowFor(/Delta/));
+  expectPickerRows(OPEN_ORDER, [2, 1]);
+}
+
+describe("AssigneePicker ordering (T-479)", () => {
+  it("opens selected-first in source order, keeps toggled rows still, and resamples on reopening", () => {
+    render(<StatefulPicker />);
+    expect(screen.queryByRole("menu")).toBeNull();
+    openFromTrigger();
+    toggleWhileOpen();
+
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Edit assignees" })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+
+    openFromTrigger();
+    expectPickerRows(
+      [
+        [1, "Alpha"],
+        [2, "Bravo"],
+        [3, "Charlie"],
+        [4, "Delta"],
+      ],
+      [2, 1],
+    );
+  });
+
+  it("keeps the opening order when selectedIds gets a fresh identity after toggles", () => {
+    const { rerender } = render(<StatefulPicker />);
+    openFromTrigger();
+    toggleWhileOpen();
+
+    // Membership is still [2, 1]; a new snapshot would move Alpha to the top.
+    rerender(<StatefulPicker freshSelectedIds />);
+    expectPickerRows(OPEN_ORDER, [2, 1]);
+  });
+
+  it("keeps the opening order with fresh candidate arrays and objects but renders refreshed metadata", () => {
+    const { rerender } = render(<StatefulPicker />);
+    openFromTrigger();
+    toggleWhileOpen();
+
+    rerender(<StatefulPicker members={[...ORDER_MEMBERS]} />);
+    expectPickerRows(OPEN_ORDER, [2, 1]);
+
+    const refreshed = ORDER_MEMBERS.map((candidate) => ({
+      ...candidate,
+      user: {
+        ...candidate.user,
+        ...(candidate.user.id === 4
+          ? { display_name: "Delta Updated", login: "delta-updated" }
+          : {}),
+      },
+    }));
+    rerender(<StatefulPicker members={refreshed} />);
+    expectPickerRows(
+      [
+        [4, "Delta Updated"],
+        [2, "Bravo"],
+        [3, "Charlie"],
+        [1, "Alpha"],
+      ],
+      [2, 1],
+      refreshed,
+    );
+    expect(
+      within(rowFor(/Delta Updated/)).getByText("@delta-updated"),
+    ).toBeTruthy();
+    expect(screen.queryByText("Delta", { exact: true })).toBeNull();
+    expect(screen.queryByText("@delta", { exact: true })).toBeNull();
+  });
+
+  it("resamples the current selection when a candidate is added while open", () => {
+    const { rerender } = render(<StatefulPicker />);
+    openFromTrigger();
+    toggleWhileOpen();
+
+    const expanded = [
+      member(5, "echo", "Echo", "human", null),
+      ...ORDER_MEMBERS,
+    ];
+    rerender(<StatefulPicker members={expanded} />);
+    expectPickerRows(
+      [
+        [1, "Alpha"],
+        [2, "Bravo"],
+        [5, "Echo"],
+        [3, "Charlie"],
+        [4, "Delta"],
+      ],
+      [2, 1],
+      expanded,
+    );
+  });
+
+  it("resamples current selection on removal and same-length candidate replacement", () => {
+    const { rerender } = render(<StatefulPicker />);
+    openFromTrigger();
+    toggleWhileOpen();
+
+    const reduced = ORDER_MEMBERS.filter(
+      (candidate) => candidate.user.id !== 2,
+    );
+    rerender(<StatefulPicker members={reduced} />);
+    expectPickerRows(
+      [
+        [1, "Alpha"],
+        [3, "Charlie"],
+        [4, "Delta"],
+      ],
+      [2, 1],
+      reduced,
+    );
+    expect(screen.queryByRole("menuitem", { name: /Bravo/ })).toBeNull();
+
+    fireEvent.click(rowFor(/Alpha/));
+    expectPickerRows(
+      [
+        [1, "Alpha"],
+        [3, "Charlie"],
+        [4, "Delta"],
+      ],
+      [2],
+      reduced,
+    );
+    fireEvent.click(rowFor(/Delta/));
+    expectPickerRows(
+      [
+        [1, "Alpha"],
+        [3, "Charlie"],
+        [4, "Delta"],
+      ],
+      [2, 4],
+      reduced,
+    );
+
+    // The length stays at three, but changed IDs must sample the selection
+    // again: Delta moves ahead of Alpha only at this candidate refresh.
+    const replaced = reduced.map((candidate) =>
+      candidate.user.id === 3
+        ? member(5, "echo", "Echo", "human", null)
+        : candidate,
+    );
+    rerender(<StatefulPicker members={replaced} />);
+    expectPickerRows(
+      [
+        [4, "Delta"],
+        [5, "Echo"],
+        [1, "Alpha"],
+      ],
+      [2, 4],
+      replaced,
+    );
+    expect(screen.queryByRole("menuitem", { name: /Charlie/ })).toBeNull();
   });
 });

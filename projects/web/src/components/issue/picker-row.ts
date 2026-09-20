@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 /**
  * The row geometry the Labels and Assignees pickers share (T-458).
  *
@@ -19,3 +21,28 @@
  * beside it in the same sidebar.
  */
 export const PICKER_ROW = "min-h-8.5 gap-2 px-2 py-1.5 text-sm";
+
+/**
+ * Sample selection at each open/query/candidate refresh, never on a toggle.
+ * Candidate IDs (not array identity) distinguish new/deleted rows from a
+ * parent render or a refetch returning the same list. Each partition retains
+ * source order. Returning live items keeps renamed rows and avatars fresh.
+ */
+export function usePickerOrder<T>(
+  items: T[],
+  selectedIds: number[],
+  idOf: (item: T) => number,
+  open: boolean,
+  query = "",
+) {
+  const candidates = JSON.stringify(items.map(idOf));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: open, query and candidates are snapshot boundaries; toggles must not reorder rows
+  const selection = useMemo(
+    () => new Set(selectedIds),
+    [open, query, candidates],
+  );
+  return [
+    ...items.filter((item) => selection.has(idOf(item))),
+    ...items.filter((item) => !selection.has(idOf(item))),
+  ];
+}
