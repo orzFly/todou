@@ -73,7 +73,10 @@ const COVERAGE_FAILURES = new Set([
  */
 const GLYPHS =
   ".ref-chip-body .ref-chip-icon, .comment-link-body .comment-reference-icon, " +
-  'a[href*="/attachments/"] svg';
+  'a[href*="/attachments/"] svg, ' +
+  // A mention's glyph is a picture of a person rather than an svg, and it is
+  // the one that was still in `rem` after T-495 (T-499).
+  '.mention-chip-body [data-slot="avatar"]';
 const FAULTS = {
   // The bug as reported, in the length the fix replaced: `size-3.5` was
   // `0.875rem`, which is the body's own font size and no heading's.
@@ -95,6 +98,14 @@ const FAULTS = {
   // margin that hands those 4px back the line grew by 2.59px at h1, 2.94px
   // at h2 and 3.13px at h3. `margin-block` is the whole of what the fix put
   // there, so zeroing it is the chip as it shipped, not a new defect.
+  // T-499's bug in the length its fix replaced: `size-5` is `1.25rem`, which
+  // is no tier's font size — 0.71 of an h1's text and 1.43 of a paragraph's.
+  // Aimed at the avatar alone, so what it reddens names the mention rather
+  // than every glyph on the page.
+  "avatar-in-rem": {
+    css: '.mention-chip-body [data-slot="avatar"] { width: 1.25rem !important; height: 1.25rem !important; }',
+    detects: "icon-does-not-follow-font",
+  },
   "chip-keeps-its-box": {
     css: 'a[href*="/attachments/"] { margin-block: 0 !important; }',
     detects: "chip-grows-its-line",
@@ -183,10 +194,26 @@ async function seedFixture(serverPort) {
 
   const refHref = `/projects/${slug}/issues/${target.number}`;
   const commentHref = `/projects/${slug}/issues/${commented.number}#comment-${note.id}`;
+  // A mention is written as `@login`, not as a markdown link, so each kind
+  // carries the markup that draws it rather than an href.
+  // `probe` is what has to survive the round trip, which is not always what
+  // went in: the server rewrites an issue link onto its permanent id, so only
+  // the label is stable, while a mention is parsed from the raw text and
+  // arrives back verbatim.
+  const me = await call("GET", "/me");
   const kinds = [
-    { key: "ref", href: refHref },
-    { key: "comment", href: commentHref },
-    { key: "attachment", href: attachment.url },
+    { key: "ref", markup: `[ref](${refHref})`, probe: "[ref](" },
+    {
+      key: "comment",
+      markup: `[comment](${commentHref})`,
+      probe: "[comment](",
+    },
+    {
+      key: "attachment",
+      markup: `[attachment](${attachment.url})`,
+      probe: "[attachment](",
+    },
+    { key: "mention", markup: `@${me.login}`, probe: `@${me.login}` },
   ];
   // Four tiers of one markdown body: the heading scale is the product surface
   // the report came from, and the paragraph is the size every earlier chip
@@ -200,8 +227,7 @@ async function seedFixture(serverPort) {
   const rows = [];
   for (const tier of TIERS) {
     rows.push(`${tier.prefix}no chip here`);
-    for (const kind of kinds)
-      rows.push(`${tier.prefix}at [${kind.key}](${kind.href})`);
+    for (const kind of kinds) rows.push(`${tier.prefix}at ${kind.markup}`);
   }
   await call("PATCH", `/projects/${slug}/issues/${page.number}`, {
     body: rows.join("\n\n"),
@@ -209,8 +235,8 @@ async function seedFixture(serverPort) {
 
   const stored = await call("GET", `/projects/${slug}/issues/${page.number}`);
   for (const kind of kinds) {
-    if (!stored.body.includes(`[${kind.key}](`))
-      throw new Error(`fixture lost the ${kind.key} link on the way in`);
+    if (!stored.body.includes(kind.probe))
+      throw new Error(`fixture lost the ${kind.key} chip on the way in`);
   }
   return {
     cookie,
@@ -261,14 +287,20 @@ async function readScale(kinds) {
   const classify = (row) => {
     const anchor = row.querySelector("a");
     if (!anchor) return { kind: "chipless", anchor: null, icon: null };
-    const icon = anchor.querySelector("svg");
+    const mention = anchor.classList.contains("mention-chip-body");
+    // The mention's glyph is its avatar; every other chip's is an svg.
+    const icon = mention
+      ? anchor.querySelector('[data-slot="avatar"]')
+      : anchor.querySelector("svg");
     const kind = anchor.classList.contains("ref-chip-body")
       ? "ref"
       : anchor.classList.contains("comment-link-body")
         ? "comment"
-        : anchor.getAttribute("href")?.includes("/attachments/")
-          ? "attachment"
-          : "unknown";
+        : mention
+          ? "mention"
+          : anchor.getAttribute("href")?.includes("/attachments/")
+            ? "attachment"
+            : "unknown";
     return { kind, anchor, icon };
   };
   const rows = window.__t495.rows();
@@ -469,10 +501,14 @@ async function openPage(browser, context, fixture, stack, fault) {
           if (rows.length !== rowCount) return false;
           // Every chip resolved: a reference still on its plain-anchor
           // fallback has no glyph, and would be graded as a chip that lost
-          // one rather than as a page that had not finished loading.
+          // one rather than as a page that had not finished loading. A
+          // mention's glyph is its avatar, and an unresolved one is not an
+          // anchor at all — it falls back to the author's typed spelling
+          // while the member list is still in flight (T-499).
           return (
-            rows.filter((row) => row.querySelector("a svg")).length ===
-            glyphCount
+            rows.filter((row) =>
+              row.querySelector('a svg, a [data-slot="avatar"]'),
+            ).length === glyphCount
           );
         },
         wantedRows,
