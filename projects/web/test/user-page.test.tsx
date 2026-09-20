@@ -736,18 +736,18 @@ describe("the registered user route's activity dates", () => {
         },
       );
       const view = renderAt(`/users/alice${address}`, clientWith(alice));
+      // Either way the rejected day is cleared rather than replaced, so no
+      // card list is rendered and no day sits in the URL.
       if (availability === "all unavailable") {
         await view.findByText("No available dates in this range.");
-      } else {
-        await view.findByText("No active cards on 2026-09-19.");
       }
       await waitFor(() => {
+        expect(
+          view.queryByRole("region", { name: "Selected day activity" }),
+        ).toBeNull();
         expect(view.router.state.location.search).toEqual({
           role: "assignee",
           state: "closed",
-          ...(availability === "all unavailable"
-            ? {}
-            : { activity_day: "2026-09-19" }),
         });
         expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
           "Invalid activity date was reset.",

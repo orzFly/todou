@@ -129,8 +129,11 @@ describe("ActivityCalendar dates and counts", () => {
     const group = screen.getByRole("group", {
       name: "Activity dates 2026-01-01 to 2026-12-31",
     });
-    expect(group.style.gridTemplateColumns).toBe("2.5rem repeat(53, 1rem)");
-    expect(group.style.gridTemplateRows).toBe("1rem repeat(7, 1rem)");
+    // Fluid week columns over a floor, and rows that follow the square cells.
+    expect(group.style.gridTemplateColumns).toBe(
+      "2.5rem repeat(53, minmax(0.5rem, 1fr))",
+    );
+    expect(group.style.gridTemplateRows).toBe("1rem repeat(7, auto)");
   });
 
   it("spreads levels and the legend from zero to the largest count on screen", () => {
@@ -162,6 +165,33 @@ describe("ActivityCalendar dates and counts", () => {
     expect(container.textContent).not.toMatch(
       /876543|annual|year total|incomplete|history quality/i,
     );
+  });
+
+  it("cuts the ramp at quartiles of the counts, not of the range", () => {
+    // One loud day against a run of quiet ones. Cutting 0..40 into four would
+    // put every count below 10 — all seven ordinary days — in one bucket.
+    const counts = [1, 1, 1, 1, 2, 3, 10, 40];
+    const days = daysFor(
+      2024,
+      counts.map((count, index) => ({
+        date: `2024-01-0${index + 1}`,
+        state: "recorded" as const,
+        count,
+      })),
+    );
+    render(<ActivityCalendar {...props({ days })} />);
+    expect(
+      within(screen.getByRole("list", { name: "Active cards per day" }))
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["0", "1", "2–3", "4–40"]);
+    // The quiet days keep the lightest swatch, and the two loud ones separate
+    // from them instead of sharing it.
+    expect(tile("2024-01-01").dataset.level).toBe("1");
+    expect(tile("2024-01-05").dataset.level).toBe("2");
+    expect(tile("2024-01-06").dataset.level).toBe("2");
+    expect(tile("2024-01-07").dataset.level).toBe("3");
+    expect(tile("2024-01-08").dataset.level).toBe("3");
   });
 
   it("reaches the darkest swatch on a quiet project instead of stopping at a fixed 10+", () => {
@@ -790,7 +820,7 @@ describe("ActivityCalendar controlled state and recovery", () => {
     expect(screen.getByRole("status").className).toContain("sr-only");
   });
 
-  it("confines the wide weekly grid to a local scroll container at narrow widths", () => {
+  it("fills the width it is given, scrolling only under the cells' floor", () => {
     const { container } = render(
       <div style={{ width: 390 }}>
         <ActivityCalendar {...props()} />
@@ -803,7 +833,16 @@ describe("ActivityCalendar controlled state and recovery", () => {
     expect(
       screen.getByRole("region", { name: "Activity" }).className,
     ).toContain("min-w-0");
-    expect(screen.getByRole("group").parentElement).toBe(scroller);
-    expect(screen.getByRole("group").className).toContain("w-max");
+    const group = screen.getByRole("group");
+    expect(group.parentElement).toBe(scroller);
+    // The grid takes the container's width rather than its content's, so a
+    // year of cells no longer forces a scrollbar at every size; the floor in
+    // the column track is what still allows one when the cells get too small.
+    expect(group.className).toContain("w-full");
+    expect(group.className).not.toContain("w-max");
+    expect(group.style.gridTemplateColumns).toContain("minmax(0.5rem, 1fr)");
+    // happy-dom has no layout engine; the cells' squareness is a CSS contract.
+    expect(tile("2024-01-10").className).toContain("aspect-square");
+    expect(tile("2024-01-10").className).toContain("w-full");
   });
 });

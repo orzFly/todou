@@ -1,6 +1,8 @@
-import { Link } from "@tanstack/react-router";
-import { type ActivitySelection, formatRef } from "@todou/shared";
+import type { ActivitySelection } from "@todou/shared";
+import { useRef } from "react";
+import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { LoadMoreFooter } from "@/components/shared/load-more.tsx";
 import { Button } from "@/components/ui/button.tsx";
 
 /** State and actions supplied by the calendar owner; this list never queries data. */
@@ -36,6 +38,10 @@ export function ActivityCardList({
     dateStyle: "medium",
     timeStyle: "short",
   });
+  const grid = useIssueListGrid({ readMarker: false });
+  // This list reports its own request failures above the group, so the shared
+  // footer is only ever asked for the button half.
+  const focusRequested = useRef(false);
   const busy = loading || loadingMore;
   const hasError = error !== null;
 
@@ -90,53 +96,55 @@ export function ActivityCardList({
               </p>
             )
           ) : (
-            <ul className="min-w-0 max-w-full">
+            <ul className={grid}>
               {selection.items.map((card) => (
-                <li
+                // The shared row, with every affordance it cannot back switched
+                // off: this list reports what happened on a day, and has no read
+                // state, questions, spec review or blocks to offer.
+                <IssueRow
                   key={`${card.project.id}:${card.issue_id}`}
-                  className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50"
-                >
-                  <Link
-                    to="/projects/$slug/issues/$number"
-                    params={{
-                      slug: card.project.slug,
-                      number: String(card.number),
-                    }}
-                    className="min-w-0 max-w-full font-medium break-words hover:underline"
-                  >
-                    {card.title}
-                  </Link>
-                  <span className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground sm:ml-auto">
-                    <span className="min-w-0 max-w-full break-words">
-                      {card.project.name}
+                  slug={card.project.slug}
+                  issue={{
+                    id: card.issue_id,
+                    number: card.number,
+                    title: card.title,
+                  }}
+                  readMarker={false}
+                  badges={false}
+                  blocked={false}
+                  returnAnchor={false}
+                  trailing={
+                    <span className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                      {/* Unbounded, unlike the inbox's trailing pair: this
+                          list's group is a day, so the project has to be named
+                          on the row and a long name must give way first. */}
+                      <span className="min-w-0 truncate max-sm:hidden">
+                        {card.project.name}
+                      </span>
+                      <StatusPill status={card.status} className="shrink-0" />
+                      <time className="shrink-0" dateTime={card.last_active_at}>
+                        {timestamp.format(new Date(card.last_active_at))}
+                      </time>
                     </span>
-                    <span className="min-w-0 max-w-full font-mono break-words">
-                      {formatRef(card.project.issue_prefix, card.number)}
-                    </span>
-                    <StatusPill
-                      status={card.status}
-                      className="min-w-0 max-w-full break-words"
-                    />
-                    <time dateTime={card.last_active_at}>
-                      {timestamp.format(new Date(card.last_active_at))}
-                    </time>
-                  </span>
-                </li>
+                  }
+                />
               ))}
             </ul>
           )}
         </section>
       )}
       {selection?.has_more && !hasError && (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={busy}
-          onClick={() => onLoadMore()}
-        >
-          Load more
-        </Button>
+        <LoadMoreFooter
+          pending={busy}
+          error={null}
+          // The shared footer reports progress by its label rather than by
+          // disabling itself, so the guard against a second request lives here.
+          // It also passes the click event on, and this prop takes none.
+          onLoadMore={() => {
+            if (!busy) onLoadMore();
+          }}
+          focusRequested={focusRequested}
+        />
       )}
     </section>
   );

@@ -663,7 +663,14 @@ describe("Insights page", () => {
       if (availability === "all unavailable") {
         await screen.findByText("No available dates in this range.");
       } else {
-        await screen.findByText("Activity on 2026-09-18");
+        // The rejected day is cleared rather than swapped for another, and
+        // with nothing selected there is no card list to render at all.
+        await screen.findByRole("heading", { name: "Burn chart" });
+        await waitFor(() =>
+          expect(
+            screen.queryByRole("region", { name: "Selected day activity" }),
+          ).toBeNull(),
+        );
       }
       await waitFor(() => {
         expect(view.router.state.location.search).toEqual({
@@ -671,9 +678,6 @@ describe("Insights page", () => {
           from: "2026-09-15",
           to: "2026-09-18",
           grain: "6h",
-          ...(availability === "all unavailable"
-            ? {}
-            : { activity_day: "2026-09-18" }),
         });
         expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
           "Invalid activity date was reset.",
@@ -915,8 +919,14 @@ describe("Insights page", () => {
         `/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&${activity}`,
         { calendar: recordedCalendar },
       );
-      await screen.findByText("Activity on 2026-09-18");
       await screen.findByRole("heading", { name: "Burn chart" });
+      // An invalid day is cleared, and nothing is chosen in its place, so the
+      // card list stays away while the graph carries on regardless.
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("region", { name: "Selected day activity" }),
+        ).toBeNull(),
+      );
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
       expect(settingsRequest).toHaveBeenCalledExactlyOnceWith("x");
       expect(burn).toHaveBeenCalledExactlyOnceWith("x", {
@@ -934,10 +944,9 @@ describe("Insights page", () => {
           query.from,
           query.day,
         ]),
-      ).toEqual([
-        ["2025-09-22", undefined],
-        ["2025-09-22", "2026-09-18"],
-      ]);
+        // One request, not two: with no day chosen for the reader there is no
+        // follow-up fetch for that day's cards.
+      ).toEqual([["2025-09-22", undefined]]);
       fireEvent.click(screen.getByRole("button", { name: "12h" }));
       await waitFor(() =>
         expect(view.router.state.location.search).toEqual({
@@ -945,7 +954,6 @@ describe("Insights page", () => {
           from: "2026-09-15",
           to: "2026-09-18",
           grain: "12h",
-          activity_day: "2026-09-18",
         }),
       );
       await waitFor(() =>
@@ -956,7 +964,9 @@ describe("Insights page", () => {
           tz,
         }),
       );
-      expect(screen.getByText("Activity on 2026-09-18")).toBeTruthy();
+      expect(
+        screen.queryByRole("region", { name: "Selected day activity" }),
+      ).toBeNull();
       view.unmount();
       view.client.clear();
     },

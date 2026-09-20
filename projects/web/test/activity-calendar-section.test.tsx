@@ -287,25 +287,19 @@ describe("ActivityCalendarSection", () => {
   );
 
   it.each([
-    { label: "current", days: recorded, expected: nextDay },
+    { label: "current", days: recorded },
     {
       label: "historical",
       days: [{ date: "2025-12-30", state: "recorded", count: 0 }],
-      expected: "2025-12-30",
     },
     {
       label: "all disabled",
       days: [{ date: day, state: "not_applicable", count: null }],
-      expected: undefined,
     },
-    { label: "empty", days: [], expected: undefined },
-  ] satisfies {
-    label: string;
-    days: ActivityDay[];
-    expected: string | undefined;
-  }[])(
-    "defaults once for $label no-day responses",
-    async ({ days, expected }) => {
+    { label: "empty", days: [] },
+  ] satisfies { label: string; days: ActivityDay[] }[])(
+    "picks no day at all for $label no-day responses",
+    async ({ days }) => {
       const result = { ...snapshot(), days };
       const transport = vi
         .spyOn(api, "getProjectActivityCalendar")
@@ -315,11 +309,10 @@ describe("ActivityCalendarSection", () => {
       await waitFor(() =>
         expect(calendar.mock.lastCall?.[0].loading).toBe(false),
       );
-      if (expected)
-        expect(value.onDayChange).toHaveBeenCalledExactlyOnceWith(expected, {
-          replace: true,
-        });
-      else expect(value.onDayChange).not.toHaveBeenCalled();
+      // The calendar opens on the whole window with nothing chosen: a day
+      // picked for the reader answers a question nobody asked, and drags a
+      // second request along behind it.
+      expect(value.onDayChange).not.toHaveBeenCalled();
       const replacement = vi.fn();
       view.rerender({ ...value, onDayChange: replacement });
       expect(replacement).not.toHaveBeenCalled();
@@ -338,11 +331,12 @@ describe("ActivityCalendarSection", () => {
     const value = props({ day: undefined, timezone: "Asia/Tokyo" });
     mount(value);
     await waitFor(() =>
-      expect(value.onDayChange).toHaveBeenCalledExactlyOnceWith(day, {
-        replace: true,
-      }),
+      expect(calendar.mock.lastCall?.[0].loading).toBe(false),
     );
+    // The response's cutoff and timezone still decide which date is "today";
+    // nothing is selected on the reader's behalf because of it.
     expect(calendar.mock.lastCall?.[0].today).toBe(day);
+    expect(value.onDayChange).not.toHaveBeenCalled();
   });
 
   it("clears an invalid explicit day once when every bucket is disabled", async () => {
@@ -379,8 +373,10 @@ describe("ActivityCalendarSection", () => {
         });
       const value = props({ onInvalidDay: vi.fn() });
       mount(value);
+      // A rejected explicit day is cleared, not swapped for one the reader
+      // never asked for.
       await waitFor(() =>
-        expect(value.onInvalidDay).toHaveBeenCalledExactlyOnceWith(nextDay),
+        expect(value.onInvalidDay).toHaveBeenCalledExactlyOnceWith(undefined),
       );
       expect(value.onDayChange).not.toHaveBeenCalled();
       expect(transport).toHaveBeenCalledTimes(1);
@@ -402,14 +398,9 @@ describe("ActivityCalendarSection", () => {
       await waitFor(() =>
         expect(calendar.mock.lastCall?.[0].loading).toBe(false),
       );
-      if (hasRecorded) {
-        expect(value.onDayChange).toHaveBeenCalledExactlyOnceWith(nextDay, {
-          replace: true,
-        });
-      } else {
-        expect(value.onDayChange).not.toHaveBeenCalled();
-        expect(onReady).toHaveBeenLastCalledWith(true);
-      }
+      expect(value.onDayChange).not.toHaveBeenCalled();
+      // Ready as soon as the snapshot lands: there is no default to wait for.
+      expect(onReady).toHaveBeenLastCalledWith(true);
     },
   );
 
@@ -651,11 +642,8 @@ describe("ActivityCalendarSection", () => {
     const value = props({ day: undefined, onReady });
     const view = mount(value);
     await waitFor(() =>
-      expect(value.onDayChange).toHaveBeenCalledExactlyOnceWith(nextDay, {
-        replace: true,
-      }),
+      expect(calendar.mock.lastCall?.[0].days).toEqual(recorded),
     );
-    expect(calendar.mock.lastCall?.[0].days).toEqual(recorded);
     const replacement = deferred<ActivityCalendarResponse>();
     transport.project.mockRejectedValueOnce(
       new TodouError(409, "conflict", "Snapshot changed"),
@@ -672,8 +660,9 @@ describe("ActivityCalendarSection", () => {
     await waitFor(() => expect(calendar.mock.lastCall?.[0].days).toEqual([]));
     expect(calendar.mock.lastCall?.[0].selection).toBeNull();
     expect(calendar.mock.lastCall?.[0].loading).toBe(true);
-    expect(onReady).not.toHaveBeenCalledWith(true);
-    expect(value.onDayChange).toHaveBeenCalledTimes(1);
+    // It was ready on the first snapshot; the conflict withdraws that.
+    expect(onReady).toHaveBeenLastCalledWith(false);
+    expect(value.onDayChange).not.toHaveBeenCalled();
     expect(
       view.client.getQueryState(activeOptions(value).queryKey)?.data,
     ).toBeUndefined();
@@ -682,12 +671,9 @@ describe("ActivityCalendarSection", () => {
       await refresh;
     });
     await waitFor(() =>
-      expect(value.onDayChange).toHaveBeenLastCalledWith(day, {
-        replace: true,
-      }),
+      expect(calendar.mock.lastCall?.[0].days).toEqual([recorded[0]!]),
     );
-    expect(value.onDayChange).toHaveBeenCalledTimes(2);
-    expect(calendar.mock.lastCall?.[0].days).toEqual([recorded[0]!]);
+    expect(value.onDayChange).not.toHaveBeenCalled();
     expect(calendar.mock.lastCall?.[0].loading).toBe(false);
   });
 
@@ -706,10 +692,9 @@ describe("ActivityCalendarSection", () => {
       transport.mockResolvedValueOnce(snapshot());
       fireEvent.click(screen.getByText("Calendar retry"));
       await waitFor(() =>
-        expect(value.onDayChange).toHaveBeenCalledExactlyOnceWith(nextDay, {
-          replace: true,
-        }),
+        expect(calendar.mock.lastCall?.[0].days).toEqual(recorded),
       );
+      expect(value.onDayChange).not.toHaveBeenCalled();
       expect(transport).toHaveBeenCalledTimes(2);
     },
   );
@@ -792,12 +777,10 @@ describe("ActivityCalendarSection", () => {
     const onReady = vi.fn();
     const value = props({ day: undefined, onReady });
     const view = mount(value);
-    await waitFor(() =>
-      expect(value.onDayChange).toHaveBeenCalledExactlyOnceWith(nextDay, {
-        replace: true,
-      }),
-    );
-    expect(onReady).not.toHaveBeenCalledWith(true);
+    // Nothing is applied on the reader's behalf, so readiness waits only for
+    // the snapshot itself.
+    await waitFor(() => expect(onReady).toHaveBeenLastCalledWith(true));
+    expect(value.onDayChange).not.toHaveBeenCalled();
     view.rerender({ ...value, day: nextDay });
     await waitFor(() => expect(onReady).toHaveBeenLastCalledWith(true));
   });
@@ -873,8 +856,6 @@ describe("ActivityCalendarSection", () => {
         view.container.querySelector('[data-date="2025-12-31"]'),
       ),
     );
-    expect(value.onDayChange).toHaveBeenCalledExactlyOnceWith("2025-12-31", {
-      replace: true,
-    });
+    expect(value.onDayChange).not.toHaveBeenCalled();
   });
 });
