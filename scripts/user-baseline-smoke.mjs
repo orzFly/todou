@@ -152,6 +152,13 @@ const SPLIT_FAULTS = [
   ],
 ];
 
+const SCOPE_FAULTS = [
+  "nowrap-diff-annotation",
+  "nowrap-unplaced-comment",
+  "hide-desktop-actions",
+  "unshrinkable-header",
+];
+
 const AVATAR_CASES = [
   "human-none",
   "human-success",
@@ -1419,11 +1426,24 @@ async function specRouteRun(
           idPart.dataset.baselineParticipant = "id";
           timePart.dataset.baselineParticipant = "time";
           if (faultKind === "nowrap") {
-            // The shape before the repair is both wraps gone. With only the
-            // row pinned, the id/time group still wraps internally and the
-            // row fits — the repair holding at its second level, which would
-            // make a row-only fault prove nothing.
+            // At the breakpoint the repaired row is a grid, so flexWrap on
+            // the row is inert. Recreate the pre-fix single-line shape on the
+            // row's actual layout items and make their intrinsic widths
+            // unshrinkable; otherwise the fault can still fit by shrinking
+            // the identity group and proves nothing about the repair.
+            candidate.style.display = "flex";
             candidate.style.flexWrap = "nowrap";
+            const items = (parent) =>
+              [...parent.children].flatMap((child) =>
+                getComputedStyle(child).display === "contents"
+                  ? items(child)
+                  : [child],
+              );
+            for (const item of items(candidate)) {
+              item.style.flexShrink = "0";
+              item.style.minWidth = "max-content";
+              item.style.whiteSpace = "nowrap";
+            }
             for (const group of candidate.querySelectorAll(
               '[data-testid="comment-header-meta"]',
             )) {
@@ -1472,6 +1492,11 @@ async function specRouteRun(
           return {
             ready: true,
             overflow: {
+              display: getComputedStyle(candidate).display,
+              scrollWidth: candidate.scrollWidth,
+              clientWidth: candidate.clientWidth,
+              rowRight: rowBox.right,
+              clipRight: clipBox.right,
               scrolls: candidate.scrollWidth > candidate.clientWidth + 1,
               clipper: clipper ? clipper.className.slice(0, 40) : "viewport",
               clipped: strained,
@@ -1744,16 +1769,12 @@ async function scopeRun(
               action.style.display = "none";
             }
           } else if (faultKind === "unshrinkable-header") {
-            // Both halves: with the row wrapping, unshrinkable children move
-            // to the next line rather than overflowing, so a fault that only
-            // pins `flex-shrink` proves nothing about the repair.
+            // At the breakpoint the repaired row is a grid, so flexShrink
+            // and flexWrap alone are inert. Recreate the old single-line
+            // flex layout and pin the intrinsic width of every actual item;
+            // this makes the header's content exceed its own row.
+            row.style.display = "flex";
             row.style.flexWrap = "nowrap";
-            // The row's flex items, which are not always its element
-            // children: the baseline line (T-487) and the identity group
-            // (T-445) each dissolve into `display: contents` on one side of
-            // the breakpoint, and pinning a box that generates none leaves
-            // everything inside it free to shrink — a fault that cannot fail
-            // proves nothing about the repair.
             const items = (parent) =>
               [...parent.children].flatMap((child) =>
                 getComputedStyle(child).display === "contents"
@@ -1797,6 +1818,24 @@ async function scopeRun(
               return box.right <= rowBox.right + 0.5 && box.width > 0;
             }),
             rowScrolls: row.scrollWidth > row.clientWidth + 1,
+            geometry: {
+              display: getComputedStyle(row).display,
+              wrap: getComputedStyle(row).flexWrap,
+              right: rowBox.right,
+              scrollWidth: row.scrollWidth,
+              clientWidth: row.clientWidth,
+              parts: [token, stamp, ...actions].map((element) => {
+                if (!element) return { missing: true };
+                const box = element.getBoundingClientRect();
+                return {
+                  text:
+                    element.getAttribute("aria-label") ?? element.textContent,
+                  right: box.right,
+                  width: box.width,
+                  overRow: box.right - rowBox.right,
+                };
+              }),
+            },
           });
         }
         return {
@@ -2248,6 +2287,7 @@ try {
       "split-copy-both-error",
       "non-header-wrap",
       ...SPLIT_FAULTS.map((entry) => entry[1]),
+      ...SCOPE_FAULTS,
     ];
     if (
       selfTestCases.length === 0 &&
@@ -2351,56 +2391,120 @@ try {
       }
     }
 
-    if (!options.selfTestCase || options.selfTestCase === "scope") {
+    if (
+      !options.selfTestCase ||
+      options.selfTestCase === "scope" ||
+      SCOPE_FAULTS.includes(options.selfTestCase)
+    ) {
       console.log("\nSCOPE FAULTS");
-      // The narrow spec containers, with the wrap taken away: this is the
-      // shape the header had before the fix, and what it costs is Resolve.
-      for (const id of ["diff-annotation", "unplaced-comment"]) {
+      const routeFailures = (run) => [
+        ...(run.overflow?.scrolls ? ["criterion-2:header-scrolls"] : []),
+        ...(run.overflow?.clipped ?? []).map(
+          (part) =>
+            `criterion-2:${JSON.stringify(part.text)} overRow=${part.overRow}px overClip=${part.overClip}px lines=${part.lines}`,
+        ),
+      ];
+      const routeGeometry = (run) => run.overflow ?? null;
+      // Recreate a single-line header inside each real narrow spec container.
+      // DiffAnnotation has no action; UnplacedComment also carries Resolve.
+      for (const id of ["diff-annotation", "unplaced-comment"].filter(
+        (id) =>
+          !options.selfTestCase ||
+          options.selfTestCase === "scope" ||
+          options.selfTestCase === `nowrap-${id}`,
+      )) {
         const narrow = VIEWPORTS[0];
         const broken = await specRouteRun(browser, base, seeded, narrow, id, {
           id,
           kind: "nowrap",
         });
         const restored = await specRouteRun(browser, base, seeded, narrow, id);
-        const spills = (run) =>
-          run.overflow?.scrolls === true ||
-          (run.overflow?.clipped?.length ?? 0) > 0;
-        const detected = spills(broken);
-        const backOk = !spills(restored) && !restored.fixtureErrors.length;
+        const brokenFailures = routeFailures(broken);
+        const restoredFailures = routeFailures(restored);
+        const detected =
+          !!broken.overflow &&
+          !broken.fixtureErrors.length &&
+          brokenFailures.length > 0;
+        const backOk =
+          !!restored.overflow &&
+          restoredFailures.length === 0 &&
+          !restored.fixtureErrors.length;
         console.log(
           `  nowrap-${id} @${narrow.name}: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
-            `(fault wrap=${broken.overflow?.wrap} clipped=${broken.overflow?.clipped?.length ?? "?"}; ` +
-            `restore wrap=${restored.overflow?.wrap} clipped=${restored.overflow?.clipped?.length ?? "?"})`,
+            `fault=${JSON.stringify(routeGeometry(broken))} failures=${brokenFailures.join(";") || "none"} ` +
+            `fixtureErrors=${JSON.stringify(broken.fixtureErrors)} ` +
+            `restore=${JSON.stringify(routeGeometry(restored))} failures=${restoredFailures.join(";") || "none"} ` +
+            `fixtureErrors=${JSON.stringify(restored.fixtureErrors)}`,
         );
         if (!detected || !backOk) fatal = true;
       }
-      for (const [kind, viewport, breaks] of [
+      const scopeFailureCodes = (scope) => [
+        ...(scope.documentOverflows
+          ? [`document-overflow:${scope.scrollWidth}>${scope.clientWidth}`]
+          : []),
+        ...(scope.rows ?? []).flatMap((row) => [
+          ...(row.rowScrolls ? [`${row.id}:header-scrolls`] : []),
+          ...(!row.withinRow ? [`${row.id}:content-past-row`] : []),
+        ]),
+      ];
+      for (const [kind, viewport, failureCodes] of [
         [
           "hide-desktop-actions",
           VIEWPORTS.at(-1),
           (scope) =>
-            (scope.rows ?? []).some(
-              (row) =>
-                row.status !== "missing" &&
-                row.actionLabels.join("|") !== row.expectedActions.join("|"),
-            ),
+            (scope.rows ?? [])
+              .filter(
+                (row) =>
+                  row.status !== "missing" &&
+                  row.actionLabels.join("|") !== row.expectedActions.join("|"),
+              )
+              .map(
+                (row) =>
+                  `${row.id}:actions=${row.actionLabels.join("|") || "none"}`,
+              ),
         ],
         [
           "unshrinkable-header",
           VIEWPORTS[0],
-          (scope) =>
-            scope.documentOverflows ||
-            (scope.rows ?? []).some((row) => row.rowScrolls || !row.withinRow),
+          (scope) => scopeFailureCodes(scope),
         ],
-      ]) {
+      ].filter(
+        ([kind]) =>
+          !options.selfTestCase ||
+          options.selfTestCase === "scope" ||
+          options.selfTestCase === kind,
+      )) {
         const broken = await scopeRun(browser, base, seeded, viewport, kind);
         const restored = await scopeRun(browser, base, seeded, viewport);
-        const detected = breaks(broken);
-        const backOk = !breaks(restored) && !restored.documentOverflows;
+        const brokenFailures = failureCodes(broken);
+        const restoredFailures = failureCodes(restored);
+        const measured = (scope) =>
+          !scope.fixtureErrors.length &&
+          scope.rows?.length === 4 &&
+          scope.rows.every(
+            (row) =>
+              row.status !== "missing" &&
+              row.idVisible &&
+              row.timeVisible &&
+              row.geometry.parts
+                .slice(0, 2)
+                .every((part) => !part.missing && part.width > 0),
+          );
+        const detected = measured(broken) && brokenFailures.length > 0;
+        const backOk =
+          measured(restored) &&
+          restoredFailures.length === 0 &&
+          !restored.documentOverflows;
         console.log(
           `  ${kind} @${viewport.name}: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
-            `(fault overflow=${broken.documentOverflows} actions=${(broken.rows ?? []).map((r) => r.actions).join("/")}; ` +
-            `restore overflow=${restored.documentOverflows} actions=${(restored.rows ?? []).map((r) => r.actions).join("/")})`,
+            `(fault overflow=${broken.documentOverflows} scroll=${broken.scrollWidth}>${broken.clientWidth} ` +
+            `rows=${JSON.stringify((broken.rows ?? []).map((r) => ({ id: r.id, withinRow: r.withinRow, rowScrolls: r.rowScrolls, geometry: r.geometry })))} ` +
+            `fixtureErrors=${JSON.stringify(broken.fixtureErrors)} ` +
+            `failures=${brokenFailures.join(";") || "none"}; ` +
+            `restore overflow=${restored.documentOverflows} scroll=${restored.scrollWidth}>${restored.clientWidth} ` +
+            `rows=${JSON.stringify((restored.rows ?? []).map((r) => ({ id: r.id, withinRow: r.withinRow, rowScrolls: r.rowScrolls, geometry: r.geometry })))} ` +
+            `fixtureErrors=${JSON.stringify(restored.fixtureErrors)} ` +
+            `failures=${restoredFailures.join(";") || "none"})`,
         );
         if (!detected || !backOk) fatal = true;
       }

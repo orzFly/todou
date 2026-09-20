@@ -1524,45 +1524,175 @@ describe("question landing through the real issue route", () => {
   );
 
   it("C13 direct event anchors still expand pagination and their collapsed event group", async () => {
-    const events: TimelineEvent[] = [1001, 1002].map((id) => ({
+    // 33 fixed proof assertions and two HTTP assertions for each of five
+    // reads. Vitest checks this count before the afterEach assertion. Wait
+    // predicates throw instead of asserting so retries cannot change it.
+    expect.assertions(43);
+    const events: TimelineEvent[] = [1001, 1002, 2001, 2002].map((id) => ({
       type: "event",
       id,
       actor: user,
       event_type: "status_changed",
       payload: {
-        from: { id: id === 1001 ? 1 : 2, name: id === 1001 ? "Todo" : "Doing" },
-        to: { id: id === 1001 ? 2 : 1, name: id === 1001 ? "Doing" : "Todo" },
+        from: { id: id % 2 ? 1 : 2, name: id % 2 ? "Todo" : "Doing" },
+        to: { id: id % 2 ? 2 : 1, name: id % 2 ? "Doing" : "Todo" },
       },
-      created_at: timestamp(125),
+      created_at: timestamp(id < 2000 ? 125 : 25),
       agent_context: null,
     }));
-    const model = card([], ordered([...pagedItems([]), ...events]));
+    // Keep 200 real comment records and the default 50-row HTTP windows.
+    // Product HiddenBlocks replace their expensive comment DOM; the target
+    // still lives beyond both initial windows and the first after page.
+    // The earlier, untargeted group is a negative control for "always open".
+    const model = card(
+      [],
+      ordered([
+        ...pagedItems([]).map((item) => ({
+          ...item,
+          hidden_at: timestamp(300),
+        })),
+        ...events,
+      ]),
+    );
+    const pending = new Map<
+      string,
+      { reply: Deferred<Response>; page: TimelinePage }
+    >();
+    model.timelineReply = (url) => {
+      const page = timelinePage(model.items, url);
+      const after = url.searchParams.get("after");
+      if (after === null) return json(page);
+      if (pending.has(after)) throw new Error(`Repeated C13 cursor: ${after}`);
+      const reply = deferred<Response>();
+      pending.set(after, { reply, page });
+      return reply.promise;
+    };
+    const requested = (cursor: string) =>
+      waitFor(() => {
+        const request = pending.get(cursor);
+        if (request === undefined) throw new Error(`Waiting for ${cursor}`);
+        return request;
+      });
     const server = serve({ "p/7": model });
     const scroll = scrolling();
     const view = renderAt("/projects/p/issues/7#event-1002");
+    const pages = (side: "head" | "tail") =>
+      view.client.getQueryData<{ pages: TimelinePage[] }>([
+        "timeline",
+        "p",
+        7,
+        side,
+      ])?.pages ?? [];
+
+    const first = await requested("cursor-50");
+    const control = view.getByTestId("event-group");
+    const controlToggle = within(control).getByTestId("event-group-toggle");
+    expect(pages("head").map((page) => page.items.length)).toEqual([50]);
+    expect(pages("tail").map((page) => page.items.length)).toEqual([50]);
+    expect(pages("head")[0]?.next_cursor).toBe("cursor-50");
+    expect([
+      pages("tail")[0]?.items[0]?.id,
+      pages("tail")[0]?.items.at(-1)?.id,
+    ]).toEqual([151, 200]);
+    expect(pages("tail")[0]?.total_count).toBe(204);
+    expect(view.container.querySelector("#event-1002")).toBeNull();
+    expect(scroll.reveals("event-1002")).toBe(0);
+    expect(controlToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(control.querySelectorAll('[id^="event-"]')).toHaveLength(0);
+    expect(view.container.querySelectorAll('[id^="comment-"]')).toHaveLength(0);
+
+    await release(first.reply, json(first.page));
+    const second = await requested("cursor-100");
+    expect(pages("head").map((page) => page.items.length)).toEqual([50, 50]);
+    expect(view.container.querySelector("#event-1002")).toBeNull();
+    expect(scroll.reveals("event-1002")).toBe(0);
+    expect(
+      server
+        .timeline()
+        .map(({ url }) => url.searchParams.get("after"))
+        .filter(Boolean),
+    ).toEqual(["cursor-50", "cursor-100"]);
+
+    await release(second.reply, json(second.page));
+    // Opening the target group schedules one extra page before its rows
+    // mount. Hold that response to prove landing does not need exhaustion.
+    const last = await requested("cursor-150");
     await waitFor(
       () => {
-        expect(
-          view.container
-            .querySelector("#event-1002")
-            ?.classList.contains("anchor-flash"),
-        ).toBe(true);
-        expect(scroll.reveals("event-1002")).toBeGreaterThan(0);
+        if (scroll.reveals("event-1002") === 0) {
+          throw new Error("Waiting for the direct event anchor reveal");
+        }
       },
       { timeout: 3_000 },
     );
-    expect(view.container.querySelector("#event-1001")).not.toBeNull();
+    const target = view.container.querySelector("#event-1002");
+    const group = target?.closest('[data-testid="event-group"]');
+    expect(pages("head").map((page) => page.items.length)).toEqual([
+      50, 50, 50,
+    ]);
+    expect(
+      pages("head")[2]
+        ?.items.filter((item) => item.type === "event")
+        .map((item) => item.id),
+    ).toEqual([1001, 1002]);
+    expect(target?.classList.contains("anchor-flash")).toBe(true);
+    expect(
+      group
+        ?.querySelector('[data-testid="event-group-toggle"]')
+        ?.getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(
+      Array.from(
+        group?.querySelectorAll('[id^="event-"]') ?? [],
+        (row) => row.id,
+      ),
+    ).toEqual(["event-1001", "event-1002"]);
+    expect(scroll.reveals("event-1002")).toBe(1);
+    expect(scroll.commits).toEqual([
+      { element: target, current: target, connected: true },
+    ]);
     expect(view.router.state.location.hash).toBe("event-1002");
-    // The existing group's passive open schedules one extra page before its
-    // event DOM mounts. Keep the ordinary anchor's bounded behavior unchanged.
+    expect(controlToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(control.querySelectorAll('[id^="event-"]')).toHaveLength(0);
+
+    await release(last.reply, json(last.page));
+    await waitFor(() => {
+      if (
+        view.client.isFetching() !== 0 ||
+        view.queryByText("75 hidden comments") === null
+      ) {
+        throw new Error("Waiting for the final page to render");
+      }
+    });
+    expect(pages("head").map((page) => page.items.length)).toEqual([
+      50, 50, 50, 50,
+    ]);
+    // The last head page overlaps 46 tail rows. These real rendered counts
+    // prove seam deduplication without mounting any of the 200 comment bodies.
+    expect(
+      view
+        .getAllByTestId("hidden-block")
+        .map(
+          (block) =>
+            within(block).getByText(/^\d+ hidden comments$/).textContent,
+        ),
+    ).toEqual([
+      "25 hidden comments",
+      "100 hidden comments",
+      "75 hidden comments",
+    ]);
+    expect(view.container.querySelectorAll("#event-1002")).toHaveLength(1);
+    expect(view.container.querySelectorAll('[id^="comment-"]')).toHaveLength(0);
     expect(
       server
         .timeline()
         .map(({ url }) => url.searchParams.get("after"))
         .filter(Boolean),
     ).toEqual(["cursor-50", "cursor-100", "cursor-150"]);
+    expect(server.timeline()).toHaveLength(5);
     expect(server.questions()).toHaveLength(0);
     expect(scroll.bottoms()).toBe(0);
+    expect(scroll.reveals("event-1002")).toBe(1);
   });
 
   it("C13 direct concrete comment links retain their target without selecting another question", async () => {
