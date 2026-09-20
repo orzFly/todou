@@ -507,8 +507,12 @@ export function useRestoreIssueMutation() {
  * from another project — so the card, every list and the inbox are refetched
  * rather than patched. The badge is read off the card's own response, and a
  * cache patched by hand here would be the one place it could disagree.
+ *
+ * Exported for the new-issue page, which declares a card's edges after the
+ * card it hangs them on has been created (T-458) and so has no mutation of
+ * its own to settle.
  */
-function invalidateAfterBlock(
+export function invalidateAfterBlock(
   queryClient: ReturnType<typeof useQueryClient>,
   slug: string,
   issueNumber: number,

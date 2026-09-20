@@ -5,6 +5,7 @@ import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { api, useCan } from "@/api/queries.ts";
 import { LabelChip, LabelInline } from "@/components/issue/label-chip.tsx";
+import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import {
   Popover,
   PopoverContent,
@@ -232,7 +233,8 @@ export function LabelPicker({
               role="option"
               aria-selected={row.kind === "toggle" && isSelected(row.label)}
               className={cn(
-                "flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm",
+                "flex w-full cursor-pointer items-center rounded-sm text-left",
+                PICKER_ROW,
                 index === highlight && "bg-accent",
                 creating && "opacity-50",
               )}

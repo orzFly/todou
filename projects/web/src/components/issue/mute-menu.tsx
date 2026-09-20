@@ -20,67 +20,49 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 /**
- * The card's notification control (T-372): one dropdown, three settings —
+ * The notification control itself (T-372): one dropdown, three settings —
  * always notifying, quiet until new activity relights the card, or quiet
  * until unmuted by hand.
  *
- * Reads its current value from the stored settings (mutesQuery), not from
- * `issue.muted`: that field is today's verdict, so an `until_activity` card
- * that relit would show "not muted" here while the setting still says
- * muted — and picking "notify" off that display would be a no-op click on
- * a state the reader believes they are leaving.
+ * It only reads and reports a setting, because the two callers store it in
+ * different places: the card page writes straight through to the server,
+ * while the new-issue page holds the pick until the card it applies to
+ * exists (T-458).
  *
- * Not part of IssueMoreActions: that section renders behind `canDelete`,
- * and muting is every reader's, not a maintainer's.
+ * `mode` is `undefined` while the stored settings are still in flight and
+ * `null` when the card carries no mute row — the control draws both as
+ * notifying, and picking "notify" out of either is the same click.
  */
-export function MuteMenu({
+export function MuteControl({
   slug,
-  issueNumber,
+  mode,
+  onPick,
 }: {
   slug: string;
-  issueNumber: number;
+  mode: IssueMuteMode | null | undefined;
+  onPick: (mode: IssueMuteMode | null) => void;
 }) {
   // Plain useQuery, not suspense: the control must render on a page whose
   // mutes fetch has not landed yet, showing the neutral "not set" state.
   const { data } = useQuery(mutesQuery);
-  const mutes = data ?? { issues: [], projects: [] };
-  const muteIssue = useMuteIssue();
-  const unmuteIssue = useUnmuteIssue();
-  const mode = muteOf(mutes, slug, issueNumber);
-  const projectMuted = (mutes?.projects ?? []).some((p) => p.slug === slug);
+  const projectMuted = (data?.projects ?? []).some((p) => p.slug === slug);
 
-  // null mode is the first entry's "not set" state: no mute row, which
-  // behaves as always-notify — the same click ("notify") clears either.
   const items: {
     key: IssueMuteMode | null;
     icon: typeof BellRingIcon;
     text: string;
-    pick: () => void;
   }[] = [
-    {
-      key: null,
-      icon: BellRingIcon,
-      text: "Notify on new activity",
-      pick: () => unmuteIssue.mutate({ slug, number: issueNumber }),
-    },
+    { key: null, icon: BellRingIcon, text: "Notify on new activity" },
     {
       key: "until_activity",
       icon: BellOffIcon,
       text: issueMuteLabels.until_activity,
-      pick: () =>
-        muteIssue.mutate({ slug, number: issueNumber, mode: "until_activity" }),
     },
-    {
-      key: "forever",
-      icon: BellOffIcon,
-      text: issueMuteLabels.forever,
-      pick: () =>
-        muteIssue.mutate({ slug, number: issueNumber, mode: "forever" }),
-    },
+    { key: "forever", icon: BellOffIcon, text: issueMuteLabels.forever },
   ];
 
   return (
-    <SidebarSection name="notifications" title="Notifications">
+    <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="sm" className="w-full justify-start">
@@ -96,7 +78,7 @@ export function MuteMenu({
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-auto" align="start">
           {items.map((item) => (
-            <DropdownMenuItem key={item.text} onSelect={item.pick}>
+            <DropdownMenuItem key={item.text} onSelect={() => onPick(item.key)}>
               <item.icon className="size-3.5" />
               {item.text}
               {(mode ?? null) === item.key && (
@@ -119,6 +101,47 @@ export function MuteMenu({
           to hear from any of its cards.
         </p>
       )}
+    </>
+  );
+}
+
+/**
+ * The card's notification section.
+ *
+ * Reads its current value from the stored settings (mutesQuery), not from
+ * `issue.muted`: that field is today's verdict, so an `until_activity` card
+ * that relit would show "not muted" here while the setting still says
+ * muted — and picking "notify" off that display would be a no-op click on
+ * a state the reader believes they are leaving.
+ *
+ * Not part of IssueMoreActions: that section renders behind `canDelete`,
+ * and muting is every reader's, not a maintainer's.
+ */
+export function MuteMenu({
+  slug,
+  issueNumber,
+}: {
+  slug: string;
+  issueNumber: number;
+}) {
+  const { data } = useQuery(mutesQuery);
+  const muteIssue = useMuteIssue();
+  const unmuteIssue = useUnmuteIssue();
+  const mode = muteOf(data ?? { issues: [], projects: [] }, slug, issueNumber);
+
+  return (
+    <SidebarSection name="notifications" title="Notifications">
+      <MuteControl
+        slug={slug}
+        mode={mode}
+        onPick={(next) => {
+          if (next === null) {
+            unmuteIssue.mutate({ slug, number: issueNumber });
+            return;
+          }
+          muteIssue.mutate({ slug, number: issueNumber, mode: next });
+        }}
+      />
     </SidebarSection>
   );
 }

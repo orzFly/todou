@@ -54,8 +54,11 @@ export function muteOf(
  * of /me/inbox and repaints every list's unread dots, so the refetch set is
  * the same coarse-grained one a reads sweep uses. Project-level writes drop
  * the per-slug narrowing: every project's list can change.
+ *
+ * Exported for the new-issue page, which applies the mute picked before the
+ * card existed (T-458) and so has no mutation of its own to settle.
  */
-function invalidateAfterMute(
+export function invalidateAfterMute(
   queryClient: QueryClient,
   scope: "issue" | "project",
   slug?: string,

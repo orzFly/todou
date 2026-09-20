@@ -24,6 +24,7 @@ import type {
   Status,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mutesQuery } from "../src/api/mutes.ts";
 import {
   api,
   labelsQuery,
@@ -103,6 +104,9 @@ function renderAs(role: MemberRole) {
   client.setQueryData(labelsQuery(SLUG).queryKey, LABELS);
   client.setQueryData(membersQuery(SLUG).queryKey, MEMBERS);
   client.setQueryData(meQuery.queryKey, ME);
+  // The Notifications control reads it for the project-wide mute note; left
+  // unseeded it would go to a network this fixture does not have.
+  client.setQueryData(mutesQuery.queryKey, { issues: [], projects: [] });
 
   // The guard rather than `AppShell`, whose only contribution to leaving is to
   // render this: the shell would also open the user-level stream, fetch the
@@ -170,9 +174,14 @@ const triageControls = () => ({
   editAssignees: screen.queryByRole("button", { name: "Edit assignees" }),
 });
 
+const sectionsOf = (container: HTMLElement) =>
+  [...container.querySelectorAll("[data-sidebar-section]")].map((el) =>
+    el.getAttribute("data-sidebar-section"),
+  );
+
 describe("the new-issue sidebar", () => {
   it("is hidden from a reporter, who may not set those fields", async () => {
-    renderAs("reporter");
+    const view = renderAs("reporter");
     // The form itself must be there — otherwise this asserts nothing.
     await screen.findByLabelText("Title");
 
@@ -182,6 +191,11 @@ describe("the new-issue sidebar", () => {
     expect(controls.assignees).toBeNull();
     expect(controls.editLabels).toBeNull();
     expect(controls.editAssignees).toBeNull();
+    // Notifications asks for no capability at all, and it still does not
+    // appear: the sidebar it lives in is what a reporter does not get, and
+    // that is the whole of what this role's page changed (T-458).
+    expect(screen.queryByRole("heading", { name: "Notifications" })).toBeNull();
+    expect(sectionsOf(view.container)).toEqual([]);
   });
 
   it("is shown to a writer", async () => {
@@ -204,6 +218,27 @@ describe("the new-issue sidebar", () => {
     await waitFor(() => {
       expect(triageControls().status).not.toBeNull();
     });
+  });
+
+  /**
+   * The alignment T-458 asked for, stated as the thing a reader can check:
+   * the same sections, under the same names, in the same order as the card
+   * page's — which sidebar-order.test.tsx pins from the other end. The two
+   * lists are written out separately on purpose; a shared constant would let
+   * both move at once and never disagree.
+   */
+  it("runs the card page's own sections, in the card page's order", async () => {
+    const view = renderAs("writer");
+    await screen.findByLabelText("Title");
+    await waitFor(() => expect(triageControls().status).not.toBeNull());
+    expect(sectionsOf(view.container)).toEqual([
+      "status",
+      "labels",
+      "assignees",
+      "blocked-by",
+      "blocks",
+      "notifications",
+    ]);
   });
 });
 
@@ -411,6 +446,151 @@ describe("the new-issue page's Ctrl-Enter", () => {
   });
 });
 
+/**
+ * Edges and a mute picked before the card exists (T-458). Both are replayed
+ * onto the number the server hands back, which makes a half-finished submit
+ * the case worth pinning: the card is written by then, so pressing Create
+ * again has to finish the job rather than file a second one.
+ */
+describe("the new-issue sidebar's staged edges and mute", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const created = { id: 1, number: 12, body: "" } as Issue;
+
+  const fillTitle = async () => {
+    fireEvent.change(await screen.findByLabelText("Title"), {
+      target: { value: "Dig up the potatoes" },
+    });
+  };
+
+  /**
+   * Typed rather than picked off the candidate list: this fixture seeds no
+   * reference config, so the picker offers only its as-typed row — which is
+   * also the row whose ref reaches the server unresolved.
+   */
+  const stageBlockedBy = async (ref: string) => {
+    (
+      await screen.findByRole("button", { name: "Add a blocked by entry" })
+    ).click();
+    const input = await screen.findByPlaceholderText("#12 or other-project#12");
+    fireEvent.change(input, { target: { value: ref } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByText(ref)).not.toBeNull());
+  };
+
+  it("hangs a staged edge on the card it just created", async () => {
+    const createIssue = vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    const addBlockedBy = vi
+      .spyOn(api, "addIssueBlockedBy")
+      .mockResolvedValue({ blocked_by: [] });
+    renderAs("admin");
+    await fillTitle();
+    await stageBlockedBy("#404");
+
+    submitButtonFor().click();
+
+    expect(await screen.findByText("the card")).toBeTruthy();
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(addBlockedBy).toHaveBeenCalledWith(SLUG, 12, "#404");
+  });
+
+  it("keeps the one card when the edge fails, and finishes it on the next press", async () => {
+    const createIssue = vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    const addBlockedBy = vi
+      .spyOn(api, "addIssueBlockedBy")
+      .mockRejectedValueOnce(new Error("no such card"))
+      .mockResolvedValue({ blocked_by: [] });
+    renderAs("admin");
+    await fillTitle();
+    await stageBlockedBy("#404");
+
+    submitButtonFor().click();
+    await waitFor(() => expect(addBlockedBy).toHaveBeenCalledTimes(1));
+    // The form is still standing — the card exists, its edge does not, and
+    // the button is the only thing that can still close that gap.
+    expect(screen.queryByText("the card")).toBeNull();
+    expect(createIssue).toHaveBeenCalledOnce();
+
+    submitButtonFor().click();
+
+    expect(await screen.findByText("the card")).toBeTruthy();
+    // The whole point of `createdRef`: a second press must not file a second
+    // card, only retry what is left.
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(addBlockedBy).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-sends only the edge that failed", async () => {
+    vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    const addBlockedBy = vi
+      .spyOn(api, "addIssueBlockedBy")
+      .mockResolvedValueOnce({ blocked_by: [] })
+      .mockRejectedValueOnce(new Error("no such card"))
+      .mockResolvedValue({ blocked_by: [] });
+    renderAs("admin");
+    await fillTitle();
+    await stageBlockedBy("#404");
+    await stageBlockedBy("#405");
+
+    submitButtonFor().click();
+    await waitFor(() => expect(addBlockedBy).toHaveBeenCalledTimes(2));
+    // The one that landed is gone from the tray; only the failure is left to
+    // look at, and only it goes out again.
+    expect(screen.queryByText("#404")).toBeNull();
+    expect(screen.queryByText("#405")).not.toBeNull();
+
+    submitButtonFor().click();
+
+    expect(await screen.findByText("the card")).toBeTruthy();
+    expect(addBlockedBy.mock.calls.map((call) => call[2])).toEqual([
+      "#404",
+      "#405",
+      "#405",
+    ]);
+  });
+
+  it("applies a picked mute to the created card", async () => {
+    vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    const muteIssue = vi.spyOn(api, "muteIssue").mockResolvedValue(undefined);
+    renderAs("admin");
+    await fillTitle();
+
+    fireEvent.pointerDown(
+      await screen.findByRole("button", { name: "Notifying" }),
+      { button: 0, pointerType: "mouse" },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Quiet until unmuted" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Quiet until unmuted" }),
+      ).not.toBeNull(),
+    );
+
+    submitButtonFor().click();
+
+    expect(await screen.findByText("the card")).toBeTruthy();
+    expect(muteIssue).toHaveBeenCalledWith(SLUG, 12, { mode: "forever" });
+  });
+
+  it("sends no mute when the pick is left where it starts", async () => {
+    vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    const muteIssue = vi.spyOn(api, "muteIssue").mockResolvedValue(undefined);
+    renderAs("admin");
+    await fillTitle();
+
+    submitButtonFor().click();
+
+    expect(await screen.findByText("the card")).toBeTruthy();
+    // Notifying is what a card with no mute row already does; writing one
+    // saying so would be a row the reader never asked for.
+    expect(muteIssue).not.toHaveBeenCalled();
+  });
+});
+
 describe("the new-issue sidebar's picked assignees (T-391)", () => {
   it("echoes the pick without linking it — there is no card yet", async () => {
     renderAs("admin");
@@ -427,11 +607,13 @@ describe("the new-issue sidebar's picked assignees (T-391)", () => {
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 
-    // The echo lives under the Assignees heading, beside the picker that
-    // wrote it. It restates a choice the reader just made on a card that does
-    // not exist yet, so it is a readout, not a way to anybody's page.
-    const echo = (await screen.findByRole("heading", { name: "Assignees" }))
-      .nextElementSibling as HTMLElement;
+    // The echo lives in the Assignees section, under the heading row that
+    // carries the picker. It restates a choice the reader just made on a card
+    // that does not exist yet, so it is a readout, not a way to anybody's
+    // page.
+    const heading = await screen.findByRole("heading", { name: "Assignees" });
+    const echo = (heading.closest("[data-sidebar-section]") as HTMLElement)
+      .children[1] as HTMLElement;
     expect(echo.querySelectorAll('a[href^="/users/"]')).toHaveLength(0);
     // The other half: an echo that rendered nothing would pass the line above.
     expect(echo.textContent).toContain("User");

@@ -95,13 +95,36 @@ describe("AssigneePicker selection (T-353)", () => {
     const onToggle = vi.fn();
     open({ selectedIds: [2], onToggle });
 
-    // The check sits alone in the row's leading slot, so its presence is the
-    // child count there — no dependence on the icon library's class names.
-    expect(rowFor(/Akira Sato/).firstElementChild?.childElementCount).toBe(1);
-    expect(rowFor(/Alice Kim/).firstElementChild?.childElementCount).toBe(0);
+    // The check sits alone in the row's trailing slot (T-458), so its presence
+    // is the child count there — no dependence on the icon library's class
+    // names.
+    expect(rowFor(/Akira Sato/).lastElementChild?.childElementCount).toBe(1);
+    expect(rowFor(/Alice Kim/).lastElementChild?.childElementCount).toBe(0);
 
     fireEvent.click(rowFor(/Alice Kim/));
     expect(onToggle).toHaveBeenCalledWith(1);
+  });
+
+  it("opens every row with the avatar, leaving no gutter on the left", () => {
+    open({ selectedIds: [2] });
+    // What the leading slot used to be: an empty span on every unpicked row.
+    // Reading the avatar off the first child is what fails if one comes back.
+    for (const row of rows()) {
+      const lead = row.firstElementChild as HTMLElement;
+      const avatar =
+        lead.matches('[data-slot="avatar"]') ||
+        lead.querySelector('[data-slot="avatar"]') !== null;
+      expect(avatar).toBe(true);
+    }
+  });
+
+  it("keeps the trailing slot on unpicked rows so the menu cannot resize", () => {
+    open({ selectedIds: [2] });
+    // A slot that only existed once picked would take the menu's width with
+    // it; every row carries one, empty or not.
+    for (const row of rows()) {
+      expect(row.lastElementChild?.className).toContain("w-4");
+    }
   });
 });
 

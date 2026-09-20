@@ -4,10 +4,12 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import type { Issue, Status } from "@todou/shared";
+import type { Issue, IssueMuteMode, Status } from "@todou/shared";
+import { PencilIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { issueQuery } from "@/api/issues.ts";
+import { invalidateAfterMute } from "@/api/mutes.ts";
 import {
   api,
   labelsQuery,
@@ -23,6 +25,12 @@ import {
   useCanCreateLabels,
   useCreateLabel,
 } from "@/components/issue/label-picker.tsx";
+import { MuteControl } from "@/components/issue/mute-menu.tsx";
+import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
+import {
+  StagedBlockSections,
+  useStagedBlocks,
+} from "@/components/issue/staged-blocks.tsx";
 import {
   StagedFileTray,
   StagedFileUploadButton,
@@ -136,10 +144,20 @@ function NewIssueForm({
   const members = useSuspenseQuery(membersQuery(slug));
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
-  // The three sidebar fields are `issue.triage`, which a reporter does not
-  // hold: the server refuses them outright, so offering them would only
+  // Status, Labels and Assignees are `issue.triage`, which a reporter does
+  // not hold: the server refuses them outright, so offering them would only
   // produce a 403 after the issue was already written.
   const canTriage = useCan(slug, "issue.triage");
+  const canBlock = useCan(slug, "issue.block");
+  // Notifications needs no capability at all, but it does not bring the
+  // sidebar out on its own: a reporter files the card and lands on it, where
+  // the same control is one click away, and an aside holding one row is not
+  // worth restacking their page for.
+  //
+  // Both gates are `writer`, so today this is exactly `canTriage` — spelled
+  // as the rule it is (the aside appears when it holds a section) rather than
+  // as the one capability that currently decides it.
+  const showSidebar = canTriage || canBlock;
   const registry = useCommandRegistry(slug, "new-issue");
 
   const [title, setTitle] = useState("");
@@ -151,8 +169,12 @@ function NewIssueForm({
   const [statusId, setStatusId] = useState("");
   const [labelIds, setLabelIds] = useState<number[]>([]);
   const [assigneeIds, setAssigneeIds] = useState<number[]>([]);
+  // null is "notifying", the state a card carries with no mute row of its
+  // own: creating with it selected sends nothing.
+  const [mute, setMute] = useState<IssueMuteMode | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const staging = useStagedFiles();
+  const blocks = useStagedBlocks();
   // A retry after a failed attachment upload must not create the issue
   // twice — the created issue survives the failed attempt here.
   const createdRef = useRef<Issue | null>(null);
@@ -242,8 +264,19 @@ function NewIssueForm({
           await api.updateIssue(slug, issue.number, { body: full });
         }
       }
+      // Everything below needs the card's number, so none of it can run
+      // before the create above. Each step is resumable on its own — the
+      // edges drop out of the tray as they land, and a mute is a PUT — so a
+      // failure here leaves the button able to finish the job, which is the
+      // whole reason it does not navigate away first.
+      await blocks.createAll(slug, issue.number);
+      if (mute !== null) {
+        await api.muteIssue(slug, issue.number, { mode: mute });
+        invalidateAfterMute(queryClient, "issue", slug);
+      }
       queryClient.invalidateQueries({ queryKey: ["issues", slug] });
       staging.clear();
+      blocks.clear();
       navigate({
         to: "/projects/$slug/issues/$number",
         params: { slug, number: String(issue.number) },
@@ -263,7 +296,9 @@ function NewIssueForm({
   }
 
   return (
-    <div className={cn("grid gap-6", canTriage && "lg:grid-cols-[1fr_240px]")}>
+    <div
+      className={cn("grid gap-6", showSidebar && "lg:grid-cols-[1fr_240px]")}
+    >
       <form
         className="min-w-0 space-y-4"
         onSubmit={(e) => {
@@ -351,103 +386,137 @@ function NewIssueForm({
         </div>
       </form>
 
-      {canTriage && (
+      {showSidebar && (
         // A grid item floors at min-content, so without `min-w-0` the Labels
         // chips never shrink; and unlike issue-detail's sidebar there is no
         // `lg:overflow-y-auto` here to clip them — they paint over the form.
-        <aside className="min-w-0 space-y-5 text-sm">
-          <section className="space-y-2">
-            <h3 className="text-xs font-medium text-muted-foreground uppercase">
-              Status
-            </h3>
-            <Select value={statusId} onValueChange={setStatusId}>
-              <SelectTrigger className="w-full">
-                <SelectValue
-                  placeholder={
-                    pickDefaultStatus(statuses.data)?.name ?? "Status"
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {statuses.data.map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>
-                    <span
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: s.color }}
-                      aria-hidden
+        <aside className="min-w-0 space-y-3 text-sm">
+          {canTriage && (
+            <>
+              <SidebarSection name="status" title="Status">
+                {/* A select rather than the card page's pill-and-dropdown:
+                    this is the one field with a value before anybody picks
+                    one, and the placeholder is where that default is said. */}
+                <Select value={statusId} onValueChange={setStatusId}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue
+                      placeholder={
+                        pickDefaultStatus(statuses.data)?.name ?? "Status"
+                      }
                     />
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </section>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statuses.data.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        <span
+                          className="size-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: s.color }}
+                          aria-hidden
+                        />
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SidebarSection>
 
-          <section className="space-y-2">
-            <h3 className="text-xs font-medium text-muted-foreground uppercase">
-              Labels
-            </h3>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <LabelChips
-                labels={labels.data.filter((label) =>
-                  labelIds.includes(label.id),
-                )}
-                truncate
-              />
-            </div>
-            <LabelPicker
-              allLabels={labels.data}
-              selected={labels.data.filter((label) =>
-                labelIds.includes(label.id),
-              )}
-              onToggle={(label) =>
-                setLabelIds((prev) =>
-                  prev.includes(label.id)
-                    ? prev.filter((id) => id !== label.id)
-                    : [...prev, label.id],
-                )
-              }
-              onCreate={canCreateLabels ? createLabel : undefined}
-              trigger={
-                <Button variant="outline" size="sm">
-                  Edit labels
-                </Button>
-              }
-            />
-          </section>
-
-          <section className="space-y-2">
-            <h3 className="text-xs font-medium text-muted-foreground uppercase">
-              Assignees
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {members.data
-                .filter((member) => assigneeIds.includes(member.user.id))
-                .map((member) => (
-                  <UserChip
-                    key={member.user.id}
-                    user={member.user}
-                    link={false}
+              <SidebarSection
+                name="labels"
+                title="Labels"
+                action={
+                  <LabelPicker
+                    allLabels={labels.data}
+                    selected={labels.data.filter((label) =>
+                      labelIds.includes(label.id),
+                    )}
+                    onToggle={(label) =>
+                      setLabelIds((prev) =>
+                        prev.includes(label.id)
+                          ? prev.filter((id) => id !== label.id)
+                          : [...prev, label.id],
+                      )
+                    }
+                    onCreate={canCreateLabels ? createLabel : undefined}
+                    trigger={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Edit labels"
+                      >
+                        <PencilIcon className="size-3.5" />
+                      </Button>
+                    }
                   />
-                ))}
-            </div>
-            <AssigneePicker
-              members={members.data}
-              selectedIds={assigneeIds}
-              onToggle={(userId) =>
-                setAssigneeIds((prev) =>
-                  prev.includes(userId)
-                    ? prev.filter((id) => id !== userId)
-                    : [...prev, userId],
-                )
-              }
-              trigger={
-                <Button variant="outline" size="sm">
-                  Edit assignees
-                </Button>
-              }
+                }
+              >
+                {labelIds.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <LabelChips
+                      labels={labels.data.filter((label) =>
+                        labelIds.includes(label.id),
+                      )}
+                      truncate
+                    />
+                  </div>
+                )}
+              </SidebarSection>
+
+              <SidebarSection
+                name="assignees"
+                title="Assignees"
+                action={
+                  <AssigneePicker
+                    members={members.data}
+                    selectedIds={assigneeIds}
+                    onToggle={(userId) =>
+                      setAssigneeIds((prev) =>
+                        prev.includes(userId)
+                          ? prev.filter((id) => id !== userId)
+                          : [...prev, userId],
+                      )
+                    }
+                    trigger={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Edit assignees"
+                      >
+                        <PencilIcon className="size-3.5" />
+                      </Button>
+                    }
+                  />
+                }
+              >
+                {assigneeIds.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {members.data
+                      .filter((member) => assigneeIds.includes(member.user.id))
+                      .map((member) => (
+                        // Unlinked, unlike the card page's chips: this echoes
+                        // a pick made on a card that does not exist (T-391).
+                        <UserChip
+                          key={member.user.id}
+                          user={member.user}
+                          link={false}
+                        />
+                      ))}
+                  </div>
+                )}
+              </SidebarSection>
+            </>
+          )}
+
+          {canBlock && (
+            <StagedBlockSections
+              slug={slug}
+              blocks={blocks}
+              disabled={submitting}
             />
-          </section>
+          )}
+
+          <SidebarSection name="notifications" title="Notifications">
+            <MuteControl slug={slug} mode={mute} onPick={setMute} />
+          </SidebarSection>
         </aside>
       )}
     </div>

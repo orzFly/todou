@@ -33,8 +33,19 @@ export function RefPicker({
   exclude: ReadonlyArray<{ slug: string; number: number }>;
   trigger: ReactNode;
   pending: boolean;
-  /** Resolve = clear and close; reject = keep the picker and original input. */
-  onPick: (ref: string) => Promise<void>;
+  /**
+   * Resolve = clear and close; reject = keep the picker and original input.
+   *
+   * `target` is where the ref points, for a caller that has to draw the pick
+   * back before anything has resolved it — the card being created on the
+   * new-issue page has no server round-trip to read it out of (T-458). It is
+   * null for a hand-typed ref that matched no candidate, which is the one
+   * shape this component cannot resolve locally.
+   */
+  onPick: (
+    ref: string,
+    target: { slug: string; number: number } | null,
+  ) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
@@ -127,7 +138,12 @@ export function RefPicker({
       return;
     }
     try {
-      await onPick(row.ref);
+      await onPick(
+        row.ref,
+        row.kind === "issue"
+          ? { slug: candidates.target, number: row.item.number }
+          : candidates.typedTarget,
+      );
       setValue("");
       setOpen(false);
     } catch {

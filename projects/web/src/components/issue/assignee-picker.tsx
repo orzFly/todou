@@ -1,6 +1,7 @@
 import type { Member } from "@todou/shared";
 import { CheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
 import {
   DropdownMenu,
@@ -46,6 +47,7 @@ export function AssigneePicker({
           return (
             <DropdownMenuItem
               key={member.user.id}
+              className={PICKER_ROW}
               // Radix keyboard typeahead reads textContent, where the initials
               // fallback appears only for users with no avatar — which letter
               // jumps to a row would otherwise depend on who uploaded one.
@@ -56,9 +58,6 @@ export function AssigneePicker({
                 onToggle(member.user.id);
               }}
             >
-              <span className="w-4">
-                {active && <CheckIcon className="size-4" />}
-              </span>
               {/* Decorative: the initials fallback would otherwise be read out
                   glued to the name this row already carries. The badge keeps
                   its own label — humans and agents are mixed in here, and it
@@ -69,6 +68,13 @@ export function AssigneePicker({
               </span>
               <span className="whitespace-nowrap text-muted-foreground">
                 @{member.user.login}
+              </span>
+              {/* Kept in the layout unchecked, unlike the leading slot this
+                  replaced (T-458): the menu sizes itself to its widest row, so
+                  a check that only occupies space once picked would widen the
+                  whole menu under the pointer that just clicked it. */}
+              <span className="ml-auto w-4 shrink-0">
+                {active && <CheckIcon className="size-4" />}
               </span>
             </DropdownMenuItem>
           );
