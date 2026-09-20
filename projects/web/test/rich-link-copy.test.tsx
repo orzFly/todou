@@ -369,7 +369,7 @@ describe("the sheet says which parts are selectable (T-427)", () => {
     );
     declares(".ref-chip-body", "--ref-chip-inset", "0px");
     expect(blocks.get(".ref-chip-body .ref-chip-title")).toContain(
-      "calc(100% - var(--ref-chip-inset))",
+      "100% - var(--ref-chip-inset) + var(--ref-chip-gutter, 0px)",
     );
   });
 

@@ -32,6 +32,10 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import {
+  checkParagraphOverflow,
+  probeRichLinkWidth,
+} from "./browser/rich-link-width.mjs";
 import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
 import {
   createBrowserStack,
@@ -116,6 +120,8 @@ const FAULTS = {
   // edge and therefore follows the leading rather than the prose (T-460).
   "title-leading":
     ".ref-chip-body, .comment-link-body { line-height: 1.2 !important; }",
+  "paragraph-overflow":
+    '.markdown-body p:has(.ref-chip-body)::after { content: ""; display: inline-block; width: calc(100% + 10px); }',
 };
 
 /**
@@ -865,6 +871,7 @@ function checkLayout(overflow, baselines, chipless, probes, viewport) {
         at,
       ),
     );
+  failures.push(...checkParagraphOverflow(overflow, at));
   for (const [index, measured] of baselines.entries()) {
     const key = probes[index]?.key ?? String(index);
     if (measured.error) continue;
@@ -1139,6 +1146,19 @@ async function runPass({ browser, stack, fixture, fault }) {
           notes.layout[`${viewport.name}/${placement}`] = layout.measurements;
           notes.navigationsHeld[`${viewport.name}/${placement}`] =
             await evaluate(page, () => window.__t427.navigationsHeld);
+          if (!fault && viewport.name === "narrow" && placement === "after") {
+            const width = await evaluate(page, probeRichLinkWidth);
+            notes.width = width;
+            for (const name of width.coverageErrors ?? [])
+              failures.push(failure("fixture-missing-shapes", name));
+            for (const name of width.failures ?? [])
+              failures.push(failure(name, JSON.stringify(width.readings)));
+            if (
+              width.injectedOverflow &&
+              checkParagraphOverflow(width.injectedOverflow).length === 0
+            )
+              failures.push(failure("paragraph-overflow-fault-unnoticed", ""));
+          }
         } finally {
           await page.close().catch(() => {});
         }

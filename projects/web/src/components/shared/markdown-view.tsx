@@ -31,6 +31,7 @@ import {
   REF_REPEAT_ATTR,
   remarkRefOccurrences,
 } from "@/lib/remark-ref-occurrences.ts";
+import { useRefChipFlow } from "@/lib/use-ref-chip-flow.ts";
 
 /**
  * A fence rendered as a diff of two versions (T-343). It keeps `.spec-changed`
@@ -259,6 +260,7 @@ export function MarkdownViewWithPlugins({
   fenceBaselines,
   remarkPlugins,
 }: MarkdownViewProps & { remarkPlugins: MarkdownRemarkPlugins }) {
+  const rootRef = useRefChipFlow();
   // The override map must be referentially stable across re-renders: every
   // entry is an anonymous component, and a fresh map makes React treat each
   // one as a NEW component type, unmounting and rebuilding those DOM
@@ -384,7 +386,7 @@ export function MarkdownViewWithPlugins({
 
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).
-    <div className="markdown-body">
+    <div ref={rootRef} className="markdown-body">
       <Markdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePasses}

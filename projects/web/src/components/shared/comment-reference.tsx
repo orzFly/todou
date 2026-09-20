@@ -140,7 +140,10 @@ export function CommentReference({
       let available =
         container.clientWidth -
         pixels(containerStyle.paddingLeft) -
-        pixels(containerStyle.paddingRight);
+        pixels(containerStyle.paddingRight) +
+        // The flow guard pays for the cloned edge on behalf of inline author
+        // text. This allocator already charges that edge below; do not pay twice.
+        pixels(containerStyle.getPropertyValue("--ref-chip-gutter"));
       if (anchor) {
         const style = getComputedStyle(anchor);
         available -=

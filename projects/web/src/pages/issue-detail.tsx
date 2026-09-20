@@ -456,7 +456,7 @@ export function BodyBlock({
       <div className="flex items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
         <UserChip user={issue.author} />
         <span
-          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground"
+          className="min-w-0 truncate text-xs text-muted-foreground"
           title={issue.created_at}
         >
           {new Date(issue.created_at).toLocaleString()}

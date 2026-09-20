@@ -33,7 +33,7 @@
 
 .ref-chip-body .ref-chip-title {
   display: inline-block;
-  max-width: calc(100% - var(--ref-chip-inset));
+  max-width: calc(100% - var(--ref-chip-inset) + var(--ref-chip-gutter, 0px));
   /* Inline overflow boxes otherwise use their bottom border as a baseline. */
   vertical-align: bottom;
 }
@@ -60,8 +60,15 @@
 /* The reader's cap, restated at this rule's specificity: the utility that
    carries it loses to the `max-width` above on its own. */
 .ref-chip-body .ref-chip-title.max-w-\[24em\] {
-  max-width: min(24em, calc(100% - var(--ref-chip-inset)));
+  max-width: min(
+    24em,
+    calc(100% - var(--ref-chip-inset) + var(--ref-chip-gutter, 0px))
+  );
 }
+
+/* useRefChipFlow reserves a closing edge at the actual line container only
+   when a fragment overflows. Titles already pay for their box above; credit
+   that container gutter so this protection never charges them twice. */
 
 /* A mention's copyable identity is the current `@login` and nothing else; the
    avatar carries the reader's initials as real text. */
