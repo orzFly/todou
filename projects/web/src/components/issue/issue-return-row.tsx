@@ -5,7 +5,7 @@ import {
   IssueReturnLink,
 } from "@/components/shared/return-link.tsx";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
-import { SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
+import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -42,6 +42,10 @@ export function IssueReturnRow({
 }) {
   const headerHeight = useHeaderHeight();
   const carriesBack = useMediaQuery(SM_UP);
+  // The mirror follows the heading it stands in for, gutter and all (T-476):
+  // the copy hanging inside the bar while the original hung outside it made
+  // the arrow jump sideways at the moment the two swapped over.
+  const backFloats = useMediaQuery(XL_UP);
   const [shown, setShown] = useState(false);
 
   useEffect(() => {
@@ -80,8 +84,14 @@ export function IssueReturnRow({
           inert={!shown}
           data-testid="floating-title-bar"
           data-state={shown ? "shown" : "hidden"}
+          // `relative` is what the gutter copy hangs off, and it has to be
+          // written rather than inherited: this half's left edge is the text
+          // column's, while the row around it is `-mx-2` and would put the
+          // arrow 8px further out. The hidden state's `-translate-y-1` makes a
+          // containing block of its own, so without this the arrow would
+          // measure from a different box in each of the two states.
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 transition-all duration-150",
+            "relative flex min-w-0 flex-1 items-center gap-2 transition-all duration-150",
             shown
               ? "pointer-events-auto cursor-pointer"
               : "pointer-events-none -translate-y-1 opacity-0",
@@ -93,7 +103,12 @@ export function IssueReturnRow({
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         >
           {carriesBack && (
-            <IssueReturnLink slug={slug} scale="compact" mirrored />
+            <IssueReturnLink
+              slug={slug}
+              scale="compact"
+              mirrored
+              floating={backFloats}
+            />
           )}
           <CompactIssueIdentity
             slug={slug}

@@ -1172,6 +1172,31 @@ describe("where the back control stands (T-461)", () => {
     ).toHaveLength(copies);
   });
 
+  it.each([
+    ["keeps the mirror's copy in the bar below 1440", 1439, false],
+    ["hangs the mirror's copy in the gutter above it", 1441, true],
+  ] as const)("%s (T-476)", async (_what, width, floats) => {
+    await waysBackAt(width);
+    const bar = screen.getByTestId("floating-title-bar");
+    const [copy] = within(bar).getAllByRole("link", {
+      name: /^Back to /,
+      hidden: true,
+    });
+    // The bar stands in for the heading, so its copy has to stand where the
+    // heading's own control stands. While only the original hung in the
+    // gutter, scrolling the heading away slid the arrow back into the column
+    // and scrolling up slid it out again — one control moving sideways for a
+    // reason the reader has no way to read.
+    const className = (copy as HTMLElement).className;
+    if (floats) expect(className).toMatch(/(^|\s)absolute\b/);
+    else expect(className).not.toMatch(/(^|\s)absolute\b/);
+    // And it measures from this half rather than from the row around it: the
+    // row is `-mx-2`, so the same offset off that box would put the gutter
+    // copy 8px further out than the heading's (T-470's arithmetic, one floor
+    // up).
+    expect((copy as HTMLElement).closest(".relative")).toBe(bar);
+  });
+
   it("keeps the way back while the title is being renamed", async () => {
     await waysBackAt(1024);
     fireEvent.click(screen.getByRole("button", { name: "edit title" }));
