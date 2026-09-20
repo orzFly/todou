@@ -42,9 +42,7 @@ function Segment({
   return (
     <span
       className={
-        wrap
-          ? "[overflow-wrap:anywhere]"
-          : "inline-block align-baseline whitespace-nowrap"
+        wrap ? "wrap-anywhere" : "inline-block align-baseline whitespace-nowrap"
       }
     >
       <span
@@ -236,7 +234,7 @@ export function JumpRowBody({
             // lines the moment the title stops covering for it. The allocated
             // head widths are what this row narrows by; the text itself stays
             // on one line until the allocator says no one line will do.
-            wrap ? "[overflow-wrap:anywhere]" : "whitespace-nowrap",
+            wrap ? "wrap-anywhere" : "whitespace-nowrap",
             refClassName,
           )}
         >

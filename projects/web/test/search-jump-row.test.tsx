@@ -106,7 +106,7 @@ describe("a search row that leads with a ref token", () => {
     // without it, which is the single deliberate divergence (T-446).
     expect(heads(credit(container))).toHaveLength(1);
     expect(heads(credit(container))[0]).toBeCloseTo(23 - CHAR, 6);
-    expect(ref.className).not.toContain("overflow-wrap");
+    expect(ref.className).not.toContain("wrap-anywhere");
     // Flex breaks lines by content width before anything shrinks, so a
     // standing `flex-wrap` would send the title to a row of its own the
     // moment it outgrew the space left — measured in Chromium, and the reason
@@ -118,7 +118,7 @@ describe("a search row that leads with a ref token", () => {
     // 147px immovable plus 49px of minima needs 196px; 150px cannot hold it.
     const { container } = renderRow(150);
     const ref = token(container);
-    expect(ref.className).toContain("[overflow-wrap:anywhere]");
+    expect(ref.className).toContain("wrap-anywhere");
     expect(block(container).className).toContain("flex-wrap");
     expect(ref.textContent).toBe(SPELLED);
     expect(ref.title).toBe(SPELLED);

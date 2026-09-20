@@ -201,7 +201,12 @@ export function SearchResults({
         style={{ top: headerHeight }}
         className="-mx-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-1.5 sm:sticky sm:z-30 sm:bg-background/95 sm:backdrop-blur"
       >
-        <h2 className="font-heading text-lg font-medium">
+        {/* The query goes in here verbatim, and a query can be one unbreakable
+            token: a 97-character comment ref quoted back drew this heading
+            874.63px wide at a 390px viewport and took the page with it. Its
+            automatic minimum as a flex item is its longest word, so a break
+            opportunity is what lets it narrow at all. */}
+        <h2 className="font-heading text-lg font-medium wrap-anywhere">
           {q === "" ? "Search" : `Results for “${q}”`}
         </h2>
         {hasContent && !replace && (
