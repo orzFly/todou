@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
 import { createBrowserStack } from "./lib/browser-stack.mjs";
 import {
+  assessSplitCopy,
   assessSplitHeaders,
   probeHeaderCopy,
   probeSplitHeader,
@@ -77,6 +78,78 @@ const SPLIT_SURFACES = [
   },
   { id: "spec-source", search: "?file=plan.md&v=2&compare=1&view=source" },
 ];
+// Stable names also work individually with --self-test-case=<name>.
+const SPLIT_FAULTS = [
+  [1, "strip", 320, "timeline", false, "the header as it stood before"],
+  [1, "meta-auto", 430, "timeline", false, "right-alignment on the meta"],
+  [2, "nowrap", 320, "spec-rendered", true, "a meta that will not wrap"],
+  [3, "no-indent", 390, "timeline", false, "no indent on the second line"],
+  [
+    4,
+    "no-time-auto",
+    390,
+    "timeline",
+    false,
+    "the time not claiming the space",
+  ],
+  [
+    4,
+    "justify-end",
+    320,
+    "spec-rendered",
+    true,
+    "the base justify-end once it wraps",
+  ],
+  // Here identity items still share a line, so their missing gap is measurable.
+  [
+    7,
+    "identity-block",
+    520,
+    "timeline",
+    false,
+    "the identity group as a block",
+  ],
+  [
+    5,
+    "desktop-grid",
+    1280,
+    "timeline",
+    false,
+    "ROW max-sm:grid replaced by grid",
+  ],
+  [
+    5,
+    "desktop-identity-flex",
+    1280,
+    "timeline",
+    false,
+    "IDENTITY contents replaced by flex",
+  ],
+  [
+    5,
+    "drop-spacer",
+    1280,
+    "spec-rendered",
+    false,
+    "the desktop spacer removed",
+  ],
+  [
+    5,
+    "action-unconditional",
+    1280,
+    "timeline",
+    false,
+    "ACTION gains unconditional w-full",
+  ],
+  [
+    5,
+    "meta-unconditional",
+    1280,
+    "timeline",
+    false,
+    "meta box gains unconditional w-full on both pages",
+  ],
+];
 
 const AVATAR_CASES = [
   "human-none",
@@ -97,6 +170,29 @@ const AVATAR_CASES = [
  * never the box around it.
  */
 const DEFAULT_ROLES = ["author", "peer"];
+
+// Only these comment headers delegate narrow-screen wrapping to T-445.
+// BodyBlock, event rows, revision history and version-menu rows still fail.
+const NARROW_COMMENT_HEADER_CASE_IDS = new Set([
+  "comment-item",
+  "comment-item-agent-session",
+  "comment-item-agent-plain",
+  "comment-hover-card",
+  "spec-annotation-hover-card",
+  "unplaced-comment",
+  "diff-annotation",
+  "spec-source-file",
+  "spec-unfolded-file",
+  "annotation-chip",
+]);
+
+function baselineRowFails(row, width) {
+  const mayWrap = width < 640 && NARROW_COMMENT_HEADER_CASE_IDS.has(row.id);
+  return (
+    (row.status !== "hit" && !(row.status === "unmeasurable" && mayWrap)) ||
+    (!mayWrap && (row.wrapped?.length ?? 0) > 0)
+  );
+}
 
 const CASES = [
   guard(
@@ -664,7 +760,14 @@ async function measure(page, fault = null, cases = CASES) {
           verticalAlign: beforeStyle.verticalAlign,
         };
         let mutation = null;
-        if (kind) {
+        if (kind === "non-header-wrap") {
+          // Real wrapping of BodyBlock's timestamp, not a fabricated status
+          // or a displaced baseline. Its flex item must occupy its own line.
+          root.style.flexWrap = "wrap";
+          roleOf("peer").style.flexBasis = "100%";
+          roleOf("peer").style.flexShrink = "0";
+          mutation = "non-header peer given a full flex line";
+        } else if (kind) {
           mutationRoot.style[property] = "center";
           mutation =
             kind === "row"
@@ -793,9 +896,9 @@ async function measure(page, fault = null, cases = CASES) {
             // The zero-size marker is an atomic inline box, so inserting it
             // takes away a line-break opportunity. On a row that is already
             // wrapping that can move the break, and the number would then
-            // describe a layout the reader never sees. Below 640 the header
-            // is allowed to wrap, so this is recorded rather than called a
-            // pass or a failure; at desktop widths it stays fatal.
+            // describe a layout the reader never sees. The main loop only
+            // permits this below 640 for explicit comment-header case ids;
+            // all other rows and desktop widths stay fatal.
             status: perturbed ? "unmeasurable" : "invalid",
             id,
             count: 0,
@@ -824,8 +927,8 @@ async function measure(page, fault = null, cases = CASES) {
               // comment header is now *for*: T-445 gives the id and the time
               // a line of their own there, and where they sit on it is graded
               // by that card's own criteria further down. Recorded rather
-              // than called a pass — and the main loop still treats it as
-              // fatal at 640 and above, where no header may wrap at all.
+              // than called a pass. The main loop permits this only for
+              // explicit comment-header case ids below 640.
               "unmeasurable"
             : failed.length > 0
               ? "failure"
@@ -1760,7 +1863,14 @@ async function splitHeaderRun(
  * the same page with the new classes stripped, taken in this same run,
  * because the timestamp inside the payload differs between runs.
  */
-async function splitCopyRun(browser, base, seeded, viewport, strip) {
+async function splitCopyRun(
+  browser,
+  base,
+  seeded,
+  viewport,
+  strip,
+  fault = null,
+) {
   const url = splitUrl(base, seeded, SPLIT_SURFACES[0]);
   const page = await pageFor(browser, viewport, seeded.cookie, url);
   try {
@@ -1770,7 +1880,13 @@ async function splitCopyRun(browser, base, seeded, viewport, strip) {
     });
     const fixtureErrors = await load(page, url);
     const selection = await evaluate(page, probeHeaderCopy, { strip });
-    if (selection.error) return { fixtureErrors, error: selection.error };
+    if (!selection || selection.error) {
+      return {
+        status: "error",
+        fixtureErrors,
+        error: selection?.error ?? "selection probe returned null",
+      };
+    }
     const key = async (type) =>
       await page.cdp.send(
         "Input.dispatchKeyEvent",
@@ -1787,8 +1903,16 @@ async function splitCopyRun(browser, base, seeded, viewport, strip) {
     await key("rawKeyDown");
     await key("keyUp");
     await sleep(120);
-    const pasted = await evaluate(page, probeHeaderCopy, { mode: "read" });
-    return { fixtureErrors, selected: selection.selected, pasted };
+    const pasted = await evaluate(page, probeHeaderCopy, {
+      mode: "read",
+      fault,
+    });
+    return {
+      status: pasted && !pasted.error ? "ok" : "error",
+      fixtureErrors,
+      selected: selection.selected,
+      pasted,
+    };
   } finally {
     await page.close();
   }
@@ -1989,26 +2113,21 @@ try {
         `dark ${(scopeDark.rows ?? [])[0]?.idColor ?? "?"} on ${scopeDark.background}`,
     );
     if (scopeBad.length) fatal = true;
-    // Below 640 the header is allowed to wrap, and each visual line is
-    // compared on its own. At desktop widths it is not: a participant that
-    // left the author's line there is the misalignment, not an excuse.
-    const wrappedOnDesktop =
-      viewport.width >= 640
-        ? run.rows.filter((row) => (row.wrapped?.length ?? 0) > 0)
-        : [];
-    for (const row of wrappedOnDesktop) {
+    // T-445 permits wrapping only for explicit comment-header case ids.
+    // A non-header participant leaving the author's line is fatal at 390 too.
+    const forbiddenWraps = run.rows.filter(
+      (row) =>
+        (row.wrapped?.length ?? 0) > 0 &&
+        !(viewport.width < 640 && NARROW_COMMENT_HEADER_CASE_IDS.has(row.id)),
+    );
+    for (const row of forbiddenWraps) {
       console.log(
         `  wrapped at ${viewport.name}: ${row.id} [${row.wrapped.join(", ")}]`,
       );
     }
     if (
       run.fixtureErrors.length ||
-      run.rows.some(
-        (row) =>
-          row.status !== "hit" &&
-          !(row.status === "unmeasurable" && viewport.width < 640),
-      ) ||
-      wrappedOnDesktop.length > 0 ||
+      run.rows.some((row) => baselineRowFails(row, viewport.width)) ||
       run.avatars.settled.some((row) => row.status !== "hit") ||
       run.untouched?.some((row) => row.status !== "hit")
     )
@@ -2021,9 +2140,9 @@ try {
   for (const viewport of SPLIT_VIEWPORTS) {
     const desktop = viewport.width >= 640;
     for (const surface of SPLIT_SURFACES) {
-      // Criterion 5 compares against the same page with every `max-sm:`
-      // class removed, measured in this same run: a log from a previous
-      // build would carry that build's font-loading and clock with it.
+      // Same-run strip geometry is diagnostic only. Criterion 5 checks the
+      // DOM-side exported constants: unconditional tokens survive stripping
+      // on both pages and must still fail.
       const baseline = desktop
         ? await splitHeaderRun(browser, base, seeded, viewport, surface, {
             fault: "strip",
@@ -2038,7 +2157,7 @@ try {
           surface,
           { stress },
         );
-        const { failures } = assessSplitHeaders(
+        const { failures, diagnostics } = assessSplitHeaders(
           measured,
           viewport.width,
           baseline,
@@ -2048,7 +2167,7 @@ try {
         console.log(
           `  ${label}: ${rows.length} header(s) ` +
             (desktop
-              ? `identical to the stripped baseline: ${failures.length === 0 ? "yes" : "NO"}`
+              ? `criterion 5 class tokens: ${measured.status !== "ok" ? "unavailable" : failures.some((failure) => failure.criterion === 5) ? "FAIL" : "pass"}; stripped geometry diagnostic: ${diagnostics.length} difference(s)`
               : `inset ${rows.map((row) => row.actionInset ?? "—").join("/")} ` +
                 `overflow ${rows.map((row) => row.overflowRight).join("/")} ` +
                 `indent ${rows.map((row) => (row.nameLeft === null ? "—" : round2(row.metaLeft - row.nameLeft))).join("/")} ` +
@@ -2057,6 +2176,11 @@ try {
         for (const failure of failures) {
           console.log(
             `    criterion ${failure.criterion} FAIL ${failure.row}: ${failure.detail}`,
+          );
+        }
+        for (const diagnostic of diagnostics) {
+          console.log(
+            `    geometry diagnostic ${diagnostic.row}: ${diagnostic.detail}`,
           );
         }
         if (measured.fixtureErrors?.length) {
@@ -2073,16 +2197,14 @@ try {
     const viewport = SPLIT_VIEWPORTS.find((entry) => entry.width === 390);
     const after = await splitCopyRun(browser, base, seeded, viewport, false);
     const before = await splitCopyRun(browser, base, seeded, viewport, true);
-    const payload = after.pasted?.value ?? null;
-    const was = before.pasted?.value ?? null;
-    // Byte for byte, trailing newline included: T-435's reader accepted that
-    // newline knowing what it was, and this card does not get to spend it.
-    const same = typeof payload === "string" && payload === was;
+    const verdict = assessSplitCopy(after, before);
     console.log(
-      `  copy @390: ${same ? "unchanged" : "CHANGED"} ${JSON.stringify(payload)} ` +
-        `vs stripped ${JSON.stringify(was)}${after.error || before.error ? ` ${after.error ?? before.error}` : ""}`,
+      `  copy @390 criterion 6: ${verdict.failures.length ? "FAIL" : "unchanged"} ` +
+        `${JSON.stringify(verdict.payload)} vs stripped ${JSON.stringify(verdict.was)}`,
     );
-    if (!same) fatal = true;
+    for (const failure of verdict.failures)
+      console.log(`    ${failure.detail}`);
+    if (verdict.failures.length) fatal = true;
   }
 
   if (options.selfTest) {
@@ -2095,7 +2217,14 @@ try {
     );
     // The sections below are not rule mutations of a `CASES` entry, so they
     // are named rather than derived; a typo has to stay an error.
-    const SECTION_CASES = ["selection", "scope", "split"];
+    const SECTION_CASES = [
+      "selection",
+      "scope",
+      "split",
+      "split-copy-both-error",
+      "non-header-wrap",
+      ...SPLIT_FAULTS.map((entry) => entry[1]),
+    ];
     if (
       selfTestCases.length === 0 &&
       historicalCases.length === 0 &&
@@ -2253,77 +2382,13 @@ try {
       }
     }
 
-    if (!options.selfTestCase || options.selfTestCase === "split") {
-      console.log("\nSPLIT-HEADER FAULTS (T-445)");
-      // One fault per criterion, and two for the two that have a likely
-      // wrong answer rather than merely a missing one: criterion 1 can be
-      // satisfied-looking with the rule on the meta, and criterion 5 can be
-      // lost either by dropping a `max-sm:` or by giving the identity group
-      // a box above the breakpoint.
-      const splitFaults = [
-        [1, "strip", 320, "timeline", false, "the header as it stood before"],
-        [1, "meta-auto", 430, "timeline", false, "right-alignment on the meta"],
-        [2, "nowrap", 320, "spec-rendered", true, "a meta that will not wrap"],
-        [
-          3,
-          "no-indent",
-          390,
-          "timeline",
-          false,
-          "no indent on the second line",
-        ],
-        [
-          4,
-          "no-time-auto",
-          390,
-          "timeline",
-          false,
-          "the time not claiming the space",
-        ],
-        [
-          4,
-          "justify-end",
-          320,
-          "spec-rendered",
-          true,
-          "the base justify-end once it wraps",
-        ],
-        // At a width where the identity still fits on one line: below that,
-        // a block-level group wraps its items onto lines of their own and
-        // there is no adjacent pair left to have lost its gap.
-        [
-          7,
-          "identity-block",
-          520,
-          "timeline",
-          false,
-          "the identity group as a block",
-        ],
-        [
-          5,
-          "desktop-grid",
-          1280,
-          "timeline",
-          false,
-          "a max-sm: rule made unconditional",
-        ],
-        [
-          5,
-          "desktop-identity-flex",
-          1280,
-          "timeline",
-          false,
-          "an identity group with a box",
-        ],
-        [
-          5,
-          "drop-spacer",
-          1280,
-          "spec-rendered",
-          false,
-          "the spacer span swept up as dead code",
-        ],
-      ];
+    if (
+      !options.selfTestCase ||
+      options.selfTestCase === "split" ||
+      options.selfTestCase === "split-copy-both-error" ||
+      SPLIT_FAULTS.some((entry) => entry[1] === options.selfTestCase)
+    ) {
+      console.log("\nSPLIT-HEADER FAULTS (T-445 / T-472)");
       for (const [
         criterion,
         kind,
@@ -2331,13 +2396,19 @@ try {
         surfaceId,
         stress,
         why,
-      ] of splitFaults) {
+      ] of SPLIT_FAULTS.filter(
+        (entry) =>
+          !options.selfTestCase ||
+          options.selfTestCase === "split" ||
+          options.selfTestCase === entry[1],
+      )) {
         const view = SPLIT_VIEWPORTS.find((entry) => entry.width === width);
         const surface = SPLIT_SURFACES.find((entry) => entry.id === surfaceId);
         const baseline =
           width >= 640
             ? await splitHeaderRun(browser, base, seeded, view, surface, {
-                fault: "strip",
+                fault: kind,
+                strip: true,
               })
             : null;
         const broken = await splitHeaderRun(
@@ -2369,8 +2440,10 @@ try {
         const hit = brokenVerdict.failures.filter(
           (failure) => failure.criterion === criterion,
         );
-        const detected = hit.length > 0;
-        const backOk = restoredVerdict.failures.length === 0;
+        const detected = hit.length > 0 && !broken.fixtureErrors?.length;
+        const backOk =
+          restoredVerdict.failures.length === 0 &&
+          !restored.fixtureErrors?.length;
         console.log(
           `  ${kind} @${width}/${surfaceId}${stress ? " [stubbed id]" : ""} → criterion ${criterion}: ` +
             `${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} (${why}; ` +
@@ -2382,12 +2455,90 @@ try {
 
       const view = SPLIT_VIEWPORTS.find((entry) => entry.width === 390);
       const clean = await splitCopyRun(browser, base, seeded, view, false);
-      const expected = clean.pasted?.value ?? null;
       const stripped = await splitCopyRun(browser, base, seeded, view, true);
+      const copyVerdict = assessSplitCopy(clean, stripped);
       console.log(
-        `  copy baseline: ${expected === (stripped.pasted?.value ?? null) ? "identical" : "DIFFERENT"} ` +
-          `${JSON.stringify(expected)}`,
+        `  copy baseline criterion 6: ${copyVerdict.failures.length ? "FAIL" : "identical"} ` +
+          `${JSON.stringify(copyVerdict.payload)} vs ${JSON.stringify(copyVerdict.was)} ` +
+          copyVerdict.failures.map((failure) => failure.detail).join("; "),
       );
+      if (copyVerdict.failures.length) fatal = true;
+
+      if (
+        !options.selfTestCase ||
+        ["split", "split-copy-both-error"].includes(options.selfTestCase)
+      ) {
+        const brokenAfter = await splitCopyRun(
+          browser,
+          base,
+          seeded,
+          view,
+          false,
+          "split-copy-both-error",
+        );
+        const brokenBefore = await splitCopyRun(
+          browser,
+          base,
+          seeded,
+          view,
+          true,
+          "split-copy-both-error",
+        );
+        const brokenVerdict = assessSplitCopy(brokenAfter, brokenBefore);
+        const restoredAfter = await splitCopyRun(
+          browser,
+          base,
+          seeded,
+          view,
+          false,
+        );
+        const restoredBefore = await splitCopyRun(
+          browser,
+          base,
+          seeded,
+          view,
+          true,
+        );
+        const restoredVerdict = assessSplitCopy(restoredAfter, restoredBefore);
+        const detected =
+          brokenAfter.pasted?.error === "clipboard sink vanished" &&
+          brokenBefore.pasted?.error === "clipboard sink vanished" &&
+          !brokenAfter.fixtureErrors.length &&
+          !brokenBefore.fixtureErrors.length &&
+          brokenVerdict.failures.length > 0;
+        const backOk = restoredVerdict.failures.length === 0;
+        console.log(
+          `  split-copy-both-error @390 → criterion 6: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
+            `(both sinks removed before read; ${brokenVerdict.failures.map((failure) => failure.detail).join("; ")}; ` +
+            `restore ${backOk ? "identical valid payloads" : "FAIL"})`,
+        );
+        if (!detected || !backOk) fatal = true;
+      }
+    }
+
+    if (!options.selfTestCase || options.selfTestCase === "non-header-wrap") {
+      const view = VIEWPORTS.find((entry) => entry.width === 390);
+      const fault = { id: "body-block", kind: "non-header-wrap" };
+      const broken = await browserRun(browser, base, seeded, view, fault);
+      const restored = await browserRun(browser, base, seeded, view);
+      const target = broken.rows.find((row) => row.id === fault.id);
+      const back = restored.rows.find((row) => row.id === fault.id);
+      const detected =
+        target?.mutation !== null &&
+        target?.status === "unmeasurable" &&
+        target?.wrapped?.includes("peer") &&
+        baselineRowFails(target, view.width) &&
+        !broken.fixtureErrors.length;
+      const backOk =
+        back?.status === "hit" &&
+        !baselineRowFails(back, view.width) &&
+        !restored.fixtureErrors.length;
+      console.log(
+        `  non-header-wrap @390 body-block: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
+          `(fault ${target?.status}, wrapped=${target?.wrapped?.join(",") ?? "none"}; ` +
+          `${target?.reason ?? ""}; restore ${back?.status})`,
+      );
+      if (!detected || !backOk) fatal = true;
     }
 
     for (const kind of historicalCases) {

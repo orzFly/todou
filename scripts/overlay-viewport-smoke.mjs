@@ -53,20 +53,50 @@ const EDGE_PADDING = 8;
  * Failures this check may report without going red — each with the reason it
  * is tolerated and the condition that retires it.
  *
- * Empty on purpose: everything the T-388 sweep turned up is fixed. It exists
- * for the next person who finds a failure they cannot fix that day, so the
- * choice is "record it with an expiry" rather than "delete the check" or
- * "remember which lines don't count".
- *
  * An entry that matches nothing in a run fails the run. A tolerated failure
  * that stops happening is a line saying something untrue about the code, and
  * the only way it gets deleted is if something makes it impossible to ignore.
  *
- *   { match: /^I2 \d+×\d+ y=\d+ submenu/,
- *     why:    "why this is allowed to be red today",
- *     retire: "what has to be true for this entry to be deleted" }
+ * Match the measured cause as well as the key: a regex alone would excuse a
+ * larger overflow, an unrelated edge, or hidden content on the same submenu.
  */
-const KNOWN_FAILURES = [];
+const KNOWN_FAILURES = [
+  {
+    name: "T-468 submenu DPR rounding",
+    match(failure) {
+      const o = failure.overlay;
+      return (
+        /^I2 360×640 y=\d+ submenu(?:-rounded)? dropdown-menu-sub-content$/.test(
+          failure.key,
+        ) &&
+        failure.problems.length === 1 &&
+        o.visibility === "visible" &&
+        o.devicePixelRatio === 1 &&
+        o.innerWidth === 360 &&
+        o.visualViewportWidth === 360 &&
+        o.side === "right" &&
+        o.transform === "none" &&
+        o.triggerRight === 224.703125 &&
+        o.left === 225 &&
+        o.width === 127.296875 &&
+        o.right === 352.296875 &&
+        o.availableWidth === "127.29687499999997px" &&
+        o.wrapperTransform === `matrix(1, 0, 0, 1, 225, ${o.top})`
+      );
+    },
+    why:
+      "T-468: collisionPadding is 8. Floating UI core size() computes " +
+      "availableWidth from unrounded x=224.703125; @floating-ui/react-dom roundByDPR() " +
+      "places the wrapper at 225 (DPR 1), while the border box keeps width " +
+      "127.296875. This exact 0.296875px residual is recorded, not an I2 tolerance.",
+    retire:
+      "After a Radix/Floating UI coordinate/size fix or a submenu placement fix, " +
+      "run the default smoke: submenu-rounded must still measure its left-anchored " +
+      "360×640 sample and every raw edge must pass I2. A stale entry fails the run; " +
+      "delete this entry only after confirming those readings. A changed failing " +
+      "fingerprint needs fresh investigation, not a wider match.",
+  },
+];
 
 /**
  * The checks each trigger has to contribute before a run counts as having
@@ -96,6 +126,7 @@ const MIN_CHECKS = {
   more: 4, // 6
   comment: 3, // 4
   submenu: 3, // 4
+  "submenu-rounded": 1, // Fixed left anchor at 360×640; independent of timeline wrapping.
   // One per viewport, and no margin: this probe either finds the sidebar
   // block at some scroll position or it does not.
   "metadata-close": 3,
@@ -133,6 +164,7 @@ function parseArgs(argv) {
     webPort: 0,
     seedFault: null,
     selfTest: false,
+    selfTestReadings: false,
     ...DEFAULTS,
     close: "outside",
     keep: false,
@@ -165,6 +197,9 @@ function parseArgs(argv) {
         break;
       case "--self-test":
         opts.selfTest = true;
+        break;
+      case "--self-test-readings":
+        opts.selfTestReadings = true;
         break;
       case "--keep":
         opts.keep = true;
@@ -350,7 +385,31 @@ function pageHelpers() {
     true,
   );
 
+  let pinnedComment = null;
+
   window.__smoke = {
+    // Natural scan positions can all flip the submenu left as timestamps wrap.
+    // Keep one explicit left-edge anchor to exercise right-side rounding, using
+    // the real menu and its real width/collision middleware.
+    pinComment() {
+      const element = find("comment");
+      if (!element) return false;
+      pinnedComment = { element, style: element.getAttribute("style") };
+      Object.assign(element.style, {
+        position: "fixed",
+        left: "8px",
+        top: `${window.innerHeight / 2}px`,
+      });
+      return true;
+    },
+    unpinComment() {
+      if (!pinnedComment) return;
+      const { element, style } = pinnedComment;
+      if (style === null) element.removeAttribute("style");
+      else element.setAttribute("style", style);
+      pinnedComment = null;
+    },
+
     /** Where a thumb could land on the trigger, or null when none of it is reachable. */
     tapPoint(name) {
       const element = find(name);
@@ -374,6 +433,13 @@ function pageHelpers() {
         .map((element) => {
           const rect = element.getBoundingClientRect();
           const style = getComputedStyle(element);
+          const wrapper = element.closest(
+            "[data-radix-popper-content-wrapper]",
+          );
+          const trigger =
+            element.getAttribute("data-slot") === "dropdown-menu-sub-content"
+              ? find("submenu-trigger")?.getBoundingClientRect()
+              : null;
           return {
             slot: element.getAttribute("data-slot"),
             top: rect.top,
@@ -390,6 +456,11 @@ function pageHelpers() {
               "--radix-popper-available-width",
             ),
             transform: style.transform,
+            wrapperTransform: wrapper
+              ? getComputedStyle(wrapper).transform
+              : null,
+            side: element.getAttribute("data-side"),
+            triggerRight: trigger?.right ?? null,
           };
         });
     },
@@ -654,6 +725,14 @@ function moved(invariant, where, when, from, to) {
     detail: `page moved on ${when}, ${from} → ${to}`,
   };
 }
+function recordFailure(tally, failure) {
+  const known = KNOWN_FAILURES.find((entry) => entry.match(failure));
+  if (known === undefined) tally.failures.push(failure);
+  else {
+    tally.matched.add(known);
+    tally.known.push({ ...failure, why: known.why });
+  }
+}
 
 function clipped(overlays, viewport, where) {
   return overlays.flatMap((overlay) => {
@@ -663,12 +742,15 @@ function clipped(overlays, viewport, where) {
       {
         invariant: "I2",
         key: `I2 ${where} ${overlay.slot}`,
+        overlay,
+        problems,
         detail:
           `${overlay.slot} outside the viewport — ${problems.join(", ")}; ` +
           `rect=${overlay.left},${overlay.top}..${overlay.right},${overlay.bottom} ` +
           `layout=${overlay.innerWidth} visual=${overlay.visualViewportWidth} ` +
           `dpr=${overlay.devicePixelRatio} available=${overlay.availableWidth} ` +
-          `transform=${overlay.transform}`,
+          `transform=${overlay.transform} wrapper=${overlay.wrapperTransform} ` +
+          `side=${overlay.side} triggerRight=${overlay.triggerRight}`,
       },
     ];
   });
@@ -678,17 +760,15 @@ function clipped(overlays, viewport, where) {
 function offViewport(overlay, viewport) {
   const problems = [];
   if (overlay.top < EDGE_PADDING)
-    problems.push(`top ${Math.round(overlay.top)} < ${EDGE_PADDING}`);
+    problems.push(`top ${overlay.top} < ${EDGE_PADDING}`);
   if (overlay.left < EDGE_PADDING)
-    problems.push(`left ${Math.round(overlay.left)} < ${EDGE_PADDING}`);
+    problems.push(`left ${overlay.left} < ${EDGE_PADDING}`);
   if (overlay.bottom > viewport.height - EDGE_PADDING)
     problems.push(
-      `bottom ${Math.round(overlay.bottom)} > ${viewport.height - EDGE_PADDING}`,
+      `bottom ${overlay.bottom} > ${viewport.height - EDGE_PADDING}`,
     );
   if (overlay.right > viewport.width - EDGE_PADDING)
-    problems.push(
-      `right ${Math.round(overlay.right)} > ${viewport.width - EDGE_PADDING}`,
-    );
+    problems.push(`right ${overlay.right} > ${viewport.width - EDGE_PADDING}`);
   if (overlay.visibility === "hidden") problems.push("visibility: hidden");
   return problems;
 }
@@ -735,9 +815,9 @@ async function probe(page, viewport, trigger, y, how) {
 }
 
 /** The submenu, which only exists once its parent menu is open. */
-async function probeSubmenu(page, viewport, y, how) {
+async function probeSubmenu(page, viewport, y, how, name = "submenu") {
   const before = await evaluate(page, (to) => window.__smoke.scrollTo(to), y);
-  const where = `${viewport.width}×${viewport.height} y=${before} submenu`;
+  const where = `${viewport.width}×${viewport.height} y=${before} ${name}`;
   const point = await evaluate(page, () => window.__smoke.tapPoint("comment"));
   if (point === null) return null;
   await tap(page, point);
@@ -774,6 +854,20 @@ async function probeSubmenu(page, viewport, y, how) {
     failures.push(moved("I3", where, "close", afterOpen, afterClose));
   }
   return { failures, where };
+}
+
+async function probeRoundedSubmenu(page, viewport, how) {
+  const y = await evaluate(page, () =>
+    window.__smoke.scrollTo(window.__smoke.bottom()),
+  );
+  if (!(await evaluate(page, () => window.__smoke.pinComment()))) {
+    return { inert: "no comment trigger to anchor", where: "submenu-rounded" };
+  }
+  try {
+    return await probeSubmenu(page, viewport, y, how, "submenu-rounded");
+  } finally {
+    await evaluate(page, () => window.__smoke.unpinComment());
+  }
 }
 
 /**
@@ -924,14 +1018,7 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
       seen.checks++;
       tally.checks++;
       for (const failure of result.failures) {
-        const known = KNOWN_FAILURES.find((entry) =>
-          entry.match.test(failure.key),
-        );
-        if (known === undefined) tally.failures.push(failure);
-        else {
-          tally.matched.add(known);
-          tally.known.push({ ...failure, why: known.why });
-        }
+        recordFailure(tally, failure);
       }
     }
   };
@@ -1007,6 +1094,14 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
         if (done()) return tally;
       }
       record("submenu", await probeSubmenu(page, viewport, y, opts.close));
+      if (done()) return tally;
+    }
+
+    if (viewport.width === 360 && viewport.height === 640) {
+      record(
+        "submenu-rounded",
+        await probeRoundedSubmenu(page, viewport, opts.close),
+      );
       if (done()) return tally;
     }
 
@@ -1113,16 +1208,94 @@ function reportStale(tally) {
   const gone = stale(tally);
   for (const entry of gone) {
     console.log(
-      `stale known failure, delete it: ${entry.match} — ${entry.retire}`,
+      `stale known failure, delete it: ${entry.name} — ${entry.retire}`,
     );
   }
   return gone.length === 0;
+}
+
+/** Replay actual T-468 readings through the same classifier and retirement check. */
+function selfTestReadings() {
+  const viewport = { width: 360, height: 640 };
+  const reading = {
+    slot: "dropdown-menu-sub-content",
+    top: 284,
+    left: 225,
+    bottom: 324,
+    right: 352.296875,
+    width: 127.296875,
+    height: 40,
+    visibility: "visible",
+    devicePixelRatio: 1,
+    innerWidth: 360,
+    visualViewportWidth: 360,
+    availableWidth: "127.29687499999997px",
+    transform: "none",
+    wrapperTransform: "matrix(1, 0, 0, 1, 225, 284)",
+    side: "right",
+    triggerRight: 224.703125,
+  };
+  const cases = [
+    ["observed", {}, viewport, 0, 1, 0],
+    [
+      "good: right edge repaired",
+      { right: 352, width: 127 },
+      viewport,
+      0,
+      0,
+      1,
+    ],
+    [
+      "bad: larger overflow",
+      { right: 353.296875, width: 128.296875 },
+      viewport,
+      1,
+      0,
+      1,
+    ],
+    [
+      "bad: tiny extra overflow",
+      { right: 352.3125, width: 127.3125 },
+      viewport,
+      1,
+      0,
+      1,
+    ],
+    ["bad: another edge", { top: 7 }, viewport, 1, 0, 1],
+    ["bad: hidden", { visibility: "hidden" }, viewport, 1, 0, 1],
+    ["bad: unrelated cause", { triggerRight: 224 }, viewport, 1, 0, 1],
+    ["bad: another viewport", {}, { width: 360, height: 520 }, 1, 0, 1],
+  ];
+  let passed = true;
+  for (const [name, patch, size, unexpected, known, obsolete] of cases) {
+    const tally = { failures: [], known: [], matched: new Set() };
+    for (const failure of clipped(
+      [{ ...reading, ...patch }],
+      size,
+      `${size.width}×${size.height} y=3886 submenu-rounded`,
+    ))
+      recordFailure(tally, failure);
+    const fresh = reportStale(tally);
+    const held =
+      tally.failures.length === unexpected &&
+      tally.known.length === known &&
+      Number(!fresh) === obsolete;
+    const exit = tally.failures.length === 0 && fresh ? 0 : 1;
+    console.log(
+      `${held ? "ok" : "FAIL"} reading ${name}: ${tally.failures.length} unexpected, ` +
+        `${tally.known.length} known, ${stale(tally).length} stale; run would exit ${exit}`,
+    );
+    for (const failure of tally.failures) console.log(`  ${failure.detail}`);
+    passed &&= held;
+  }
+  return passed ? 0 : 1;
 }
 
 // ----------------------------------------------------------------------- main
 
 async function run() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.selfTestReadings) return selfTestReadings();
   let stack = null;
   try {
     stack = await createBrowserStack({
@@ -1169,7 +1342,9 @@ async function run() {
         opts.seedFault ? `fault:${opts.seedFault}` : "clean",
         await runPass(page, target, opts),
       );
-      const fresh = reportStale(tally);
+      // Faults deliberately change the fingerprint; only clean readings can
+      // establish that a known failure has actually been repaired.
+      const fresh = opts.seedFault !== null || reportStale(tally);
       const covered = reportFloors(tally, opts);
       if (tally.inert.length > 0 || !fresh || !covered) return 1;
       if (opts.seedFault === null) return tally.failures.length === 0 ? 0 : 1;
@@ -1179,6 +1354,7 @@ async function run() {
         console.log(`the ${opts.seedFault} fault broke no ${invariant}`);
       return bit ? 0 : 1;
     }
+    if (selfTestReadings() !== 0) return 1;
 
     await arm(page, null);
     const clean = report("clean", await runPass(page, target, opts));

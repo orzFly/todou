@@ -12,9 +12,9 @@
  * wrap threshold move with the *rendered timestamp*: the same fixture gave
  * 77.8px and 53.8px at 360px eighteen minutes apart, because
  * `9/19/2026, 5:39:xx PM` is a few pixels wider than `…5:57:xx PM`. Every
- * assertion below is a containment, an adjacency, or an equality against a
- * baseline taken in the same browser run, and none of them moves with a
- * clock.
+ * assertion below uses containment, adjacency, or the exported class token
+ * contract. Same-run geometry is retained as a diagnostic, not proof that
+ * desktop rules are unchanged.
  */
 
 /** Anything closer than this reads as the same line, or the same edge. */
@@ -66,6 +66,52 @@ export async function probeSplitHeader(options = {}) {
   const fault = options.fault ?? null;
   const stress = options.stress === true;
 
+  // Import the values the running app uses, inside its Vite/DOM context.
+  // Looking only at the rendered classList would also include each caller's
+  // legitimate desktop classes, which are outside these three constants.
+  const exported = await import(
+    "/src/components/shared/comment-header-meta.tsx"
+  );
+  const classConstants = Object.fromEntries(
+    [
+      "COMMENT_HEADER_ROW",
+      "COMMENT_HEADER_ACTION",
+      "COMMENT_HEADER_IDENTITY",
+    ].map((name) => [name, exported[name]]),
+  );
+  // Mutate real class tokens and install the same changes on their DOM
+  // targets below. Spacer deletion remains a separate structural fault.
+  const tokenFaults = {
+    "desktop-grid": ["COMMENT_HEADER_ROW", "max-sm:grid", "grid"],
+    "desktop-identity-flex": ["COMMENT_HEADER_IDENTITY", "contents", "flex"],
+    "action-unconditional": ["COMMENT_HEADER_ACTION", null, "w-full"],
+  };
+  const tokenFault = tokenFaults[fault];
+  if (tokenFault) {
+    const [name, removed, added] = tokenFault;
+    if (typeof classConstants[name] === "string") {
+      classConstants[name] = [
+        ...classConstants[name]
+          .split(/\s+/)
+          .filter((token) => token && token !== removed),
+        added,
+      ].join(" ");
+    }
+  }
+  const classContract = Object.entries(classConstants).map(([name, value]) => {
+    const tokens =
+      typeof value === "string"
+        ? value.trim().split(/\s+/).filter(Boolean)
+        : [];
+    return {
+      name,
+      tokens,
+      valid: tokens.length > 0,
+      unconditional: tokens.filter(
+        (token) => token !== "contents" && !token.startsWith("max-sm:"),
+      ),
+    };
+  });
   await document.fonts.ready;
   if (!document.fonts.check('12px "Geist Variable"')) {
     return { status: "error", reason: "Geist Variable did not load" };
@@ -175,28 +221,42 @@ export async function probeSplitHeader(options = {}) {
     }
   }
 
-  if (fault === "strip") {
-    // The header exactly as it stood before this card: every rule the change
-    // introduced is `max-sm:`-prefixed, so removing that prefix's classes
-    // restores the old shape without touching anything else. Above the
-    // breakpoint it changes nothing, which is what makes it usable as
-    // criterion 5's baseline rather than only as a fault.
-    for (const element of document.querySelectorAll("[class]")) {
-      for (const name of [...element.classList]) {
-        if (name.startsWith("max-sm:")) element.classList.remove(name);
+  if (fault === "strip" || options.strip === true) {
+    // Useful same-run geometry only: unconditional regressions survive on
+    // both sides, so equality here cannot establish criterion 5.
+    const stripIn = (host) => {
+      for (const element of host.querySelectorAll("*")) {
+        for (const name of [...element.classList]) {
+          if (name.startsWith("max-sm:")) element.classList.remove(name);
+        }
+        if (element.shadowRoot) stripIn(element.shadowRoot);
       }
-    }
+    };
+    stripIn(document);
   }
 
   for (const { row, meta, identity, spacer, actions } of headers) {
+    if (tokenFault) {
+      const [name, removed, added] = tokenFault;
+      const targets =
+        name === "COMMENT_HEADER_ROW"
+          ? [row]
+          : name === "COMMENT_HEADER_IDENTITY"
+            ? [identity]
+            : actions;
+      for (const target of targets.filter(Boolean)) {
+        if (removed) target.classList.remove(removed);
+        target.classList.add(added);
+      }
+    }
     switch (fault) {
       case "drop-spacer":
-        // What "cleaning up dead code" costs. The span is empty and inert,
-        // so nothing on the page reads differently for it — except that the
-        // row loses one `gap-2` with it, and everything to its right moves.
-        // Measured against a baseline that still has it, at a desktop width
-        // where the header is the row it has always been.
         spacer?.remove();
+        break;
+      case "meta-unconditional":
+        // The private `box` class string is not one of the exported
+        // constants. Exercise its real DOM token on both measurement pages.
+        meta.classList.add("w-full");
         break;
       case "meta-auto":
         // The design "simplified" back to the minimal fix this card rejected:
@@ -234,13 +294,6 @@ export async function probeSplitHeader(options = {}) {
         break;
       case "identity-block":
         if (identity) identity.style.display = "block";
-        break;
-      case "desktop-grid":
-        row.style.display = "grid";
-        row.style.gridTemplateColumns = "minmax(0,1fr) auto";
-        break;
-      case "desktop-identity-flex":
-        if (identity) identity.style.display = "flex";
         break;
       default:
         break;
@@ -293,12 +346,22 @@ export async function probeSplitHeader(options = {}) {
         identityGaps.push(round(after.left - before.right));
       }
     }
+    const hasSpacer =
+      spacer?.isConnected === true && spacer.parentElement === row;
+    const spacerStyle = hasSpacer ? getComputedStyle(spacer) : null;
 
     return {
       id,
+      metaTokens: [...meta.classList],
       hasIdentity: identity !== null,
-      hasSpacer: spacer !== null,
-      spacerShown: spacer !== null && visible(spacer),
+      hasSpacer,
+      // Empty flex spacers can be zero-height and still contribute a gap.
+      // Check that the connected element generates an in-flow layout box.
+      spacerShown:
+        hasSpacer &&
+        !["none", "contents"].includes(spacerStyle.display) &&
+        !["absolute", "fixed"].includes(spacerStyle.position) &&
+        spacer.getClientRects().length > 0,
       actions: liveActions.length,
       actionInset: round(actionInset),
       overflowRight: round(overflowRight),
@@ -315,8 +378,8 @@ export async function probeSplitHeader(options = {}) {
           ? idRect.bottom > timeRect.top && timeRect.bottom > idRect.top
           : null,
       identityGaps,
-      // Criterion 5's fingerprint, taken relative to the row so a shift in
-      // one header cannot report every header below it as moved too.
+      // Same-run diagnostic, relative to the row so one header's shift does
+      // not report every header below it as moved too.
       fingerprint: shown.map((element) => ({
         tag: element.tagName.toLowerCase(),
         text: (element.textContent ?? "").slice(0, 40),
@@ -330,6 +393,7 @@ export async function probeSplitHeader(options = {}) {
     status: "ok",
     fault,
     stress,
+    classContract,
     rows,
     documentOverflows:
       document.documentElement.scrollWidth >
@@ -345,6 +409,9 @@ export async function probeSplitHeader(options = {}) {
 export async function probeHeaderCopy(options = {}) {
   const mode = options.mode ?? "select";
   if (mode === "read") {
+    if (options.fault === "split-copy-both-error") {
+      document.querySelector("#split-header-clipboard-sink")?.remove();
+    }
     const sink = document.querySelector("#split-header-clipboard-sink");
     if (!sink) return { error: "clipboard sink vanished" };
     sink.focus();
@@ -383,6 +450,14 @@ export async function probeHeaderCopy(options = {}) {
     document.body.append(sink);
   }
   sink.value = "";
+  // A failed Ctrl+C must not re-read the same nonempty payload from an earlier
+  // probe and make both sides look identical. An unchanged clipboard is empty
+  // after this reset and assessSplitCopy rejects it.
+  try {
+    await navigator.clipboard.writeText("");
+  } catch (error) {
+    return { error: `clipboard reset failed: ${String(error)}` };
+  }
 
   const range = document.createRange();
   range.selectNodeContents(row);
@@ -393,25 +468,93 @@ export async function probeHeaderCopy(options = {}) {
 }
 
 /**
- * Grade one measured page. `baseline` is the same page with every `max-sm:`
- * class removed, measured in the same browser run — font loading and clock
- * drift are then common to both sides instead of being compared across them.
+ * Grade one measured page. Criterion 5 checks exported constants and meta DOM
+ * tokens against the pre-existing base/caller classes.
+ * The stripped baseline supplies geometry diagnostics only: an unconditional
+ * token survives stripping, making equality insufficient evidence of safety.
  */
 export function assessSplitHeaders(measured, width, baseline = null) {
   const failures = [];
+  const diagnostics = [];
   const note = (criterion, row, detail) =>
     failures.push({ criterion, row, detail });
 
   if (measured.status !== "ok") {
-    return { failures: [{ criterion: 0, row: "-", detail: measured.reason }] };
+    return {
+      failures: [{ criterion: 0, row: "-", detail: measured.reason }],
+      diagnostics,
+    };
   }
   const narrow = width < 640;
+  if (!narrow) {
+    const contracts = measured.classContract ?? [];
+    for (const name of [
+      "COMMENT_HEADER_ROW",
+      "COMMENT_HEADER_ACTION",
+      "COMMENT_HEADER_IDENTITY",
+    ]) {
+      const contract = contracts.find((entry) => entry.name === name);
+      if (!contract?.valid) {
+        note(5, name, "missing or empty DOM-side class constant");
+      } else if (contract.unconditional.length) {
+        note(
+          5,
+          name,
+          `unconditional token(s): ${contract.unconditional.join(" ")}`,
+        );
+      }
+    }
+  }
 
   if (measured.documentOverflows) {
     note(2, "document", "the page scrolls sideways");
   }
 
   for (const row of measured.rows) {
+    if (!narrow) {
+      // These surfaces explicitly render the empty desktop spacer. The
+      // expectation comes from the surface, never from finding the node:
+      // deletion must still be checked, including the cached detached node.
+      const needsSpacer = [
+        "unplaced-comment",
+        "spec-annotation-bubble",
+        "annotation-chip",
+      ].includes(row.id.replace(/#\d+$/, ""));
+      if (needsSpacer && (!row.hasSpacer || !row.spacerShown)) {
+        note(
+          5,
+          row.id,
+          "required desktop spacer is missing or has no in-flow box",
+        );
+      }
+      // CommentHeaderMeta's private `box` predates T-445 with these five
+      // tokens. All current callers add only ml-auto (or no className):
+      // comment-item, both hover cards, and spec-view's unplaced comments.
+      // Do not derive this allowlist from current product source: doing so
+      // would silently bless an unconditional regression such as w-full.
+      const metaBaseTokens = new Set([
+        "flex",
+        "flex-wrap",
+        "items-baseline",
+        "justify-end",
+        "gap-x-2",
+        "ml-auto",
+      ]);
+      if (!Array.isArray(row.metaTokens) || row.metaTokens.length === 0) {
+        note(5, row.id, "missing or empty DOM meta box class tokens");
+      } else {
+        const unconditional = row.metaTokens.filter(
+          (token) => !token.startsWith("max-sm:") && !metaBaseTokens.has(token),
+        );
+        if (unconditional.length) {
+          note(
+            5,
+            row.id,
+            `meta box unconditional token(s): ${unconditional.join(" ")}`,
+          );
+        }
+      }
+    }
     if (!row.hasIdentity) {
       note(0, row.id, "no identity group in this header");
       continue;
@@ -424,18 +567,20 @@ export function assessSplitHeaders(measured, width, baseline = null) {
     if (row.rowScrolls) note(2, row.id, "the header scrolls");
 
     if (!narrow) {
-      // 5. Above the breakpoint nothing may have moved at all.
+      // Equality cannot pass criterion 5; differences still help diagnosis.
       const before = baseline?.rows?.find((entry) => entry.id === row.id);
       if (!before) {
-        note(5, row.id, "no stripped baseline for this header");
+        diagnostics.push({
+          row: row.id,
+          detail: "no stripped baseline for this header",
+        });
         continue;
       }
       if (before.fingerprint.length !== row.fingerprint.length) {
-        note(
-          5,
-          row.id,
-          `${row.fingerprint.length} elements, baseline has ${before.fingerprint.length}`,
-        );
+        diagnostics.push({
+          row: row.id,
+          detail: `${row.fingerprint.length} elements, baseline has ${before.fingerprint.length}`,
+        });
         continue;
       }
       for (const [index, now] of row.fingerprint.entries()) {
@@ -445,11 +590,10 @@ export function assessSplitHeaders(measured, width, baseline = null) {
           Math.abs(now.top - was.top) > EPSILON ||
           Math.abs(now.left - was.left) > EPSILON
         ) {
-          note(
-            5,
-            row.id,
-            `${now.tag} ${JSON.stringify(now.text)} at (${now.top},${now.left}), baseline (${was.top},${was.left})`,
-          );
+          diagnostics.push({
+            row: row.id,
+            detail: `${now.tag} ${JSON.stringify(now.text)} at (${now.top},${now.left}), baseline (${was.top},${was.left})`,
+          });
         }
       }
       continue;
@@ -501,5 +645,43 @@ export function assessSplitHeaders(measured, width, baseline = null) {
     }
   }
 
-  return { failures };
+  return { failures, diagnostics };
+}
+
+/** Criterion 6: successful nonempty probes before byte-for-byte comparison. */
+export function assessSplitCopy(after, before) {
+  const failures = [];
+  const validString = (value) =>
+    typeof value === "string" && value.trim().length > 0;
+  for (const [side, run] of [
+    ["current", after],
+    ["stripped", before],
+  ]) {
+    if (
+      run?.status !== "ok" ||
+      run.error ||
+      !Array.isArray(run.fixtureErrors) ||
+      run.fixtureErrors.length ||
+      run.pasted?.error ||
+      !validString(run.selected) ||
+      !validString(run.pasted?.value)
+    ) {
+      failures.push({
+        criterion: 6,
+        row: side,
+        detail: `${side} copy probe failed or returned invalid/empty text: ${run?.error ?? run?.pasted?.error ?? JSON.stringify(run)}`,
+      });
+    }
+  }
+  const payload = after?.pasted?.value ?? null;
+  const was = before?.pasted?.value ?? null;
+  // No trimming for equality: trailing newlines remain part of the payload.
+  if (failures.length === 0 && payload !== was) {
+    failures.push({
+      criterion: 6,
+      row: "copy",
+      detail: `clipboard bytes changed: ${JSON.stringify(payload)} vs ${JSON.stringify(was)}`,
+    });
+  }
+  return { failures, payload, was };
 }
