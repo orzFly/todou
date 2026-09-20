@@ -24,7 +24,12 @@ import type {
   UserIssueItem,
   UserIssuesPage,
 } from "@todou/shared";
-import { createElement, Suspense, useSyncExternalStore } from "react";
+import {
+  createElement,
+  type ReactNode,
+  Suspense,
+  useSyncExternalStore,
+} from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boardColumnQuery } from "../src/api/board.ts";
 import {
@@ -41,6 +46,11 @@ import { userQuery, userSearchSchema } from "../src/api/users.ts";
 import type * as CalendarSectionModule from "../src/components/activity-calendar/activity-calendar-section.tsx";
 import * as returnContext from "../src/components/shared/return-context.tsx";
 import { ReturnViewProvider } from "../src/components/shared/return-context.tsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "../src/components/ui/dialog.tsx";
 import {
   RETURN_VIEW_VERSION,
   type ReturnView,
@@ -345,13 +355,14 @@ function account(initial?: number) {
 type Account = ReturnType<typeof account>;
 
 /** The provider the shell puts around the whole authenticated app. */
-const returnRoot = (who: Account) =>
+const returnRoot = (who: Account, extra?: ReactNode) =>
   createRootRoute({
     component: function Shell() {
       const viewerId = useSyncExternalStore(who.subscribe, who.get, who.get);
       return (
         <ReturnViewProvider viewerId={viewerId}>
           <Outlet />
+          {extra}
         </ReturnViewProvider>
       );
     },
@@ -418,6 +429,7 @@ function mountList({
   state,
   client = listClient(),
   who = account(VIEWER),
+  extra,
 }: {
   path?: string;
   pending?: ReturnView;
@@ -425,8 +437,10 @@ function mountList({
   state?: unknown;
   client?: QueryClient;
   who?: Account;
+  /** Rendered beside the page, inside the same shell and the same React root. */
+  extra?: ReactNode;
 } = {}) {
-  const rootRoute = returnRoot(who);
+  const rootRoute = returnRoot(who, extra);
   const projectRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/projects/$slug",
@@ -985,6 +999,185 @@ describe("the three ways a reader takes a restore over", () => {
     expect(entryOf(view.router).pending).toBeUndefined();
     expect(restoreScrolls(scrollTo)).toEqual([]);
   });
+});
+
+// ————— the one gesture that is not a take-over —————
+
+/**
+ * happy-dom dispatches a composed event with `target` still on the node it
+ * came from. A browser retargets it to the shadow host, and that retargeting
+ * is the entire reason `ui/dialog.tsx` has anything to decide, so a fixture
+ * without it would exercise a path no reader can reach. The real browser is
+ * held to it separately, by the wrap smoke's `wheel-target-not-retargeted`
+ * and `touch-target-not-retargeted`.
+ */
+function retargeted<E extends Event>(event: E, host: Element): E {
+  Object.defineProperty(event, "target", {
+    configurable: true,
+    get: () => host,
+  });
+  return event;
+}
+
+/** A diff-shaped scroller: inside an open shadow root, with `travel` to give. */
+function shadowScroller(host: Element, travel: number): Element {
+  const code = document.createElement("div");
+  code.style.overflowX = "auto";
+  code.style.overflowY = "hidden";
+  Object.defineProperty(code, "scrollWidth", {
+    value: 390 + travel,
+    configurable: true,
+  });
+  Object.defineProperty(code, "clientWidth", {
+    value: 390,
+    configurable: true,
+  });
+  host.attachShadow({ mode: "open" }).append(code);
+  return code;
+}
+
+/** Both gestures the lock watches, aimed sideways across the diff. */
+const GESTURES = {
+  wheel(code: Element, host: Element) {
+    code.dispatchEvent(
+      retargeted(
+        new WheelEvent("wheel", {
+          deltaX: 120,
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+        host,
+      ),
+    );
+  },
+  drag(code: Element, host: Element) {
+    const at = (x: number) =>
+      new Touch({ identifier: 0, target: host, clientX: x, clientY: 200 });
+    // A drag is a pair: the dialog measures the move against where the finger
+    // started, as the lock does.
+    for (const [type, x] of [
+      ["touchstart", 300],
+      ["touchmove", 180],
+    ] as const)
+      code.dispatchEvent(
+        retargeted(
+          new TouchEvent(type, {
+            touches: [at(x)],
+            changedTouches: [at(x)],
+            bubbles: true,
+            composed: true,
+            cancelable: true,
+          }),
+          host,
+        ),
+      );
+  },
+};
+
+/**
+ * Reading a diff in a modal dialog is not abandoning the way back (T-473).
+ *
+ * The lock this dialog installs puts `overflow: hidden` on the body, so the
+ * page behind it cannot move whatever the reader does; `ui/dialog.tsx` hands a
+ * gesture over a shadow-rooted scroller past the lock with `stopPropagation`
+ * so the diff itself can travel (T-450 for the wheel, T-471 for the finger),
+ * and that call is also what keeps the gesture away from the window listener
+ * below. The cases above cannot see any of this: they dispatch
+ * `new Event("wheel")` straight at the window, which never travels the React
+ * path where the release happens, so moving this listener to the capture phase
+ * would leave every one of them green.
+ *
+ * The pair here is what makes that falsifiable. A scroller with room to move
+ * is released and the restore finishes; the same gesture over a scroller with
+ * nowhere left to go is not released, reaches the window, and retires the
+ * positioning exactly as a gesture on the page itself does.
+ */
+describe("a gesture inside a modal dialog is not the reader taking over", () => {
+  const diffDialog = (
+    <Dialog open>
+      <DialogContent>
+        <DialogTitle>Edit history</DialogTitle>
+        <div data-diff-host />
+      </DialogContent>
+    </Dialog>
+  );
+
+  const owedRestore = () => ({
+    pending: snapshot({
+      pages: [{ lane: "flat", extraPages: 1 }],
+      scroll: [region({ region: "window", y: 900 })],
+    }),
+    extra: diffDialog,
+  });
+
+  async function openDiff(server: ReturnType<typeof flatServer>) {
+    await settleUntil(
+      () =>
+        cursorsOf(server).length > 0 &&
+        document.querySelector("[data-diff-host]") !== null,
+    );
+    const host = document.querySelector("[data-diff-host]");
+    expect(host).not.toBeNull();
+    expect(cursorsOf(server)).toEqual(["c1"]);
+    return host as Element;
+  }
+
+  it.each(["wheel", "drag"] as const)(
+    "a %s over a diff with room to move leaves the restore its position",
+    async (gesture) => {
+      const scrollTo = vi
+        .spyOn(window, "scrollTo")
+        .mockImplementation(() => {});
+      vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
+        5_000,
+      );
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
+      const server = flatServer();
+      server.hold("c1");
+      const view = mountFlat(1, owedRestore());
+      const host = await openDiff(server);
+
+      const code = shadowScroller(host, 1_024);
+      act(() => GESTURES[gesture](code, host));
+      expect(entryOf(view.router).pending?.locate).toBe(true);
+
+      await act(async () => server.release("c1"));
+      await settleUntil(settled(view.router));
+      expect(rowIds(view.container)).toEqual(["101", "102", "103", "104"]);
+      expect(entryOf(view.router).pending).toBeUndefined();
+      expect(restoreScrolls(scrollTo)).toEqual([{ top: 900 }]);
+    },
+  );
+
+  it.each(["wheel", "drag"] as const)(
+    "a %s the dialog does not release still takes the restore over",
+    async (gesture) => {
+      const scrollTo = vi
+        .spyOn(window, "scrollTo")
+        .mockImplementation(() => {});
+      vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
+        5_000,
+      );
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
+      const server = flatServer();
+      server.hold("c1");
+      const view = mountFlat(1, owedRestore());
+      const host = await openDiff(server);
+
+      // Nothing to scroll sideways: the lock keeps this one, and so the
+      // window hears it.
+      const code = shadowScroller(host, 0);
+      act(() => GESTURES[gesture](code, host));
+      expect(entryOf(view.router).pending?.locate).toBe(false);
+
+      await act(async () => server.release("c1"));
+      await settleUntil(settled(view.router));
+      expect(rowIds(view.container)).toEqual(["101", "102", "103", "104"]);
+      expect(entryOf(view.router).pending).toBeUndefined();
+      expect(restoreScrolls(scrollTo)).toEqual([]);
+    },
+  );
 });
 
 // ————— a failure in the middle of the replay —————
