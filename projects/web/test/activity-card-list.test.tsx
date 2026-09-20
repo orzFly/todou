@@ -3,15 +3,38 @@ import {
   type ActivityCard,
   type ActivityDay,
   ActivitySelection,
+  MePrefs,
 } from "@todou/shared";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { prefsQuery } from "../src/api/prefs.ts";
+import { referenceConfigQuery } from "../src/api/references.ts";
 import { ActivityCalendar } from "../src/components/activity-calendar/activity-calendar.tsx";
 import {
   ActivityCardList,
   type ActivityCardListProps,
 } from "../src/components/activity-calendar/activity-card-list.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+
+/**
+ * The shared row resolves a ref from the project's reference config, the way
+ * every other issue list does, so the prefix is seeded per slug rather than
+ * carried on each card.
+ */
+function seedPrefixes(
+  client: ReturnType<typeof testQueryClient>,
+  prefixes: Record<string, string | null>,
+) {
+  // The row reads the viewer's ref placement too; seeding it keeps these
+  // assertions about the list rather than about an unseeded preferences fetch.
+  client.setQueryData(prefsQuery.queryKey, MePrefs.parse({}));
+  for (const [slug, prefix] of Object.entries(prefixes)) {
+    client.setQueryData(referenceConfigQuery(slug).queryKey, {
+      format: { prefix, history: [] },
+      autolinks: [],
+    });
+  }
+}
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -76,7 +99,13 @@ const selection: ActivitySelection = {
 
 // The real helper owns the router. A stateful child lets updates preserve that
 // router and DOM, so identity assertions detect index/number keys and remounts.
-function mount(overrides: Partial<ActivityCardListProps> = {}) {
+function mount(
+  overrides: Partial<ActivityCardListProps> = {},
+  prefixes: Record<string, string | null> = {
+    "alpha-engine": "AX",
+    "beta-tools": null,
+  },
+) {
   const initial: ActivityCardListProps = {
     selection,
     timezone: "UTC",
@@ -91,6 +120,7 @@ function mount(overrides: Partial<ActivityCardListProps> = {}) {
     return <ActivityCardList {...props} />;
   }
   const client = testQueryClient();
+  seedPrefixes(client, prefixes);
   const view = renderWithProviders(<Harness />, client);
   return {
     ...view,
@@ -201,10 +231,10 @@ describe("ActivityCardList cards", () => {
     expect(view.queryByText("34 active cards")).toBeNull();
 
     expect(cards[0].textContent).toBe(
-      `Repair the schedulerAlpha EngineAX-42In review${wallTime("2026-07-02T00:30:00Z")}`,
+      `AX-42Repair the schedulerAlpha EngineIn review${wallTime("2026-07-02T00:30:00Z")}`,
     );
     expect(cards[1].textContent).toBe(
-      `Publish the packageBeta Tools#42Done${wallTime("2026-07-02T01:45:00Z")}`,
+      `#42Publish the packageBeta ToolsDone${wallTime("2026-07-02T01:45:00Z")}`,
     );
     for (const card of cards) {
       const row = within(card);
@@ -229,7 +259,22 @@ describe("ActivityCardList cards", () => {
     fireEvent.mouseEnter(view.getByRole("link", { name: alpha.title }));
     fireEvent.focus(view.getByRole("link", { name: alpha.title }));
     expect(fetch).not.toHaveBeenCalled();
-    expect(view.client.getQueryCache().getAll()).toHaveLength(0);
+    // The shared row reads two list-wide things — the viewer's ref placement
+    // and each project's ref config — and nothing per card. Anything else in
+    // the cache would mean a row started fetching on its own behalf.
+    expect(
+      view.client
+        .getQueryCache()
+        .getAll()
+        .map((query) => JSON.stringify(query.queryKey))
+        .sort(),
+    ).toEqual(
+      [
+        '["me-prefs"]',
+        '["reference-config","alpha-engine"]',
+        '["reference-config","beta-tools"]',
+      ].sort(),
+    );
   });
 
   it("uses each card's current project identity, prefix and status", async () => {
@@ -257,7 +302,7 @@ describe("ActivityCardList cards", () => {
     const moved: ActivityCard = {
       ...alpha,
       number: 9,
-      project: { ...beta.project, id: alpha.project.id, issue_prefix: "BT" },
+      project: { ...beta.project, id: alpha.project.id },
       status: beta.status,
       url: "/projects/beta-tools/issues/9",
     };
@@ -267,7 +312,8 @@ describe("ActivityCardList cards", () => {
       "/projects/beta-tools/issues/9",
     );
     expect(within(first).getByText("Beta Tools")).not.toBeNull();
-    expect(within(first).getByText("BT-9")).not.toBeNull();
+    // beta-tools has no prefix of its own, so the moved card wears `#`.
+    expect(within(first).getByText("#9")).not.toBeNull();
     expect(within(first).getByText("Done")).not.toBeNull();
     expect(within(first).queryByText("Alpha Engine")).toBeNull();
     expect(within(first).queryByText("AX-42")).toBeNull();
@@ -504,32 +550,31 @@ describe("ActivityCardList selection and request states", () => {
     const title = "LongTitle".repeat(30);
     const name = "LongProject".repeat(30);
     const prefix = "LONG".repeat(30);
-    const view = mount({
-      selection: {
-        ...selection,
-        items: [
-          {
-            ...alpha,
-            title,
-            project: { ...alpha.project, name, issue_prefix: prefix },
-          },
-        ],
+    const view = mount(
+      {
+        selection: {
+          ...selection,
+          items: [{ ...alpha, title, project: { ...alpha.project, name } }],
+        },
       },
-    });
+      { "alpha-engine": prefix },
+    );
     const link = await view.findByRole("link", { name: title });
     const region = view.getByRole("region");
     expect(region.className).toContain("min-w-0");
     expect(region.className).toContain("max-w-full");
     // happy-dom has no layout engine; assert the CSS constraints themselves.
-    for (const element of [
-      link,
-      view.getByText(name),
-      view.getByText(`${prefix}-42`),
-    ]) {
+    // The shared row defends the width with a floorless flexible track plus
+    // per-cell truncation, not with break-words on every cell.
+    expect(view.getByRole("list").className).toContain("minmax(0,1fr)");
+    for (const element of [link, view.getByText(name)]) {
       expect(element.className).toContain("min-w-0");
-      expect(element.className).toContain("max-w-full");
-      expect(element.className).toContain("break-words");
+      expect(element.className).toContain("truncate");
     }
+    // The ref keeps its own width instead of wrapping; the title gives way.
+    expect(view.getByText(`${prefix}-42`).className).toContain(
+      "whitespace-nowrap",
+    );
   });
 });
 

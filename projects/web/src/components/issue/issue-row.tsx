@@ -60,11 +60,33 @@ const ISSUE_LIST_GRID =
 const ISSUE_LIST_GRID_TRAILING_REF =
   "grid grid-cols-[27px_minmax(0,1fr)] gap-x-2 px-3.5";
 
-/** The column layout a list of `IssueRow`s must wear, per the viewer's preference. */
-export function useIssueListGrid(): string {
-  return useRefPlacement("list") === "before"
-    ? ISSUE_LIST_GRID
-    : ISSUE_LIST_GRID_TRAILING_REF;
+/**
+ * The same two layouts without the read marker's track. A list that only
+ * reports has no read state to offer, and leaving the 27px column empty would
+ * indent every title past a control that is not there.
+ */
+const ISSUE_LIST_GRID_NO_MARKER =
+  "grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 px-3.5";
+const ISSUE_LIST_GRID_NO_MARKER_TRAILING_REF =
+  "grid grid-cols-[minmax(0,1fr)] gap-x-2 px-3.5";
+
+/**
+ * The column layout a list of `IssueRow`s must wear, per the viewer's
+ * preference. `readMarker: false` must match the rows' own prop: the track and
+ * the control are one decision, made once by the list.
+ */
+export function useIssueListGrid({
+  readMarker = true,
+}: {
+  readMarker?: boolean;
+} = {}): string {
+  const leads = useRefPlacement("list") === "before";
+  if (!readMarker) {
+    return leads
+      ? ISSUE_LIST_GRID_NO_MARKER
+      : ISSUE_LIST_GRID_NO_MARKER_TRAILING_REF;
+  }
+  return leads ? ISSUE_LIST_GRID : ISSUE_LIST_GRID_TRAILING_REF;
 }
 
 /**
@@ -86,6 +108,25 @@ export const ISSUE_LIST_ROW = "col-span-full -mx-3.5";
  * `slug` comes per row, not from a page-level context: the inbox mixes
  * projects, and every link, ref prefix and mark-read call is project-scoped.
  */
+/**
+ * What a row cannot do without. Everything behind an affordance is optional,
+ * so a list that switches those affordances off can hand over the three facts
+ * it actually has instead of inventing read state and empty label arrays.
+ */
+export type IssueRowIssue = Pick<IssueListItem, "id" | "number" | "title"> &
+  Partial<
+    Pick<
+      IssueListItem,
+      | "unread"
+      | "unread_comments"
+      | "muted"
+      | "open_questions"
+      | "spec_version"
+      | "spec_review_status"
+      | "blocked_by"
+    >
+  >;
+
 export function IssueRow({
   slug,
   issue,
@@ -93,9 +134,13 @@ export function IssueRow({
   mentionsYou = false,
   trailing,
   meta,
+  readMarker = true,
+  badges = true,
+  blocked = true,
+  returnAnchor = true,
 }: {
   slug: string;
-  issue: IssueListItem;
+  issue: IssueRowIssue;
   /**
    * Whether a spec is waiting on the viewer. The inbox overrides the default
    * with the server's caller-aware flag, which also excludes versions the
@@ -106,6 +151,18 @@ export function IssueRow({
   mentionsYou?: boolean;
   trailing?: ReactNode;
   meta?: ReactNode;
+  /** The ● column. Off for a list with no read state; pair with the grid's own flag. */
+  readMarker?: boolean;
+  /** Open questions, spec review and mention badges. */
+  badges?: boolean;
+  /** The blocked-by badge. */
+  blocked?: boolean;
+  /**
+   * Whether this row is a place a returning reader can be put back on. Only
+   * the list a page is *about* may claim that: a second list of the same cards
+   * would offer the restorer two anchors carrying one id.
+   */
+  returnAnchor?: boolean;
 }) {
   const refPrefix = useRefPrefix(slug);
   const refLeads = useRefPlacement("list") === "before";
@@ -116,7 +173,7 @@ export function IssueRow({
       // The anchor a returning reader is put back on (T-407). The database id
       // rather than the number, because a move rewrites the number and the
       // remembered anchor would then name a different card — or none.
-      data-return-id={String(issue.id)}
+      data-return-id={returnAnchor ? String(issue.id) : undefined}
       className={cn(
         ISSUE_LIST_ROW,
         "grid grid-cols-subgrid items-center border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50",
@@ -124,15 +181,17 @@ export function IssueRow({
     >
       {/* Centering keeps the ring and the 99+ badge on one axis; the width of
           the slot is the grid's first column (the CLI's ● column). */}
-      <span className="inline-flex justify-center">
-        <MarkReadButton
-          slug={slug}
-          number={issue.number}
-          unread={issue.unread}
-          unreadComments={issue.unread_comments}
-          muted={issue.muted}
-        />
-      </span>
+      {readMarker && (
+        <span className="inline-flex justify-center">
+          <MarkReadButton
+            slug={slug}
+            number={issue.number}
+            unread={issue.unread ?? false}
+            unreadComments={issue.unread_comments ?? 0}
+            muted={issue.muted ?? null}
+          />
+        </span>
+      )}
       {refLeads && (
         /* The old fixed width survives as a floor, so a project whose refs fit
            within it keeps the spacing it had. */
@@ -159,35 +218,44 @@ export function IssueRow({
         {/* Reasons hug the title, exactly as on a board card; only `trailing`
             is pushed to the far edge, so a badge never ends up inside a group
             the phone hides (T-116). */}
-        {issue.open_questions > 0 && (
+        {badges && (issue.open_questions ?? 0) > 0 && (
           <QuestionBadge
             slug={slug}
             issueNumber={issue.number}
-            count={issue.open_questions}
+            count={issue.open_questions ?? 0}
             className="shrink-0"
           />
         )}
-        {specAwaitingReview && (
+        {badges && specAwaitingReview && (
           <SpecReviewBadge
             slug={slug}
             issueNumber={issue.number}
-            version={issue.spec_version}
+            version={issue.spec_version ?? null}
             className="shrink-0"
           />
         )}
-        {mentionsYou && <MentionBadge className="shrink-0" />}
-        <BlockedBadge
-          slug={slug}
-          blockedBy={issue.blocked_by}
-          className="shrink-0"
-        />
+        {badges && mentionsYou && <MentionBadge className="shrink-0" />}
+        {blocked && (
+          <BlockedBadge
+            slug={slug}
+            blockedBy={issue.blocked_by ?? []}
+            className="shrink-0"
+          />
+        )}
         {trailing}
       </div>
       {meta && (
         <div
           className={cn(
             "mt-1 flex flex-wrap items-center gap-1.5",
-            refLeads ? "col-start-3" : "col-start-2",
+            // One track earlier when the marker's column is not there.
+            readMarker
+              ? refLeads
+                ? "col-start-3"
+                : "col-start-2"
+              : refLeads
+                ? "col-start-2"
+                : "col-start-1",
           )}
         >
           {meta}
