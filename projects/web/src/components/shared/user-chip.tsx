@@ -84,11 +84,11 @@ export function UserAvatar({
 
 /**
  * What a second line has to be indented by to start under a chip's name
- * instead of under its avatar: `UserAvatar`'s `size-5` plus the `ml-1.5` in
- * front of the name. It lives beside those two rather than beside the header
- * that indents by it (T-445), because nothing in that second line holds it in
- * place — resize the avatar without moving this and the two lines go ragged
- * with no other symptom.
+ * instead of under its avatar: the `ps-5` the chip reserves for the avatar
+ * plus the `ml-1.5` in front of the name. It lives beside those two rather
+ * than beside the header that indents by it (T-445), because nothing in that
+ * second line holds it in place — resize the avatar without moving this and
+ * the two lines go ragged with no other symptom.
  */
 export const USER_CHIP_NAME_INDENT = "1.625rem";
 
@@ -120,7 +120,22 @@ export function UserChip({
 }) {
   const body = (
     <>
-      <UserAvatar user={user} badge />
+      {compact ? (
+        <UserAvatar user={user} badge />
+      ) : (
+        // Out of flow, so that the chip's box is the name's line box and
+        // nothing else. In flow the avatar decided two things it has no
+        // business deciding: `align-middle` put its centre half an x-height
+        // above the baseline, 1.3px below the centre of the name beside it,
+        // and its 20px box made the chip taller than the text, which is what
+        // carried a comment header's baseline 2px off where the header's own
+        // text puts it (T-487). Centred here against that box, so the rule is
+        // "the avatar's centre is the name's centre" and not an offset that
+        // happens to come out right at one font size.
+        <span className="absolute inset-y-0 start-0 flex items-center">
+          <UserAvatar user={user} badge />
+        </span>
+      )}
       {!compact && (
         <span className={cn("ml-1.5 text-sm", nameClassName)}>
           {displayNameOf(user)}
@@ -138,14 +153,21 @@ export function UserChip({
   // item — here the avatar. Showing an image that box has no text baseline to
   // give, so the chip sat on the line's own baseline and carried the name 5px
   // above the sentence around it, then jumped the moment the image replaced
-  // the initials, which do have one. For the same reason UserAvatar's
-  // `align-middle` only bites out here: a flex item would ignore it.
+  // the initials, which do have one.
   //
   // The anchor takes these classes rather than sitting outside them: the
   // chip is a flex item in the comment header, the event row and the board's
   // meta row, and wrapping it would hand that slot to an element without
   // `shrink-0`, squeezing the chip in exactly the dense rows it is used in.
-  const box = "inline-block shrink-0 whitespace-nowrap";
+  //
+  // `text-sm` restates the name's own size on the box the avatar is centred
+  // in. Inherited instead, a hover card's `text-base` would give the chip a
+  // 24px strut and hang the avatar 2px below the 14px name it belongs to.
+  // `ps-5` is the width the out-of-flow avatar no longer claims.
+  const box = cn(
+    "inline-block shrink-0 whitespace-nowrap",
+    !compact && "relative ps-5 text-sm",
+  );
 
   // The avatar's `alt` is empty and the fallback only carries initials, so a
   // compact chip reaching for a name of its own has none to find.

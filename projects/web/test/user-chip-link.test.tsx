@@ -34,8 +34,11 @@ describe("UserChip link", () => {
   });
 
   // Red when the anchor is wrapped around the chip's span instead of
-  // replacing it: the second assertion then reads SPAN. A human fixture on
-  // purpose — UserAvatar wraps a machine user's badge in a span of its own.
+  // replacing it: the box classes then sit on a span one level in and the
+  // anchor carries none of them. Asserted through the box rather than
+  // through "the avatar is the anchor's first child", which stopped telling
+  // the two shapes apart once the avatar moved into a positioned span of its
+  // own (T-487) — as it already had for a machine user's badge.
   it("makes the anchor the chip's outermost element", async () => {
     const { container, findByRole } = renderWithProviders(
       <UserChip user={alice} />,
@@ -43,7 +46,8 @@ describe("UserChip link", () => {
     await findByRole("link");
     const outer = container.firstElementChild;
     expect(outer?.tagName).toBe("A");
-    expect(outer?.firstElementChild?.getAttribute("data-slot")).toBe("avatar");
+    expect(outer?.className).toContain("inline-block");
+    expect(outer?.querySelector('[data-slot="avatar"]')).not.toBeNull();
   });
 
   // Red either way round: put only the name inside the anchor and the avatar

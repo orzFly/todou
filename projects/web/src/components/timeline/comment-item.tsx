@@ -180,17 +180,16 @@ export function CommentItem({
         <CommentHeaderLine>
           <CommentHeaderIdentity>
             <UserChip user={comment.author} />
-            {/* T-433's rule — text of different sizes shares one baseline —
-                applied to the badge here, where T-435 put an id and a time on
-                that same line. The icon opts out and stays centred because a
-                replaced box has no baseline of its own: left in the group, the
-                pill's position would be decided by a synthesized one taken from
-                the glyph's box rather than by the model name beside it. Scoped
-                to this call site; the event and revision rows keep T-433's
-                self-center. */}
+            {/* The pill the event row and the revision list draw, drawn the
+                same way here. T-435 put the model name on the header's
+                baseline instead, and a name on a baseline inside a box of
+                fixed height is a name that moves against its own pill: it sat
+                1px below the pill's top edge and 4.72px above its bottom one,
+                where the other two rows hold it centred. The text decides
+                where its box goes, never the other way round (T-487). */}
             <AgentContextBadge
               context={comment.agent_context}
-              className="items-baseline [&>svg]:self-center"
+              className="self-center"
             />
             {comment.edited_at && (
               <RevisionHistory

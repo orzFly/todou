@@ -54,18 +54,19 @@ export function CommentHeaderIdentity({ children }: { children: ReactNode }) {
  * the row can centre the lot of it.
  *
  * Flexbox lays a baseline-aligned group flush with the line's cross-start, so
- * as soon as one item is taller than the group, every pixel of the leftover
- * falls below the names and none above them: the action group is 28px against
- * the 24px an avatar and an agent badge make, and the header drew its whole
- * first line 4px high inside a box built around the buttons (T-487). Wrapping
- * the baseline participants makes them one item, and `self-center` then moves
- * the group as a unit.
+ * as soon as one item is taller than the group — the action buttons always
+ * are, being sized for a pointer rather than for text — every pixel of the
+ * leftover falls below the names and none above them, and the header draws
+ * its first line hard against the top of a box the buttons decide the height
+ * of (T-487). Wrapping the baseline participants makes them one item, and
+ * `self-center` then moves the group as a unit. Because nothing in the group
+ * is taller than the header's own text any more, what ends up centred is the
+ * text line, and the baseline lands where the header's text puts it.
  *
  * It has to be the group and not each participant. Centring them one by one
- * would put the id and the time a pixel off the author's baseline, because a
- * 16px meta box and a 24px identity box hold their baselines at different
- * distances from their own centres — and that baseline is what T-433 and
- * T-435 are.
+ * would put the id and the time off the author's baseline, because boxes of
+ * different heights hold their baselines at different distances from their
+ * own centres — and that baseline is what T-433 and T-435 are.
  *
  * `max-sm:contents` for the mirror of the reason `COMMENT_HEADER_IDENTITY` is
  * `contents` above the breakpoint: below it the row is a grid whose cells the
