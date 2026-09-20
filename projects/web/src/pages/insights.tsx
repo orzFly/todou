@@ -126,44 +126,6 @@ export function InsightsPage() {
           });
         }}
       />
-      {viewer.data && project.data && (
-        <ActivityCalendarSection
-          viewerId={viewer.data.id}
-          scope={{
-            kind: "project",
-            projectId: project.data.id,
-            slug: project.data.slug,
-          }}
-          {...activityWindow}
-          day={activity.day}
-          timezone={context.timezone}
-          today={today}
-          onInvalidDay={(day) => {
-            if (!activityInvalidNotified.current) {
-              activityInvalidNotified.current = true;
-              toast("Invalid activity date was reset.");
-            }
-            void navigate({
-              to: "/projects/$slug/insights",
-              params: { slug },
-              search: activityDateSearchParams(
-                parseInsightsSearch({ ...search, activity_day: day }),
-              ),
-              replace: true,
-            });
-          }}
-          onDayChange={(day, options) =>
-            void navigate({
-              to: "/projects/$slug/insights",
-              params: { slug },
-              search: activityDateSearchParams(
-                parseInsightsSearch({ ...search, activity_day: day }),
-              ),
-              replace: options?.replace ?? false,
-            })
-          }
-        />
-      )}
       {resolved.invalid && (
         <p role="status" className="text-sm text-destructive">
           Invalid URL filters were reset to safe defaults.
@@ -202,6 +164,44 @@ export function InsightsPage() {
           )}
           <InsightsResults data={result.data} />
         </>
+      )}
+      {viewer.data && project.data && (
+        <ActivityCalendarSection
+          viewerId={viewer.data.id}
+          scope={{
+            kind: "project",
+            projectId: project.data.id,
+            slug: project.data.slug,
+          }}
+          {...activityWindow}
+          day={activity.day}
+          timezone={context.timezone}
+          today={today}
+          onInvalidDay={(day) => {
+            if (!activityInvalidNotified.current) {
+              activityInvalidNotified.current = true;
+              toast("Invalid activity date was reset.");
+            }
+            void navigate({
+              to: "/projects/$slug/insights",
+              params: { slug },
+              search: activityDateSearchParams(
+                parseInsightsSearch({ ...search, activity_day: day }),
+              ),
+              replace: true,
+            });
+          }}
+          onDayChange={(day, options) =>
+            void navigate({
+              to: "/projects/$slug/insights",
+              params: { slug },
+              search: activityDateSearchParams(
+                parseInsightsSearch({ ...search, activity_day: day }),
+              ),
+              replace: options?.replace ?? false,
+            })
+          }
+        />
       )}
     </div>
   );

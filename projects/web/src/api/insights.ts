@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   mutationOptions,
   type QueryClient,
   queryOptions,
@@ -27,6 +28,11 @@ export function insightsBurnQuery(
   return queryOptions({
     queryKey: insightsKeys.burnRequest(slug, input, settingsVersion),
     queryFn: () => api.getInsightsBurn(slug, input),
+    // Every range, grain or settings change is a new key. Without carrying the
+    // last answer over, the charts fall back to the page skeleton on each one,
+    // so the reader watches the whole section collapse and reflow to read a
+    // neighbouring window.
+    placeholderData: keepPreviousData,
   });
 }
 

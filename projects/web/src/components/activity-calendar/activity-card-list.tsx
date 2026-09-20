@@ -45,16 +45,11 @@ export function ActivityCardList({
       aria-busy={busy}
       className="min-w-0 max-w-full space-y-3"
     >
-      {selection && (
-        <header className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className="font-medium">{selection.date}</h3>
-          <p className="text-sm text-muted-foreground">
-            {selection.total} active {selection.total === 1 ? "card" : "cards"}
-          </p>
-        </header>
-      )}
+      {/* A refresh keeps the rows it already has: announcing progress is the
+          screen reader's business, and taking a line for it moves the list the
+          reader is pointing at. */}
       {busy && (
-        <p role="status" className="text-sm text-muted-foreground">
+        <p role="status" className="sr-only">
           {loading ? "Loading activity…" : "Loading more activity…"}
         </p>
       )}
@@ -72,50 +67,65 @@ export function ActivityCardList({
           </Button>
         </div>
       )}
-      {!busy &&
-        !hasError &&
-        (!selection ? (
-          <p className="text-sm text-muted-foreground">Select a day.</p>
-        ) : selection.items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No active cards on {selection.date}.
-          </p>
-        ) : null)}
-      {selection && selection.items.length > 0 && (
-        <ul className="min-w-0 max-w-full space-y-2">
-          {selection.items.map((card) => (
-            <li
-              key={`${card.project.id}:${card.issue_id}`}
-              className="min-w-0 max-w-full space-y-2 rounded-lg border p-3"
-            >
-              <Link
-                to="/projects/$slug/issues/$number"
-                params={{
-                  slug: card.project.slug,
-                  number: String(card.number),
-                }}
-                className="block min-w-0 max-w-full font-medium break-words hover:underline"
-              >
-                {card.title}
-              </Link>
-              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <span className="min-w-0 max-w-full break-words">
-                  {card.project.name}
-                </span>
-                <span className="min-w-0 max-w-full font-mono break-words">
-                  {formatRef(card.project.issue_prefix, card.number)}
-                </span>
-                <StatusPill
-                  status={card.status}
-                  className="min-w-0 max-w-full break-words"
-                />
-                <time dateTime={card.last_active_at}>
-                  {timestamp.format(new Date(card.last_active_at))}
-                </time>
-              </div>
-            </li>
-          ))}
-        </ul>
+      {!busy && !hasError && !selection && (
+        <p className="text-sm text-muted-foreground">Select a day.</p>
+      )}
+      {/* The group survives a failed refresh: its cards and total are the last
+          good answer, and dropping them would punish the reader for the retry. */}
+      {selection && (
+        <section className="min-w-0 max-w-full overflow-hidden rounded-lg border">
+          <header className="flex flex-wrap items-baseline justify-between gap-2 border-b bg-muted/50 px-3.5 py-2">
+            <h3 className="min-w-0 font-semibold break-words">
+              {selection.date}
+            </h3>
+            <span className="text-xs text-muted-foreground">
+              {selection.total} active{" "}
+              {selection.total === 1 ? "card" : "cards"}
+            </span>
+          </header>
+          {selection.items.length === 0 ? (
+            !busy && (
+              <p className="px-3.5 py-2.5 text-sm text-muted-foreground">
+                No active cards on {selection.date}.
+              </p>
+            )
+          ) : (
+            <ul className="min-w-0 max-w-full">
+              {selection.items.map((card) => (
+                <li
+                  key={`${card.project.id}:${card.issue_id}`}
+                  className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50"
+                >
+                  <Link
+                    to="/projects/$slug/issues/$number"
+                    params={{
+                      slug: card.project.slug,
+                      number: String(card.number),
+                    }}
+                    className="min-w-0 max-w-full font-medium break-words hover:underline"
+                  >
+                    {card.title}
+                  </Link>
+                  <span className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground sm:ml-auto">
+                    <span className="min-w-0 max-w-full break-words">
+                      {card.project.name}
+                    </span>
+                    <span className="min-w-0 max-w-full font-mono break-words">
+                      {formatRef(card.project.issue_prefix, card.number)}
+                    </span>
+                    <StatusPill
+                      status={card.status}
+                      className="min-w-0 max-w-full break-words"
+                    />
+                    <time dateTime={card.last_active_at}>
+                      {timestamp.format(new Date(card.last_active_at))}
+                    </time>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
       {selection?.has_more && !hasError && (
         <Button

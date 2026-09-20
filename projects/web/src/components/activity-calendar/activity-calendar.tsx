@@ -356,12 +356,6 @@ export function ActivityCalendar({
           Loading activity…
         </p>
       )}
-      {loading && days.length === 0 && (
-        <div
-          aria-hidden="true"
-          className="h-40 w-full animate-pulse rounded bg-muted"
-        />
-      )}
       {error && (
         <div role="alert" className="flex flex-wrap items-center gap-2 text-sm">
           <span>{error}</span>
@@ -380,116 +374,118 @@ export function ActivityCalendar({
         move to the first and last available day of the week. Enter or Space
         selects a day.
       </p>
-      {days.length > 0 && (
-        <div
-          className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain"
-          data-activity-scroll
+      {/* The grid's geometry comes from the window, not from the response, so
+          it is always drawn: a cold load shows the cells it is about to fill
+          rather than a differently sized block that then swaps for them, and a
+          refresh never collapses the grid the reader is pointing at. */}
+      <div
+        className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain"
+        data-activity-scroll
+      >
+        <fieldset
+          ref={calendar}
+          aria-label={`Activity dates ${from} to ${dates.at(-1) ?? from}`}
+          aria-describedby={`${id}-instructions`}
+          className="m-0 grid w-max min-w-0 gap-1 border-0 p-1"
+          style={{
+            gridTemplateColumns: `2.5rem repeat(${weeks}, 1rem)`,
+            gridTemplateRows: "1rem repeat(7, 1rem)",
+          }}
         >
-          <fieldset
-            ref={calendar}
-            aria-label={`Activity dates ${from} to ${dates.at(-1) ?? from}`}
-            aria-describedby={`${id}-instructions`}
-            className="m-0 grid w-max min-w-0 gap-1 border-0 p-1"
-            style={{
-              gridTemplateColumns: `2.5rem repeat(${weeks}, 1rem)`,
-              gridTemplateRows: "1rem repeat(7, 1rem)",
-            }}
-          >
-            {WEEKDAYS.map((name, index) => (
-              <span
-                key={name}
-                aria-hidden="true"
-                className="text-[10px] text-muted-foreground"
-                style={{ gridColumn: 1, gridRow: index + 2 }}
-              >
-                {name}
-              </span>
-            ))}
-            {dates.map((date, index) => {
-              const day = byDate.get(date);
-              const enabled = day?.state === "recorded";
-              const intensity = enabled ? level(day.count, levels) : undefined;
-              const label = dayLabel(date, day);
-              const column = Math.floor((index + offset) / 7) + 2;
-              return (
-                <span key={date} className="contents">
-                  {date.endsWith("-01") && (
-                    <span
-                      aria-hidden="true"
-                      className="text-[10px] text-muted-foreground"
-                      style={{ gridColumn: `${column} / span 3`, gridRow: 1 }}
-                    >
-                      {MONTHS[Number(date.slice(5, 7)) - 1]}
-                    </span>
-                  )}
+          {WEEKDAYS.map((name, index) => (
+            <span
+              key={name}
+              aria-hidden="true"
+              className="text-[10px] text-muted-foreground"
+              style={{ gridColumn: 1, gridRow: index + 2 }}
+            >
+              {name}
+            </span>
+          ))}
+          {dates.map((date, index) => {
+            const day = byDate.get(date);
+            const enabled = day?.state === "recorded";
+            const intensity = enabled ? level(day.count, levels) : undefined;
+            const label = dayLabel(date, day);
+            const column = Math.floor((index + offset) / 7) + 2;
+            return (
+              <span key={date} className="contents">
+                {date.endsWith("-01") && (
                   <span
-                    className="inline-flex"
-                    style={{
-                      gridColumn: column,
-                      gridRow: ((index + offset) % 7) + 2,
-                    }}
-                    onPointerEnter={() => setInspectedDate(date)}
-                    onPointerLeave={(event) => {
-                      if (event.pointerType !== "touch") setInspectedDate(null);
-                    }}
-                    onPointerDown={(event) => {
-                      if (event.pointerType === "touch") setInspectedDate(date);
-                    }}
+                    aria-hidden="true"
+                    className="text-[10px] text-muted-foreground"
+                    style={{ gridColumn: `${column} / span 3`, gridRow: 1 }}
                   >
-                    <button
-                      ref={(node) => {
-                        if (node) buttons.current.set(date, node);
-                        else {
-                          if (
-                            buttons.current.get(date) === document.activeElement
-                          ) {
-                            heldFocus.current = true;
-                          }
-                          buttons.current.delete(date);
-                        }
-                      }}
-                      type="button"
-                      disabled={!enabled}
-                      tabIndex={enabled && activeDate === date ? 0 : -1}
-                      aria-label={label}
-                      aria-pressed={enabled ? selectedDate === date : undefined}
-                      aria-current={date === today ? "date" : undefined}
-                      aria-describedby={
-                        readDate === date ? `${id}-readout` : undefined
-                      }
-                      data-date={date}
-                      data-state={day?.state ?? "unavailable"}
-                      data-level={intensity}
-                      className={cn(
-                        "size-4 shrink-0 rounded-xs border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                        intensity !== undefined
-                          ? levels[intensity]?.className
-                          : "bg-transparent",
-                        day?.state === "future" && "border-dashed opacity-50",
-                        day?.state === "not_applicable" &&
-                          "border-transparent bg-muted/30",
-                        enabled &&
-                          selectedDate === date &&
-                          "outline-2 outline-offset-2 outline-primary",
-                      )}
-                      onFocus={() => {
-                        heldFocus.current = true;
-                        setRovingDate(date);
-                        setInspectedDate(date);
-                      }}
-                      onKeyDown={(event) => onKeyDown(event, index)}
-                      onClick={() => {
-                        focusDate(date);
-                        onDayChange(date);
-                      }}
-                    />
+                    {MONTHS[Number(date.slice(5, 7)) - 1]}
                   </span>
+                )}
+                <span
+                  className="inline-flex"
+                  style={{
+                    gridColumn: column,
+                    gridRow: ((index + offset) % 7) + 2,
+                  }}
+                  onPointerEnter={() => setInspectedDate(date)}
+                  onPointerLeave={(event) => {
+                    if (event.pointerType !== "touch") setInspectedDate(null);
+                  }}
+                  onPointerDown={(event) => {
+                    if (event.pointerType === "touch") setInspectedDate(date);
+                  }}
+                >
+                  <button
+                    ref={(node) => {
+                      if (node) buttons.current.set(date, node);
+                      else {
+                        if (
+                          buttons.current.get(date) === document.activeElement
+                        ) {
+                          heldFocus.current = true;
+                        }
+                        buttons.current.delete(date);
+                      }
+                    }}
+                    type="button"
+                    disabled={!enabled}
+                    tabIndex={enabled && activeDate === date ? 0 : -1}
+                    aria-label={label}
+                    aria-pressed={enabled ? selectedDate === date : undefined}
+                    aria-current={date === today ? "date" : undefined}
+                    aria-describedby={
+                      readDate === date ? `${id}-readout` : undefined
+                    }
+                    data-date={date}
+                    data-state={day?.state ?? "unavailable"}
+                    data-level={intensity}
+                    className={cn(
+                      "size-4 shrink-0 rounded-xs border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                      intensity !== undefined
+                        ? levels[intensity]?.className
+                        : "bg-transparent",
+                      day?.state === "future" && "border-dashed opacity-50",
+                      day?.state === "not_applicable" &&
+                        "border-transparent bg-muted/30",
+                      enabled &&
+                        selectedDate === date &&
+                        "outline-2 outline-offset-2 outline-primary",
+                    )}
+                    onFocus={() => {
+                      heldFocus.current = true;
+                      setRovingDate(date);
+                      setInspectedDate(date);
+                    }}
+                    onKeyDown={(event) => onKeyDown(event, index)}
+                    onClick={() => {
+                      focusDate(date);
+                      onDayChange(date);
+                    }}
+                  />
                 </span>
-              );
-            })}
-          </fieldset>
-        </div>
-      )}
+              </span>
+            );
+          })}
+        </fieldset>
+      </div>
       {/* Still the description `aria-describedby` points at, so it keeps its
           role; it simply no longer takes a line under the grid restating the
           count that the selected day's own heading already carries. */}

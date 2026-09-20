@@ -998,6 +998,38 @@ describe("Insights page", () => {
     view.client.clear();
   });
 
+  it("keeps the charts mounted through range and grain changes", async () => {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage();
+    const chart = await screen.findByRole("heading", { name: "Burn chart" });
+    expect(document.querySelector('[data-testid="page-skeleton"]')).toBeNull();
+
+    // Every range and grain is its own query key. Without carried-over data the
+    // charts fall back to the page skeleton on each change, and the reader
+    // watches the whole section collapse and reflow to read a nearby window.
+    // Node identity is the criterion: a skeleton in between unmounts this one.
+    for (const button of ["90d", "7d", "12h", "1d"]) {
+      fireEvent.click(screen.getByRole("button", { name: button }));
+      expect(
+        document.querySelector('[data-testid="page-skeleton"]'),
+      ).toBeNull();
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("button", { name: button })
+            .getAttribute("aria-pressed"),
+        ).toBe("true"),
+      );
+      expect(
+        document.querySelector('[data-testid="page-skeleton"]'),
+      ).toBeNull();
+      expect(screen.getByRole("heading", { name: "Burn chart" })).toBe(chart);
+    }
+    view.unmount();
+    view.client.clear();
+  });
+
   it("keeps charts and graph filters working through calendar failure and retry", async () => {
     vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
     const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
