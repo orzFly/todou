@@ -1,11 +1,14 @@
-import type { InfiniteData, QueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import {
   type SpecReviewResult,
   type TimelinePage,
   TodouError,
 } from "@todou/shared";
 import { api } from "@/api/queries.ts";
-import { READS, type TimelinePageParam } from "@/api/timeline.ts";
+import { timelineResource } from "@/api/runtime/projections.ts";
+import { seedRuntimeQuery } from "@/api/runtime/query-adapter.ts";
+import { timelinePageQuery } from "@/api/runtime/timeline.ts";
+import { type TimelinePageParam, timelineProjection } from "@/api/timeline.ts";
 
 const ROUND_BUDGET_MS = 1_250;
 const ROUND_GAP_MS = 500;
@@ -82,12 +85,17 @@ export async function prepareSpecReviewTarget({
           : { dir: "init" };
         const page = await withDeadline(
           () =>
-            api.getTimeline(slug, issueNumber, {
-              ...READS,
-              ...(pageParam.dir === "before"
-                ? { before: pageParam.cursor }
-                : { last: true }),
-            }),
+            api
+              .withContext({
+                forceFresh: true,
+                resource: timelineResource(
+                  slug,
+                  issueNumber,
+                  pageParam,
+                  "tail",
+                ),
+              })
+              .getTimeline(slug, issueNumber, timelinePageQuery(pageParam)),
           roundDeadline,
         );
         // Check time again: promise callbacks may run after their round's timer
@@ -106,18 +114,29 @@ export async function prepareSpecReviewTarget({
         if (found) {
           preparing = true;
           const prepared = await withDeadline(
-            () => queryClient.cancelQueries({ queryKey, exact: true }),
+            () =>
+              seedRuntimeQuery(
+                queryClient,
+                queryKey,
+                { pages, pageParams },
+                {
+                  projection: timelineProjection(
+                    slug,
+                    issueNumber,
+                    "tail",
+                    pageParams,
+                  ),
+                  isCurrent: canNavigate,
+                },
+              ),
             roundDeadline,
           );
-          // Cancellation can itself yield past the budget or lose ownership.
-          // Never seed first and discover that at the navigation boundary.
-          if (prepared === TIMED_OUT || !canNavigate()) {
+          // The seed owns its cancellation/window/write/resume barrier. It must
+          // finish within this round; no later review onSettled will release it.
+          if (prepared === TIMED_OUT || !prepared || !canNavigate()) {
             active = false;
             return { status: isCurrent() ? "not-found" : "cancelled" };
           }
-          queryClient.setQueryData<
-            InfiniteData<TimelinePage, TimelinePageParam>
-          >(queryKey, { pages, pageParams });
           return { status: "found", canNavigate };
         }
         before = page.prev_cursor ?? undefined;

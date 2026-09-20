@@ -1,23 +1,52 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  hashKey,
+  type QueryClient,
+  type QueryKey,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type { InboxPage, IssueListPage } from "@todou/shared";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import {
+  beginRuntimeWrite,
+  getRuntimeQueryAdapter,
+  settleRuntimeWrite,
+  writeRuntimeData,
+} from "@/api/runtime/query-adapter.ts";
+import {
+  type ReadMutationScope,
+  readMutationAffects,
+} from "@/api/runtime/read-scope.ts";
 
-/**
- * Read positions write no timeline entry, no change event and no /activity
- * row, so a mark-read is invisible to every signal that travels by project.
- * The mutating client says so itself: it is the party that knows, and while
- * the stream is down it is the only one (the server's `me` event, T-275,
- * covers the account's *other* tabs and cannot cover a disconnected one).
- * Every mark-read, single or bulk, goes through here; an undefined slug is
- * the cross-project scope.
+/** Refresh only cached rows that a read position can change. The transport's
+ * mutation registry independently sends this scope to the worker, including
+ * when this page has never instantiated any matching query.
  */
-const readInvalidations = (
-  slug?: string,
-): ReadonlyArray<ReadonlyArray<unknown>> => [
-  slug === undefined ? ["issues"] : ["issues", slug],
-  ["inbox"],
-];
+export async function invalidateReadQueries(
+  queryClient: QueryClient,
+  scope: ReadMutationScope,
+  optimisticKeys: readonly QueryKey[] = [],
+): Promise<void> {
+  const keys = new Set(optimisticKeys.map((key) => hashKey(key)));
+  const filters = {
+    predicate: (query: { queryKey: QueryKey; state: { data: unknown } }) =>
+      keys.has(hashKey(query.queryKey)) ||
+      readMutationAffects(query.queryKey, query.state.data, scope),
+  };
+  const adapter = getRuntimeQueryAdapter(queryClient);
+  let pending: Promise<void> | undefined;
+  if (adapter?.bridge.mode === "worker") {
+    // The transport already sent the business scope. Repeating it through
+    // page predicates would cancel the repair shared with other pages.
+    adapter.pageInvalidation(() => {
+      pending = queryClient.invalidateQueries(filters);
+    });
+  } else {
+    pending = queryClient.invalidateQueries(filters);
+  }
+  await pending;
+}
 
 /** What a single-issue mark-read was aimed at, fixed at its `mutate()` call. */
 export type ReadTarget = { slug: string; number: number };
@@ -36,11 +65,8 @@ export function useMarkIssueRead() {
     mutationFn: (vars: ReadTarget) =>
       api.markIssueRead(vars.slug, vars.number, {}),
     onError: (error) => console.warn("mark-read failed", error),
-    onSettled: (_data, _error, vars) => {
-      for (const queryKey of readInvalidations(vars.slug)) {
-        queryClient.invalidateQueries({ queryKey });
-      }
-    },
+    onSettled: (_data, _error, vars) =>
+      invalidateReadQueries(queryClient, vars).catch(() => {}),
   });
 }
 
@@ -101,41 +127,60 @@ export function useMarkAllReadAction() {
     mutationFn: (vars: BulkReadTarget) =>
       api.markAllRead(vars.slug === undefined ? {} : { projects: [vars.slug] }),
     onMutate: async (vars: BulkReadTarget) => {
-      const issuesKey =
-        vars.slug === undefined ? ["issues"] : ["issues", vars.slug];
-      await queryClient.cancelQueries({ queryKey: issuesKey });
-      await queryClient.cancelQueries({ queryKey: ["inbox"] });
-      const lists = queryClient.getQueriesData<IssueListPage>({
-        queryKey: issuesKey,
-      });
-      const inboxes = queryClient.getQueriesData<InboxPage>({
-        queryKey: ["inbox"],
-      });
-      for (const [key, data] of lists) {
-        // The prefix also matches the tab-counts cache (no `items`); leave
-        // anything that isn't a list page untouched.
-        if (!data || !("items" in data)) continue;
-        queryClient.setQueryData(key, clearAllUnread(data));
+      const filters = {
+        predicate: (query: { queryKey: QueryKey; state: { data: unknown } }) =>
+          readMutationAffects(query.queryKey, query.state.data, vars),
+      };
+      const ownerToken = beginRuntimeWrite(queryClient, filters);
+      try {
+        await queryClient.cancelQueries(filters);
+        const snapshot = queryClient.getQueriesData<IssueListPage | InboxPage>(
+          filters,
+        );
+        for (const [key, data] of snapshot) {
+          if (!data || !("items" in data)) continue;
+          writeRuntimeData(
+            queryClient,
+            key,
+            key[0] === "inbox"
+              ? clearInboxUnread(data as InboxPage, vars.slug)
+              : clearAllUnread(data as IssueListPage),
+            ownerToken,
+          );
+        }
+        return {
+          snapshot,
+          ownerToken,
+          lists: snapshot.filter(([key]) => key[0] === "issues") as Array<
+            [QueryKey, IssueListPage | undefined]
+          >,
+          inboxes: snapshot.filter(([key]) => key[0] === "inbox") as Array<
+            [QueryKey, InboxPage | undefined]
+          >,
+        };
+      } catch (error) {
+        await settleRuntimeWrite(queryClient, ownerToken).catch(() => {});
+        throw error;
       }
-      for (const [key, data] of inboxes) {
-        if (!data) continue;
-        queryClient.setQueryData(key, clearInboxUnread(data, vars.slug));
-      }
-      return { lists, inboxes };
     },
     onError: (error, _vars, context) => {
-      for (const [key, data] of [
-        ...(context?.lists ?? []),
-        ...(context?.inboxes ?? []),
-      ]) {
-        queryClient.setQueryData(key, data);
+      if (context) {
+        for (const [key, data] of context.snapshot) {
+          writeRuntimeData(queryClient, key, data, context.ownerToken);
+        }
       }
       toast.error(`Could not mark as read: ${error.message}`);
     },
-    onSettled: (_data, _error, vars) => {
-      for (const queryKey of readInvalidations(vars.slug)) {
-        queryClient.invalidateQueries({ queryKey });
-      }
+    onSettled: async (_data, _error, vars, context) => {
+      if (context)
+        await settleRuntimeWrite(queryClient, context.ownerToken).catch(
+          () => {},
+        );
+      await invalidateReadQueries(
+        queryClient,
+        vars,
+        context?.snapshot.map(([key]) => key),
+      ).catch(() => {});
     },
   });
 }
@@ -167,28 +212,48 @@ export function useMarkReadAction() {
     mutationFn: (vars: ReadTarget) =>
       api.markIssueRead(vars.slug, vars.number, {}),
     onMutate: async (vars: ReadTarget) => {
-      await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
-      const snapshot = queryClient.getQueriesData<IssueListPage>({
+      const filters = {
         queryKey: ["issues", vars.slug],
-      });
-      for (const [key, data] of snapshot) {
-        // The prefix also matches the tab-counts cache (no `items`); leave
-        // anything that isn't a list page untouched.
-        if (!data || !("items" in data)) continue;
-        queryClient.setQueryData(key, clearUnread(data, vars.number));
+        predicate: (query: { queryKey: QueryKey; state: { data: unknown } }) =>
+          readMutationAffects(query.queryKey, query.state.data, vars),
+      };
+      const ownerToken = beginRuntimeWrite(queryClient, filters);
+      try {
+        await queryClient.cancelQueries(filters);
+        const snapshot = queryClient.getQueriesData<IssueListPage>(filters);
+        for (const [key, data] of snapshot) {
+          if (!data || !("items" in data)) continue;
+          writeRuntimeData(
+            queryClient,
+            key,
+            clearUnread(data, vars.number),
+            ownerToken,
+          );
+        }
+        return { snapshot, ownerToken };
+      } catch (error) {
+        await settleRuntimeWrite(queryClient, ownerToken).catch(() => {});
+        throw error;
       }
-      return { snapshot };
     },
     onError: (error, _vars, context) => {
-      for (const [key, data] of context?.snapshot ?? []) {
-        queryClient.setQueryData(key, data);
+      if (context) {
+        for (const [key, data] of context.snapshot) {
+          writeRuntimeData(queryClient, key, data, context.ownerToken);
+        }
       }
       toast.error(`Could not mark as read: ${error.message}`);
     },
-    onSettled: (_data, _error, vars) => {
-      for (const queryKey of readInvalidations(vars.slug)) {
-        queryClient.invalidateQueries({ queryKey });
-      }
+    onSettled: async (_data, _error, vars, context) => {
+      if (context)
+        await settleRuntimeWrite(queryClient, context.ownerToken).catch(
+          () => {},
+        );
+      await invalidateReadQueries(
+        queryClient,
+        vars,
+        context?.snapshot.map(([key]) => key),
+      ).catch(() => {});
     },
   });
 }

@@ -7,6 +7,7 @@ import {
   queryOptions,
 } from "@tanstack/react-query";
 import { type ActivityCalendarResponse, TodouError } from "@todou/shared";
+import { activityKeys } from "@/api/activity-calendar-keys.ts";
 import { api } from "@/api/queries.ts";
 
 /** Dates and timezone are resolved by the caller, never from browser globals. */
@@ -31,16 +32,7 @@ export type UserActivityCalendarRequest = ActivityCalendarRequest & {
   subjectId: number;
 };
 
-export const activityKeys = {
-  project: (slug?: string) =>
-    slug === undefined
-      ? (["activity-project"] as const)
-      : (["activity-project", slug] as const),
-  user: (subjectId?: number) =>
-    subjectId === undefined
-      ? (["activity-user"] as const)
-      : (["activity-user", subjectId] as const),
-};
+export { activityKeys } from "@/api/activity-calendar-keys.ts";
 
 function requestFields(input: ActivityCalendarRequest) {
   return {

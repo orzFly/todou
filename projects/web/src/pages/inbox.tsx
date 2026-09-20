@@ -1,9 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import type { InboxItem } from "@todou/shared";
 import { useMemo, useRef } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
 import { mutesQuery } from "@/api/mutes.ts";
+import { useRuntimeQuery as useQuery } from "@/api/runtime/query-adapter.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";

@@ -17,6 +17,10 @@ import {
 import { issueQuery } from "@/api/issues.ts";
 import { api, meQuery } from "@/api/queries.ts";
 import {
+  pageResource as resource,
+  runtimeQueryOptions,
+} from "@/api/runtime/query-adapter.ts";
+import {
   computeVersionStats,
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
@@ -28,7 +32,10 @@ export class SpecReadError extends Error {
     super(error instanceof Error ? error.message : "Could not load spec");
     this.name = "SpecReadError";
     this.cause = error;
-    this.status = error instanceof TodouError ? error.status : undefined;
+    this.status =
+      typeof (error as { status?: unknown })?.status === "number"
+        ? (error as { status: number }).status
+        : undefined;
   }
 }
 
@@ -56,30 +63,64 @@ async function readSpecFiles(
 
 /** Spec overview; resolves null (not an error) when the issue has no spec. */
 export const specQuery = (slug: string, issueNumber: number) =>
-  queryOptions({
-    queryKey: ["spec", slug, issueNumber],
-    queryFn: async () => {
-      try {
-        return await api.getSpec(slug, issueNumber);
-      } catch (error) {
-        if (error instanceof TodouError && error.status === 404) return null;
-        throw error;
-      }
+  runtimeQueryOptions(
+    queryOptions({
+      queryKey: ["spec", slug, issueNumber],
+      queryFn: async () => {
+        try {
+          return await api.getSpec(slug, issueNumber);
+        } catch (error) {
+          if (error instanceof TodouError && error.status === 404) return null;
+          throw error;
+        }
+      },
+    }),
+    {
+      kind: "spec",
+      resources: [
+        resource("spec", `/projects/${slug}/issues/${issueNumber}/spec`),
+      ],
     },
-  });
+  );
 
 export const specFilesQuery = (
   slug: string,
   issueNumber: number,
   version?: number,
 ) =>
-  queryOptions({
-    // Version snapshots are immutable, so old versions can cache forever;
-    // "current" (undefined) must follow pushes via SSE invalidation.
-    queryKey: ["spec-files", slug, issueNumber, version ?? "current"],
-    queryFn: () => readSpecFiles(slug, issueNumber, version),
-    staleTime: version === undefined ? 5_000 : Number.POSITIVE_INFINITY,
-  });
+  runtimeQueryOptions(
+    queryOptions({
+      // Version snapshots are immutable, so old versions can cache forever;
+      // "current" (undefined) must follow pushes via SSE invalidation.
+      queryKey: ["spec-files", slug, issueNumber, version ?? "current"],
+      queryFn: () => readSpecFiles(slug, issueNumber, version),
+      staleTime: version === undefined ? 5_000 : Number.POSITIVE_INFINITY,
+    }),
+    {
+      kind: "spec-files",
+      resources: [
+        resource(
+          version === undefined ? "spec-files" : "spec-files-version",
+          `/projects/${slug}/issues/${issueNumber}/spec/files`,
+          { version },
+        ),
+      ],
+    },
+    (error) => {
+      if (
+        error instanceof SpecReadError ||
+        error instanceof MovedError ||
+        error instanceof GoneError ||
+        (error instanceof TodouError && error.status === 404)
+      )
+        return error;
+      return error.name === "SpecReadError" ||
+        error instanceof TodouError ||
+        error instanceof TodouNetworkError
+        ? new SpecReadError(error)
+        : error;
+    },
+  );
 
 export const specCommentsQuery = (slug: string, issueNumber: number) =>
   queryOptions({

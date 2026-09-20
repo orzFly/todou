@@ -1,7 +1,10 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { Me } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api, runtime } from "../src/api/queries.ts";
 import { AppShell } from "../src/components/shell.tsx";
+import { registerDirtySource } from "../src/lib/unsaved-guard.ts";
+import { deferred } from "./deferred.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const me: Me = {
@@ -29,8 +32,12 @@ async function openUserMenu(mode: "single" | "forward") {
   });
   // The menu content mounts in a portal; anchor on a link that is always there.
   await waitFor(() => expect(screen.getByText("Profile")).toBeTruthy());
-  return view;
+  return { ...view, client };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("AppShell logout visibility", () => {
   it("offers Log out under session-based modes", async () => {
@@ -75,5 +82,82 @@ describe("the header's account chip stays a menu trigger (T-391)", () => {
     expect(trigger.querySelectorAll('a[href^="/users/"]')).toHaveLength(0);
     // Without this half, a trigger that rendered no chip would pass.
     expect(trigger.textContent).toContain("User");
+  });
+});
+
+describe("AppShell logout lifecycle", () => {
+  it("waits for the auth fence before logout HTTP or clearing private data", async () => {
+    const fence = deferred<void>();
+    vi.spyOn(runtime, "authTransition").mockImplementation(async (action) => {
+      await fence.promise;
+      return action();
+    });
+    const logout = vi.spyOn(api, "logout").mockResolvedValue(undefined);
+    const view = await openUserMenu("single");
+    view.client.setQueryData(["private-logout-test"], "retained");
+
+    fireEvent.click(screen.getByText("Log out"));
+    await waitFor(() => expect(runtime.authTransition).toHaveBeenCalledOnce());
+    expect(logout).not.toHaveBeenCalled();
+    expect(view.client.getQueryData(["private-logout-test"])).toBe("retained");
+
+    await act(async () => fence.resolve());
+    await waitFor(() => expect(logout).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(view.client.getQueryData(["private-logout-test"])).toBeUndefined(),
+    );
+  });
+
+  it("clears and leaves the ended session before identity confirmation, even when confirmation fails", async () => {
+    const confirmation = deferred<void>();
+    vi.spyOn(runtime, "authTransition").mockImplementation(async (action) => {
+      const result = await action();
+      await confirmation.promise;
+      return result;
+    });
+    vi.spyOn(api, "logout").mockResolvedValue(undefined);
+    const view = await openUserMenu("single");
+    view.client.setQueryData(["private-logout-test"], "retained");
+
+    fireEvent.click(screen.getByText("Log out"));
+    await waitFor(() => expect(api.logout).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(view.client.getQueryData(["private-logout-test"])).toBeUndefined(),
+    );
+    await waitFor(() =>
+      expect(view.router.state.location.pathname).toBe("/login"),
+    );
+
+    await act(async () => {
+      confirmation.reject(new Error("server unreachable"));
+    });
+    expect(view.client.getQueryData(["private-logout-test"])).toBeUndefined();
+  });
+
+  it("does not clear an unsaved editor's cache when the leave is cancelled", async () => {
+    vi.spyOn(runtime, "authTransition").mockImplementation((action) =>
+      action(),
+    );
+    vi.spyOn(api, "logout").mockResolvedValue(undefined);
+    const view = await openUserMenu("single");
+    view.client.setQueryData(["private-logout-test"], "retained");
+    const unregister = registerDirtySource(() => true);
+    try {
+      fireEvent.click(screen.getByText("Log out"));
+      await screen.findByText("Leave with unsaved changes?");
+      expect(view.client.getQueryData(["private-logout-test"])).toBe(
+        "retained",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+      await waitFor(() =>
+        expect(screen.queryByText("Leave with unsaved changes?")).toBeNull(),
+      );
+      expect(view.client.getQueryData(["private-logout-test"])).toBe(
+        "retained",
+      );
+      expect(view.router.state.location.pathname).toBe("/");
+    } finally {
+      unregister();
+    }
   });
 });

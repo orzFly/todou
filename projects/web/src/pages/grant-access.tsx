@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import type {
   Agent,
@@ -18,6 +18,7 @@ import {
   projectsQuery,
 } from "@/api/queries.ts";
 import { referenceDirectoryQuery } from "@/api/references.ts";
+import { useRuntimeQuery as useQuery } from "@/api/runtime/query-adapter.ts";
 import {
   AuthTargetFieldset,
   readLastAgentId,

@@ -114,16 +114,29 @@ describe("MarkReadButton (T-81)", () => {
     // report them, so the badge only drops if the mutation says so.
     vi.spyOn(api, "markIssueRead").mockResolvedValue(undefined);
     const client = testQueryClient();
-    const spy = vi.spyOn(client, "invalidateQueries");
+    const changed = ["issues", "p", {}];
+    const untouched = ["issues", "p", { board: 2 }];
+    client.setQueryData(changed, {
+      items: [{ number: 7, unread: true, unread_comments: 2 }],
+    });
+    client.setQueryData(untouched, {
+      items: [{ number: 8, unread: true, unread_comments: 1 }],
+    });
+    client.setQueryData(["inbox"], {
+      items: [
+        { project: { slug: "p" }, number: 7, unread: true, unread_comments: 2 },
+      ],
+    });
     const view = renderWithProviders(
       <MarkReadButton slug="p" number={7} unread unreadComments={2} />,
       client,
     );
     fireEvent.click(await view.findByRole("button", { name: /mark as read/i }));
     await waitFor(() =>
-      expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] }),
+      expect(client.getQueryState(["inbox"])?.isInvalidated).toBe(true),
     );
-    expect(spy).toHaveBeenCalledWith({ queryKey: ["issues", "p"] });
+    expect(client.getQueryState(changed)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(untouched)?.isInvalidated).toBe(false);
   });
 
   it("does not let the click bubble into row/card handlers", async () => {

@@ -108,6 +108,53 @@ import {
 import { CANONICAL_SLUG_HEADER } from "./schemas/project.ts";
 import { SseDecoder } from "./sse.ts";
 
+/** Local invocation metadata; signals and hooks never cross RPC boundaries. */
+export type RequestContext = Readonly<{
+  signal?: AbortSignal;
+  forceFresh?: boolean;
+  /** Runtime freshness ceiling for this read; never sent as an HTTP header. */
+  freshnessMs?: number;
+  resource?: unknown;
+  projectionId?: string;
+  operationId?: string;
+  origin?: string;
+  invalidationSeq?: number;
+  /** Override the JSON GET budget for an explicitly longer read. */
+  timeoutMs?: number;
+  /**
+   * Called once after a JSON request's physical transport finishes. For a
+   * batched item this waits for the entire chunk; raw requests end at headers.
+   */
+  onTransportSettled?: () => void;
+}>;
+
+export type RequestDelegate = (request: {
+  method: string;
+  path: string;
+  query?: RequestQuery;
+  body?: unknown;
+  context: RequestContext;
+}) => Promise<unknown>;
+
+export type RequestOptions = {
+  json?: unknown;
+  form?: FormData;
+  query?: RequestQuery;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+export type MutationLifecycleEvent = {
+  method: string;
+  path: string;
+  body?: unknown;
+  query?: RequestQuery;
+  context: RequestContext;
+  phase: "success" | "error";
+  data?: unknown;
+  error?: unknown;
+};
+
 export type TodouClientOptions = {
   /**
    * Where the API is mounted: an origin, or an origin plus a path prefix
@@ -135,6 +182,14 @@ export type TodouClientOptions = {
    * sequential CLI calls would pay the macrotask delay for nothing.
    */
   batch?: boolean;
+  /** Handles JSON GETs before batching; raw requests and forms bypass it. */
+  delegate?: RequestDelegate;
+  /** JSON GET budget. Defaults to 30s for batch/delegate clients only. */
+  timeoutMs?: number;
+  /** Physical batch deadline, including response bytes. Default 30s. */
+  batchTimeoutMs?: number;
+  /** Completion notification; hook failures never replace the HTTP result. */
+  onMutation?: (event: MutationLifecycleEvent) => void | Promise<void>;
   /**
    * Called with the project's current slug whenever a response says the path
    * named something else (T-156) — a retired slug, or the project's id
@@ -176,17 +231,22 @@ export class TodouError extends Error {
 
 /** A transport failure while awaiting headers or consuming response bytes. */
 export class TodouNetworkError extends Error {
-  constructor(cause: unknown) {
+  readonly path?: string;
+
+  constructor(cause: unknown, path?: string) {
     super(cause instanceof Error ? cause.message : "Network request failed");
     this.name = "TodouNetworkError";
     this.cause = cause;
+    this.path = path;
   }
 }
 
-type Query = Record<
+export type RequestQuery = Record<
   string,
   string | number | boolean | Array<string | number> | undefined
 >;
+
+type Query = RequestQuery;
 
 function queryString(query?: Query): string {
   if (!query) return "";
@@ -213,6 +273,10 @@ const BATCH_LIMIT = 50;
 
 type BatchWaiter = {
   url: string;
+  scope: RequestScope;
+  settled: boolean;
+  dispatched: boolean;
+  onSettled?: () => void;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
@@ -225,8 +289,14 @@ type BatchWaiter = {
 export class MovedError extends TodouError {
   readonly movedTo: MovedTo;
 
-  constructor(movedTo: MovedTo) {
-    super(301, "moved", `moved to ${movedTo.slug}#${movedTo.number}`, movedTo);
+  constructor(movedTo: MovedTo, path?: string) {
+    super(
+      301,
+      "moved",
+      `moved to ${movedTo.slug}#${movedTo.number}`,
+      movedTo,
+      path,
+    );
     this.movedTo = movedTo;
   }
 }
@@ -235,11 +305,262 @@ export class MovedError extends TodouError {
 export class GoneError extends TodouError {
   readonly body: GoneBody;
 
-  constructor(body: GoneBody) {
-    super(410, "gone", "this issue moved to a project you cannot read", body);
+  constructor(body: GoneBody, path?: string) {
+    super(
+      410,
+      "gone",
+      "this issue moved to a project you cannot read",
+      body,
+      path,
+    );
     this.body = body;
   }
 }
+
+/** Explicit, structured-cloneable error fields; stacks stay in their owner. */
+export type ClientErrorEnvelope = {
+  kind:
+    | "todou"
+    | "network"
+    | "moved"
+    | "gone"
+    | "cancelled"
+    | "timeout"
+    | "protocol"
+    | "session-reset"
+    | "unknown";
+  message: string;
+  name?: string;
+  status?: number;
+  code?: string;
+  path?: string;
+  details?: unknown;
+  movedTo?: MovedTo;
+  goneBody?: GoneBody;
+  cause?: { name: string; message: string };
+};
+
+export type ErrorEnvelope = ClientErrorEnvelope;
+
+export function serializeClientError(
+  error: unknown,
+  path?: string,
+): ClientErrorEnvelope {
+  const fields = error as {
+    kind?: string;
+    path?: string;
+    code?: string;
+    details?: unknown;
+  } | null;
+  const envelope: ClientErrorEnvelope = {
+    kind: "unknown",
+    message: error instanceof Error ? error.message : String(error),
+    name: error instanceof Error ? error.name : "Error",
+    path: path ?? fields?.path,
+  };
+  if (error instanceof TodouError) {
+    envelope.kind =
+      error instanceof MovedError
+        ? "moved"
+        : error instanceof GoneError
+          ? "gone"
+          : "todou";
+    envelope.status = error.status;
+    envelope.code = error.code;
+    envelope.details = error.details;
+    if (error instanceof MovedError) envelope.movedTo = error.movedTo;
+    if (error instanceof GoneError) envelope.goneBody = error.body;
+  } else if (error instanceof TodouNetworkError) {
+    envelope.kind = "network";
+    if (error.cause instanceof Error) {
+      envelope.cause = {
+        name: error.cause.name,
+        message: error.cause.message,
+      };
+    }
+  } else if (error instanceof Error && error.name === "AbortError") {
+    envelope.kind = "cancelled";
+  } else if (error instanceof Error && error.name === "TimeoutError") {
+    envelope.kind = "timeout";
+  } else if (
+    fields?.kind === "cancelled" ||
+    fields?.kind === "timeout" ||
+    fields?.kind === "protocol" ||
+    fields?.kind === "session-reset"
+  ) {
+    envelope.kind = fields.kind;
+    envelope.code = fields.code;
+    envelope.details = fields.details;
+  }
+  return envelope;
+}
+
+export function deserializeClientError(
+  envelope: ClientErrorEnvelope,
+  path = envelope.path,
+): Error {
+  let error: Error;
+  switch (envelope.kind) {
+    case "moved":
+      error = new MovedError(MovedTo.parse(envelope.movedTo), path);
+      break;
+    case "gone":
+      error = new GoneError(GoneBody.parse(envelope.goneBody), path);
+      break;
+    case "todou":
+      error = new TodouError(
+        envelope.status ?? 500,
+        envelope.code ?? "unknown",
+        envelope.message,
+        envelope.details,
+        path,
+      );
+      break;
+    case "network": {
+      const cause = new Error(envelope.cause?.message ?? envelope.message);
+      cause.name = envelope.cause?.name ?? "Error";
+      error = new TodouNetworkError(cause, path);
+      break;
+    }
+    case "cancelled":
+    case "timeout":
+      error = new DOMException(
+        envelope.message,
+        envelope.name ??
+          (envelope.kind === "cancelled" ? "AbortError" : "TimeoutError"),
+      );
+      break;
+    default:
+      error = new Error(envelope.message);
+      error.name = envelope.name ?? "Error";
+  }
+  // DOMException.name/message are getter-only. Its constructor already
+  // supplied them; ordinary errors retain custom names and messages.
+  if (!(error instanceof DOMException)) {
+    error.name = envelope.name ?? error.name;
+    error.message = envelope.message;
+  }
+  Object.assign(error, { kind: envelope.kind, path });
+  if (envelope.code !== undefined)
+    Object.assign(error, { code: envelope.code });
+  if (envelope.status !== undefined)
+    Object.assign(error, { status: envelope.status });
+  if (envelope.details !== undefined)
+    Object.assign(error, { details: envelope.details });
+  return error;
+}
+
+const READ_TIMEOUT_MS = 30_000;
+class RequestScope {
+  readonly controller = new AbortController();
+  readonly signal: AbortSignal;
+  #clearDeadline?: () => void;
+  #pending = 0;
+  #finishing = false;
+  #settled = false;
+  #onTransportSettled?: () => void;
+
+  constructor(
+    signals: Array<AbortSignal | undefined>,
+    timeoutMs?: number,
+    onTransportSettled?: () => void,
+  ) {
+    if (
+      timeoutMs !== undefined &&
+      (!Number.isFinite(timeoutMs) ||
+        timeoutMs < 0 ||
+        timeoutMs > 2_147_483_647)
+    ) {
+      throw new RangeError(
+        "timeoutMs must be a finite nonnegative timer duration",
+      );
+    }
+    this.#onTransportSettled = onTransportSettled;
+    this.signal = AbortSignal.any([
+      this.controller.signal,
+      ...signals.filter(
+        (signal): signal is AbortSignal => signal !== undefined,
+      ),
+    ]);
+    if (!this.signal.aborted && timeoutMs !== undefined) {
+      const expire = () =>
+        this.controller.abort(
+          new DOMException("Request timed out", "TimeoutError"),
+        );
+      if (timeoutMs === 0) expire();
+      else {
+        const timer = setTimeout(expire, timeoutMs);
+        this.#clearDeadline = () => clearTimeout(timer);
+      }
+      this.signal.addEventListener("abort", () => this.dispose(), {
+        once: true,
+      });
+    }
+  }
+
+  dispose(): void {
+    this.#clearDeadline?.();
+    this.#clearDeadline = undefined;
+  }
+
+  /** Mark logical execution complete; physical pending work may remain. */
+  finish(clearDeadline = true): void {
+    this.#finishing = true;
+    if (clearDeadline) this.dispose();
+    this.#maybeSettleTransport();
+  }
+
+  /** Track the actual adapter promise separately from the abort race. */
+  track<T>(pending: Promise<T>): Promise<T> {
+    this.#pending += 1;
+    const settled = (): void => {
+      this.#pending -= 1;
+      this.#maybeSettleTransport();
+    };
+    pending.then(settled, settled);
+    return pending;
+  }
+
+  #maybeSettleTransport(): void {
+    if (!this.#finishing || this.#pending !== 0 || this.#settled) return;
+    this.#settled = true;
+    try {
+      this.#onTransportSettled?.();
+    } catch {
+      // The hook only releases a runtime slot; it cannot affect the request.
+    }
+  }
+
+  async wait<T>(pending: Promise<T>): Promise<T> {
+    const signal = this.signal;
+    const tracked = this.track(pending);
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort, { once: true });
+      tracked.then(
+        (value) => {
+          signal.removeEventListener("abort", abort);
+          if (signal.aborted) reject(signal.reason);
+          else resolve(value);
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", abort);
+          reject(signal.aborted ? signal.reason : error);
+        },
+      );
+    });
+  }
+}
+
+type TransportState = {
+  options: Readonly<TodouClientOptions>;
+  fetch: typeof fetch;
+  batchQueue: BatchWaiter[];
+  batchScheduled: boolean;
+  batchUnavailable: boolean;
+  directUploadUnavailable: boolean;
+};
 
 /**
  * The redirect bodies are not the error envelope every other status uses,
@@ -253,11 +574,11 @@ function errorFromBody(
   if (status === 301) {
     const moved = (parsed as { moved_to?: unknown } | null)?.moved_to;
     const result = MovedTo.safeParse(moved);
-    if (result.success) return new MovedError(result.data);
+    if (result.success) return new MovedError(result.data, path);
   }
   if (status === 410) {
     const result = GoneBody.safeParse(parsed);
-    if (result.success) return new GoneError(result.data);
+    if (result.success) return new GoneError(result.data, path);
   }
   const body = parsed as {
     error?: { code?: string; message?: string; details?: unknown };
@@ -326,26 +647,46 @@ function movedToFromUrl(url: string, baseUrl: string): MovedTo | null {
 }
 
 export class TodouClient {
-  #baseUrl: string;
-  #token?: string;
-  #headers?: Record<string, string>;
-  #fetch: typeof fetch;
-  #batch: boolean;
-  #batchQueue: BatchWaiter[] = [];
-  #onCanonicalSlug?: (canonical: string, requested: string | null) => void;
-  /** Remembered per client: the backend has no batch endpoint. */
-  #batchUnavailable = false;
+  #transport: TransportState;
+  #context: RequestContext = Object.freeze({});
 
-  constructor(options?: TodouClientOptions) {
-    this.#baseUrl = options?.baseUrl ?? "";
-    this.#token = options?.token;
-    this.#headers = options?.headers;
-    this.#batch = options?.batch ?? false;
-    this.#onCanonicalSlug = options?.onCanonicalSlug;
-    // Never store the bare global fetch: calling it as `this.#fetch(...)`
-    // rebinds `this` to the client and browsers throw
-    // "'fetch' called on an object that does not implement interface Window".
-    this.#fetch = options?.fetch ?? ((...args) => fetch(...args));
+  constructor(options: TodouClientOptions = {}) {
+    this.#transport = {
+      options: Object.freeze({
+        ...options,
+        headers: options.headers && Object.freeze({ ...options.headers }),
+      }),
+      // Never bind the global fetch to the client (illegal in browsers).
+      fetch: options.fetch ?? ((...args) => fetch(...args)),
+      batchQueue: [],
+      batchScheduled: false,
+      batchUnavailable: false,
+      directUploadUnavailable: false,
+    };
+  }
+
+  get #baseUrl(): string {
+    return this.#transport.options.baseUrl ?? "";
+  }
+
+  get #token(): string | undefined {
+    return this.#transport.options.token;
+  }
+
+  get #headers(): Record<string, string> | undefined {
+    return this.#transport.options.headers;
+  }
+
+  get #fetch(): typeof fetch {
+    return this.#transport.fetch;
+  }
+
+  /** Bind a snapshot without changing other callers or their batch queue. */
+  withContext(context: RequestContext): TodouClient {
+    const view = new TodouClient();
+    view.#transport = this.#transport;
+    view.#context = Object.freeze({ ...this.#context, ...context });
+    return view;
   }
 
   /**
@@ -356,14 +697,76 @@ export class TodouClient {
   async request<T>(
     method: string,
     path: string,
-    init?: { json?: unknown; form?: FormData; query?: Query },
+    init?: RequestOptions,
   ): Promise<T> {
-    if (method === "GET" && this.#batch && !this.#batchUnavailable) {
-      return this.#enqueueBatch(
-        `${path}${queryString(init?.query)}`,
-      ) as Promise<T>;
+    const scope = new RequestScope(
+      [this.#context.signal, init?.signal],
+      init?.timeoutMs ??
+        this.#context.timeoutMs ??
+        (method === "GET"
+          ? (this.#transport.options.timeoutMs ??
+            (this.#transport.options.batch || this.#transport.options.delegate
+              ? READ_TIMEOUT_MS
+              : undefined))
+          : undefined),
+      this.#context.onTransportSettled,
+    );
+    let queued = false;
+    try {
+      scope.signal.throwIfAborted();
+      const logicalPath = `${path}${queryString(init?.query)}`;
+      const delegate = this.#transport.options.delegate;
+      let data: T;
+      if (method === "GET" && !init?.form && delegate) {
+        try {
+          data = (await scope.wait(
+            delegate({
+              method,
+              path,
+              query: init?.query,
+              body: init?.json,
+              context: Object.freeze({
+                ...this.#context,
+                signal: scope.signal,
+              }),
+            }),
+          )) as T;
+        } catch (error) {
+          // RPCs may report a physical /batch or resolved resource address.
+          // Report the original logical request, retaining its error class.
+          if (
+            error instanceof TodouError ||
+            error instanceof TodouNetworkError
+          ) {
+            throw deserializeClientError(
+              serializeClientError(error, logicalPath),
+            );
+          }
+          throw error;
+        }
+      } else if (
+        method === "GET" &&
+        !init?.form &&
+        this.#transport.options.batch &&
+        !this.#transport.batchUnavailable
+      ) {
+        queued = true;
+        data = (await this.#enqueueBatch(logicalPath, scope)) as T;
+      } else {
+        data = await this.#send<T>(method, path, init, scope);
+      }
+      await this.#notifyMutation(method, path, init, {
+        phase: "success",
+        data,
+      });
+      return data;
+    } catch (error) {
+      await this.#notifyMutation(method, path, init, { phase: "error", error });
+      throw error;
+    } finally {
+      if (queued) scope.dispose();
+      else scope.finish();
     }
-    return this.#send(method, path, init);
   }
 
   /**
@@ -380,13 +783,57 @@ export class TodouClient {
   async requestRaw(
     method: string,
     path: string,
-    init?: {
-      json?: unknown;
-      form?: FormData;
-      query?: Query;
-      headers?: Record<string, string>;
-    },
+    init?: RequestOptions & { headers?: Record<string, string> },
   ): Promise<Response> {
+    const scope = new RequestScope(
+      [this.#context.signal, init?.signal],
+      init?.timeoutMs ?? this.#context.timeoutMs,
+      this.#context.onTransportSettled,
+    );
+    try {
+      const res = await this.#sendRaw(method, path, init, scope);
+      // Keep a raw body's explicit deadline and cancellation connected after
+      // returning headers. Never wrap Response: url/redirected are evidence.
+      if (!res.body) scope.dispose();
+      await this.#notifyMutation(method, path, init, { phase: "success" });
+      return res;
+    } catch (error) {
+      scope.dispose();
+      await this.#notifyMutation(method, path, init, { phase: "error", error });
+      throw error;
+    } finally {
+      scope.finish(false);
+    }
+  }
+
+  async #notifyMutation(
+    method: string,
+    path: string,
+    init: RequestOptions | undefined,
+    result: Pick<MutationLifecycleEvent, "phase" | "data" | "error">,
+  ): Promise<void> {
+    if (method === "GET" || method === "HEAD" || method === "OPTIONS") return;
+    try {
+      await this.#transport.options.onMutation?.({
+        method,
+        path,
+        body: init?.json ?? init?.form,
+        query: init?.query,
+        context: this.#context,
+        ...result,
+      });
+    } catch {
+      // Runtime invalidation is a notification, never the mutation result.
+    }
+  }
+
+  async #sendRaw(
+    method: string,
+    path: string,
+    init: (RequestOptions & { headers?: Record<string, string> }) | undefined,
+    scope: RequestScope,
+  ): Promise<Response> {
+    scope.signal.throwIfAborted();
     const headers: Record<string, string> = {
       ...this.#headers,
       ...init?.headers,
@@ -402,40 +849,46 @@ export class TodouClient {
 
     // Build the request before the transport boundary. A query getter or
     // synchronous custom fetch adapter bug must keep its original identity.
-    const url = `${this.#baseUrl}/api${path}${queryString(init?.query)}`;
+    const logicalPath = `${path}${queryString(init?.query)}`;
+    const url = `${this.#baseUrl}/api${logicalPath}`;
     const request = {
       method,
       headers,
       body,
       credentials: "same-origin" as const,
+      signal: scope.signal,
     };
     const response = this.#fetch(url, request);
     let res: Response;
     try {
-      res = await response;
+      res = await scope.wait(response);
     } catch (error) {
+      if (scope.signal.aborted) throw scope.signal.reason;
       if (
         error instanceof TypeError ||
         (error instanceof DOMException &&
           (error.name === "TimeoutError" || error.name === "NetworkError"))
       ) {
-        throw new TodouNetworkError(error);
+        throw new TodouNetworkError(error, logicalPath);
       }
       throw error;
     }
     if (!res.ok) {
       let parsed: unknown = null;
       try {
-        parsed = await res.json();
-      } catch {
+        parsed = await scope.wait(res.json());
+      } catch (error) {
+        if (scope.signal.aborted) throw scope.signal.reason;
+        if (error instanceof Error && error.name === "AbortError") throw error;
         // Non-JSON error body; errorFromBody keeps status as message.
       }
-      throw errorFromBody(res.status, parsed, path);
+      throw errorFromBody(res.status, parsed, logicalPath);
     }
-    if (this.#onCanonicalSlug !== undefined) {
+    const onCanonicalSlug = this.#transport.options.onCanonicalSlug;
+    if (onCanonicalSlug !== undefined) {
       const canonical = res.headers.get(CANONICAL_SLUG_HEADER);
       if (canonical !== null) {
-        this.#onCanonicalSlug(
+        onCanonicalSlug(
           canonical,
           /^\/projects\/([^/?#]+)/.exec(path)?.[1] ?? null,
         );
@@ -453,12 +906,17 @@ export class TodouClient {
   async #send<T>(
     method: string,
     path: string,
-    init?: { json?: unknown; form?: FormData; query?: Query },
+    init: RequestOptions | undefined,
+    scope: RequestScope,
   ): Promise<T> {
-    const res = await this.requestRaw(method, path, init);
+    const logicalPath = `${path}${queryString(init?.query)}`;
+    const res = await this.#sendRaw(method, path, init, scope);
     if (method === "GET" && res.redirected) {
       const movedTo = movedToFromUrl(res.url, this.#baseUrl);
-      if (movedTo !== null) throw new MovedError(movedTo);
+      if (movedTo !== null) {
+        void res.body?.cancel().catch(() => {});
+        throw new MovedError(movedTo, logicalPath);
+      }
     }
     if (res.status === 204) return undefined as T;
     // Consume the response stream before parsing. Only rejected body reads
@@ -467,8 +925,9 @@ export class TodouClient {
     const bodyRead = res.text();
     let text: string;
     try {
-      text = await bodyRead;
+      text = await scope.wait(bodyRead);
     } catch (error) {
+      if (scope.signal.aborted) throw scope.signal.reason;
       if (
         error instanceof TypeError ||
         (error instanceof DOMException &&
@@ -476,7 +935,7 @@ export class TodouClient {
             error.name === "NetworkError" ||
             error.name === "TimeoutError"))
       ) {
-        throw new TodouNetworkError(error);
+        throw new TodouNetworkError(error, logicalPath);
       }
       throw error;
     }
@@ -490,114 +949,196 @@ export class TodouClient {
    * A single queued request skips the envelope so plain HTTP semantics
    * (and server logs) stay the norm outside bursts.
    */
-  #enqueueBatch(url: string): Promise<unknown> {
+  #enqueueBatch(url: string, scope: RequestScope): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      this.#batchQueue.push({ url, resolve, reject });
-      if (this.#batchQueue.length === 1) {
+      const finish = (error: boolean, value: unknown): void => {
+        if (item.settled) return;
+        item.settled = true;
+        scope.signal.removeEventListener("abort", cancel);
+        scope.dispose();
+        if (error) reject(value);
+        else resolve(value);
+        item.onSettled?.();
+      };
+      const item: BatchWaiter = {
+        url,
+        scope,
+        settled: false,
+        dispatched: false,
+        resolve: (value) => finish(false, value),
+        reject: (error) => finish(true, error),
+      };
+      const cancel = () => {
+        if (!item.dispatched) scope.finish();
+        item.reject(scope.signal.reason);
+      };
+      if (scope.signal.aborted) {
+        cancel();
+        return;
+      }
+      scope.signal.addEventListener("abort", cancel, { once: true });
+      this.#transport.batchQueue.push(item);
+      if (!this.#transport.batchScheduled) {
+        this.#transport.batchScheduled = true;
         setTimeout(() => void this.#flushBatch(), 0);
       }
     });
   }
 
   async #flushBatch(): Promise<void> {
-    const queue = this.#batchQueue;
-    this.#batchQueue = [];
-    if (queue.length === 1) {
-      const item = queue[0] as BatchWaiter;
-      this.#send<unknown>("GET", item.url).then(item.resolve, item.reject);
-      return;
-    }
+    const queue = this.#transport.batchQueue.filter((item) => !item.settled);
+    this.#transport.batchQueue = [];
+    this.#transport.batchScheduled = false;
     for (let i = 0; i < queue.length; i += BATCH_LIMIT) {
-      await this.#sendBatchChunk(queue.slice(i, i + BATCH_LIMIT));
+      const chunk = queue
+        .slice(i, i + BATCH_LIMIT)
+        .filter((item) => !item.settled);
+      try {
+        if (queue.length === 1 || this.#transport.batchUnavailable) {
+          await this.#sendBatchDirect(chunk);
+        } else if (chunk.length > 0) {
+          await this.#sendBatchChunk(chunk);
+        }
+      } catch (error) {
+        // Adapter bugs must not escape the fire-and-forget flush and strand
+        // this chunk or any later one.
+        for (const item of chunk) {
+          item.reject(error);
+          item.scope.finish();
+        }
+      }
     }
   }
 
+  async #sendBatchDirect(chunk: BatchWaiter[]): Promise<void> {
+    await Promise.all(
+      chunk.map(async (item) => {
+        if (item.settled) return;
+        item.dispatched = true;
+        try {
+          item.resolve(
+            await this.#send("GET", item.url, undefined, item.scope),
+          );
+        } catch (error) {
+          item.reject(error);
+        } finally {
+          item.scope.finish();
+        }
+      }),
+    );
+  }
+
   async #sendBatchChunk(chunk: BatchWaiter[]): Promise<void> {
-    let res: Response;
+    const scope = new RequestScope(
+      [],
+      this.#transport.options.batchTimeoutMs ?? READ_TIMEOUT_MS,
+      () => {
+        for (const item of chunk) item.scope.finish();
+      },
+    );
+    const cancelIfUnobserved = (): void => {
+      if (chunk.every((item) => item.settled)) scope.controller.abort();
+    };
+    for (const item of chunk) {
+      item.dispatched = true;
+      item.onSettled = cancelIfUnobserved;
+    }
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-      // The accept header is a negotiation, not a demand: a server without
-      // the stream answers with the JSON envelope, and the response's
-      // Content-Type decides which reading applies.
-      res = await this.requestRaw("POST", "/batch", {
-        json: { requests: chunk.map(({ url }) => ({ url })) },
-        headers: { accept: "text/event-stream" },
-      });
-    } catch (error) {
-      // 404/405 = a server predating the gateway: remember, fall back to
-      // direct sends for this chunk, and never try the envelope again.
-      if (
-        error instanceof TodouError &&
-        (error.status === 404 || error.status === 405)
-      ) {
-        this.#batchUnavailable = true;
+      let res: Response;
+      try {
+        // This physical POST bypasses invocation context and mutation hooks.
+        res = await this.#sendRaw(
+          "POST",
+          "/batch",
+          {
+            json: { requests: chunk.map(({ url }) => ({ url })) },
+            headers: { accept: "text/event-stream" },
+          },
+          scope,
+        );
+      } catch (error) {
+        if (
+          !scope.signal.aborted &&
+          error instanceof TodouError &&
+          (error.status === 404 || error.status === 405)
+        ) {
+          this.#transport.batchUnavailable = true;
+          for (const item of chunk) item.onSettled = undefined;
+          scope.dispose();
+          await this.#sendBatchDirect(chunk);
+          return;
+        }
         for (const item of chunk) {
-          this.#send<unknown>("GET", item.url).then(item.resolve, item.reject);
+          item.reject(
+            error instanceof TodouError || error instanceof TodouNetworkError
+              ? deserializeClientError(serializeClientError(error, item.url))
+              : error,
+          );
         }
         return;
       }
-      for (const item of chunk) item.reject(error);
-      return;
-    }
 
-    // A waiter is settled exactly once: duplicate or out-of-range indices in
-    // a stream (or missing entries in an envelope) leave the rest for the
-    // shared mismatch rejection below.
-    const settled = new Set<number>();
-    const settle = (index: number, status: number, body: unknown): void => {
-      const item = chunk[index];
-      if (item === undefined || settled.has(index)) return;
-      settled.add(index);
-      if (status >= 200 && status < 300) {
-        item.resolve(status === 204 ? undefined : body);
-      } else {
-        item.reject(errorFromBody(status, body, item.url));
-      }
-    };
-
-    // Read errors (a reset connection, a malformed frame, a 200 that is not
-    // the envelope) must reject the unsatisfied waiters rather than escape:
-    // the flush is fire-and-forget, so an exception here would otherwise
-    // strand every pending caller in this chunk — and every later chunk.
-    try {
-      if (res.headers.get("content-type")?.includes("text/event-stream")) {
-        // item frames settle waiters as they arrive; the done frame is
-        // skipped — a truncated stream is reported through the same
-        // missing-waiter path as a short envelope, so its count is
-        // informational on the wire, nothing the client needs to track.
-        const reader = res.body?.getReader();
-        if (reader === undefined) throw new Error("stream without a body");
-        const text = new TextDecoder();
-        const decoder = new SseDecoder();
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          for (const frame of decoder.push(
-            text.decode(value, { stream: true }),
-          )) {
-            if (frame.event !== SSE_BATCH_ITEM_EVENT) continue;
-            const item = JSON.parse(frame.data) as BatchStreamItem;
-            settle(item.index, item.status, item.body);
-          }
+      const settle = (index: number, status: number, body: unknown): void => {
+        const item = chunk[index];
+        if (item === undefined || item.settled) return;
+        if (status >= 200 && status < 300) {
+          item.resolve(status === 204 ? undefined : body);
+        } else {
+          item.reject(errorFromBody(status, body, item.url));
         }
-      } else {
-        const envelope = (await res.json()) as {
-          responses: Array<{ status: number; body: unknown }>;
-        };
-        envelope.responses.forEach((result, i) => {
-          settle(i, result.status, result.body);
-        });
-      }
-    } catch {
-      // Fall through to the mismatch rejection: an unreadable body is
-      // indistinguishable from a truncated stream, and the waiters must
-      // not outlive the exchange.
-    }
+      };
 
-    for (const [i, item] of chunk.entries()) {
-      if (settled.has(i)) continue;
-      item.reject(
-        new TodouError(502, "batch_mismatch", "missing batch response"),
-      );
+      try {
+        if (res.headers.get("content-type")?.includes("text/event-stream")) {
+          reader = res.body?.getReader();
+          if (reader === undefined) throw new Error("stream without a body");
+          const text = new TextDecoder();
+          const decoder = new SseDecoder();
+          for (;;) {
+            const { value, done } = await scope.wait(reader.read());
+            if (done) break;
+            for (const frame of decoder.push(
+              text.decode(value, { stream: true }),
+            )) {
+              if (frame.event !== SSE_BATCH_ITEM_EVENT) continue;
+              const item = JSON.parse(frame.data) as BatchStreamItem;
+              settle(item.index, item.status, item.body);
+            }
+            if (chunk.every((item) => item.settled)) break;
+          }
+        } else {
+          const envelope = (await scope.wait(res.json())) as {
+            responses: Array<{ status: number; body: unknown }>;
+          };
+          envelope.responses.forEach((result, i) => {
+            settle(i, result.status, result.body);
+          });
+        }
+      } catch {
+        // Preserve the existing mismatch identity for malformed/truncated
+        // bodies; cancellation and the physical deadline have their own kind.
+      }
+      for (const item of chunk) {
+        item.reject(
+          scope.signal.aborted
+            ? scope.signal.reason
+            : new TodouError(
+                502,
+                "batch_mismatch",
+                "missing batch response",
+                undefined,
+                item.url,
+              ),
+        );
+      }
+    } finally {
+      for (const item of chunk) item.onSettled = undefined;
+      if (reader) {
+        void scope.track(reader.cancel()).catch(() => {});
+        reader.releaseLock();
+      }
+      scope.finish();
     }
   }
 
@@ -1137,7 +1678,13 @@ export class TodouClient {
   };
 
   /** Remembered per client: the backend said it cannot presign. */
-  #directUploadUnavailable = false;
+  get #directUploadUnavailable(): boolean {
+    return this.#transport.directUploadUnavailable;
+  }
+
+  set #directUploadUnavailable(unavailable: boolean) {
+    this.#transport.directUploadUnavailable = unavailable;
+  }
 
   /**
    * Direct-upload path (s3 backends): presigned ticket → PUT straight to

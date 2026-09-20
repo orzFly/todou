@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-router";
 import type { Me } from "@todou/shared";
 import { type ReactNode, Suspense, useMemo } from "react";
-import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
+import { api, authModeQuery, projectQuery, runtime } from "@/api/queries.ts";
 import { useUserEvents } from "@/api/useUserEvents.ts";
 import { VersionFooter } from "@/components/footer.tsx";
 import { InboxButton } from "@/components/inbox-button.tsx";
@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
 import { MD_UP, SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { cn } from "@/lib/utils";
@@ -75,11 +76,19 @@ export function AppShell({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const logout = useMutation({
-    mutationFn: () => api.logout(),
-    onSuccess: () => {
-      queryClient.clear();
-      navigate({ to: "/login" });
-    },
+    mutationFn: () =>
+      runtime.authTransition(async () => {
+        await api.logout();
+        // The server has ended this session. Retire its cache now, even if
+        // the following identity check is slow or the network goes away.
+        // A blocked leave must retain the editor; AuthedLayout retires that
+        // cache once navigation actually commits.
+        if (!hasUnsavedWork()) queryClient.clear();
+        // Leaving the ended session does not require a successful /me.
+        // Do not await a draft leave decision while holding the auth lock;
+        // END and online confirmation must still settle independently.
+        void navigate({ to: "/login" });
+      }),
   });
 
   // In forward mode the login state belongs to the reverse proxy — a local

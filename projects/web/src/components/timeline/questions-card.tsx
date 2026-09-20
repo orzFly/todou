@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AnsweredComment,
   Question,
@@ -20,6 +20,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { questionsQuery } from "@/api/questions.ts";
+import { useRuntimeQuery as useQuery } from "@/api/runtime/query-adapter.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";

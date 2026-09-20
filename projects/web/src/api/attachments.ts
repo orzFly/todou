@@ -2,16 +2,30 @@ import { queryOptions, useQuery } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
 import { api, projectsQuery } from "@/api/queries.ts";
 import {
+  pageResource as resource,
+  runtimeQueryOptions,
+} from "@/api/runtime/query-adapter.ts";
+import {
   type AttachmentAddress,
   type AttachmentRef,
   attachmentAnswersTo,
 } from "@/lib/attachment-refs.ts";
 
 export const attachmentsQuery = (slug: string, issueNumber: number) =>
-  queryOptions({
-    queryKey: ["attachments", slug, issueNumber],
-    queryFn: () => api.listAttachments(slug, issueNumber),
-  });
+  runtimeQueryOptions(
+    queryOptions({
+      queryKey: ["attachments", slug, issueNumber],
+      queryFn: () => api.listAttachments(slug, issueNumber),
+    }),
+    {
+      kind: "direct",
+      resources: [
+        resource("attachments", `/projects/${slug}/attachments`, {
+          issue_number: issueNumber,
+        }),
+      ],
+    },
+  );
 
 /**
  * Which project a reference landed on: undefined while the directory is

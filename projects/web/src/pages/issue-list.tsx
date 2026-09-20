@@ -1,6 +1,5 @@
 import {
   keepPreviousData,
-  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
@@ -52,6 +51,11 @@ import {
   statusesQuery,
   useIsProjectAdmin,
 } from "@/api/queries.ts";
+import {
+  runtimeQueryOptions,
+  useRuntimeQuery as useQuery,
+} from "@/api/runtime/query-adapter.ts";
+import { resource } from "@/api/runtime/resources.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import {
   ISSUE_LIST_ROW,
@@ -784,21 +788,38 @@ function IssueGroup({
     if (!lastCursor) return;
     const base = issueGroupQuery(slug, status.id, search);
     paged.append(() =>
-      queryClient.fetchQuery({
-        ...issuesEntry([...base.queryKey, lastCursor], {
-          kind: "page",
-          filter: groupFilter(search, status.id, lastCursor),
-        }),
-        queryFn: () =>
-          api.listIssues(slug, {
-            status: [status.id],
-            q: search.q,
-            label: csvToIds(search.label),
-            assignee: search.assignee,
-            ...effectiveSort(search),
-            cursor: lastCursor,
-          }),
-      }),
+      queryClient.fetchQuery(
+        runtimeQueryOptions(
+          {
+            ...issuesEntry([...base.queryKey, lastCursor], {
+              kind: "page",
+              filter: groupFilter(search, status.id, lastCursor),
+            }),
+            queryFn: () =>
+              api.listIssues(slug, {
+                status: [status.id],
+                q: search.q,
+                label: csvToIds(search.label),
+                assignee: search.assignee,
+                ...effectiveSort(search),
+                cursor: lastCursor,
+              }),
+          },
+          {
+            kind: "list",
+            resources: [
+              resource("issues", `/projects/${slug}/issues`, {
+                status: [status.id],
+                q: search.q,
+                label: csvToIds(search.label),
+                assignee: search.assignee,
+                ...effectiveSort(search),
+                cursor: lastCursor,
+              }),
+            ],
+          },
+        ),
+      ),
     );
   }
 
@@ -969,14 +990,30 @@ export function IssueList({
   function loadNextPage() {
     if (!lastCursor) return;
     paged.append(() =>
-      queryClient.fetchQuery({
-        ...issuesEntry(["issues", slug, search, lastCursor], {
-          kind: "page",
-          filter: listFilter(search, lastCursor),
-        }),
-        queryFn: () =>
-          api.listIssues(slug, { ...listParams(search), cursor: lastCursor }),
-      }),
+      queryClient.fetchQuery(
+        runtimeQueryOptions(
+          {
+            ...issuesEntry(["issues", slug, search, lastCursor], {
+              kind: "page",
+              filter: listFilter(search, lastCursor),
+            }),
+            queryFn: () =>
+              api.listIssues(slug, {
+                ...listParams(search),
+                cursor: lastCursor,
+              }),
+          },
+          {
+            kind: "list",
+            resources: [
+              resource("issues", `/projects/${slug}/issues`, {
+                ...listParams(search),
+                cursor: lastCursor,
+              }),
+            ],
+          },
+        ),
+      ),
     );
   }
 
