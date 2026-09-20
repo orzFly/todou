@@ -94,8 +94,10 @@ function dayAt(index: number): string {
 }
 
 // Day 0 (1970-01-01) was a Thursday, so +3 rotates the remainder onto Monday.
+// The second modulo is what keeps dates before 1970 working: JS `%` returns a
+// negative remainder there, which would push the left edge a week too late.
 function mondayOnOrBefore(index: number): number {
-  return index - ((index + 3) % 7);
+  return index - ((((index + 3) % 7) + 7) % 7);
 }
 
 /**

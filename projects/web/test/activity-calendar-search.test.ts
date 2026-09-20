@@ -4,10 +4,12 @@ import {
   activityDateSearchParams,
   activityToday,
   browserActivityTimezone,
+  centredActivityWindow,
   defaultActivityDay,
   isActivityDate,
   parseActivityDateSearch,
   resolveActivityDateSearch,
+  rollingActivityWindow,
 } from "../src/lib/activity-calendar-search.ts";
 
 const context = {
@@ -203,5 +205,80 @@ describe("browser activity timezone", () => {
       throw new Error("browser timezone unavailable");
     });
     expect(browserActivityTimezone()).toBe("UTC");
+  });
+});
+
+// Weekday and span oracles are spelled out here rather than recomputed from the
+// helper's own arithmetic, which is what lets them catch a shifted left edge.
+const WEEKDAYS = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+function weekdayOf(date: string): string {
+  const index = Math.round(Date.parse(`${date}T00:00:00Z`) / 86_400_000);
+  return WEEKDAYS[((index % 7) + 7) % 7] as string;
+}
+function spanOf(window: { from: string; to: string }): number {
+  return (
+    (Date.parse(`${window.to}T00:00:00Z`) -
+      Date.parse(`${window.from}T00:00:00Z`)) /
+    86_400_000
+  );
+}
+
+describe("activity calendar windows", () => {
+  it.each([
+    ["2026-09-20", "2025-09-22", "2026-09-21", 364],
+    ["2026-09-19", "2025-09-22", "2026-09-20", 363],
+    ["2026-09-14", "2025-09-22", "2026-09-15", 358],
+    ["2026-01-01", "2025-01-06", "2026-01-02", 361],
+  ])(
+    "ends the rolling window the day after %s, over 52 Monday columns",
+    (today, from, to, span) => {
+      const window = rollingActivityWindow(today);
+      expect(window).toEqual({ from, to });
+      expect(weekdayOf(from)).toBe("Mon");
+      expect(spanOf(window)).toBe(span);
+      // 52 columns whose last one is partial, and never past the server's cap.
+      expect(Math.ceil(span / 7)).toBe(52);
+      expect(span).toBeLessThanOrEqual(366);
+    },
+  );
+
+  it("centres a short custom range, then caps it at today", () => {
+    // A range wholly in the past centres: the window reaches past its end.
+    const past = centredActivityWindow(
+      "2026-03-01",
+      "2026-03-31",
+      "2026-09-20",
+    );
+    expect(past).toEqual({ from: "2025-09-15", to: "2026-09-14" });
+    expect(weekdayOf(past.from)).toBe("Mon");
+    // Centring would run past today here, so the cap wins and it matches the
+    // rolling window: no future cell, whichever rule produced the edge.
+    expect(
+      centredActivityWindow("2026-09-01", "2026-09-15", "2026-09-20"),
+    ).toEqual(rollingActivityWindow("2026-09-20"));
+  });
+
+  it("anchors a range wider than the window to its own end", () => {
+    const wide = centredActivityWindow(
+      "2024-01-01",
+      "2026-01-01",
+      "2026-09-20",
+    );
+    expect(wide).toEqual({ from: "2025-01-06", to: "2026-01-01" });
+    expect(weekdayOf(wide.from)).toBe("Mon");
+    expect(Math.ceil(spanOf(wide) / 7)).toBe(52);
+  });
+
+  it("keeps 52 columns for a range before the epoch", () => {
+    // Day indices go negative there, and a plain `%` would return a negative
+    // remainder and shift the left edge a week late, costing a column.
+    const window = centredActivityWindow(
+      "1960-01-01",
+      "1960-01-11",
+      "2026-09-20",
+    );
+    expect(window).toEqual({ from: "1959-07-13", to: "1960-07-06" });
+    expect(weekdayOf(window.from)).toBe("Mon");
+    expect(Math.ceil(spanOf(window) / 7)).toBe(52);
   });
 });
