@@ -210,7 +210,8 @@ describe.each(PLACEMENTS)(
       year = 2026,
     ) {
       const params = new URLSearchParams({
-        year: String(year),
+        from: `${year}-01-01`,
+        to: `${year + 1}-01-01`,
         tz,
         limit: String(limit),
       });
@@ -226,7 +227,8 @@ describe.each(PLACEMENTS)(
       // unknown keys and would otherwise hide accidental extra body fields.
       expect(ActivityCalendarResponse.safeParse(raw).success).toBe(true);
       const body = raw as ActivityCalendarResponse;
-      expect(body.year).toBe(year);
+      expect(body.from).toBe(`${year}-01-01`);
+      expect(body.to).toBe(`${year + 1}-01-01`);
       expect(body.timezone).toBe(tz);
       expect(Date.parse(body.read_started_at)).toBeLessThanOrEqual(
         Date.parse(body.read_finished_at),
@@ -904,7 +906,8 @@ describe.each(PLACEMENTS)(
           expect(fresh.selection?.total).toBe(2);
           expect(fresh.selection?.items).toEqual(before.selection?.items);
           const params = new URLSearchParams({
-            year: "2026",
+            from: "2026-01-01",
+            to: "2027-01-01",
             tz: TZ,
             day: DAY,
             limit: "1",
@@ -1410,7 +1413,7 @@ describe.each(PLACEMENTS)(
             count: 0,
           });
           const rejected = await request<{ error: { code: string } }>(
-            `${path}?year=2011&tz=Pacific%2FApia&day=2011-12-30`,
+            `${path}?from=2011-01-01&to=2012-01-01&tz=Pacific%2FApia&day=2011-12-30`,
             viewer.headers,
             "GET",
             undefined,

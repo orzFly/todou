@@ -18,7 +18,8 @@ const input: ProjectActivityCalendarRequest = {
   viewerId: 42,
   projectId: 1,
   slug: "demo",
-  year: 2026,
+  from: "2026-01-01",
+  to: "2027-01-01",
   day: "2026-03-01",
   tz: "UTC",
   limit: 1,
@@ -26,7 +27,8 @@ const input: ProjectActivityCalendarRequest = {
 const personal = {
   viewerId: 42,
   subjectId: 7,
-  year: 2026,
+  from: "2026-01-01",
+  to: "2027-01-01",
   day: input.day,
   tz: "UTC",
   limit: 1,
@@ -63,7 +65,8 @@ function response(
   otherDayCount = 0,
 ): ActivityCalendarResponse {
   return {
-    year: 2026,
+    from: "2026-01-01",
+    to: "2027-01-01",
     timezone: "UTC",
     cutoff: at,
     read_started_at: at,
@@ -142,7 +145,8 @@ describe("activity query identity and cancellation", () => {
     mutable.viewerId = 99;
     await client().fetchQuery(options);
     expect(project).toHaveBeenCalledWith("demo", {
-      year: 2026,
+      from: "2026-01-01",
+      to: "2027-01-01",
       day: input.day,
       tz: "UTC",
       limit: 1,
@@ -154,7 +158,8 @@ describe("activity query identity and cancellation", () => {
       {
         viewerId: 42,
         projectId: 1,
-        year: 2026,
+        from: "2026-01-01",
+        to: "2027-01-01",
         day: input.day,
         tz: "UTC",
         limit: 1,
@@ -163,7 +168,8 @@ describe("activity query identity and cancellation", () => {
     ]);
     await client().fetchQuery(userActivityCalendarQuery(personal));
     expect(user).toHaveBeenCalledWith(7, {
-      year: 2026,
+      from: "2026-01-01",
+      to: "2027-01-01",
       day: input.day,
       tz: "UTC",
       limit: 1,
@@ -175,7 +181,7 @@ describe("activity query identity and cancellation", () => {
     { viewerId: 43 },
     { projectId: 2 },
     { slug: "other" },
-    { year: 2025, day: "2025-03-01" },
+    { from: "2025-01-01", to: "2026-01-01", day: "2025-03-01" },
     { day: "2026-03-02" },
     { day: undefined },
     { tz: "Asia/Tokyo" },

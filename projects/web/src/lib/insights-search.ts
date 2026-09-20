@@ -57,7 +57,7 @@ function isTimezone(value: unknown): value is string {
 }
 
 /** Calendar arithmetic only: these UTC dates never stand for IANA midnights. */
-function shiftCalendarDate(date: string, days: number): string {
+export function shiftCalendarDate(date: string, days: number): string {
   const shifted = new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS);
   return shifted.toISOString().slice(0, 10);
 }

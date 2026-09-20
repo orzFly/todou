@@ -3,7 +3,6 @@ import type { ActivityCalendarResponse } from "@todou/shared";
 
 /** Date selection only. The page supplies its approved timezone policy. */
 export type ActivityDateSearch = {
-  activity_year?: number;
   activity_day?: string;
   /** Derived validation state. Never accepted from or written to a URL. */
   activity_invalid?: true;
@@ -24,32 +23,21 @@ export function isActivityDate(value: unknown): value is string {
   );
 }
 
+// A rolling window has no year to navigate to, so `activity_year` from an
+// older link is dropped the same way a legacy `tz` is: silently, because a
+// parameter this page no longer honours is not the reader's mistake.
 export function parseActivityDateSearch(
   search: Record<string, unknown>,
 ): ActivityDateSearch {
-  const rawYear = search.activity_year;
-  const year =
-    typeof rawYear === "number"
-      ? rawYear
-      : typeof rawYear === "string" && /^\d{1,4}$/.test(rawYear)
-        ? Number(rawYear)
-        : undefined;
-  const validYear =
-    year !== undefined && Number.isInteger(year) && year >= 1 && year <= 9998;
   const day =
     isActivityDate(search.activity_day) &&
     Number(search.activity_day.slice(0, 4)) >= 1 &&
     Number(search.activity_day.slice(0, 4)) <= 9998
       ? search.activity_day
       : undefined;
-  const mismatch =
-    validYear && day !== undefined && Number(day.slice(0, 4)) !== year;
   return {
-    ...(validYear ? { activity_year: year } : {}),
-    ...(day !== undefined && !mismatch ? { activity_day: day } : {}),
-    ...((rawYear !== undefined && !validYear) ||
-    (search.activity_day !== undefined && day === undefined) ||
-    mismatch
+    ...(day !== undefined ? { activity_day: day } : {}),
+    ...(search.activity_day !== undefined && day === undefined
       ? { activity_invalid: true as const }
       : {}),
   };
@@ -95,31 +83,85 @@ export function activityToday(now: Date, timezone: string): string {
   return `${values.year!.padStart(4, "0")}-${values.month}-${values.day}`;
 }
 
+const DAY_MS = 86_400_000;
+
+function dayIndex(date: string): number {
+  return Math.round(Date.parse(`${date}T00:00:00Z`) / DAY_MS);
+}
+
+function dayAt(index: number): string {
+  return new Date(index * DAY_MS).toISOString().slice(0, 10);
+}
+
+// Day 0 (1970-01-01) was a Thursday, so +3 rotates the remainder onto Monday.
+function mondayOnOrBefore(index: number): number {
+  return index - ((index + 3) % 7);
+}
+
+/**
+ * `weeks` whole columns whose last one holds `endExclusive - 1`. Aligning the
+ * left edge to a Monday is what keeps every column a full week; the right edge
+ * stays wherever the caller put it, so the newest column may be a partial one.
+ */
+function windowEndingAt(
+  endExclusive: number,
+  weeks: number,
+): { from: string; to: string } {
+  const monday = mondayOnOrBefore(endExclusive - 1);
+  return {
+    from: dayAt(monday - (weeks - 1) * 7),
+    to: dayAt(endExclusive),
+  };
+}
+
+/**
+ * The default window: 52 columns ending with the current, unfinished week. It
+ * stops at `today` rather than at the week's end because a future date has no
+ * activity to show, and an empty cell there reads as a quiet day.
+ */
+export function rollingActivityWindow(
+  today: string,
+  weeks = 52,
+): { from: string; to: string } {
+  return windowEndingAt(dayIndex(today) + 1, weeks);
+}
+
+/**
+ * A custom range uses the calendar as its picker, so the window frames that
+ * range rather than the present: centred on it, never extending past `today`,
+ * and anchored to the range's end once the range outgrows the window.
+ */
+export function centredActivityWindow(
+  rangeFrom: string,
+  rangeTo: string,
+  today: string,
+  weeks = 52,
+): { from: string; to: string } {
+  const span = weeks * 7;
+  const start = dayIndex(rangeFrom);
+  const end = dayIndex(rangeTo);
+  const desired =
+    end - start >= span
+      ? end
+      : Math.ceil((start + end) / 2) + Math.floor(span / 2);
+  return windowEndingAt(Math.min(desired, dayIndex(today) + 1), weeks);
+}
+
 export function resolveActivityDateSearch(
   search: ActivityDateSearch,
   context: { now: Date; timezone: string },
-): { year: number; day?: string; invalid: boolean } {
+): { day?: string; invalid: boolean } {
   const parsed = parseActivityDateSearch(search);
   const today = activityToday(context.now, context.timezone);
-  const currentYear = Number(today.slice(0, 4));
-  const requestedYear =
-    parsed.activity_year ??
-    (parsed.activity_day
-      ? Number(parsed.activity_day.slice(0, 4))
-      : currentYear);
-  const futureYear = requestedYear > currentYear;
-  const year = futureYear ? currentYear : requestedYear;
   const day =
-    !futureYear && parsed.activity_day && parsed.activity_day <= today
+    parsed.activity_day && parsed.activity_day <= today
       ? parsed.activity_day
       : undefined;
   return {
-    year,
     ...(day ? { day } : {}),
     invalid: Boolean(
       search.activity_invalid ||
         parsed.activity_invalid ||
-        futureYear ||
         (parsed.activity_day && parsed.activity_day > today),
     ),
   };

@@ -437,7 +437,6 @@ function UserPage() {
       redirectToLogin={/^\d{1,15}$/.test(ref)}
       role={role}
       state={state}
-      activity_year={search.activity_year}
       activity_day={search.activity_day}
       activity_invalid={search.activity_invalid}
       onActivityDateChange={(next, options) =>

@@ -74,7 +74,6 @@ export const returnTargetSchema = z.discriminatedUnion("kind", [
       .object({
         role: UserIssueRole.optional(),
         state: UserIssueState.optional(),
-        activity_year: z.number().optional(),
         activity_day: z.string().optional(),
       })
       .refine((search) => !parseActivityDateSearch(search).activity_invalid),

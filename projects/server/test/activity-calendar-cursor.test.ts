@@ -22,7 +22,8 @@ import {
 const binding: ActivityCalendarCursorBinding = {
   viewer_id: 7,
   scope: { type: "user", id: 8 },
-  year: 2026,
+  from: "2026-01-01",
+  to: "2027-01-01",
   day: "2026-09-01",
   tz: "UTC",
   limit: 2,
@@ -164,10 +165,10 @@ describe("activity calendar v1 cursor", () => {
       { scope: { type: "team", id: 8 } },
       { scope: { type: "user", id: -1 } },
       { scope: { type: "user", id: 1.5 } },
-      { year: 0 },
-      { year: 9999 },
-      { year: 2026.5 },
-      { year: "2026" },
+      { from: 0 },
+      { from: "2026-02-30" },
+      { to: undefined },
+      { to: "2026-01-01" },
       { day: "2026-02-29" },
       { day: "2026-04-31" },
       { day: "2025-09-01" },
@@ -235,11 +236,10 @@ describe("activity calendar v1 cursor", () => {
       "2400-02-29T00:00:00.000001Z",
       "9998-12-31T23:59:59.999999Z",
     ]) {
-      const query = {
-        ...binding,
-        year: Number(timestamp.slice(0, 4)),
-        day: timestamp.slice(0, 10),
-      };
+      const day = timestamp.slice(0, 10);
+      // The envelope only requires the day to fall inside its window; the
+      // window's own length is the query schema's business, not the cursor's.
+      const query = { ...binding, from: day, to: "9999-01-01", day };
       const position = { ...last, at: timestamp };
       expect(
         decodeActivityCalendarCursor(
@@ -250,12 +250,12 @@ describe("activity calendar v1 cursor", () => {
     }
   });
 
-  it("binds viewer, scope kind/id, year, day, timezone and limit before checking hashes", () => {
+  it("binds viewer, scope kind/id, window, day, timezone and limit before checking hashes", () => {
     const changes: Partial<ActivityCalendarCursorBinding>[] = [
       { viewer_id: 9 },
       { scope: { type: "project", id: 8 } },
       { scope: { type: "user", id: 9 } },
-      { year: 2025, day: "2025-09-01" },
+      { from: "2025-01-01", to: "2026-01-01", day: "2025-09-01" },
       { day: "2026-09-02" },
       { tz: "Etc/UTC" },
       { limit: 3 },

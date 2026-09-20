@@ -29,19 +29,34 @@ function selected(date: string): ActivitySelection {
   return { date, total: 876543, items: [], has_more: false, next_cursor: null };
 }
 
+/** A calendar year is just one window the component can be handed. */
+function windowOf(year: number): { from: string; to: string } {
+  const pad = (value: number) => String(value).padStart(4, "0");
+  return { from: `${pad(year)}-01-01`, to: `${pad(year + 1)}-01-01` };
+}
+
 function props(
   overrides: Partial<ActivityCalendarProps> = {},
 ): ActivityCalendarProps {
   return {
-    year: 2024,
+    ...windowOf(2024),
     days: daysFor(),
     selection: selected("2024-01-10"),
     today: "2026-09-18",
-    onYearChange: vi.fn(),
     onDayChange: vi.fn(),
     onRetry: vi.fn(),
     ...overrides,
   };
+}
+
+/** The section owns no focusable control besides its dates any more. */
+function Outside({ ...rest }: ActivityCalendarProps) {
+  return (
+    <>
+      <ActivityCalendar {...rest} />
+      <button type="button">elsewhere</button>
+    </>
+  );
 }
 
 function tile(date: string): HTMLButtonElement {
@@ -75,7 +90,11 @@ describe("ActivityCalendar dates and counts", () => {
       const prefix = String(year).padStart(4, "0");
       const { container } = render(
         <ActivityCalendar
-          {...props({ year, days: daysFor(year), selection: null })}
+          {...props({
+            ...windowOf(year),
+            days: daysFor(year),
+            selection: null,
+          })}
         />,
       );
       const buttons = container.querySelectorAll("button[data-date]");
@@ -96,7 +115,7 @@ describe("ActivityCalendar dates and counts", () => {
   it("places Monday first, weeks in columns, and month labels over the right week", () => {
     render(
       <ActivityCalendar
-        {...props({ year: 2026, days: daysFor(2026), selection: null })}
+        {...props({ ...windowOf(2026), days: daysFor(2026), selection: null })}
       />,
     );
     // January 1, 2026 is Thursday, January 5 is the next Monday.
@@ -107,13 +126,15 @@ describe("ActivityCalendar dates and counts", () => {
     expect(tile("2026-01-05").parentElement?.style.gridColumn).toBe("3");
     expect(screen.getByText("Jan").style.gridColumn).toBe("2 / span 3");
     expect(screen.getByText("Feb").style.gridColumn).toBe("6 / span 3");
-    const group = screen.getByRole("group", { name: "2026 activity dates" });
+    const group = screen.getByRole("group", {
+      name: "Activity dates 2026-01-01 to 2026-12-31",
+    });
     expect(group.style.gridTemplateColumns).toBe("2.5rem repeat(53, 1rem)");
     expect(group.style.gridTemplateRows).toBe("1rem repeat(7, 1rem)");
   });
 
-  it("uses fixed thresholds and exact DTO counts, never selection total or a relative scale", () => {
-    const counts = [0, 1, 3, 4, 6, 7, 9, 10, 12345];
+  it("spreads levels and the legend from zero to the largest count on screen", () => {
+    const counts = [0, 1, 2, 3, 4, 5, 6, 7, 8];
     const days = daysFor(
       2024,
       counts.map((count, index) => ({
@@ -137,10 +158,29 @@ describe("ActivityCalendar dates and counts", () => {
       within(screen.getByRole("list", { name: "Active cards per day" }))
         .getAllByRole("listitem")
         .map((item) => item.textContent),
-    ).toEqual(["0", "1–3", "4–6", "7–9", "10+"]);
+    ).toEqual(["0", "1–2", "3–4", "5–6", "7–8"]);
     expect(container.textContent).not.toMatch(
       /876543|annual|year total|incomplete|history quality/i,
     );
+  });
+
+  it("reaches the darkest swatch on a quiet project instead of stopping at a fixed 10+", () => {
+    const days = daysFor(
+      2024,
+      [0, 1, 2].map((count, index) => ({
+        date: `2024-01-0${index + 1}`,
+        state: "recorded" as const,
+        count,
+      })),
+    );
+    render(<ActivityCalendar {...props({ days })} />);
+    expect(
+      within(screen.getByRole("list", { name: "Active cards per day" }))
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["0", "1", "2"]);
+    expect(tile("2024-01-03").className).toContain("bg-primary");
+    expect(tile("2024-01-03").className).not.toContain("bg-primary/");
   });
 
   it("leaves future and not_applicable disabled without a fake zero or a level", () => {
@@ -170,10 +210,11 @@ describe("ActivityCalendar dates and counts", () => {
     expect(p.onDayChange).toHaveBeenCalledExactlyOnceWith("2024-01-03");
   });
 
-  it("uses supplied today and distinguishes selected and today outlines", () => {
+  it("marks today for assistive technology only, leaving selection the sole outline", () => {
     render(<ActivityCalendar {...props({ today: "2024-01-11" })} />);
     expect(tile("2024-01-11").getAttribute("aria-current")).toBe("date");
-    expect(tile("2024-01-11").className).toContain("ring-1");
+    expect(tile("2024-01-11").className).not.toContain("ring-");
+    expect(tile("2024-01-11").className).toBe(tile("2024-01-12").className);
     expect(tile("2024-01-11").getAttribute("aria-pressed")).toBe("false");
     expect(tile("2024-01-10").getAttribute("aria-pressed")).toBe("true");
     expect(tile("2024-01-10").className).toContain("outline-primary");
@@ -198,7 +239,7 @@ describe("ActivityCalendar dates and counts", () => {
 
   it("preserves the skipped civil date from the server as unavailable", () => {
     const p = props({
-      year: 2011,
+      ...windowOf(2011),
       days: daysFor(2011, [
         { date: "2011-12-30", state: "not_applicable", count: null },
       ]),
@@ -234,7 +275,6 @@ describe("ActivityCalendar keyboard and inspection", () => {
       expect(tile("2024-01-10").getAttribute("aria-pressed")).toBe("true");
       expect(tile(target).getAttribute("aria-pressed")).toBe("false");
       expect(p.onDayChange).not.toHaveBeenCalled();
-      expect(p.onYearChange).not.toHaveBeenCalled();
       expect(screen.getByRole("tooltip").textContent).toBe(
         `${target}: 0 active cards`,
       );
@@ -289,7 +329,11 @@ describe("ActivityCalendar keyboard and inspection", () => {
   });
 
   it("handles partial first/last weeks and never wraps across year boundaries", () => {
-    const p = props({ year: 2026, days: daysFor(2026), selection: null });
+    const p = props({
+      ...windowOf(2026),
+      days: daysFor(2026),
+      selection: null,
+    });
     render(<ActivityCalendar {...p} />);
     focus("2026-01-02");
     fireEvent.keyDown(tile("2026-01-02"), { key: "Home" });
@@ -306,7 +350,6 @@ describe("ActivityCalendar keyboard and inspection", () => {
       expect(document.activeElement).toBe(tile("2026-12-31"));
     }
     expect(p.onDayChange).not.toHaveBeenCalled();
-    expect(p.onYearChange).not.toHaveBeenCalled();
   });
 
   it.each(["Enter", " "])(
@@ -350,7 +393,6 @@ describe("ActivityCalendar keyboard and inspection", () => {
       expect(tabStops(container)).toEqual(["2024-01-10"]);
     }
     expect(p.onDayChange).not.toHaveBeenCalled();
-    expect(p.onYearChange).not.toHaveBeenCalled();
     // A handler that ignores every key must still fail this regression.
     expect(fireEvent.keyDown(tile("2024-01-10"), { key: "ArrowDown" })).toBe(
       false,
@@ -358,7 +400,6 @@ describe("ActivityCalendar keyboard and inspection", () => {
     expect(document.activeElement).toBe(tile("2024-01-11"));
     expect(tabStops(container)).toEqual(["2024-01-11"]);
     expect(p.onDayChange).not.toHaveBeenCalled();
-    expect(p.onYearChange).not.toHaveBeenCalled();
   });
 
   it("ignores non-string keys produced by React native-key normalization without reporting errors", () => {
@@ -381,7 +422,6 @@ describe("ActivityCalendar keyboard and inspection", () => {
         expect(tabStops(container)).toEqual(["2024-01-10"]);
       }
       expect(p.onDayChange).not.toHaveBeenCalled();
-      expect(p.onYearChange).not.toHaveBeenCalled();
       fireEvent.keyDown(tile("2024-01-10"), { key: "ArrowDown" });
       expect(document.activeElement).toBe(tile("2024-01-11"));
       fireEvent.keyDown(tile("2024-01-11"), { key: "Home" });
@@ -465,60 +505,62 @@ describe("ActivityCalendar controlled state and recovery", () => {
     expect(p.onDayChange).not.toHaveBeenCalled();
   });
 
-  it("restores date focus after replacing the entire year, without stealing focus from Year", () => {
+  it("restores date focus after replacing the entire window, but never steals it back", () => {
     const p = props();
-    const { container, rerender } = render(<ActivityCalendar {...p} />);
+    const { container, rerender } = render(<Outside {...p} />);
     focus("2024-01-10");
     rerender(
-      <ActivityCalendar
+      <Outside
         {...p}
-        year={2025}
+        {...windowOf(2025)}
         days={daysFor(2025)}
         selection={selected("2025-03-04")}
       />,
     );
     expect(document.activeElement).toBe(tile("2025-03-04"));
     expect(tabStops(container)).toEqual(["2025-03-04"]);
-    act(() => screen.getByRole("spinbutton").focus());
+    const outside = screen.getByRole("button", { name: "elsewhere" });
+    act(() => outside.focus());
     rerender(
-      <ActivityCalendar
+      <Outside
         {...p}
-        year={2026}
+        {...windowOf(2026)}
         days={daysFor(2026)}
         selection={selected("2026-03-04")}
       />,
     );
-    expect(document.activeElement).toBe(screen.getByRole("spinbutton"));
+    expect(document.activeElement).toBe(outside);
     expect(tabStops(container)).toEqual(["2026-03-04"]);
     expect(p.onDayChange).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
-    "retains pending focus through year loading, unless focus moved outside: %s",
+    "retains pending focus through window loading, unless focus moved outside: %s",
     (moveOutside) => {
       const p = props();
-      const { rerender } = render(<ActivityCalendar {...p} />);
+      const { rerender } = render(<Outside {...p} />);
       focus("2024-01-10");
       rerender(
-        <ActivityCalendar
+        <Outside
           {...p}
-          year={2025}
+          {...windowOf(2025)}
           days={[]}
           selection={null}
           loading
         />,
       );
-      if (moveOutside) act(() => screen.getByRole("spinbutton").focus());
+      const outside = screen.getByRole("button", { name: "elsewhere" });
+      if (moveOutside) act(() => outside.focus());
       rerender(
-        <ActivityCalendar
+        <Outside
           {...p}
-          year={2025}
+          {...windowOf(2025)}
           days={daysFor(2025)}
           selection={selected("2025-03-04")}
         />,
       );
       expect(document.activeElement).toBe(
-        moveOutside ? screen.getByRole("spinbutton") : tile("2025-03-04"),
+        moveOutside ? outside : tile("2025-03-04"),
       );
       expect(p.onDayChange).not.toHaveBeenCalled();
     },
@@ -558,7 +600,7 @@ describe("ActivityCalendar controlled state and recovery", () => {
     expect(p.onDayChange).toHaveBeenCalledExactlyOnceWith("2024-01-11");
   });
 
-  it("returns focus to Year when an entire year is not applicable", () => {
+  it("drops every tab stop when the entire window is not applicable", () => {
     const p = props();
     const { container, rerender } = render(<ActivityCalendar {...p} />);
     focus("2024-01-10");
@@ -569,17 +611,17 @@ describe("ActivityCalendar controlled state and recovery", () => {
     }));
     rerender(<ActivityCalendar {...p} days={days} selection={null} />);
     expect(tabStops(container)).toEqual([]);
-    expect(document.activeElement).toBe(
-      screen.getByRole("spinbutton", { name: "Year" }),
-    );
-    expect(screen.getByText("No available dates in 2024.")).not.toBeNull();
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    expect(
+      screen.getByText("No available dates in this range."),
+    ).not.toBeNull();
     expect(screen.queryByRole("tooltip")).toBeNull();
     expect(screen.queryByRole("button", { name: /0 active cards/ })).toBeNull();
     expect(p.onDayChange).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
-    "empty year restores owned focus but respects an outside input: %s",
+    "empty window leaves focus wherever it already sits: %s",
     (moveOutside) => {
       const p = props();
       const tree = (loading: boolean) => (
@@ -587,7 +629,7 @@ describe("ActivityCalendar controlled state and recovery", () => {
           <input aria-label="Outside calendar" />
           <ActivityCalendar
             {...p}
-            year={2025}
+            {...windowOf(2025)}
             days={[]}
             selection={null}
             loading={loading}
@@ -607,30 +649,27 @@ describe("ActivityCalendar controlled state and recovery", () => {
           screen.getByRole("textbox", { name: "Outside calendar" }).focus(),
         );
       rerender(tree(false));
-      expect(screen.getByText("No available dates in 2025.")).not.toBeNull();
+      expect(
+        screen.getByText("No available dates in this range."),
+      ).not.toBeNull();
+      // Without a year control there is nowhere inside the section to park
+      // focus, so an emptied window must not yank it anywhere either.
       expect(document.activeElement).toBe(
         moveOutside
           ? screen.getByRole("textbox", { name: "Outside calendar" })
-          : screen.getByRole("spinbutton", { name: "Year" }),
+          : document.body,
       );
     },
   );
 
-  it("requests historical years without project metadata or timezone controls", () => {
+  it("offers no year, timezone or project-metadata control of its own", () => {
     const p = props();
     const { container } = render(<ActivityCalendar {...p} />);
-    const year = screen.getByRole("spinbutton", { name: "Year" });
-    expect(year.getAttribute("min")).toBe("1");
-    expect(year.getAttribute("max")).toBe("2026");
-    fireEvent.change(year, { target: { value: "1999" } });
-    expect(p.onYearChange).toHaveBeenCalledExactlyOnceWith(1999);
-    for (const value of ["", "0", "2027", "1.5", "9999", "2024"])
-      fireEvent.change(year, { target: { value } });
-    expect(p.onYearChange).toHaveBeenCalledTimes(1);
-    expect(p.onDayChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("spinbutton")).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
+    expect(p.onDayChange).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(
-      /timezone|project created|earliest contribution/i,
+      /Year|timezone|project created|earliest contribution/,
     );
   });
 
@@ -662,8 +701,10 @@ describe("ActivityCalendar controlled state and recovery", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(p.onRetry).toHaveBeenCalledOnce();
     rerender(<ActivityCalendar {...p} loading={false} />);
-    expect(screen.getByText("No available dates in 2024.")).not.toBeNull();
-    expect(document.activeElement).not.toBe(screen.getByRole("spinbutton"));
+    expect(
+      screen.getByText("No available dates in this range."),
+    ).not.toBeNull();
+    expect(screen.queryByRole("spinbutton")).toBeNull();
   });
 
   it("preserves real counts while refreshing or showing a failed refresh", () => {
@@ -699,7 +740,7 @@ describe("ActivityCalendar controlled state and recovery", () => {
       "2024-01-11: No data",
     );
     expect(tile("2024-01-11").hasAttribute("data-level")).toBe(false);
-    rerender(<ActivityCalendar {...p} year={2025} loading />);
+    rerender(<ActivityCalendar {...p} {...windowOf(2025)} loading />);
     expect(screen.queryByRole("button", { name: /^2024-/ })).toBeNull();
     expect(tile("2025-01-10").getAttribute("aria-label")).toBe(
       "2025-01-10: No data",

@@ -34,9 +34,10 @@ type ErrorBody = {
 };
 
 const DAY = "2024-02-29";
-const QUERY = { year: "2024", tz: "UTC", day: DAY };
+const QUERY = { from: "2024-01-01", to: "2025-01-01", tz: "UTC", day: DAY };
 const SERVICE_QUERY: ActivityCalendarQuery = {
-  year: 2024,
+  from: "2024-01-01",
+  to: "2025-01-01",
   tz: "UTC",
   day: DAY,
   limit: 50,
@@ -78,7 +79,8 @@ function expectSelection(
   total: number,
   expected: Array<[string, number, string]>,
 ): void {
-  expect(body.year).toBe(2024);
+  expect(body.from).toBe("2024-01-01");
+  expect(body.to).toBe("2025-01-01");
   expect(body.timezone).toBe("UTC");
   expect(body.days).toHaveLength(366);
   expect(body.days.find((day) => day.date === DAY)).toEqual({
@@ -100,31 +102,40 @@ function expectComplete(body: ActivityCalendarResponse): void {
   expect(body.selection).toMatchObject({ has_more: false, next_cursor: null });
 }
 
+const W = "from=2024-01-01&to=2025-01-01";
 const malformedQueries: Array<[string, string]> = [
-  ["missing year", "tz=UTC"],
-  ["missing timezone", "year=2024"],
-  ["unknown field", "year=2024&tz=UTC&project=hidden"],
-  ["unknown actor filter", "year=2024&tz=UTC&actor_id=1"],
-  ["nonnumeric year", "year=nope&tz=UTC"],
-  ["fractional year", "year=2024.5&tz=UTC"],
-  ["zero year", "year=0&tz=UTC"],
-  ["year beyond supported range", "year=9999&tz=UTC"],
-  ["empty timezone", "year=2024&tz="],
-  ["unknown database timezone", "year=2024&tz=Not%2FA_Zone"],
-  ["oversized timezone", `year=2024&tz=${"x".repeat(101)}`],
-  ["malformed date", "year=2024&tz=UTC&day=2024-2-29"],
-  ["nonexistent date", "year=2024&tz=UTC&day=2024-02-30"],
-  ["nonleap February 29", "year=2023&tz=UTC&day=2023-02-29"],
-  ["day outside year", "year=2024&tz=UTC&day=2023-02-28"],
-  ["zero limit", "year=2024&tz=UTC&limit=0"],
-  ["excessive limit", "year=2024&tz=UTC&limit=101"],
-  ["fractional limit", "year=2024&tz=UTC&limit=1.5"],
-  ["nonnumeric limit", "year=2024&tz=UTC&limit=many"],
-  ["cursor without day", "year=2024&tz=UTC&after=e30"],
-  ["empty cursor", `year=2024&tz=UTC&day=${DAY}&after=`],
-  ["non-base64 cursor", `year=2024&tz=UTC&day=${DAY}&after=%25%25%25`],
-  ["cursor with wrong envelope", `year=2024&tz=UTC&day=${DAY}&after=e30`],
-  ["oversized cursor", `year=2024&tz=UTC&day=${DAY}&after=${"a".repeat(8193)}`],
+  ["missing window", "tz=UTC"],
+  ["missing window end", "from=2024-01-01&tz=UTC"],
+  ["missing window start", "to=2025-01-01&tz=UTC"],
+  ["missing timezone", W],
+  ["unknown field", `${W}&tz=UTC&project=hidden`],
+  ["unknown actor filter", `${W}&tz=UTC&actor_id=1`],
+  ["legacy year field", "year=2024&tz=UTC"],
+  ["malformed window start", "from=2024-1-01&to=2025-01-01&tz=UTC"],
+  ["nonexistent window start", "from=2024-02-30&to=2025-01-01&tz=UTC"],
+  ["reversed window", "from=2025-01-01&to=2024-01-01&tz=UTC"],
+  ["empty window", "from=2024-01-01&to=2024-01-01&tz=UTC"],
+  ["window beyond 366 days", "from=2024-01-01&to=2025-01-02&tz=UTC"],
+  ["empty timezone", `${W}&tz=`],
+  ["unknown database timezone", `${W}&tz=Not%2FA_Zone`],
+  ["oversized timezone", `${W}&tz=${"x".repeat(101)}`],
+  ["malformed date", `${W}&tz=UTC&day=2024-2-29`],
+  ["nonexistent date", `${W}&tz=UTC&day=2024-02-30`],
+  [
+    "nonleap February 29",
+    "from=2023-01-01&to=2024-01-01&tz=UTC&day=2023-02-29",
+  ],
+  ["day before window", `${W}&tz=UTC&day=2023-02-28`],
+  ["day at exclusive window end", `${W}&tz=UTC&day=2025-01-01`],
+  ["zero limit", `${W}&tz=UTC&limit=0`],
+  ["excessive limit", `${W}&tz=UTC&limit=101`],
+  ["fractional limit", `${W}&tz=UTC&limit=1.5`],
+  ["nonnumeric limit", `${W}&tz=UTC&limit=many`],
+  ["cursor without day", `${W}&tz=UTC&after=e30`],
+  ["empty cursor", `${W}&tz=UTC&day=${DAY}&after=`],
+  ["non-base64 cursor", `${W}&tz=UTC&day=${DAY}&after=%25%25%25`],
+  ["cursor with wrong envelope", `${W}&tz=UTC&day=${DAY}&after=e30`],
+  ["oversized cursor", `${W}&tz=UTC&day=${DAY}&after=${"a".repeat(8193)}`],
 ];
 
 describe.each(PLACEMENTS)(
@@ -649,9 +660,9 @@ describe.each(PLACEMENTS)(
     it("returns every zero day of an empty historic year with no selection", async () => {
       for (const path of [projectPath(a.slug), userPath(subject.user.login)]) {
         const body = await calendar(
-          await get(path, { year: "2023", tz: "UTC" }),
+          await get(path, { from: "2023-01-01", to: "2024-01-01", tz: "UTC" }),
         );
-        expect(body.year).toBe(2023);
+        expect(body.from).toBe("2023-01-01");
         expect(body.timezone).toBe("UTC");
         expect(body.selection).toBeNull();
         expect(body.days).toHaveLength(365);

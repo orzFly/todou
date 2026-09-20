@@ -132,11 +132,11 @@ describe("ActivityCalendar and ActivityCardList shared selection", () => {
       return (
         <>
           <ActivityCalendar
-            year={2026}
+            from="2026-01-01"
+            to="2027-01-01"
             days={days}
             selection={current}
             today="2026-09-19"
-            onYearChange={vi.fn()}
             onDayChange={vi.fn()}
             onRetry={vi.fn()}
           />
@@ -154,7 +154,8 @@ describe("ActivityCalendar and ActivityCardList shared selection", () => {
       name: "2026-07-02: 3 active cards",
     });
     expect(tile.getAttribute("aria-pressed")).toBe("true");
-    expect(tile.getAttribute("data-level")).toBe("1");
+    // Three is the busiest day on screen, so it lands in the top bucket.
+    expect(tile.getAttribute("data-level")).toBe("3");
     const list = within(
       view.getByRole("region", { name: "Selected day activity" }),
     );

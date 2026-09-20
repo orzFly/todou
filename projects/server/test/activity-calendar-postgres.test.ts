@@ -289,8 +289,10 @@ for (const placement of PLACEMENTS) {
         vi.useFakeTimers({ toFake: ["Date"] });
         vi.setSystemTime(new Date(NOW));
         try {
+          const year = Number(day.slice(0, 4));
           const query = {
-            year: Number(day.slice(0, 4)),
+            from: `${year}-01-01`,
+            to: `${year + 1}-01-01`,
             tz: "UTC",
             day,
             limit: 100,
@@ -469,8 +471,10 @@ for (const placement of PLACEMENTS) {
           if (at !== boundary.before && at !== boundary.end)
             included.push(c.id);
         }
+        const year = Number(boundary.day.slice(0, 4));
         const plan = await buildActivityBuckets(t!.ctx.router.system(), {
-          year: Number(boundary.day.slice(0, 4)),
+          fromDate: `${year}-01-01`,
+          toDate: `${year + 1}-01-01`,
           timezone: boundary.tz,
           cutoff: NOW,
           bornAt: BORN,

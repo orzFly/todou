@@ -1315,10 +1315,11 @@ function userCalendar(
   input: Parameters<typeof api.getUserActivityCalendar>[1],
   recorded = false,
 ): ActivityCalendarResponse {
-  const year = Number(input.year);
-  const date = `${year}-03-04`;
+  const from = String(input.from);
+  const date = `${from.slice(0, 4)}-03-04`;
   return {
-    year,
+    from,
+    to: String(input.to),
     timezone: input.tz,
     cutoff: "2026-09-19T12:00:00Z",
     read_started_at: "2026-09-19T12:00:00Z",
@@ -1478,11 +1479,9 @@ describe("the user page", () => {
     const search = {
       role: "assignee" as const,
       state: "all" as const,
-      activity_year: 2025,
       activity_day: "2025-03-04",
     };
-    const path =
-      "/users/alice?role=assignee&state=all&activity_year=2025&activity_day=2025-03-04";
+    const path = "/users/alice?role=assignee&state=all&activity_day=2025-03-04";
     const calendar = async (
       _subject: Parameters<typeof api.getUserActivityCalendar>[0],
       input: Parameters<typeof api.getUserActivityCalendar>[1],
@@ -1557,7 +1556,6 @@ describe("the user page", () => {
       const search = {
         role: "assignee" as const,
         state: "all" as const,
-        activity_year: 2025,
         ...(outcome === "empty" ? {} : { activity_day: "2025-03-04" }),
       };
       if (outcome === "lazy") userCalendarModule.wait = moduleGate.promise;
@@ -1572,7 +1570,7 @@ describe("the user page", () => {
         ],
       });
       const view = mountUser(
-        `/users/alice?role=assignee&state=all&activity_year=2025${outcome === "empty" ? "" : "&activity_day=2025-03-04"}`,
+        `/users/alice?role=assignee&state=all${outcome === "empty" ? "" : "&activity_day=2025-03-04"}`,
         pending,
         {
           calendar: async (_subject, input) =>
@@ -1641,8 +1639,12 @@ describe("the user page", () => {
       } finally {
         userCalendarModule.wait = null;
         moduleGate.resolve();
-        base.resolve(userCalendar({ year: 2025, tz: "UTC" }));
-        selected.resolve(userCalendar({ year: 2025, tz: "UTC" }));
+        base.resolve(
+          userCalendar({ from: "2025-01-01", to: "2026-01-01", tz: "UTC" }),
+        );
+        selected.resolve(
+          userCalendar({ from: "2025-01-01", to: "2026-01-01", tz: "UTC" }),
+        );
         view.unmount();
       }
     },
@@ -1659,11 +1661,10 @@ describe("the user page", () => {
     const search = {
       role: "assignee",
       state: "all",
-      activity_year: 2025,
       activity_day: "2025-03-04",
     };
     const view = mountUser(
-      "/users/alice?role=assignee&state=all&activity_year=2025&activity_day=2025-03-04",
+      "/users/alice?role=assignee&state=all&activity_day=2025-03-04",
       undefined,
       {
         calendar: async (_subject, input) => {
@@ -1754,11 +1755,10 @@ describe("the user page", () => {
       const search = {
         role: "assignee" as const,
         state: "all" as const,
-        activity_year: 2025,
         activity_day: "2025-03-04",
       };
       const view = mountUser(
-        "/users/alice?role=assignee&state=all&activity_year=2025&activity_day=2025-03-04",
+        "/users/alice?role=assignee&state=all&activity_day=2025-03-04",
         snapshot({
           target: { kind: "user", ref: "alice", search },
           pages: [{ lane: "flat", extraPages: 1 }],

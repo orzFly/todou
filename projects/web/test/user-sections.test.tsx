@@ -185,7 +185,8 @@ beforeEach(() => {
   });
   vi.spyOn(api, "getUserActivityCalendar").mockImplementation(
     async (_subject, input) => ({
-      year: Number(input.year),
+      from: String(input.from),
+      to: String(input.to),
       timezone: input.tz,
       cutoff: "2026-09-19T12:00:00Z",
       read_started_at: "2026-09-19T12:00:00Z",

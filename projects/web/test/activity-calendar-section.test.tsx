@@ -75,7 +75,8 @@ function snapshot(
   cursor: string | null = "next",
 ): ActivityCalendarResponse {
   return {
-    year: 2026,
+    from: "2026-01-01",
+    to: "2027-01-01",
     timezone: "UTC",
     cutoff: "2026-03-02T01:00:00Z",
     read_started_at: "2026-03-02T01:00:00Z",
@@ -109,13 +110,13 @@ function props(
   return {
     viewerId: 42,
     scope: scopes[0]!,
-    year: 2026,
+    from: "2026-01-01",
+    to: "2027-01-01",
     day,
     timezone: "UTC",
     today: "2026-02-28",
     limit: 1,
     onDayChange: vi.fn(),
-    onYearChange: vi.fn(),
     ...overrides,
   };
 }
@@ -151,7 +152,8 @@ function activeOptions(
 ) {
   const request = {
     viewerId: value.viewerId,
-    year: value.year,
+    from: value.from,
+    to: value.to,
     day: selectedDay,
     tz: value.timezone,
     limit: value.limit,
@@ -191,9 +193,6 @@ beforeEach(() => {
           </button>
         </div>
       )}
-      <button type="button" onClick={() => value.onYearChange(2025)}>
-        Previous year
-      </button>
       <button type="button" onClick={() => value.onDayChange(nextDay)}>
         Choose day
       </button>
@@ -248,7 +247,8 @@ describe("ActivityCalendarSection", () => {
         [
           identity,
           {
-            year: 2026,
+            from: "2026-01-01",
+            to: "2027-01-01",
             day: undefined,
             tz: value.timezone,
             limit: 1,
@@ -257,7 +257,14 @@ describe("ActivityCalendarSection", () => {
         ],
         [
           identity,
-          { year: 2026, day, tz: value.timezone, limit: 1, after: undefined },
+          {
+            from: "2026-01-01",
+            to: "2027-01-01",
+            day,
+            tz: value.timezone,
+            limit: 1,
+            after: undefined,
+          },
         ],
       ]);
       expect(
@@ -270,9 +277,7 @@ describe("ActivityCalendarSection", () => {
       expect(list.mock.lastCall?.[0].timezone).toBe("UTC");
       expect(calendar.mock.lastCall?.[0].today).toBe(nextDay);
       expect(value.onDayChange).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByText("Previous year"));
       fireEvent.click(screen.getByText("Choose day"));
-      expect(value.onYearChange).toHaveBeenCalledWith(2025);
       expect(value.onDayChange).toHaveBeenCalledExactlyOnceWith(nextDay);
       expect(value.onDayChange).not.toHaveBeenCalledWith(
         nextDay,
@@ -413,7 +418,7 @@ describe("ActivityCalendarSection", () => {
     { scope: { kind: "project", projectId: 2, slug: "demo" } },
     { scope: { kind: "project", projectId: 1, slug: "other" } },
     { scope: { kind: "user", subjectId: 7 } },
-    { year: 2025, day: "2025-03-01" },
+    { from: "2025-01-01", to: "2026-01-01", day: "2025-03-01" },
     { day: nextDay },
     { timezone: "Asia/Tokyo" },
     { limit: 2 },
@@ -469,8 +474,22 @@ describe("ActivityCalendarSection", () => {
       expect(screen.getByText("Card 1")).toBeTruthy();
       expect(screen.queryByText("Page unavailable")).toBeNull();
       expect(endpoint.mock.calls.slice(-2).map((call) => call[1])).toEqual([
-        { year: 2026, day, tz: "UTC", limit: 1, after: "next" },
-        { year: 2026, day, tz: "UTC", limit: 1, after: "next" },
+        {
+          from: "2026-01-01",
+          to: "2027-01-01",
+          day,
+          tz: "UTC",
+          limit: 1,
+          after: "next",
+        },
+        {
+          from: "2026-01-01",
+          to: "2027-01-01",
+          day,
+          tz: "UTC",
+          limit: 1,
+          after: "next",
+        },
       ]);
       expect(calendar.mock.lastCall?.[0].selection).toBe(
         list.mock.lastCall?.[0].selection,
@@ -719,7 +738,8 @@ describe("ActivityCalendarSection", () => {
     fireEvent.click(screen.getByText("Page retry"));
     await screen.findByText("Card 3");
     expect(transport.project.mock.lastCall?.[1]).toEqual({
-      year: 2026,
+      from: "2026-01-01",
+      to: "2027-01-01",
       day,
       tz: "UTC",
       limit: 1,
@@ -832,10 +852,16 @@ describe("ActivityCalendarSection", () => {
     });
     const pending = deferred<ActivityCalendarResponse>();
     transport.project.mockReturnValueOnce(pending.promise);
-    view.rerender({ ...value, year: 2025, day: undefined });
+    view.rerender({
+      ...value,
+      from: "2025-01-01",
+      to: "2026-01-01",
+      day: undefined,
+    });
     const historic = {
       ...snapshot(),
-      year: 2025,
+      from: "2025-01-01",
+      to: "2026-01-01",
       days: [{ date: "2025-12-31", state: "recorded" as const, count: 0 }],
     };
     await act(async () => {

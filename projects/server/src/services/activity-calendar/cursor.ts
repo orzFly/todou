@@ -32,12 +32,13 @@ const Binding = z
   .strictObject({
     viewer_id: Id,
     scope: Scope,
-    year: z.number().int().min(1).max(9998),
+    from: CalendarDate,
+    to: CalendarDate,
     day: CalendarDate,
     tz: z.string().min(1).max(100),
     limit: z.number().int().min(1).max(100),
   })
-  .refine((value) => Number(value.day.slice(0, 4)) === value.year);
+  .refine((value) => value.day >= value.from && value.day < value.to);
 const Hashes = z.strictObject({
   scope_hash: z
     .string()
@@ -61,7 +62,7 @@ const Envelope = z
     ...Hashes.shape,
     last: Position,
   })
-  .refine((value) => Number(value.day.slice(0, 4)) === value.year);
+  .refine((value) => value.day >= value.from && value.day < value.to);
 
 /** The caller validates tz against the database and day against cutoff/birth. */
 export type ActivityCalendarCursorBinding = z.infer<typeof Binding>;
@@ -199,7 +200,8 @@ export function decodeActivityCalendarCursor(
     cursor.viewer_id !== expected.viewer_id ||
     cursor.scope.type !== expected.scope.type ||
     cursor.scope.id !== expected.scope.id ||
-    cursor.year !== expected.year ||
+    cursor.from !== expected.from ||
+    cursor.to !== expected.to ||
     cursor.day !== expected.day ||
     cursor.tz !== expected.tz ||
     cursor.limit !== expected.limit

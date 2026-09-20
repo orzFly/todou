@@ -12,7 +12,10 @@ import { api } from "@/api/queries.ts";
 /** Dates and timezone are resolved by the caller, never from browser globals. */
 export type ActivityCalendarRequest = {
   viewerId: number;
-  year: number;
+  /** Inclusive first local date of the window. */
+  from: string;
+  /** Exclusive last local date of the window. */
+  to: string;
   day?: string;
   tz: string;
   limit?: number;
@@ -41,7 +44,8 @@ export const activityKeys = {
 
 function requestFields(input: ActivityCalendarRequest) {
   return {
-    year: input.year,
+    from: input.from,
+    to: input.to,
     day: input.day,
     tz: input.tz,
     limit: input.limit ?? 50,

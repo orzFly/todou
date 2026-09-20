@@ -33,8 +33,10 @@ export interface ActivityCalendarSectionProps {
   scope:
     | { kind: "project"; projectId: number; slug: string }
     | { kind: "user"; subjectId: number };
-  /** Resolved Gregorian year, 1–9998; URL parsing belongs to the caller. */
-  year: number;
+  /** Inclusive first local date of the window; URL parsing belongs to the caller. */
+  from: string;
+  /** Exclusive last local date of the window. */
+  to: string;
   /** Requested YYYY-MM-DD, validated against recorded days before fetching cards. */
   day?: string;
   /** Explicit approved IANA timezone; no browser timezone policy lives here. */
@@ -44,7 +46,6 @@ export interface ActivityCalendarSectionProps {
   /** Page size, defaulting to the query API's 50. */
   limit?: number;
   /** The caller owns navigation and updates these controlled props. */
-  onYearChange: (year: number) => void;
   /** Legal defaults pass { replace: true }; user selections omit options so callers can push history. */
   onDayChange: (day: string, options?: ActivityDayChangeOptions) => void;
   /** Supply to clear/notify rejected explicit days: replace with the recorded default, or clear when undefined. */
@@ -60,7 +61,8 @@ type ScopedRequest =
 function requestFor(props: ActivityCalendarSectionProps, day = props.day) {
   const common = {
     viewerId: props.viewerId,
-    year: props.year,
+    from: props.from,
+    to: props.to,
     day,
     tz: props.timezone,
     limit: props.limit,
@@ -260,11 +262,11 @@ export function ActivityCalendarSection(props: ActivityCalendarSectionProps) {
   return (
     <div className="min-w-0 space-y-4">
       <ActivityCalendar
-        year={props.year}
+        from={props.from}
+        to={props.to}
         days={response?.days ?? []}
         selection={response?.selection ?? null}
         today={today}
-        onYearChange={props.onYearChange}
         onDayChange={props.onDayChange}
         loading={loading}
         error={response?.selection ? null : baseError}

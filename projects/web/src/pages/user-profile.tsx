@@ -20,6 +20,7 @@ import {
   activityToday,
   browserActivityTimezone,
   resolveActivityDateSearch,
+  rollingActivityWindow,
 } from "@/lib/activity-calendar-search.ts";
 import { statusOf } from "@/lib/http-status";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
@@ -44,7 +45,6 @@ export function UserProfilePage({
   ref,
   role = "any",
   state = "open",
-  activity_year,
   activity_day,
   activity_invalid,
   onFilters = () => undefined,
@@ -69,7 +69,7 @@ export function UserProfilePage({
     timezone: browserActivityTimezone(),
   }));
   const activity = resolveActivityDateSearch(
-    { activity_year, activity_day, activity_invalid },
+    { activity_day, activity_invalid },
     activityContext,
   );
   const activityInvalidNotified = useRef(false);
@@ -78,19 +78,10 @@ export function UserProfilePage({
       activityInvalidNotified.current = true;
       toast("Invalid activity date was reset.");
       if (!redirectToLogin) {
-        onActivityDateChange(
-          { activity_year: activity.year, activity_day: activity.day },
-          { replace: true },
-        );
+        onActivityDateChange({ activity_day: activity.day }, { replace: true });
       }
     }
-  }, [
-    activity.invalid,
-    activity.year,
-    activity.day,
-    redirectToLogin,
-    onActivityDateChange,
-  ]);
+  }, [activity.invalid, activity.day, redirectToLogin, onActivityDateChange]);
   const data = user.data;
   const hasContent = data !== undefined;
   const { replace, notice } = useReadFailure(
@@ -118,12 +109,7 @@ export function UserProfilePage({
       // whichever filter still sits at its default. The URL carries only
       // what the reader changed, so a target spelling the defaults out would
       // not describe the page it returns to.
-      search: userSearchParams({
-        role,
-        state,
-        activity_year,
-        activity_day,
-      }),
+      search: userSearchParams({ role, state, activity_day }),
     },
     userLabel: login,
     ready: rowsReady && calendarReady,
@@ -176,7 +162,6 @@ export function UserProfilePage({
         search={userSearchParams({
           role,
           state,
-          activity_year: activity.invalid ? activity.year : activity_year,
           activity_day: activity.invalid ? activity.day : activity_day,
         })}
         replace
@@ -227,7 +212,9 @@ export function UserProfilePage({
           <ActivityCalendarSection
             viewerId={viewer.data.id}
             scope={{ kind: "user", subjectId: me.id }}
-            year={activity.year}
+            {...rollingActivityWindow(
+              activityToday(activityContext.now, activityContext.timezone),
+            )}
             day={activity.day}
             timezone={activityContext.timezone}
             today={activityToday(activityContext.now, activityContext.timezone)}
@@ -237,28 +224,10 @@ export function UserProfilePage({
                 activityInvalidNotified.current = true;
                 toast("Invalid activity date was reset.");
               }
-              onActivityDateChange(
-                {
-                  activity_year: activity.year,
-                  activity_day: day,
-                },
-                { replace: true },
-              );
+              onActivityDateChange({ activity_day: day }, { replace: true });
             }}
-            onYearChange={(year) =>
-              onActivityDateChange({
-                activity_year: year,
-                activity_day: undefined,
-              })
-            }
             onDayChange={(day, options) =>
-              onActivityDateChange(
-                {
-                  activity_year: Number(day.slice(0, 4)),
-                  activity_day: day,
-                },
-                options,
-              )
+              onActivityDateChange({ activity_day: day }, options)
             }
           />
         </Suspense>

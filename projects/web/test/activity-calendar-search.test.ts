@@ -46,48 +46,50 @@ describe("activity date search", () => {
     }
   });
 
-  it("rejects coerced boolean/array years and mismatched dates", () => {
+  it("drops a legacy activity_year of any shape without calling it invalid", () => {
     for (const year of [
       true,
       [],
       [2026],
       {},
       0,
+      2026,
       9999,
       "2e3",
       "2026x",
       2026.5,
     ]) {
-      expect(parseActivityDateSearch({ activity_year: year })).toEqual({
-        activity_invalid: true,
-      });
+      expect(parseActivityDateSearch({ activity_year: year })).toEqual({});
     }
     expect(
       parseActivityDateSearch({
-        activity_year: "2024",
         activity_day: "2024-02-29",
       }),
-    ).toEqual({ activity_year: 2024, activity_day: "2024-02-29" });
+    ).toEqual({ activity_day: "2024-02-29" });
+    // Any real date now stands on its own: there is no year for it to disagree with.
     expect(
       parseActivityDateSearch({
         activity_year: 2024,
         activity_day: "2023-02-28",
       }),
-    ).toEqual({ activity_year: 2024, activity_invalid: true });
+    ).toEqual({ activity_day: "2023-02-28" });
+    expect(
+      parseActivityDateSearch({
+        activity_day: "2023-02-29",
+      }),
+    ).toEqual({ activity_invalid: true });
   });
 
   it("derives invalidity from dates and rejects every supplied marker", () => {
     const parsed = parseActivityDateSearch({
-      activity_year: 2024,
       activity_day: "2024-02-30",
     });
-    expect(parsed).toEqual({ activity_year: 2024, activity_invalid: true });
+    expect(parsed).toEqual({ activity_invalid: true });
     expect(resolveActivityDateSearch(parsed, context)).toEqual({
-      year: 2024,
       invalid: true,
     });
-    expect(activityDateSearchParams(parsed)).toEqual({ activity_year: 2024 });
-    expect(parseActivityDateSearch(parsed)).toEqual({ activity_year: 2024 });
+    expect(activityDateSearchParams(parsed)).toEqual({});
+    expect(parseActivityDateSearch(parsed)).toEqual({});
     for (const marker of [true, "true", 1, [], {}, false, null]) {
       expect(parseActivityDateSearch({ activity_invalid: marker })).toEqual({});
     }
@@ -96,7 +98,7 @@ describe("activity date search", () => {
         ...parsed,
         activity_day: "2024-02-29",
       }),
-    ).toEqual({ activity_year: 2024, activity_day: "2024-02-29" });
+    ).toEqual({ activity_day: "2024-02-29" });
   });
 
   it("leaves unrelated page filters outside its result", () => {
@@ -111,33 +113,27 @@ describe("activity date search", () => {
     ).toEqual({ activity_day: "2024-02-29" });
   });
 
-  it("derives the current date and year in the supplied browser context", () => {
+  it("derives the current date in the supplied browser context", () => {
     expect(activityToday(context.now, context.timezone)).toBe("2025-12-31");
     expect(activityToday(context.now, "Asia/Tokyo")).toBe("2026-01-01");
-    expect(resolveActivityDateSearch({}, context)).toEqual({
-      year: 2025,
-      invalid: false,
-    });
+    expect(resolveActivityDateSearch({}, context)).toEqual({ invalid: false });
+    // A day older than the rolling window is still a legal request: the
+    // window belongs to the page, and the server decides what is recorded.
     expect(
       resolveActivityDateSearch({ activity_day: "2024-02-29" }, context),
-    ).toEqual({ year: 2024, day: "2024-02-29", invalid: false });
+    ).toEqual({ day: "2024-02-29", invalid: false });
     expect(
-      resolveActivityDateSearch(
-        { activity_year: 2026, activity_day: "2026-01-01" },
-        context,
-      ),
-    ).toEqual({ year: 2025, invalid: true });
+      resolveActivityDateSearch({ activity_day: "2026-01-01" }, context),
+    ).toEqual({ invalid: true });
     expect(
-      resolveActivityDateSearch(
-        { activity_year: 2025, activity_day: "2025-12-31" },
-        context,
-      ),
-    ).toEqual({ year: 2025, day: "2025-12-31", invalid: false });
+      resolveActivityDateSearch({ activity_day: "2025-12-31" }, context),
+    ).toEqual({ day: "2025-12-31", invalid: false });
   });
 
   it("chooses only a recorded server date, including zero-count dates", () => {
     const response: ActivityCalendarResponse = {
-      year: 2011,
+      from: "2011-01-01",
+      to: "2012-01-01",
       timezone: "Pacific/Apia",
       cutoff: "2012-01-01T00:00:00Z",
       read_started_at: "2012-01-01T00:00:00Z",

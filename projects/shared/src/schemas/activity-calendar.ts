@@ -3,7 +3,6 @@ import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
 import { Project, Status } from "./project.ts";
 
-const CalendarYear = z.number().int().min(1).max(9998);
 const Timezone = z.string().min(1).max(100);
 const CalendarCursor = z.string().max(8192);
 const NonNegativeSafeInteger = z
@@ -41,25 +40,55 @@ const CalendarDate = z
     return year >= 1 && day >= 1 && day <= (monthDays[month - 1] ?? 0);
   }, "date must exist in the Gregorian calendar");
 
+/** Days between `from` and `to`, at most a leap year's worth of cells. */
+export const MAX_ACTIVITY_WINDOW_DAYS = 366;
+
+function dayNumber(date: string): number {
+  return Date.UTC(
+    Number(date.slice(0, 4)),
+    Number(date.slice(5, 7)) - 1,
+    Number(date.slice(8, 10)),
+  );
+}
+
 // Database timezone recognition, cutoff and subject/project birth boundaries
 // are checked by the server against the current request's evidence scope.
+// The window is a half-open local-date range: the caller owns which window it
+// wants (a calendar year, a rolling 52 weeks, a custom span) and the server
+// only renders the cells for it.
 export const ActivityCalendarQuery = z
   .strictObject({
-    year: QueryNumber.pipe(CalendarYear),
+    from: CalendarDate,
+    to: CalendarDate,
     tz: Timezone,
     day: CalendarDate.optional(),
     limit: QueryNumber.pipe(z.number().int().min(1).max(100)).default(50),
     after: CalendarCursor.optional(),
   })
   .superRefine((query, ctx) => {
+    const span =
+      (dayNumber(query.to) - dayNumber(query.from)) / (24 * 60 * 60 * 1000);
+    if (span <= 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["to"],
+        message: "to must be later than from",
+      });
+    } else if (span > MAX_ACTIVITY_WINDOW_DAYS) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["to"],
+        message: `the activity window cannot exceed ${MAX_ACTIVITY_WINDOW_DAYS} days`,
+      });
+    }
     if (
       query.day !== undefined &&
-      Number(query.day.slice(0, 4)) !== query.year
+      (query.day < query.from || query.day >= query.to)
     ) {
       ctx.addIssue({
         code: "custom",
         path: ["day"],
-        message: "day must belong to year",
+        message: "day must fall inside the window",
       });
     }
     if (query.after !== undefined && query.day === undefined) {
@@ -144,7 +173,8 @@ export type ActivitySelection = z.infer<typeof ActivitySelection>;
 // Calendar completeness/order, selection totals and page ordering are cross-row
 // invariants asserted by the service tests over the same evidence snapshot.
 export const ActivityCalendarResponse = z.object({
-  year: CalendarYear,
+  from: CalendarDate,
+  to: CalendarDate,
   timezone: Timezone,
   cutoff: Timestamp,
   read_started_at: Timestamp,

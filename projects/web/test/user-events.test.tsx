@@ -77,11 +77,22 @@ const cachedInbox = (...items: Record<string, unknown>[]) => ({
 
 /** Production keys for cached years, drilldowns, viewers, and profile subjects. */
 const activityCacheKeys = () => {
-  const request = { viewerId: USER_ID, year: 2026, tz: "UTC" };
+  const request = {
+    viewerId: USER_ID,
+    from: "2026-01-01",
+    to: "2027-01-01",
+    tz: "UTC",
+  };
   const requests = [
     request,
     { ...request, day: AT.slice(0, 10), after: "next-page" },
-    { ...request, viewerId: USER_ID + 1, year: 2025, tz: "Asia/Tokyo" },
+    {
+      ...request,
+      viewerId: USER_ID + 1,
+      from: "2025-01-01",
+      to: "2026-01-01",
+      tz: "Asia/Tokyo",
+    },
   ];
   return {
     project: requests.map((input) => [
@@ -1731,7 +1742,8 @@ describe("useUserEvents visibility gate (T-276)", () => {
     const options = userActivityCalendarQuery({
       viewerId: USER_ID,
       subjectId: USER_ID + 2,
-      year: 2026,
+      from: "2026-01-01",
+      to: "2027-01-01",
       tz: "UTC",
     });
     const before = { days: [{ date: AT.slice(0, 10), count: 0 }] };

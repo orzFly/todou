@@ -1,4 +1,4 @@
-import type { ActivityDay } from "@todou/shared";
+import { type ActivityDay, MAX_ACTIVITY_WINDOW_DAYS } from "@todou/shared";
 import { sql } from "drizzle-orm";
 import type { Db } from "../../db/driver.ts";
 import { ValidationFailedError } from "../../errors.ts";
@@ -29,7 +29,10 @@ export type ActivityBucketPlan = {
 export async function buildActivityBuckets(
   db: Db,
   input: {
-    year: number;
+    /** Inclusive first local date of the window. */
+    fromDate: string;
+    /** Exclusive last local date of the window. */
+    toDate: string;
     timezone: string;
     cutoff: string;
     bornAt: string;
@@ -41,23 +44,19 @@ export async function buildActivityBuckets(
     input.timezone,
     (message) => new ValidationFailedError(message),
   );
-  const current = rowsFrom(
+  const first = input.fromDate;
+  const next = input.toDate;
+  const span = rowsFrom(
     await db.execute(sql`
-    select extract(year from timezone(${timezone}, ${input.cutoff}::timestamptz))::integer as year
+    select (${next}::date - ${first}::date)::integer as days
   `),
   );
-  if (
-    !Number.isInteger(input.year) ||
-    input.year < 1 ||
-    input.year > 9998 ||
-    input.year > Number(current[0]?.year)
-  ) {
+  const days = Number(span[0]?.days);
+  if (!Number.isInteger(days) || days < 1 || days > MAX_ACTIVITY_WINDOW_DAYS) {
     throw new ValidationFailedError(
-      "year must be an existing calendar year at cutoff",
+      `the activity window must span 1 to ${MAX_ACTIVITY_WINDOW_DAYS} days`,
     );
   }
-  const first = `${String(input.year).padStart(4, "0")}-01-01`;
-  const next = `${String(input.year + 1).padStart(4, "0")}-01-01`;
   const rows = rowsFrom(
     await db.execute(sql`
     with dates as (
@@ -103,13 +102,13 @@ export async function buildActivityBuckets(
     buckets.find((bucket) => bucket.date === input.day)?.state !== "recorded"
   ) {
     throw new ValidationFailedError(
-      "day must be an applicable, non-future local date in year",
+      "day must be an applicable, non-future local date in the window",
     );
   }
   const from = buckets[0]?.start;
   const to = buckets.at(-1)?.end;
   if (from === undefined || to === undefined)
-    throw new Error("empty calendar year");
+    throw new Error("empty activity window");
   return {
     timezone,
     from,

@@ -19,7 +19,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
 
   it("enumerates the complete leap year, preserving zero and null day states", async () => {
     const plan = await buildActivityBuckets(db, {
-      year: 2024,
+      fromDate: "2024-01-01",
+      toDate: "2025-01-01",
       timezone: "UTC",
       bornAt: "2024-02-29T12:00:00.000001Z",
       cutoff: "2024-03-01T00:00:00.000000Z",
@@ -93,7 +94,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     "uses exact IANA boundaries for %s %s",
     async (timezone, day, start, end, hours) => {
       const plan = await buildActivityBuckets(db, {
-        year: 2026,
+        fromDate: "2026-01-01",
+        toDate: "2027-01-01",
         timezone,
         bornAt: "2020-01-01T00:00:00Z",
         cutoff: "2026-12-31T23:59:59.999999Z",
@@ -107,7 +109,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
 
   it("keeps Apia's skipped date visible and refuses selecting it", async () => {
     const input = {
-      year: 2011,
+      fromDate: "2011-01-01",
+      toDate: "2012-01-01",
       timezone: "Pacific/Apia",
       bornAt: "2010-01-01T00:00:00Z",
       cutoff: "2012-01-02T00:00:00Z",
@@ -134,7 +137,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
 
   it("classifies birth before future, and preserves birth microseconds", async () => {
     const plan = await buildActivityBuckets(db, {
-      year: 2026,
+      fromDate: "2026-01-01",
+      toDate: "2027-01-01",
       timezone: "UTC",
       bornAt: "2026-09-19T00:00:00.000001Z",
       cutoff: "2026-09-18T12:00:00Z",
@@ -150,7 +154,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
       count: null,
     });
     const beforeMidnight = await buildActivityBuckets(db, {
-      year: 2026,
+      fromDate: "2026-01-01",
+      toDate: "2027-01-01",
       timezone: "UTC",
       bornAt: "2026-09-18T23:59:59.999999Z",
       cutoff: "2026-09-19T00:00:00Z",
@@ -163,7 +168,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
       count: 0,
     });
     const atMidnight = await buildActivityBuckets(db, {
-      year: 2026,
+      fromDate: "2026-01-01",
+      toDate: "2027-01-01",
       timezone: "UTC",
       bornAt: "2026-09-19T00:00:00.000000Z",
       cutoff: "2026-09-19T00:00:00Z",
@@ -173,9 +179,10 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     ).toBe("not_applicable");
   });
 
-  it("uses cutoff's local year, supports year one, and rejects inapplicable selections", async () => {
+  it("supports year one, and rejects bad windows and inapplicable selections", async () => {
     const input = {
-      year: 2026,
+      fromDate: "2026-01-01",
+      toDate: "2027-01-01",
       timezone: "Asia/Shanghai",
       bornAt: "2025-12-31T16:00:00Z",
       cutoff: "2025-12-31T16:00:00Z",
@@ -190,7 +197,11 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
       count: 0,
     });
     for (const override of [
-      { year: 2027 },
+      // 2026 has 365 days, so this is 367: one past the widest window allowed,
+      // followed by a reversed window and an empty one.
+      { toDate: "2027-01-03" },
+      { toDate: "2025-01-01" },
+      { toDate: "2026-01-01", fromDate: "2026-01-01" },
       { day: "2026-01-02" },
       { day: "2025-12-31" },
     ]) {
@@ -199,7 +210,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
       ).rejects.toBeInstanceOf(ValidationFailedError);
     }
     const ancient = await buildActivityBuckets(db, {
-      year: 1,
+      fromDate: "0001-01-01",
+      toDate: "0002-01-01",
       timezone: "UTC",
       bornAt: "2020-01-01T00:00:00Z",
       cutoff: "2026-01-01T00:00:00Z",
@@ -216,7 +228,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
 
   it("keeps year-one east-of-UTC boundaries native instead of losing the BC era", async () => {
     const plan = await buildActivityBuckets(db, {
-      year: 1,
+      fromDate: "0001-01-01",
+      toDate: "0002-01-01",
       timezone: "Etc/GMT-8",
       bornAt: "0001-01-01T00:00:00Z",
       cutoff: "0002-01-01T00:00:00Z",
@@ -234,7 +247,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
 
   it("uses the first Havana midnight and local birth date while preserving burn's boundary contract", async () => {
     const plan = await buildActivityBuckets(db, {
-      year: 2025,
+      fromDate: "2025-01-01",
+      toDate: "2026-01-01",
       timezone: "America/Havana",
       bornAt: "2025-11-02T04:30:00.000000Z",
       cutoff: "2025-11-03T12:00:00.000000Z",
@@ -254,7 +268,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     });
     await expect(
       buildActivityBuckets(db, {
-        year: 2025,
+        fromDate: "2025-01-01",
+        toDate: "2026-01-01",
         timezone: "America/Havana",
         bornAt: "2025-11-02T04:30:00.000000Z",
         cutoff: "2025-11-03T12:00:00.000000Z",
@@ -276,7 +291,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
       });
       await expect(
         buildActivityBuckets(db, {
-          year: 2026,
+          fromDate: "2026-01-01",
+          toDate: "2027-01-01",
           timezone,
           bornAt: "2020-01-01T00:00:00Z",
           cutoff: "2026-09-19T00:00:00Z",
@@ -339,7 +355,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     try {
       await expect(
         buildActivityBuckets(db, {
-          year: 2026,
+          fromDate: "2026-01-01",
+          toDate: "2027-01-01",
           timezone: "UTC",
           bornAt: "2020-01-01T00:00:00Z",
           cutoff: "2026-09-19T00:00:00Z",

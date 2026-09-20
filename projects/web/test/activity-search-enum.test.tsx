@@ -29,11 +29,11 @@ afterEach(() => {
 function calendar(days: ActivityDay[], onDayChange = vi.fn()) {
   return render(
     <ActivityCalendar
-      year={2024}
+      from="2024-01-01"
+      to="2025-01-01"
       days={days}
       selection={null}
       today="2024-01-10"
-      onYearChange={vi.fn()}
       onDayChange={onDayChange}
       onRetry={vi.fn()}
     />,

@@ -138,8 +138,8 @@ function calendarSnapshot(
   recorded = false,
 ): ActivityCalendarResponse {
   const days: ActivityDay[] = [];
-  const date = new Date(`${query.year}-01-01T00:00:00Z`);
-  while (date.getUTCFullYear() === query.year) {
+  const date = new Date(`${query.from}T00:00:00Z`);
+  while (date.toISOString().slice(0, 10) < query.to) {
     const day = date.toISOString().slice(0, 10);
     days.push(
       day > "2026-09-18"
@@ -156,7 +156,8 @@ function calendarSnapshot(
   }
   const selected = days.find((day) => day.date === query.day);
   return ActivityCalendarResponse.parse({
-    year: query.year,
+    from: query.from,
+    to: query.to,
     timezone: query.tz,
     cutoff,
     read_started_at: cutoff,
@@ -436,7 +437,7 @@ describe("Insights page", () => {
     const entry =
       "/projects/x/insights?range=custom&from=2026-09-17&to=2026-09-18&grain=6h&tz=America%2FNew_York";
     const view = renderPage(entry, { seedIdentities: false });
-    await screen.findByText("No available dates in 2026.");
+    await screen.findByText("No available dates in this range.");
     await screen.findByRole("heading", { name: "Burn chart" });
     expect(view.router.state.location.href).toBe(entry);
     expect(view.router.state.location.search).not.toHaveProperty(
@@ -453,7 +454,8 @@ describe("Insights page", () => {
       canonicalProject,
     );
     expect(view.calendarRequest).toHaveBeenCalledExactlyOnceWith({
-      year: 2026,
+      from: "2025-09-22",
+      to: "2026-09-19",
       tz: "Asia/Tokyo",
       limit: 50,
     });
@@ -461,7 +463,8 @@ describe("Insights page", () => {
       viewerId: viewer.id,
       projectId: canonicalProject.id,
       slug: canonicalProject.slug,
-      year: 2026,
+      from: "2025-09-22",
+      to: "2026-09-19",
       tz: "Asia/Tokyo",
     };
     expect(
@@ -476,7 +479,8 @@ describe("Insights page", () => {
         {
           viewerId: 7,
           projectId: 42,
-          year: 2026,
+          from: "2025-09-22",
+          to: "2026-09-19",
           day: undefined,
           tz: "Asia/Tokyo",
           limit: 50,
@@ -489,19 +493,27 @@ describe("Insights page", () => {
     );
     expect(cached).toEqual(
       calendarSnapshot({
-        year: 2026,
+        from: "2025-09-22",
+        to: "2026-09-19",
         tz: "Asia/Tokyo",
         limit: 50,
       }),
     );
-    const dates = screen.getByRole("group", { name: "2026 activity dates" });
-    expect(within(dates).getAllByRole("button")).toHaveLength(365);
+    const dates = screen.getByRole("group", {
+      name: "Activity dates 2025-09-22 to 2026-09-18",
+    });
+    // The rolling window is 52 columns ending at today, not a calendar year.
+    expect(within(dates).getAllByRole("button")).toHaveLength(362);
     expect(
       within(dates).getByRole("button", { name: /2026-09-17: Not applicable/ }),
     ).toHaveProperty("disabled", true);
+    // The window stops at today, so no future cell is drawn at all.
+    expect(within(dates).queryByRole("button", { name: /Future date/ })).toBe(
+      null,
+    );
     expect(
-      within(dates).getByRole("button", { name: /2026-09-19: Future date/ }),
-    ).toHaveProperty("disabled", true);
+      within(dates).getAllByRole("button").at(-1)?.getAttribute("data-date"),
+    ).toBe("2026-09-18");
     expect(
       screen.queryByRole("region", { name: "Selected day activity" }),
     ).toBeNull();
@@ -519,12 +531,12 @@ describe("Insights page", () => {
     vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
     const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
     const view = renderPage(
-      "/projects/x/insights?range=custom&from=2026-09-17&to=2026-09-18&activity_year=2026&activity_day=2026-09-17&tz=UTC",
+      "/projects/x/insights?range=custom&from=2026-09-17&to=2026-09-18&activity_day=2026-09-17&tz=UTC",
       { calendar: recordedCalendar },
     );
     await screen.findByText("Activity on 2026-09-17");
     await screen.findByRole("heading", { name: "Burn chart" });
-    const activity = { activity_year: 2026, activity_day: "2026-09-17" };
+    const activity = { activity_day: "2026-09-17" };
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
     expect(
       screen
@@ -617,14 +629,16 @@ describe("Insights page", () => {
           viewerId: viewer.id,
           projectId: canonicalProject.id,
           slug: canonicalProject.slug,
-          year: 2026,
+          from: "2025-09-22",
+          to: "2026-09-19",
           day: "2026-09-17",
           tz,
         }).queryKey,
       ),
     ).toEqual(
       recordedCalendar({
-        year: 2026,
+        from: "2025-09-22",
+        to: "2026-09-19",
         day: "2026-09-17",
         tz,
         limit: 50,
@@ -640,16 +654,16 @@ describe("Insights page", () => {
       vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
       vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
       const view = renderPage(
-        "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2025&activity_day=2025-01-01",
+        "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_day=2025-01-01",
         {
           calendar: (query) =>
             calendarSnapshot(query, availability === "partially unavailable"),
         },
       );
       if (availability === "all unavailable") {
-        await screen.findByText("No available dates in 2025.");
+        await screen.findByText("No available dates in this range.");
       } else {
-        await screen.findByText("No active cards on 2025-12-31.");
+        await screen.findByText("Activity on 2026-09-18");
       }
       await waitFor(() => {
         expect(view.router.state.location.search).toEqual({
@@ -657,10 +671,9 @@ describe("Insights page", () => {
           from: "2026-09-15",
           to: "2026-09-18",
           grain: "6h",
-          activity_year: 2025,
           ...(availability === "all unavailable"
             ? {}
-            : { activity_day: "2025-12-31" }),
+            : { activity_day: "2026-09-18" }),
         });
         expect(sonner.toast).toHaveBeenCalledExactlyOnceWith(
           "Invalid activity date was reset.",
@@ -683,14 +696,11 @@ describe("Insights page", () => {
   it("leaves an empty project year with no requested day quiet", async () => {
     vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
     vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
-    const view = renderPage(
-      "/projects/x/insights?range=7d&grain=6h&activity_year=2025",
-    );
-    await screen.findByText("No available dates in 2025.");
+    const view = renderPage("/projects/x/insights?range=7d&grain=6h");
+    await screen.findByText("No available dates in this range.");
     expect(view.router.state.location.search).toEqual({
       range: "7d",
       grain: "6h",
-      activity_year: 2025,
     });
     expect(sonner.toast).not.toHaveBeenCalled();
     expect(view.router.history.canGoBack()).toBe(false);
@@ -698,7 +708,7 @@ describe("Insights page", () => {
     view.client.clear();
   });
 
-  it.each(["click", "Enter", "year"] as const)(
+  it.each(["click", "Enter"] as const)(
     "drops legacy URL timezone on calendar %s while preserving graph filters",
     async (action) => {
       const options = Intl.DateTimeFormat().resolvedOptions();
@@ -712,26 +722,19 @@ describe("Insights page", () => {
       vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
       const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
       const view = renderPage(
-        "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2026&activity_day=2026-09-17&tz=Pacific%2FHonolulu",
+        "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_day=2026-09-17&tz=Pacific%2FHonolulu",
         { calendar: recordedCalendar },
       );
       await screen.findByText("Activity on 2026-09-17");
       expect(
         new URLSearchParams(view.router.state.location.searchStr).get("tz"),
       ).toBe("Pacific/Honolulu");
-      if (action === "year") {
-        fireEvent.change(screen.getByRole("spinbutton", { name: "Year" }), {
-          target: { value: "2025" },
-        });
-        await screen.findByText("No active cards on 2025-12-31.");
-      } else {
-        const date = screen.getByRole("button", {
-          name: /2026-09-18: 1 active card/,
-        });
-        if (action === "Enter") fireEvent.keyDown(date, { key: "Enter" });
-        else fireEvent.click(date);
-        await screen.findByText("Activity on 2026-09-18");
-      }
+      const date = screen.getByRole("button", {
+        name: /2026-09-18: 1 active card/,
+      });
+      if (action === "Enter") fireEvent.keyDown(date, { key: "Enter" });
+      else fireEvent.click(date);
+      await screen.findByText("Activity on 2026-09-18");
       expect(
         new URLSearchParams(view.router.state.location.searchStr).has("tz"),
       ).toBe(false);
@@ -740,12 +743,12 @@ describe("Insights page", () => {
         from: "2026-09-15",
         to: "2026-09-18",
         grain: "6h",
-        activity_year: action === "year" ? 2025 : 2026,
-        activity_day: action === "year" ? "2025-12-31" : "2026-09-18",
+        activity_day: "2026-09-18",
       });
       expect(view.calendarRequest).toHaveBeenLastCalledWith({
-        year: action === "year" ? 2025 : 2026,
-        day: action === "year" ? "2025-12-31" : "2026-09-18",
+        from: "2025-09-22",
+        to: "2026-09-19",
+        day: "2026-09-18",
         tz: "Asia/Tokyo",
         limit: 50,
       });
@@ -760,21 +763,12 @@ describe("Insights page", () => {
     },
   );
 
-  it("retains custom graph filters through activity selections, back/forward and year changes", async () => {
+  it("retains custom graph filters through activity selections and back/forward", async () => {
     vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
     const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
-    let resolveYear!: (value: ActivityCalendarResponse) => void;
-    const previousYear = new Promise<ActivityCalendarResponse>((resolve) => {
-      resolveYear = resolve;
-    });
     const view = renderPage(
-      "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2026&activity_day=2026-09-17",
-      {
-        calendar: (query) =>
-          query.year === 2025 && !query.day
-            ? previousYear
-            : recordedCalendar(query),
-      },
+      "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_day=2026-09-17",
+      { calendar: recordedCalendar },
     );
     await screen.findByText("Activity on 2026-09-17");
     await screen.findByRole("heading", { name: "Burn chart" });
@@ -790,7 +784,6 @@ describe("Insights page", () => {
     await screen.findByText("Activity on 2026-09-18");
     expect(view.router.state.location.search).toEqual({
       ...graph,
-      activity_year: 2026,
       activity_day: "2026-09-18",
     });
     fireEvent.click(
@@ -799,7 +792,6 @@ describe("Insights page", () => {
     await screen.findByText("Activity on 2026-09-17");
     expect(view.router.state.location.search).toEqual({
       ...graph,
-      activity_year: 2026,
       activity_day: "2026-09-17",
     });
     await act(async () => {
@@ -808,7 +800,6 @@ describe("Insights page", () => {
     await screen.findByText("Activity on 2026-09-18");
     expect(view.router.state.location.search).toEqual({
       ...graph,
-      activity_year: 2026,
       activity_day: "2026-09-18",
     });
     await act(async () => {
@@ -817,45 +808,9 @@ describe("Insights page", () => {
     await screen.findByText("Activity on 2026-09-17");
     expect(view.router.state.location.search).toEqual({
       ...graph,
-      activity_year: 2026,
       activity_day: "2026-09-17",
     });
-    fireEvent.change(screen.getByRole("spinbutton", { name: "Year" }), {
-      target: { value: "2025" },
-    });
-    await waitFor(() =>
-      expect(view.router.state.location.search).toEqual({
-        ...graph,
-        activity_year: 2025,
-      }),
-    );
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
-    await waitFor(() =>
-      expect(view.calendarRequest).toHaveBeenLastCalledWith({
-        year: 2025,
-        tz,
-        limit: 50,
-      }),
-    );
-    expect(screen.queryByText("Activity on 2026-09-17")).toBeNull();
-    resolveYear(recordedCalendar({ year: 2025, tz, limit: 50 }));
-    await screen.findByText("No active cards on 2025-12-31.");
-    expect(view.router.state.location.search).toEqual({
-      ...graph,
-      activity_year: 2025,
-      activity_day: "2025-12-31",
-    });
-    expect(view.calendarRequest).toHaveBeenLastCalledWith({
-      year: 2025,
-      day: "2025-12-31",
-      tz,
-      limit: 50,
-    });
-    expect(
-      screen
-        .getByRole("button", { name: "2025-12-31: 0 active cards" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
     expect(burn).toHaveBeenCalledExactlyOnceWith("x", {
       from: "2026-09-15",
       to: "2026-09-19",
@@ -871,7 +826,7 @@ describe("Insights page", () => {
     vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
     vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
     const view = renderPage(
-      "/projects/x/insights?range=7d&grain=6h&activity_year=2026&activity_day=2026-09-17&activity_invalid=true",
+      "/projects/x/insights?range=7d&grain=6h&activity_day=2026-09-17&activity_invalid=true",
       { calendar: recordedCalendar },
     );
     await screen.findByText("Activity on 2026-09-17");
@@ -893,7 +848,6 @@ describe("Insights page", () => {
       expect(view.router.state.location.search).toEqual({
         range: "7d",
         grain: "12h",
-        activity_year: 2026,
         activity_day: "2026-09-17",
       }),
     );
@@ -906,15 +860,14 @@ describe("Insights page", () => {
     vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
     vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
     const view = renderPage(
-      "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_year=2025&activity_day=2025-02-30",
+      "/projects/x/insights?range=custom&from=2026-09-15&to=2026-09-18&grain=6h&activity_day=2025-02-30",
     );
-    await screen.findByText("No available dates in 2025.");
+    await screen.findByText("No available dates in this range.");
     const normalized = {
       range: "custom",
       from: "2026-09-15",
       to: "2026-09-18",
       grain: "6h",
-      activity_year: 2025,
     };
     await waitFor(() => {
       expect(view.router.state.location.search).toEqual(normalized);
@@ -937,7 +890,7 @@ describe("Insights page", () => {
     view.client.clear();
     vi.mocked(sonner.toast).mockClear();
     const reopened = renderPage(shared);
-    await screen.findByText("No available dates in 2025.");
+    await screen.findByText("No available dates in this range.");
     expect(reopened.router.state.location.search).toEqual({
       ...normalized,
       grain: "12h",
@@ -948,9 +901,9 @@ describe("Insights page", () => {
   });
 
   it.each([
-    "activity_year=bad&activity_day=2026-02-30",
-    "activity_year=2026&activity_day=2025-09-17",
-    "activity_year=2027&activity_day=2027-09-17",
+    "activity_day=2026-02-30",
+    "activity_day=2025-09-17",
+    "activity_day=2027-09-17",
   ])(
     "keeps graph fetching and filtering independent of invalid activity: %s",
     async (activity) => {
@@ -978,12 +931,12 @@ describe("Insights page", () => {
       expect(screen.queryByRole("alert")).toBeNull();
       expect(
         view.calendarRequest.mock.calls.map(([query]) => [
-          query.year,
+          query.from,
           query.day,
         ]),
       ).toEqual([
-        [2026, undefined],
-        [2026, "2026-09-18"],
+        ["2025-09-22", undefined],
+        ["2025-09-22", "2026-09-18"],
       ]);
       fireEvent.click(screen.getByRole("button", { name: "12h" }));
       await waitFor(() =>
@@ -992,7 +945,6 @@ describe("Insights page", () => {
           from: "2026-09-15",
           to: "2026-09-18",
           grain: "12h",
-          activity_year: 2026,
           activity_day: "2026-09-18",
         }),
       );
@@ -1016,7 +968,7 @@ describe("Insights page", () => {
       .mockResolvedValue(settings);
     const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
     const view = renderPage(
-      "/projects/x/insights?range=custom&from=2026-09-18&to=2026-09-17&grain=6h&activity_year=2026&activity_day=2026-09-17",
+      "/projects/x/insights?range=custom&from=2026-09-18&to=2026-09-17&grain=6h&activity_day=2026-09-17",
       { calendar: recordedCalendar },
     );
     await screen.findByText("Activity on 2026-09-17");
@@ -1032,7 +984,6 @@ describe("Insights page", () => {
       from: "2026-09-18",
       to: "2026-09-17",
       grain: "6h",
-      activity_year: 2026,
       activity_day: "2026-09-18",
     });
     expect(view.calendarRequest.mock.calls.map(([query]) => query.day)).toEqual(
@@ -1078,7 +1029,7 @@ describe("Insights page", () => {
     });
     view.calendarRequest.mockImplementation(calendarSnapshot);
     fireEvent.click(within(activity).getByRole("button", { name: "Retry" }));
-    await screen.findByText("No available dates in 2026.");
+    await screen.findByText("No available dates in this range.");
     expect(within(activity).queryByRole("alert")).toBeNull();
     expect(burn).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("heading", { name: "Burn chart" })).toBeTruthy();

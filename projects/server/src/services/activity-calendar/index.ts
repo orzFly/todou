@@ -416,7 +416,8 @@ async function calendar(
     if (typeof bornAt !== "string")
       throw new Error("calendar subject birth is unavailable");
     const plan = await buildActivityBuckets(system, {
-      year: query.year,
+      fromDate: query.from,
+      toDate: query.to,
       timezone: query.tz,
       cutoff,
       bornAt,
@@ -480,7 +481,8 @@ async function calendar(
         {
           viewer_id: viewer.id,
           scope,
-          year: query.year,
+          from: query.from,
+          to: query.to,
           day: query.day,
           tz: plan.timezone,
           limit: query.limit,
@@ -496,7 +498,8 @@ async function calendar(
       };
     }
     return {
-      year: query.year,
+      from: query.from,
+      to: query.to,
       timezone: plan.timezone,
       cutoff,
       read_started_at: readStartedAt,

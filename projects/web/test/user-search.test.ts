@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { userSearchParams, userSearchSchema } from "../src/api/users.ts";
 
-const activity = {
-  activity_year: 2024,
-  activity_day: "2024-02-29",
-};
+const activity = { activity_day: "2024-02-29" };
 
 describe("user search", () => {
   it("does not accept URL notice metadata, including JSON boolean true", () => {
@@ -22,14 +19,12 @@ describe("user search", () => {
     const invalid = {
       role: "assignee",
       state: "closed",
-      activity_year: 2024,
       activity_day: "2024-02-30",
     };
     expect(userSearchSchema(invalid).activity_invalid).toBe(true);
     expect(userSearchParams(invalid)).toEqual({
       role: "assignee",
       state: "closed",
-      activity_year: 2024,
     });
     expect(
       userSearchParams({
@@ -37,7 +32,7 @@ describe("user search", () => {
         role: "author",
         state: "all",
       }),
-    ).toEqual({ role: "author", state: "all", activity_year: 2024 });
+    ).toEqual({ role: "author", state: "all" });
   });
 
   it.each([
@@ -81,23 +76,8 @@ describe("user search", () => {
     ["malformed day", { activity_day: "2026-03-08T00:00:00Z" }, {}],
     ["nonexistent day", { activity_day: "2026-02-29" }, {}],
     ["array day", { activity_day: ["2024-02-29"] }, {}],
-    ["malformed year", { activity_year: "2026x" }, {}],
-    ["array year", { activity_year: [2024] }, {}],
-    [
-      "mismatched year and day",
-      { activity_year: 2024, activity_day: "2023-02-28" },
-      { activity_year: 2024 },
-    ],
-    [
-      "invalid day beside a valid year",
-      { activity_year: 2024, activity_day: "2024-02-30" },
-      { activity_year: 2024 },
-    ],
-    [
-      "invalid year beside a valid day",
-      { activity_year: true, activity_day: "2024-02-29" },
-      { activity_day: "2024-02-29" },
-    ],
+    ["nonexistent day", { activity_day: "2024-02-30" }, {}],
+    ["numeric day", { activity_day: 20240229 }, {}],
   ])("keeps role and state with %s", (_case, invalid, preserved) => {
     expect(
       userSearchSchema({ role: "author", state: "all", ...invalid }),
@@ -117,21 +97,15 @@ describe("user search", () => {
     });
     const changed = userSearchSchema({
       ...initial,
-      activity_year: "2026",
       activity_day: "2026-03-08",
     });
     expect(changed).toStrictEqual({
       role: "assignee",
       state: "closed",
-      activity_year: 2026,
       activity_day: "2026-03-08",
     });
     expect(
-      userSearchSchema({
-        ...changed,
-        activity_year: undefined,
-        activity_day: undefined,
-      }),
+      userSearchSchema({ ...changed, activity_day: undefined }),
     ).toStrictEqual({ role: "assignee", state: "closed" });
   });
 

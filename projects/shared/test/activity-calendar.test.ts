@@ -10,7 +10,7 @@ import {
   TodouClient,
 } from "../src/index.ts";
 
-const query = { year: 2024, tz: "UTC" };
+const query = { from: "2024-01-01", to: "2025-01-01", tz: "UTC" };
 const day = "2024-02-29";
 const timestamp = "2024-02-29T12:34:56.123456Z";
 const card = {
@@ -37,7 +37,8 @@ const selection = {
   has_more: false,
 };
 const response = {
-  year: 2024,
+  from: "2024-01-01",
+  to: "2025-01-01",
   timezone: "UTC",
   cutoff: "2025-01-01T00:00:00.000001Z",
   read_started_at: "2025-01-01T00:00:00.000002Z",
@@ -55,7 +56,7 @@ const response = {
 // rules, cursor decoding and calendar cross-row invariants belong to the server.
 describe("ActivityCalendarQuery", () => {
   it("coerces URL numbers and applies only the limit default", () => {
-    expect(ActivityCalendarQuery.parse({ year: "2024", tz: "UTC" })).toEqual({
+    expect(ActivityCalendarQuery.parse({ ...query })).toEqual({
       ...query,
       limit: 50,
     });
@@ -73,17 +74,26 @@ describe("ActivityCalendarQuery", () => {
   });
 
   it.each([
-    [1, "0001-01-01"],
-    [4, "0004-02-29"],
-    [1900, "1900-02-28"],
-    [2000, "2000-02-29"],
-    [2024, "2024-02-29"],
-    [9998, "9998-12-31"],
-  ])("accepts Gregorian boundary year %i and day %s", (year, date) => {
-    expect(
-      ActivityCalendarQuery.parse({ year, tz: "UTC", day: date, limit: 1 }).day,
-    ).toBe(date);
-  });
+    ["0001-01-01", "0001-02-01", "0001-01-01"],
+    ["0004-02-01", "0004-03-01", "0004-02-29"],
+    ["1900-02-01", "1900-03-01", "1900-02-28"],
+    ["2000-02-01", "2000-03-01", "2000-02-29"],
+    ["2024-02-01", "2024-03-01", "2024-02-29"],
+    ["9998-12-01", "9998-12-31", "9998-12-30"],
+  ])(
+    "accepts Gregorian boundary window %s..%s and day %s",
+    (from, to, date) => {
+      expect(
+        ActivityCalendarQuery.parse({
+          from,
+          to,
+          tz: "UTC",
+          day: date,
+          limit: 1,
+        }).day,
+      ).toBe(date);
+    },
+  );
 
   it.each([
     "2023-02-29",
@@ -103,11 +113,10 @@ describe("ActivityCalendarQuery", () => {
     " 2024-02-29",
   ])("rejects invalid calendar date %j in queries and responses", (date) => {
     expect(
-      ActivityCalendarQuery.safeParse({
-        ...query,
-        year: Number(date.slice(0, 4)),
-        day: date,
-      }).success,
+      ActivityCalendarQuery.safeParse({ ...query, day: date }).success,
+    ).toBe(false);
+    expect(
+      ActivityCalendarQuery.safeParse({ ...query, from: date }).success,
     ).toBe(false);
     expect(
       ActivityDay.safeParse({ date, state: "recorded", count: 0 }).success,
@@ -117,13 +126,19 @@ describe("ActivityCalendarQuery", () => {
     );
   });
 
-  it("rejects an otherwise valid day in a different year", () => {
+  it("rejects an otherwise valid day outside the window", () => {
+    for (const outside of ["2023-12-31", "2025-01-01"]) {
+      expect(
+        ActivityCalendarQuery.safeParse({ ...query, day: outside }).success,
+      ).toBe(false);
+    }
+    // The window end is exclusive, so its last selectable day is the one before.
     expect(
-      ActivityCalendarQuery.safeParse({ ...query, day: "2023-12-31" }).success,
-    ).toBe(false);
+      ActivityCalendarQuery.safeParse({ ...query, day: "2024-12-31" }).success,
+    ).toBe(true);
   });
 
-  it.each(["year", "limit"] as const)(
+  it.each(["limit"] as const)(
     "rejects invalid numeric kinds for %s",
     (field) => {
       for (const value of [
@@ -144,17 +159,13 @@ describe("ActivityCalendarQuery", () => {
   );
 
   it.each([
-    { year: undefined },
-    { year: 0 },
-    { year: -1 },
-    { year: 9999 },
-    { year: 2024.5 },
-    { year: NaN },
-    { year: Infinity },
-    { year: "" },
-    { year: " " },
-    { year: "2024x" },
-    { year: "2024.5" },
+    { from: undefined },
+    { to: undefined },
+    { from: 2024 },
+    { to: "2024-01-01" },
+    { from: "2025-01-01" },
+    // 367 days: one past the widest window the contract allows.
+    { from: "2024-01-01", to: "2025-01-02" },
     { limit: 0 },
     { limit: -1 },
     { limit: 101 },
@@ -487,10 +498,10 @@ describe("ActivitySelection and ActivityCalendarResponse", () => {
   );
 
   it.each([
-    { year: 0 },
-    { year: 9999 },
-    { year: 2024.5 },
-    { year: "2024" },
+    { from: 0 },
+    { from: "2024-02-30" },
+    { to: undefined },
+    { to: "2024" },
     { timezone: "" },
     { timezone: "x".repeat(101) },
     { timezone: null },
@@ -519,7 +530,11 @@ describe("activity calendar typed client", () => {
       baseUrl: "https://todou.example",
       fetch: fetchImpl,
     });
-    const input: ActivityCalendarQueryInput = { year: 2024, tz: "UTC" };
+    const input: ActivityCalendarQueryInput = {
+      from: "2024-01-01",
+      to: "2025-01-01",
+      tz: "UTC",
+    };
     const projectResult = client.getProjectActivityCalendar("demo", input);
     expectTypeOf(projectResult).toEqualTypeOf<
       Promise<ActivityCalendarResponse>
@@ -532,7 +547,8 @@ describe("activity calendar typed client", () => {
     >().toEqualTypeOf<ActivityCalendarQueryInput>();
     await expect(projectResult).resolves.toEqual(response);
     const userResult = client.getUserActivityCalendar("alice", {
-      year: "2024",
+      from: "2024-01-01",
+      to: "2025-01-01",
       tz: "America/New_York",
       day,
       limit: 1,
@@ -548,19 +564,19 @@ describe("activity calendar typed client", () => {
     });
     expect(calls).toEqual([
       {
-        url: "https://todou.example/api/projects/demo/insights/activity?year=2024&tz=UTC",
+        url: "https://todou.example/api/projects/demo/insights/activity?from=2024-01-01&to=2025-01-01&tz=UTC",
         method: "GET",
       },
       {
-        url: "https://todou.example/api/users/alice/activity?year=2024&tz=America%2FNew_York&day=2024-02-29&limit=1&after=opaque%2B%2F%3D",
+        url: "https://todou.example/api/users/alice/activity?from=2024-01-01&to=2025-01-01&tz=America%2FNew_York&day=2024-02-29&limit=1&after=opaque%2B%2F%3D",
         method: "GET",
       },
       {
-        url: "https://todou.example/api/users/42/activity?year=2024&tz=UTC",
+        url: "https://todou.example/api/users/42/activity?from=2024-01-01&to=2025-01-01&tz=UTC",
         method: "GET",
       },
       {
-        url: "https://todou.example/api/projects/12/insights/activity?year=2024&tz=UTC&limit=100",
+        url: "https://todou.example/api/projects/12/insights/activity?from=2024-01-01&to=2025-01-01&tz=UTC&limit=100",
         method: "GET",
       },
     ]);

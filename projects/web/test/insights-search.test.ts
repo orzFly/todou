@@ -196,10 +196,7 @@ describe("insights search with activity dates", () => {
     to: "2026-03-08",
     grain: "6h",
   };
-  const activity = {
-    activity_year: 2024,
-    activity_day: "2024-02-29",
-  };
+  const activity = { activity_day: "2024-02-29" };
 
   it("preserves the exact legacy custom URL output", () => {
     expect(
@@ -251,23 +248,9 @@ describe("insights search with activity dates", () => {
     ["malformed day", { activity_day: "2026-03-08T00:00:00Z" }, {}],
     ["nonexistent day", { activity_day: "2026-02-29" }, {}],
     ["array day", { activity_day: ["2024-02-29"] }, {}],
-    ["malformed year", { activity_year: "2026x" }, {}],
-    ["array year", { activity_year: [2024] }, {}],
-    [
-      "mismatched year and day",
-      { activity_year: 2024, activity_day: "2023-02-28" },
-      { activity_year: 2024 },
-    ],
-    [
-      "invalid day beside a valid year",
-      { activity_year: 2024, activity_day: "2024-02-30" },
-      { activity_year: 2024 },
-    ],
-    [
-      "invalid year beside a valid day",
-      { activity_year: true, activity_day: "2024-02-29" },
-      { activity_day: "2024-02-29" },
-    ],
+    ["day out of the Gregorian calendar", { activity_day: "2024-02-30" }, {}],
+    ["day with a trailing newline", { activity_day: "2024-02-29\n" }, {}],
+    ["numeric day", { activity_day: 20240229 }, {}],
   ])("keeps all chart filters with %s", (_case, invalid, preserved) => {
     const parsed = parseInsightsSearch({ ...chart, ...invalid });
     expect(parsed).toStrictEqual({
@@ -287,20 +270,11 @@ describe("insights search with activity dates", () => {
     const initial = parseInsightsSearch({ ...chart, ...activity });
     const changed = parseInsightsSearch({
       ...initial,
-      activity_year: "2026",
       activity_day: "2026-03-08",
     });
-    expect(changed).toStrictEqual({
-      ...chart,
-      activity_year: 2026,
-      activity_day: "2026-03-08",
-    });
+    expect(changed).toStrictEqual({ ...chart, activity_day: "2026-03-08" });
     expect(
-      parseInsightsSearch({
-        ...changed,
-        activity_year: undefined,
-        activity_day: undefined,
-      }),
+      parseInsightsSearch({ ...changed, activity_day: undefined }),
     ).toStrictEqual(chart);
   });
 

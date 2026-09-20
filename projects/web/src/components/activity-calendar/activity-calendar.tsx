@@ -7,16 +7,16 @@ import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export interface ActivityCalendarProps {
-  /** Gregorian year, 1–9998. The parent owns URL state and data fetching. */
-  year: number;
-  /** Complete DTO days for year; [] while no snapshot is available. Counts are never inferred. */
+  /** Inclusive first local date of the window. The parent owns URL state and fetching. */
+  from: string;
+  /** Exclusive last local date of the window. */
+  to: string;
+  /** Complete DTO days for the window; [] while no snapshot is available. Counts are never inferred. */
   days: readonly ActivityDay[];
   /** Selection from the same snapshot as days. Only its date is used here. */
   selection: ActivitySelection | null;
   /** YYYY-MM-DD at the response cutoff in its timezone, supplied by the parent. */
   today: string;
-  /** Requests a year in 1..min(9998, today's year); does not choose a day. */
-  onYearChange: (year: number) => void;
   /** Requests a recorded date. Moving keyboard focus never calls this callback. */
   onDayChange: (date: string) => void;
   /** True for initial loading or refresh; an existing snapshot stays visible. */
@@ -42,13 +42,7 @@ const MONTHS = [
   "Nov",
   "Dec",
 ];
-const LEVELS = [
-  { label: "0", className: "bg-muted" },
-  { label: "1–3", className: "bg-primary/25" },
-  { label: "4–6", className: "bg-primary/45" },
-  { label: "7–9", className: "bg-primary/70" },
-  { label: "10+", className: "bg-primary" },
-];
+const RAMP = ["bg-primary/25", "bg-primary/45", "bg-primary/70", "bg-primary"];
 const ARROW_STEPS: Record<string, number | undefined> = {
   ArrowUp: -1,
   ArrowDown: 1,
@@ -56,30 +50,101 @@ const ARROW_STEPS: Record<string, number | undefined> = {
   ArrowRight: 7,
 };
 
-function level(count: number): number {
-  return count === 0 ? 0 : count <= 3 ? 1 : count <= 6 ? 2 : count <= 9 ? 3 : 4;
+export interface ActivityLevel {
+  label: string;
+  className: string;
+  /** Inclusive upper bound of the counts this level covers; 0 for the empty level. */
+  bound: number;
+}
+
+/**
+ * Buckets run 0..max over the counts actually on screen, so a project whose
+ * busiest day is 4 still uses the whole ramp instead of stopping at the second
+ * swatch of a fixed 10+ scale. Ranges that would collapse onto one count are
+ * dropped rather than repeated, which is why a max below 4 yields fewer levels.
+ */
+export function activityLevels(max: number): ActivityLevel[] {
+  const bounds: number[] = [];
+  for (let index = 1; index <= RAMP.length; index++) {
+    const bound = Math.ceil((max * index) / RAMP.length);
+    if (bound >= 1 && bound !== bounds.at(-1)) bounds.push(bound);
+  }
+  return [
+    { label: "0", className: "bg-muted", bound: 0 },
+    ...bounds.map((bound, index) => {
+      const lower = (bounds[index - 1] ?? 0) + 1;
+      return {
+        label: lower === bound ? String(bound) : `${lower}–${bound}`,
+        className:
+          RAMP[
+            bounds.length === 1
+              ? RAMP.length - 1
+              : Math.round((index * (RAMP.length - 1)) / (bounds.length - 1))
+          ] ?? RAMP[RAMP.length - 1],
+        bound,
+      };
+    }),
+  ];
+}
+
+function level(count: number, levels: readonly ActivityLevel[]): number {
+  const index = levels.findIndex((entry) => count <= entry.bound);
+  return index < 0 ? levels.length - 1 : index;
 }
 
 // Gregorian geometry only: no local Date midnight, timestamps, or timezone
 // conversion. DTO date strings remain the identity of each server-side bucket.
-function yearGeometry(year: number) {
-  const prior = year - 1;
-  const offset =
-    (prior +
-      Math.floor(prior / 4) -
-      Math.floor(prior / 100) +
-      Math.floor(prior / 400)) %
-    7;
+function monthLength(year: number, month: number): number {
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  const prefix = String(year).padStart(4, "0");
-  const dates = lengths.flatMap((length, month) =>
-    Array.from(
-      { length },
-      (_, day) =>
-        `${prefix}-${String(month + 1).padStart(2, "0")}-${String(day + 1).padStart(2, "0")}`,
-    ),
-  );
+  return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][
+    month - 1
+  ] as number;
+}
+
+function isoDate(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** Sakamoto's congruence, rotated so Monday is row 0. */
+function weekdayIndex(date: string): number {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const shift = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4][month - 1] as number;
+  const base = month < 3 ? year - 1 : year;
+  const sunday =
+    (base +
+      Math.floor(base / 4) -
+      Math.floor(base / 100) +
+      Math.floor(base / 400) +
+      shift +
+      day) %
+    7;
+  return (sunday + 6) % 7;
+}
+
+/** Half-open [from, to) of local dates; a year is just one window among many. */
+function windowGeometry(from: string, to: string) {
+  const dates: string[] = [];
+  let year = Number(from.slice(0, 4));
+  let month = Number(from.slice(5, 7));
+  let day = Number(from.slice(8, 10));
+  // The server caps the span; this bound only stops a malformed pair looping.
+  while (dates.length < 400) {
+    const date = isoDate(year, month, day);
+    if (date >= to) break;
+    dates.push(date);
+    day += 1;
+    if (day > monthLength(year, month)) {
+      day = 1;
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
+    }
+  }
+  const offset = dates[0] ? weekdayIndex(dates[0]) : 0;
   return { dates, offset, weeks: Math.ceil((dates.length + offset) / 7) };
 }
 
@@ -101,23 +166,28 @@ function dayLabel(date: string, day: ActivityDay | undefined, today: string) {
 
 /** Pure display and interaction: callers atomically supply a calendar snapshot. */
 export function ActivityCalendar({
-  year,
+  from,
+  to,
   days,
   selection,
   today,
-  onYearChange,
   onDayChange,
   loading = false,
   error = null,
   onRetry,
 }: ActivityCalendarProps) {
   const id = useId();
-  const yearInput = useRef<HTMLInputElement>(null);
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const calendar = useRef<HTMLFieldSetElement>(null);
   const restoreRemovedFocus = useRef(false);
-  const { dates, offset, weeks } = yearGeometry(year);
+  const { dates, offset, weeks } = windowGeometry(from, to);
   const byDate = new Map(days.map((day) => [day.date, day]));
+  const levels = activityLevels(
+    Math.max(
+      0,
+      ...days.map((day) => (day.state === "recorded" ? day.count : 0)),
+    ),
+  );
   const recorded = dates.filter(
     (date) => byDate.get(date)?.state === "recorded",
   );
@@ -182,22 +252,16 @@ export function ActivityCalendar({
 
   useEffect(() => {
     const focused = document.activeElement;
+    // Without a year control there is nowhere inside this section to park
+    // focus once every date is gone, so leave it where the browser put it.
     if (activeDate === null) {
-      const ownedFocus =
-        calendar.current?.contains(focused) ||
-        (restoreRemovedFocus.current && focused === document.body);
-      if (!loading && !error && ownedFocus) {
-        restoreRemovedFocus.current = false;
-        yearInput.current?.focus();
-      }
-    } else {
-      if (
-        calendar.current?.contains(focused) &&
-        focused instanceof HTMLButtonElement &&
-        focused.disabled
-      ) {
-        buttons.current.get(activeDate)?.focus();
-      }
+      if (!loading && !error) restoreRemovedFocus.current = false;
+    } else if (
+      calendar.current?.contains(focused) &&
+      focused instanceof HTMLButtonElement &&
+      focused.disabled
+    ) {
+      buttons.current.get(activeDate)?.focus();
     }
   }, [activeDate, loading, error]);
 
@@ -259,46 +323,22 @@ export function ActivityCalendar({
 
   const readDate =
     inspectedDate && dates.includes(inspectedDate) ? inspectedDate : activeDate;
-  const maxYear = Math.min(9998, Number(today.slice(0, 4)));
 
   return (
     <section
       aria-labelledby={`${id}-heading`}
       aria-busy={loading}
-      className="w-full min-w-0 max-w-full space-y-3"
+      className="w-full min-w-0 max-w-full space-y-3 rounded-xl border bg-card p-4 sm:p-5"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id={`${id}-heading`} className="font-semibold">
           Activity
         </h2>
-        <label className="flex items-center gap-2 text-sm">
-          Year
-          <input
-            ref={yearInput}
-            type="number"
-            min={1}
-            max={maxYear}
-            step={1}
-            value={year}
-            className="w-24 rounded-md border bg-background px-2 py-1 focus-visible:outline-2 focus-visible:outline-ring"
-            onChange={(event) => {
-              const next = event.currentTarget.valueAsNumber;
-              if (
-                Number.isInteger(next) &&
-                next >= 1 &&
-                next <= maxYear &&
-                next !== year
-              )
-                onYearChange(next);
-            }}
-          />
-        </label>
       </div>
+      {/* A refresh keeps the mounted calendar at its size: only the cold load
+          may take layout, so an update never moves what the reader is aiming at. */}
       {loading && (
-        <p
-          role="status"
-          className="animate-pulse text-sm text-muted-foreground"
-        >
+        <p role="status" className="sr-only">
           Loading activity…
         </p>
       )}
@@ -333,7 +373,7 @@ export function ActivityCalendar({
         >
           <fieldset
             ref={calendar}
-            aria-label={`${year} activity dates`}
+            aria-label={`Activity dates ${from} to ${dates.at(-1) ?? from}`}
             aria-describedby={`${id}-instructions`}
             className="m-0 grid w-max min-w-0 gap-1 border-0 p-1"
             style={{
@@ -354,7 +394,7 @@ export function ActivityCalendar({
             {dates.map((date, index) => {
               const day = byDate.get(date);
               const enabled = day?.state === "recorded";
-              const intensity = enabled ? level(day.count) : undefined;
+              const intensity = enabled ? level(day.count, levels) : undefined;
               const label = dayLabel(date, day, today);
               const column = Math.floor((index + offset) / 7) + 2;
               return (
@@ -409,13 +449,11 @@ export function ActivityCalendar({
                       className={cn(
                         "size-4 shrink-0 rounded-xs border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                         intensity !== undefined
-                          ? LEVELS[intensity].className
+                          ? levels[intensity]?.className
                           : "bg-transparent",
                         day?.state === "future" && "border-dashed opacity-50",
                         day?.state === "not_applicable" &&
                           "border-transparent bg-muted/30",
-                        date === today &&
-                          "ring-1 ring-foreground ring-offset-1 ring-offset-background",
                         enabled &&
                           selectedDate === date &&
                           "outline-2 outline-offset-2 outline-primary",
@@ -449,14 +487,14 @@ export function ActivityCalendar({
       )}
       {!loading && !error && recorded.length === 0 && (
         <p className="text-sm text-muted-foreground">
-          No available dates in {year}.
+          No available dates in this range.
         </p>
       )}
       <ul
         aria-label="Active cards per day"
         className="flex flex-wrap gap-3 text-xs text-muted-foreground"
       >
-        {LEVELS.map((entry) => (
+        {levels.map((entry) => (
           <li key={entry.label} className="inline-flex items-center gap-1">
             <span
               aria-hidden="true"

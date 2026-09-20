@@ -99,11 +99,7 @@ describe("parseReturnView — the destination has to be entirely valid", () => {
 });
 
 describe("parseReturnView — version 1 user activity dates", () => {
-  it.each([
-    { activity_year: 2024 },
-    { activity_day: "2024-02-29" },
-    { activity_year: 2024, activity_day: "2024-02-29" },
-  ])(
+  it.each([{ activity_day: "2024-02-29" }])(
     "preserves optional activity fields %j after serialization",
     (activity) => {
       const raw = stored({
@@ -166,24 +162,7 @@ describe("parseReturnView — version 1 user activity dates", () => {
     ["nonexistent April 31", { activity_day: "2026-04-31" }],
     ["year zero in day", { activity_day: "0000-01-01" }],
     ["unsupported year in day", { activity_day: "9999-01-01" }],
-    [
-      "mismatched year and day",
-      { activity_year: 2024, activity_day: "2023-02-28" },
-    ],
-    [
-      "nonexistent day with a valid year",
-      { activity_year: 2024, activity_day: "2024-02-30" },
-    ],
-    ["year zero", { activity_year: 0 }],
-    ["negative year", { activity_year: -1 }],
-    ["unsupported year", { activity_year: 9999 }],
-    ["fractional year", { activity_year: 2026.5 }],
-    ["malformed year", { activity_year: "2026x" }],
-    ["numeric string year", { activity_year: "2024" }],
-    ["boolean year", { activity_year: true }],
-    ["array year", { activity_year: [2024] }],
-    ["object year", { activity_year: {} }],
-    ["null year", { activity_year: null }],
+    ["nonexistent day", { activity_day: "2024-02-30" }],
     ["numeric day", { activity_day: 20260101 }],
     ["boolean day", { activity_day: true }],
     ["array day", { activity_day: ["2024-02-29"] }],
