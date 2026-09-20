@@ -848,6 +848,56 @@ describe("the way back and the identity beside it (T-407)", () => {
     }
   });
 
+  it.each([1441, 1024] as const)(
+    "tints as one box covering both halves at %spx (T-484)",
+    async (width) => {
+      setViewportWidth(width);
+      try {
+        const view = await toolbar("?v=2&file=design.md");
+        const back = slot(view, "back");
+        // Any spelling of "paint a background while hovered" counts, the
+        // `group-hover/…:` one included — that was the second box.
+        const tinted = [back, ...(back?.querySelectorAll("*") ?? [])].filter(
+          (node) =>
+            /(^|\s)(group-)?hover(\/[\w-]+)?:bg-/.test(
+              node?.getAttribute("class") ?? "",
+            ),
+        );
+        // One control, one highlight. A second box that lights up alongside
+        // reads as two buttons that happen to sit near each other — and in
+        // the gutter, where the column's edge runs between the arrow and the
+        // ref, that is exactly what it looked like.
+        expect(tinted).toHaveLength(1);
+        expect(tinted[0]).toBe(back);
+        // Which is only worth anything if the one box holds both halves.
+        expect(back?.querySelector("svg")).not.toBeNull();
+        expect(back?.textContent).toBe("T-1");
+        // And, in the gutter, if it reaches them. The arrow is hung off the
+        // row by `right-full mr-2` at `size-6`, so it stands that far left of
+        // the box's content edge; the box's own padding has to cover at least
+        // as much, or the single tint stops short of the arrow it is meant to
+        // include. Both numbers are read off the markup, so moving either one
+        // alone breaks the comparison.
+        if (width >= 1441) {
+          const arrow = back?.querySelector("svg")?.parentElement;
+          const step = (className: string, pattern: RegExp) =>
+            Number(pattern.exec(className)?.[1] ?? 0);
+          const arrowClass = arrow?.getAttribute("class") ?? "";
+          const reach =
+            step(arrowClass, /\bmr-(\d+)\b/) +
+            step(arrowClass, /\bsize-(\d+)\b/);
+          const padding = step(
+            back?.getAttribute("class") ?? "",
+            /\bpl-(\d+)\b/,
+          );
+          expect(padding).toBeGreaterThanOrEqual(reach);
+        }
+      } finally {
+        setViewportWidth(1024);
+      }
+    },
+  );
+
   it("truncates the identity on a narrow screen instead of hiding it", async () => {
     const view = await toolbar("?v=2&file=design.md");
     const className = slot(view, "title")?.className ?? "";

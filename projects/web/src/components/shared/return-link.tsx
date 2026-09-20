@@ -256,9 +256,14 @@ export function SpecReturnLink({
  * No resting background, because the ref not moving is the requirement. The
  * hover one is back (T-470): its padding is cancelled by an equal negative
  * margin, so the tint has room to sit in while the ref keeps the pixel it
- * would occupy without a button around it. Out in the gutter the arrow tints
- * as its own box — the two halves are too far apart for one — which is what
- * the whole control lighting up at once comes to there.
+ * would occupy without a button around it.
+ *
+ * One tint, whichever side of 1440 this is (T-484). In the gutter the arrow
+ * is out of flow and the ref is in it, with the column's edge between them,
+ * and the way across is the padding: it reaches back far enough to pass under
+ * the arrow, so a single background spans the pair. Two boxes that lit up
+ * together read as two buttons that happen to sit near each other, which is
+ * the thing the merge exists to stop.
  */
 export function SpecIssueReturnLink({
   slug,
@@ -285,10 +290,13 @@ export function SpecIssueReturnLink({
       aria-label={`Back to ${reference}`}
       data-toolbar-slot={slot}
       className={cn(
-        "group/back -my-1 inline-flex shrink-0 items-center gap-2 rounded-md py-1 text-sm text-muted-foreground tabular-nums hover:bg-muted hover:text-foreground",
-        // Left padding only while the arrow is still in the row: in the gutter
-        // it would run the two tints together across the column's edge.
-        floating ? "-mr-2 pr-2" : "-mx-2 px-2",
+        "-my-1 inline-flex shrink-0 items-center gap-2 rounded-md py-1 text-sm text-muted-foreground tabular-nums hover:bg-muted hover:text-foreground",
+        // 36px is the gutter the arrow was hung in, counted out: 12px from the
+        // icon's right edge to the column, the 16px icon itself, and the 8px
+        // of breathing room the in-row shape gives it on the other side of
+        // 1440. Every one of those is the same number twice — change one and
+        // the tint stops meeting the arrow.
+        floating ? "-mr-2 -ml-9 pr-2 pl-9" : "-mx-2 px-2",
       )}
     >
       {/* The same 4px of slack the icon buttons give a `size-4` arrow, so the
@@ -296,8 +304,7 @@ export function SpecIssueReturnLink({
       <span
         className={cn(
           "inline-flex shrink-0 items-center justify-center",
-          floating &&
-            "absolute right-full mr-2 size-6 rounded-md group-hover/back:bg-muted",
+          floating && "absolute right-full mr-2 size-6",
         )}
       >
         <ArrowLeftIcon className="size-4" />
