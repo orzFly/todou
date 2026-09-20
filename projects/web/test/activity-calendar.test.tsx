@@ -167,6 +167,33 @@ describe("ActivityCalendar dates and counts", () => {
     );
   });
 
+  it("cuts the ramp at quartiles of the counts, not of the range", () => {
+    // One loud day against a run of quiet ones. Cutting 0..40 into four would
+    // put every count below 10 — all seven ordinary days — in one bucket.
+    const counts = [1, 1, 1, 1, 2, 3, 10, 40];
+    const days = daysFor(
+      2024,
+      counts.map((count, index) => ({
+        date: `2024-01-0${index + 1}`,
+        state: "recorded" as const,
+        count,
+      })),
+    );
+    render(<ActivityCalendar {...props({ days })} />);
+    expect(
+      within(screen.getByRole("list", { name: "Active cards per day" }))
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["0", "1", "2–3", "4–40"]);
+    // The quiet days keep the lightest swatch, and the two loud ones separate
+    // from them instead of sharing it.
+    expect(tile("2024-01-01").dataset.level).toBe("1");
+    expect(tile("2024-01-05").dataset.level).toBe("2");
+    expect(tile("2024-01-06").dataset.level).toBe("2");
+    expect(tile("2024-01-07").dataset.level).toBe("3");
+    expect(tile("2024-01-08").dataset.level).toBe("3");
+  });
+
   it("reaches the darkest swatch on a quiet project instead of stopping at a fixed 10+", () => {
     const days = daysFor(
       2024,

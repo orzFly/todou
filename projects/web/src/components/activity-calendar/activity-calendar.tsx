@@ -58,16 +58,24 @@ export interface ActivityLevel {
 }
 
 /**
- * Buckets run 0..max over the counts actually on screen, so a project whose
- * busiest day is 4 still uses the whole ramp instead of stopping at the second
- * swatch of a fixed 10+ scale. Ranges that would collapse onto one count are
- * dropped rather than repeated, which is why a max below 4 yields fewer levels.
+ * Quartiles of the counts actually on screen, so each swatch carries about a
+ * quarter of the active days. Cutting the 0..max *range* into four instead
+ * reads the ramp off the busiest day alone: one day of 40 against a month of
+ * ones puts every ordinary day in the lightest bucket and tells the reader
+ * nothing about how they differ.
+ *
+ * Nearest-rank, and duplicate cuts are dropped rather than repeated — a set
+ * with few distinct counts genuinely has fewer levels to show, which is also
+ * why a quiet project still reaches the darkest swatch.
  */
-export function activityLevels(max: number): ActivityLevel[] {
+export function activityLevels(counts: readonly number[]): ActivityLevel[] {
+  // Zero is its own level; it must not drag the quartiles down with it.
+  const active = [...counts].filter((count) => count > 0).sort((a, b) => a - b);
   const bounds: number[] = [];
   for (let index = 1; index <= RAMP.length; index++) {
-    const bound = Math.ceil((max * index) / RAMP.length);
-    if (bound >= 1 && bound !== bounds.at(-1)) bounds.push(bound);
+    const rank = Math.ceil((active.length * index) / RAMP.length);
+    const bound = active[Math.max(0, rank - 1)];
+    if (bound !== undefined && bound !== bounds.at(-1)) bounds.push(bound);
   }
   return [
     { label: "0", className: "bg-muted", bound: 0 },
@@ -184,10 +192,7 @@ export function ActivityCalendar({
   const { dates, offset, weeks } = windowGeometry(from, to);
   const byDate = new Map(days.map((day) => [day.date, day]));
   const levels = activityLevels(
-    Math.max(
-      0,
-      ...days.map((day) => (day.state === "recorded" ? day.count : 0)),
-    ),
+    days.map((day) => (day.state === "recorded" ? day.count : 0)),
   );
   const recorded = dates.filter(
     (date) => byDate.get(date)?.state === "recorded",

@@ -184,8 +184,11 @@ describe("ActivityCalendar and ActivityCardList shared selection", () => {
       name: "2026-07-02: 3 active cards",
     });
     expect(tile.getAttribute("aria-pressed")).toBe("true");
-    // Three is the busiest day on screen, so it lands in the top bucket.
-    expect(tile.getAttribute("data-level")).toBe("3");
+    // Every active day here has the same count, so there is one level to show
+    // and it is the darkest one.
+    expect(tile.getAttribute("data-level")).toBe("1");
+    expect(tile.className).toContain("bg-primary");
+    expect(tile.className).not.toContain("bg-primary/");
     const list = within(
       view.getByRole("region", { name: "Selected day activity" }),
     );
