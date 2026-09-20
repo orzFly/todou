@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useState } from "react";
 
 /**
  * The row geometry the Labels and Assignees pickers share (T-458).
@@ -36,11 +36,23 @@ export function usePickerOrder<T>(
   query = "",
 ) {
   const candidates = JSON.stringify(items.map(idOf));
-  // biome-ignore lint/correctness/useExhaustiveDependencies: open, query and candidates are snapshot boundaries; toggles must not reorder rows
-  const selection = useMemo(
-    () => new Set(selectedIds),
-    [open, query, candidates],
-  );
+  const [snapshot, setSnapshot] = useState(() => ({
+    open,
+    query,
+    candidates,
+    selection: new Set(selectedIds),
+  }));
+  let selection = snapshot.selection;
+  if (
+    snapshot.open !== open ||
+    snapshot.query !== query ||
+    snapshot.candidates !== candidates
+  ) {
+    selection = new Set(selectedIds);
+    // Synchronize during render so children never commit the previous order.
+    // Selection alone is not a boundary; state survives discarded memo caches.
+    setSnapshot({ open, query, candidates, selection });
+  }
   return [
     ...items.filter((item) => selection.has(idOf(item))),
     ...items.filter((item) => !selection.has(idOf(item))),

@@ -5,7 +5,7 @@ import type {
   MemberRole,
 } from "@todou/shared";
 import { ROLE_RANK } from "@todou/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -63,7 +63,10 @@ export async function listMembers(
   const rows = await system
     .select()
     .from(projectMembers)
-    .where(eq(projectMembers.projectId, project.id));
+    .where(eq(projectMembers.projectId, project.id))
+    // Keep join order through profile/role edits; simultaneous joins use the
+    // user id, which is unique within the project, to make the order total.
+    .orderBy(asc(projectMembers.createdAt), asc(projectMembers.userId));
   const refs = await getUserRefs(
     system,
     rows.map((r) => r.userId),
