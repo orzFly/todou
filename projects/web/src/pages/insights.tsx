@@ -12,7 +12,7 @@ import { meQuery, projectQuery } from "@/api/queries.ts";
 import { ActivityCalendarSection } from "@/components/activity-calendar/activity-calendar-section.tsx";
 import { BurnChart } from "@/components/insights/burn-chart.tsx";
 import { StatusFlowChart } from "@/components/insights/status-flow-chart.tsx";
-import { PageSkeleton } from "@/components/page-skeleton.tsx";
+import { InsightsResultsSkeleton } from "@/components/page-skeleton.tsx";
 import {
   LoadFailure,
   RefreshFailure,
@@ -143,7 +143,7 @@ export function InsightsPage() {
           retrying={coldFailure.isFetching}
         />
       ) : result.data === undefined ? (
-        <PageSkeleton kind="insights" />
+        <InsightsResultsSkeleton />
       ) : (
         <>
           {settings.isError && (

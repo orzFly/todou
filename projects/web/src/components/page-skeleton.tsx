@@ -372,55 +372,63 @@ function BoardSkeleton() {
   );
 }
 
-const INSIGHTS_CHARTS = ["throughput", "cycle-time"];
-const INSIGHTS_ROWS = ["i1", "i2", "i3", "i4"];
+const INSIGHTS_CHARTS = ["burn", "status-flow"];
 
 function InsightsSkeleton() {
   return (
-    <div className="space-y-6" data-testid="page-skeleton" data-kind="insights">
+    <div
+      className="min-w-0 space-y-5"
+      data-testid="page-skeleton"
+      data-kind="insights"
+    >
       <Skeleton className="h-7 w-32" />
       <div
-        className="flex flex-wrap items-center gap-2"
+        className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-between"
         data-testid="insights-skeleton-controls"
       >
-        <Skeleton className="h-8 w-28" />
-        <Skeleton className="h-8 w-36" />
-        <Skeleton className="h-8 w-24" />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {INSIGHTS_CHARTS.map((chart) => (
-          <div
-            key={chart}
-            className="min-w-0 space-y-4 rounded-lg border p-4"
-            data-testid="insights-skeleton-chart"
-          >
-            <Skeleton className="h-5 w-32" />
-            <Skeleton className="h-48 w-full" />
-            <Skeleton className="mx-auto h-3 w-1/2" />
-          </div>
-        ))}
-      </div>
-      <div
-        className="overflow-hidden rounded-lg border"
-        data-testid="insights-skeleton-table"
-      >
-        <div className="grid grid-cols-[2fr_1fr_1fr] gap-4 border-b bg-muted px-4 py-3">
-          <Skeleton className="h-4 w-3/5" />
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-4 w-2/3" />
+        <div className="min-w-0 space-y-2">
+          <Skeleton className="h-5 w-20" />
+          <Skeleton className="h-11.5 w-80 max-w-full rounded-lg" />
         </div>
-        {INSIGHTS_ROWS.map((row) => (
-          <div
-            key={row}
-            className="grid grid-cols-[2fr_1fr_1fr] gap-4 border-b px-4 py-3 last:border-0"
-            data-testid="insights-skeleton-table-row"
-          >
-            <Skeleton className="h-4 w-4/5" />
-            <Skeleton className="h-4 w-1/2" />
-            <Skeleton className="h-4 w-1/2" />
-          </div>
-        ))}
+        <div className="min-w-0 space-y-2">
+          <Skeleton className="h-5 w-20" />
+          <Skeleton className="h-11.5 w-72 max-w-full rounded-lg" />
+        </div>
       </div>
+      <InsightsResultsSkeleton />
+      <div
+        className="min-w-0 space-y-3 rounded-xl border bg-card p-4 sm:p-5"
+        data-testid="insights-skeleton-activity"
+      >
+        <Skeleton className="h-6 w-20" />
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-4 w-60 max-w-full" />
+      </div>
+    </div>
+  );
+}
+
+/** The charts load independently while the page controls and activity stay mounted. */
+export function InsightsResultsSkeleton() {
+  return (
+    <div
+      className="grid min-w-0 gap-5 xl:grid-cols-2"
+      data-testid="insights-results-skeleton"
+    >
+      {INSIGHTS_CHARTS.map((chart) => (
+        <div
+          key={chart}
+          className="min-w-0 rounded-xl border bg-card p-4 sm:p-5"
+          data-testid="insights-skeleton-chart"
+        >
+          <Skeleton className="h-6 w-32" />
+          <div className="mt-3 mb-4 flex min-h-5 flex-wrap gap-x-4 gap-y-1">
+            <Skeleton className="h-5 w-20" />
+            <Skeleton className="h-5 w-20" />
+          </div>
+          <Skeleton className="aspect-[560/340] w-full" />
+        </div>
+      ))}
     </div>
   );
 }

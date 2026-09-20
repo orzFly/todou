@@ -1013,16 +1013,18 @@ describe("Insights page", () => {
     vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
     const view = renderPage();
     const chart = await screen.findByRole("heading", { name: "Burn chart" });
-    expect(document.querySelector('[data-testid="page-skeleton"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="insights-results-skeleton"]'),
+    ).toBeNull();
 
     // Every range and grain is its own query key. Without carried-over data the
-    // charts fall back to the page skeleton on each change, and the reader
+    // charts fall back to the results skeleton on each change, and the reader
     // watches the whole section collapse and reflow to read a nearby window.
     // Node identity is the criterion: a skeleton in between unmounts this one.
     for (const button of ["90d", "7d", "12h", "1d"]) {
       fireEvent.click(screen.getByRole("button", { name: button }));
       expect(
-        document.querySelector('[data-testid="page-skeleton"]'),
+        document.querySelector('[data-testid="insights-results-skeleton"]'),
       ).toBeNull();
       await waitFor(() =>
         expect(
@@ -1032,7 +1034,7 @@ describe("Insights page", () => {
         ).toBe("true"),
       );
       expect(
-        document.querySelector('[data-testid="page-skeleton"]'),
+        document.querySelector('[data-testid="insights-results-skeleton"]'),
       ).toBeNull();
       expect(screen.getByRole("heading", { name: "Burn chart" })).toBe(chart);
     }
@@ -1201,15 +1203,16 @@ describe("Insights page", () => {
     view.client.clear();
   });
 
-  it("shows the Insights shape while loading and retries a cold read failure", async () => {
+  it("shows only chart placeholders while loading and retries a cold read failure", async () => {
     vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
     const request = vi
       .spyOn(api, "getInsightsBurn")
       .mockReturnValue(new Promise<BurnResponse>(() => undefined));
     const loading = renderPage();
-    expect(
-      (await screen.findByTestId("page-skeleton")).getAttribute("data-kind"),
-    ).toBe("insights");
+    expect(await screen.findByTestId("insights-results-skeleton")).toBeTruthy();
+    expect(screen.queryByTestId("page-skeleton")).toBeNull();
+    expect(screen.queryByTestId("insights-skeleton-controls")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Insights" })).toBeTruthy();
     loading.unmount();
     loading.client.clear();
     request

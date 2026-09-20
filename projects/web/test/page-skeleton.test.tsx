@@ -49,13 +49,13 @@ describe("PageSkeleton", () => {
     expect(view.getAllByTestId("spec-skeleton-doc")).toHaveLength(1);
   });
 
-  it("draws Insights controls, two charts and a table", () => {
+  it("draws Insights controls, two charts and activity", () => {
     const view = render(<PageSkeleton kind="insights" />);
     const controls = view.getByTestId("insights-skeleton-controls");
-    expect(controls.querySelectorAll("[data-slot=skeleton]")).toHaveLength(3);
+    expect(controls.querySelectorAll("[data-slot=skeleton]")).toHaveLength(4);
     expect(view.getAllByTestId("insights-skeleton-chart")).toHaveLength(2);
-    expect(view.getByTestId("insights-skeleton-table")).toBeTruthy();
-    expect(view.getAllByTestId("insights-skeleton-table-row")).toHaveLength(4);
+    expect(view.getByTestId("insights-results-skeleton")).toBeTruthy();
+    expect(view.getByTestId("insights-skeleton-activity")).toBeTruthy();
   });
 
   it("builds the list shape out of the body the list page reuses", () => {
