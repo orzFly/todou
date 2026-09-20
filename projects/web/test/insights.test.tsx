@@ -25,16 +25,25 @@ import {
   type Me,
   type Project,
 } from "@todou/shared";
+import { createElement } from "react";
 import * as sonner from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { projectActivityCalendarQuery } from "../src/api/activity-calendar.ts";
 import { insightsKeys } from "../src/api/insights.ts";
 import { api, meQuery, projectQuery } from "../src/api/queries.ts";
+import type * as CalendarSectionModule from "../src/components/activity-calendar/activity-calendar-section.tsx";
+import type * as BurnChartModule from "../src/components/insights/burn-chart.tsx";
+import type * as StatusFlowChartModule from "../src/components/insights/status-flow-chart.tsx";
 import {
   insightsRequest,
   parseInsightsSearch,
   resolveInsightsSearch,
 } from "../src/lib/insights-search.ts";
+import type {
+  InsightsHover,
+  InsightsLink,
+  TimeSpan,
+} from "../src/lib/insights-selection.ts";
 import {
   InsightsControls,
   InsightsPage,
@@ -59,6 +68,63 @@ function dayBounds(date: string): { start: string; end: string } {
   const next = new Date(parsed + 86_400_000).toISOString().slice(0, 10);
   return { start: `${date}T00:00:00.000Z`, end: `${next}T00:00:00.000Z` };
 }
+
+/**
+ * The InsightsLink is the whole coupling between the three surfaces, so the
+ * probe records the object each one is handed and then renders the real
+ * component: everything else in this file still sees the genuine charts and
+ * calendar. Reading the link back is how a hover raised on one surface can be
+ * checked against what the other two were given -- and against whether it was
+ * the same object, from the same commit, rather than three copies that agree.
+ */
+const linkProbe = vi.hoisted(() => ({
+  burn: [] as (InsightsLink | undefined)[],
+  flow: [] as (InsightsLink | undefined)[],
+  activity: [] as (InsightsLink | undefined)[],
+}));
+
+vi.mock("../src/components/insights/burn-chart.tsx", async (importOriginal) => {
+  const actual = await importOriginal<typeof BurnChartModule>();
+  return {
+    ...actual,
+    BurnChart: (props: Parameters<typeof actual.BurnChart>[0]) => {
+      linkProbe.burn.push(props.link);
+      return createElement(actual.BurnChart, props);
+    },
+  };
+});
+
+vi.mock(
+  "../src/components/insights/status-flow-chart.tsx",
+  async (importOriginal) => {
+    const actual = await importOriginal<typeof StatusFlowChartModule>();
+    return {
+      ...actual,
+      StatusFlowChart: (
+        props: Parameters<typeof actual.StatusFlowChart>[0],
+      ) => {
+        linkProbe.flow.push(props.link);
+        return createElement(actual.StatusFlowChart, props);
+      },
+    };
+  },
+);
+
+vi.mock(
+  "../src/components/activity-calendar/activity-calendar-section.tsx",
+  async (importOriginal) => {
+    const actual = await importOriginal<typeof CalendarSectionModule>();
+    return {
+      ...actual,
+      ActivityCalendarSection: (
+        props: Parameters<typeof actual.ActivityCalendarSection>[0],
+      ) => {
+        linkProbe.activity.push(props.link);
+        return createElement(actual.ActivityCalendarSection, props);
+      },
+    };
+  },
+);
 
 vi.mock("sonner", async (importOriginal) => {
   const actual = await importOriginal<typeof sonner>();
@@ -292,6 +358,9 @@ afterEach(() => {
   vi.mocked(sonner.toast).mockClear();
   vi.restoreAllMocks();
   vi.useRealTimers();
+  linkProbe.burn.length = 0;
+  linkProbe.flow.length = 0;
+  linkProbe.activity.length = 0;
 });
 
 describe("Insights route", () => {
@@ -1349,5 +1418,87 @@ describe("Insights page", () => {
     expect(
       screen.getByRole("heading", { name: "Status flow chart" }),
     ).toBeTruthy();
+  });
+});
+
+/**
+ * One hover, one selection, three surfaces. The cases below raise each through
+ * the link one surface was handed and read it back off the other two, because
+ * that shared object is the entire mechanism; what the charts and the calendar
+ * then draw with it is their own contract, asserted next to those components.
+ */
+describe("Insights linked hover and selection", () => {
+  const firstDay = {
+    start: Date.parse("2026-09-17T00:00:00Z"),
+    end: Date.parse("2026-09-18T00:00:00Z"),
+  };
+
+  async function renderLinked() {
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    const burn = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
+    const view = renderPage(undefined, { calendar: recordedCalendar });
+    await screen.findByRole("heading", { name: "Burn chart" });
+    await waitFor(() => expect(linkProbe.activity.at(-1)).toBeDefined());
+    return { view, burn, windowReads: burn.mock.calls.length };
+  }
+
+  it("hands both charts and the activity calendar the same link", async () => {
+    const { view } = await renderLinked();
+    const link = linkProbe.burn.at(-1);
+    expect(link).toBeDefined();
+    expect(link?.hover).toBeNull();
+    expect(link?.selection).toBeNull();
+    expect(linkProbe.flow.at(-1)).toBe(link);
+    expect(linkProbe.activity.at(-1)).toBe(link);
+    view.unmount();
+    view.client.clear();
+  });
+
+  it("marks both charts and the calendar from a hover on one chart", async () => {
+    const { view, burn, windowReads } = await renderLinked();
+    const search = { ...view.router.state.location.search };
+    const hover: InsightsHover = { at: firstDay.start + 6 * 3_600_000 };
+    act(() => linkProbe.burn.at(-1)?.onHover(hover));
+
+    const linked = linkProbe.burn.at(-1);
+    expect(linked?.hover).toBe(hover);
+    expect(linkProbe.flow.at(-1)).toBe(linked);
+    expect(linkProbe.activity.at(-1)).toBe(linked);
+
+    // A cell's hover carries its whole interval, and reaches the charts intact:
+    // a day has width on their axis, so they have a band to draw rather than a
+    // line. Leaving the pointer clears every surface at once.
+    const cell: InsightsHover = { at: firstDay.start, span: firstDay };
+    act(() => linkProbe.activity.at(-1)?.onHover(cell));
+    expect(linkProbe.burn.at(-1)?.hover).toBe(cell);
+    expect(linkProbe.flow.at(-1)?.hover).toBe(cell);
+    act(() => linkProbe.flow.at(-1)?.onHover(null));
+    expect(linkProbe.burn.at(-1)?.hover).toBeNull();
+    expect(linkProbe.activity.at(-1)?.hover).toBeNull();
+
+    expect(view.router.state.location.search).toEqual(search);
+    expect(burn).toHaveBeenCalledTimes(windowReads);
+    view.unmount();
+    view.client.clear();
+  });
+
+  it("shares a selection without touching the URL or the window", async () => {
+    const { view, burn, windowReads } = await renderLinked();
+    const search = { ...view.router.state.location.search };
+    const span: TimeSpan = firstDay;
+    act(() => linkProbe.activity.at(-1)?.onSelect(span));
+    expect(linkProbe.burn.at(-1)?.selection).toBe(span);
+    expect(linkProbe.flow.at(-1)?.selection).toBe(span);
+
+    act(() => linkProbe.burn.at(-1)?.onSelect(null));
+    expect(linkProbe.flow.at(-1)?.selection).toBeNull();
+    expect(linkProbe.activity.at(-1)?.selection).toBeNull();
+
+    // Transient by decision: nothing lands in the URL, and no range picked out
+    // of the window may re-fetch or move the window it was picked out of.
+    expect(view.router.state.location.search).toEqual(search);
+    expect(burn).toHaveBeenCalledTimes(windowReads);
+    view.unmount();
+    view.client.clear();
   });
 });

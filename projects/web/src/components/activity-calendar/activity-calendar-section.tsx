@@ -15,6 +15,7 @@ import {
   userActivityCalendarQuery,
 } from "@/api/activity-calendar.ts";
 import { activityToday } from "@/lib/activity-calendar-search.ts";
+import type { InsightsLink } from "@/lib/insights-selection.ts";
 import { ActivityCalendar } from "./activity-calendar.tsx";
 import { ActivityCardList } from "./activity-card-list.tsx";
 
@@ -42,6 +43,11 @@ export interface ActivityCalendarSectionProps {
   today: string;
   /** Page size, defaulting to the query API's 50. */
   limit?: number;
+  /**
+   * Hover and instant selection shared with the insights charts, forwarded
+   * untouched. The profile page has no charts to link to and omits it.
+   */
+  link?: InsightsLink;
   /** The caller owns navigation and updates these controlled props. */
   /** Legal defaults pass { replace: true }; user selections omit options so callers can push history. */
   onDayChange: (day: string, options?: ActivityDayChangeOptions) => void;
@@ -255,6 +261,7 @@ export function ActivityCalendarSection(props: ActivityCalendarSectionProps) {
         days={response?.days ?? []}
         selection={response?.selection ?? null}
         today={today}
+        link={props.link}
         onDayChange={props.onDayChange}
         loading={loading}
         error={response?.selection ? null : baseError}

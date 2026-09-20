@@ -38,6 +38,11 @@ import {
   resolveInsightsSearch,
   shiftCalendarDate,
 } from "@/lib/insights-search.ts";
+import type {
+  InsightsHover,
+  InsightsLink,
+  TimeSpan,
+} from "@/lib/insights-selection.ts";
 
 export function InsightsPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
@@ -52,6 +57,20 @@ export function InsightsPage() {
     now: new Date(),
     timezone: browserActivityTimezone(),
   }));
+  // Where the reader is pointing and what they picked out of the window. Both
+  // stay out of the URL: they answer "right now", and a restored hover would
+  // claim a pointer that is no longer on the page.
+  const [hover, setHover] = useState<InsightsHover | null>(null);
+  const [selection, setSelection] = useState<TimeSpan | null>(null);
+  // One object per render handed to every surface, so a pointer on any of them
+  // reaches all of them in the same commit. Neither value feeds the queries
+  // below: picking a range must never move the window it was picked out of.
+  const link: InsightsLink = {
+    hover,
+    selection,
+    onHover: setHover,
+    onSelect: setSelection,
+  };
   const resolved = resolveInsightsSearch(search, context);
   const activity = resolveActivityDateSearch(search, context);
   const today = activityToday(context.now, context.timezone);
@@ -162,7 +181,7 @@ export function InsightsPage() {
               retrying={result.isFetching}
             />
           )}
-          <InsightsResults data={result.data} />
+          <InsightsResults data={result.data} link={link} />
         </>
       )}
       {viewer.data && project.data && (
@@ -175,6 +194,7 @@ export function InsightsPage() {
           }}
           {...activityWindow}
           day={activity.day}
+          link={link}
           timezone={context.timezone}
           today={today}
           onInvalidDay={(day) => {
@@ -378,7 +398,14 @@ export function InsightsControls({
   );
 }
 
-export function InsightsResults({ data }: { data: BurnResponse }) {
+export function InsightsResults({
+  data,
+  link,
+}: {
+  data: BurnResponse;
+  /** Absent where the charts stand alone; they simply draw no linked marks. */
+  link?: InsightsLink;
+}) {
   const [selection, setSelection] = useState({
     data,
     index: data.buckets.length - 1,
@@ -392,6 +419,7 @@ export function InsightsResults({ data }: { data: BurnResponse }) {
     data,
     selectedIndex,
     onSelect: (index: number) => setSelection({ data, index }),
+    link,
   };
   return (
     <div className="space-y-5">

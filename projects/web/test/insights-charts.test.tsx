@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import type {
+  ActivityDay,
   Bucket,
   BurnResponse,
   Flow,
@@ -8,6 +9,7 @@ import type {
 } from "@todou/shared";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ActivityCalendar } from "../src/components/activity-calendar/activity-calendar.tsx";
 import { BurnChart } from "../src/components/insights/burn-chart.tsx";
 import {
   bucketX,
@@ -22,6 +24,11 @@ import {
   timeScale,
 } from "../src/components/insights/chart-frame.tsx";
 import { StatusFlowChart } from "../src/components/insights/status-flow-chart.tsx";
+import type {
+  InsightsHover,
+  InsightsLink,
+  TimeSpan,
+} from "../src/lib/insights-selection.ts";
 
 // Both burn axes span the whole plot rectangle; they stay independent of each other.
 const burnScale = (max: number) => countScale(max, PLOT_TOP, PLOT_BOTTOM);
@@ -167,6 +174,49 @@ function SharedSelection({ data }: { data: BurnResponse }) {
       <StatusFlowChart {...props} />
     </>
   );
+}
+
+function linkOf(overrides: Partial<InsightsLink> = {}): InsightsLink {
+  return {
+    hover: null,
+    selection: null,
+    onHover: vi.fn(),
+    onSelect: vi.fn(),
+    ...overrides,
+  };
+}
+
+function LinkedCharts({
+  data,
+  link,
+}: {
+  data: BurnResponse;
+  link: InsightsLink;
+}) {
+  const props = { data, selectedIndex: 0, onSelect: vi.fn(), link };
+  return (
+    <>
+      <BurnChart {...props} />
+      <StatusFlowChart {...props} />
+    </>
+  );
+}
+
+// The plot rectangle sits at its viewBox size, offset by 10, so a client x of
+// `10 + x(time)` lands exactly on that instant.
+const CLIENT_OFFSET = 10;
+function layOut(svg: Element) {
+  vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+    x: CLIENT_OFFSET,
+    y: 0,
+    left: CLIENT_OFFSET,
+    right: CLIENT_OFFSET + CHART_WIDTH,
+    top: 0,
+    bottom: CHART_HEIGHT,
+    width: CHART_WIDTH,
+    height: CHART_HEIGHT,
+    toJSON: () => ({}),
+  });
 }
 
 afterEach(() => {
@@ -417,6 +467,247 @@ describe("insights charts", () => {
       expect(onSelect).not.toHaveBeenCalled();
     },
   );
+
+  it("marks a hovered instant with one line and a hovered day with a band, in both charts", () => {
+    const data = response();
+    const x = timeScale(data.buckets);
+    const at = Date.parse("2026-09-02T06:00:00Z");
+    const { container, rerender } = render(
+      <LinkedCharts data={data} link={linkOf({ hover: { at } })} />,
+    );
+    const marks = () => [...container.querySelectorAll('[data-mark="hover"]')];
+    expect(marks().map((mark) => mark.tagName.toLowerCase())).toEqual([
+      "line",
+      "line",
+    ]);
+    for (const mark of marks()) {
+      expect(mark.getAttribute("data-hover")).toBe("instant");
+      expect(mark.getAttribute("x1")).toBe(String(x(at)));
+      expect(mark.getAttribute("x2")).toBe(String(x(at)));
+      expect(mark.getAttribute("y1")).toBe(String(PLOT_TOP));
+      expect(mark.getAttribute("y2")).toBe(String(PLOT_BOTTOM));
+    }
+    // A whole activity cell has width on this axis, so it reads as a band.
+    const day = {
+      start: Date.parse(data.buckets[1]!.start),
+      end: Date.parse(data.buckets[1]!.end),
+    };
+    rerender(
+      <LinkedCharts data={data} link={linkOf({ hover: { at, span: day } })} />,
+    );
+    expect(marks().map((mark) => mark.tagName.toLowerCase())).toEqual([
+      "rect",
+      "rect",
+    ]);
+    for (const mark of marks()) {
+      expect(mark.getAttribute("data-hover")).toBe("span");
+      expect(Number(mark.getAttribute("x"))).toBeCloseTo(x(day.start));
+      expect(Number(mark.getAttribute("width"))).toBeCloseTo(
+        x(day.end) - x(day.start),
+      );
+      expect(Number(mark.getAttribute("y"))).toBe(PLOT_TOP);
+      expect(Number(mark.getAttribute("height"))).toBe(PLOT_BOTTOM - PLOT_TOP);
+    }
+  });
+
+  it("draws one vertical line while the pointer is on the chart, not two", () => {
+    const data = response();
+    const at = Date.parse("2026-09-02T06:00:00Z");
+    const { container, getByRole } = render(
+      <BurnChart
+        data={data}
+        selectedIndex={0}
+        onSelect={vi.fn()}
+        link={linkOf({ hover: { at } })}
+      />,
+    );
+    layOut(getByRole("img", { name: "Burn chart" }));
+    fireEvent.pointerMove(
+      getByRole("group", { name: "Burn chart selection" }),
+      { clientX: CLIENT_OFFSET + timeScale(data.buckets)(at) },
+    );
+    // Pointing at the chart also raises its own bucket inspector, which reads
+    // the bucket's centre. Two full-height lines a few pixels apart claim two
+    // different instants, so the inspector keeps the tooltip and drops its line.
+    expect(getByRole("tooltip")).toBeTruthy();
+    const verticals = [...container.querySelectorAll("line")].filter(
+      (line) =>
+        line.getAttribute("y1") === String(PLOT_TOP) &&
+        line.getAttribute("y2") === String(PLOT_BOTTOM),
+    );
+    expect(verticals).toHaveLength(1);
+    expect(verticals[0]!.getAttribute("data-hover")).toBe("instant");
+  });
+
+  it("clips the selection band to its own window and draws nothing outside it", () => {
+    const data = response();
+    const x = timeScale(data.buckets);
+    const overrun = {
+      start: Date.parse("2026-08-31T12:00:00Z"),
+      end: Date.parse("2026-09-01T12:00:00Z"),
+    };
+    const { container, rerender } = render(
+      <LinkedCharts data={data} link={linkOf({ selection: overrun })} />,
+    );
+    const bands = () =>
+      [
+        ...container.querySelectorAll('[data-mark="selection"]'),
+      ] as SVGElement[];
+    expect(bands()).toHaveLength(2);
+    for (const band of bands()) {
+      expect(Number(band.getAttribute("x"))).toBe(PLOT_LEFT);
+      expect(Number(band.getAttribute("width"))).toBeCloseTo(
+        x(overrun.end) - PLOT_LEFT,
+      );
+      expect(Number(band.getAttribute("y"))).toBe(PLOT_TOP);
+      expect(Number(band.getAttribute("height"))).toBe(PLOT_BOTTOM - PLOT_TOP);
+    }
+    // Selections that miss this window leave no trace at all: no band, no hint.
+    rerender(
+      <LinkedCharts
+        data={data}
+        link={linkOf({
+          selection: {
+            start: Date.parse("2026-08-20T00:00:00Z"),
+            end: Date.parse("2026-08-21T00:00:00Z"),
+          },
+          hover: {
+            at: Date.parse("2026-08-20T06:00:00Z"),
+            span: {
+              start: Date.parse("2026-08-20T00:00:00Z"),
+              end: Date.parse("2026-08-21T00:00:00Z"),
+            },
+          },
+        })}
+      />,
+    );
+    expect(container.querySelectorAll("[data-mark]")).toHaveLength(0);
+    // A selection touching the first bucket's start still ends outside it.
+    rerender(
+      <LinkedCharts
+        data={data}
+        link={linkOf({
+          selection: {
+            start: Date.parse("2026-08-31T00:00:00Z"),
+            end: Date.parse("2026-09-01T00:00:00Z"),
+          },
+        })}
+      />,
+    );
+    expect(container.querySelectorAll("[data-mark]")).toHaveLength(0);
+  });
+
+  it("selects a normalised span from a backwards drag without moving the window", () => {
+    const data = response();
+    const link = linkOf();
+    const { container, getByRole } = render(
+      <BurnChart
+        data={data}
+        selectedIndex={0}
+        onSelect={vi.fn()}
+        link={link}
+      />,
+    );
+    layOut(getByRole("img", { name: "Burn chart" }));
+    const group = getByRole("group", { name: "Burn chart selection" });
+    const x = timeScale(data.buckets);
+    const axis = container.querySelector('[data-axis="time"]')!.outerHTML;
+    const later = Date.parse("2026-09-03T00:00:00Z");
+    const earlier = Date.parse("2026-09-01T12:00:00Z");
+    fireEvent.pointerDown(group, {
+      clientX: CLIENT_OFFSET + x(later),
+      pointerId: 1,
+    });
+    fireEvent.pointerMove(group, {
+      clientX: CLIENT_OFFSET + x(earlier),
+      pointerId: 1,
+      buttons: 1,
+    });
+    fireEvent.pointerUp(group, {
+      clientX: CLIENT_OFFSET + x(earlier),
+      pointerId: 1,
+    });
+    const span = vi.mocked(link.onSelect).mock.lastCall![0]!;
+    expect(span.start).toBeLessThan(span.end);
+    expect(span.start).toBeCloseTo(earlier, -3);
+    expect(span.end).toBeCloseTo(later, -3);
+    // Reading a range never rescales the axis it was read from.
+    expect(container.querySelector('[data-axis="time"]')!.outerHTML).toBe(axis);
+
+    // A click keeps its existing meaning — inspect this bucket. Selecting on it
+    // too would hand the reader a band on their very first click, and the only
+    // gesture that takes one back is Escape.
+    vi.mocked(link.onSelect).mockClear();
+    const clicked = data.buckets[1]!;
+    const middle = CLIENT_OFFSET + bucketX(clicked, x);
+    fireEvent.pointerDown(group, { clientX: middle, pointerId: 2, button: 0 });
+    fireEvent.pointerUp(group, { clientX: middle + 1, pointerId: 2 });
+    expect(link.onSelect).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(group, { key: "Escape" });
+    expect(link.onSelect).toHaveBeenLastCalledWith(null);
+  });
+
+  it("refuses to drag from a non-primary button, or once one is released", () => {
+    const data = response();
+    const link = linkOf();
+    const { container } = render(
+      <BurnChart
+        data={data}
+        selectedIndex={0}
+        onSelect={vi.fn()}
+        link={link}
+      />,
+    );
+    const group = container.querySelector("fieldset")!;
+    layOut(container.querySelector("svg")!);
+    const x = timeScale(data.buckets);
+    const from =
+      CLIENT_OFFSET + x(Date.parse(data.buckets[0]!.start) + 3_600_000);
+    const to = CLIENT_OFFSET + x(Date.parse(data.buckets[2]!.start));
+
+    // A right-click's release can be swallowed by the context menu.
+    fireEvent.pointerDown(group, { clientX: from, pointerId: 3, button: 2 });
+    fireEvent.pointerMove(group, { clientX: to, pointerId: 3, buttons: 2 });
+    expect(link.onSelect).not.toHaveBeenCalled();
+
+    // And a primary drag whose release never arrives must not keep extending
+    // on bare movement afterwards.
+    fireEvent.pointerDown(group, { clientX: from, pointerId: 4, button: 0 });
+    fireEvent.pointerMove(group, { clientX: to, pointerId: 4, buttons: 0 });
+    expect(link.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("reports the instant under the pointer and clears it on leave", () => {
+    const data = response();
+    const link = linkOf();
+    const { getByRole } = render(
+      <StatusFlowChart
+        data={data}
+        selectedIndex={0}
+        onSelect={vi.fn()}
+        link={link}
+      />,
+    );
+    layOut(getByRole("img", { name: "Status flow chart" }));
+    const group = getByRole("group", { name: "Status flow chart selection" });
+    const x = timeScale(data.buckets);
+    const at = Date.parse("2026-09-02T12:00:00Z");
+    fireEvent.pointerMove(group, { clientX: CLIENT_OFFSET + x(at) });
+    const hover = vi.mocked(link.onHover).mock.lastCall![0]!;
+    expect(hover.at).toBeCloseTo(at, -3);
+    expect(hover.span).toBeUndefined();
+    expect(link.onSelect).not.toHaveBeenCalled();
+    // The last instant of the window, never the exclusive end past its edge.
+    fireEvent.pointerMove(group, {
+      clientX: CLIENT_OFFSET + CHART_WIDTH + 200,
+    });
+    expect(vi.mocked(link.onHover).mock.lastCall![0]!.at).toBe(
+      Date.parse(data.buckets[2]!.end) - 1,
+    );
+    fireEvent.pointerLeave(group);
+    expect(link.onHover).toHaveBeenLastCalledWith(null);
+  });
 
   it("breaks the remaining step across an unknown interval and retains its independent completed bar", () => {
     const data = response();
@@ -900,4 +1191,132 @@ describe("insights charts", () => {
       }
     },
   );
+});
+
+// The unit tests above hand each surface a link by hand. These drive a real
+// pointer across real components sharing one state, which is the only place
+// the two halves of the contract meet.
+describe("insights linked surfaces", () => {
+  const WINDOW = { from: "2026-09-01", to: "2026-09-08" };
+
+  function activityDays(): ActivityDay[] {
+    return Array.from({ length: 7 }, (_, offset) => {
+      const date = `2026-09-0${offset + 1}`;
+      return {
+        date,
+        state: "recorded",
+        count: offset,
+        start: `${date}T00:00:00.000Z`,
+        end: `2026-09-0${offset + 2}T00:00:00.000Z`,
+      };
+    });
+  }
+
+  function LinkedSurfaces({ data }: { data: BurnResponse }) {
+    const [hover, setHover] = useState<InsightsHover | null>(null);
+    const [selection, setSelection] = useState<TimeSpan | null>(null);
+    const [selectedIndex, onSelect] = useState(0);
+    const link: InsightsLink = {
+      hover,
+      selection,
+      onHover: setHover,
+      onSelect: setSelection,
+    };
+    return (
+      <>
+        <BurnChart
+          data={data}
+          selectedIndex={selectedIndex}
+          onSelect={onSelect}
+          link={link}
+        />
+        <ActivityCalendar
+          {...WINDOW}
+          days={activityDays()}
+          selection={null}
+          today="2026-09-07"
+          onDayChange={vi.fn()}
+          onRetry={vi.fn()}
+          link={link}
+        />
+      </>
+    );
+  }
+
+  function setUp() {
+    const data = response();
+    const view = render(<LinkedSurfaces data={data} />);
+    layOut(view.getByRole("img", { name: "Burn chart" }));
+    return {
+      ...view,
+      data,
+      group: view.getByRole("group", { name: "Burn chart selection" }),
+      x: timeScale(data.buckets),
+      cell: (date: string) =>
+        view.container.querySelector(`[data-date="${date}"]`)!,
+      mark: (date: string, kind: string) =>
+        view.container.querySelector(
+          `[data-date="${date}"] [data-mark="${kind}"]`,
+        ),
+    };
+  }
+
+  it("outlines the cell holding the instant the pointer reads off a chart", () => {
+    const { group, x, mark } = setUp();
+    fireEvent.pointerMove(group, {
+      clientX: CLIENT_OFFSET + x(Date.parse("2026-09-02T06:00:00Z")),
+    });
+    expect(mark("2026-09-02", "hover")).toBeTruthy();
+    expect(mark("2026-09-01", "hover")).toBeNull();
+    expect(mark("2026-09-03", "hover")).toBeNull();
+  });
+
+  it("keeps the margin past a chart's right edge inside its last day", () => {
+    const { group, mark } = setUp();
+    // The window is half-open, so its exclusive `end` is midnight owned by the
+    // next cell. Reading it raw would outline a day the chart never covered.
+    fireEvent.pointerMove(group, {
+      clientX: CLIENT_OFFSET + CHART_WIDTH + 200,
+    });
+    expect(mark("2026-09-03", "hover")).toBeTruthy();
+    expect(mark("2026-09-04", "hover")).toBeNull();
+  });
+
+  it("reads a hovered activity cell as a band on the chart, never a line", () => {
+    const { container, cell } = setUp();
+    fireEvent.pointerEnter(cell("2026-09-02").parentElement as HTMLElement);
+    const marks = [...container.querySelectorAll('svg [data-mark="hover"]')];
+    expect(marks.map((node) => node.getAttribute("data-hover"))).toEqual([
+      "span",
+    ]);
+    expect(marks[0]!.tagName.toLowerCase()).toBe("rect");
+  });
+
+  it("fills each cell over the hours a chart drag selected", () => {
+    const { group, x, container, mark } = setUp();
+    const from = Date.parse("2026-09-01T12:00:00Z");
+    const to = Date.parse("2026-09-03T12:00:00Z");
+    fireEvent.pointerDown(group, { clientX: CLIENT_OFFSET + x(from) });
+    fireEvent.pointerMove(group, {
+      clientX: CLIENT_OFFSET + x(to),
+      buttons: 1,
+    });
+    fireEvent.pointerUp(group, { clientX: CLIENT_OFFSET + x(to) });
+    // Noon to noon two days later: half of the first cell from its middle down,
+    // all of the second, half of the third from its top.
+    const band = (date: string) => {
+      const node = mark(date, "selection") as HTMLElement;
+      return [parseFloat(node.style.top), parseFloat(node.style.height)];
+    };
+    expect(band("2026-09-01")[0]).toBeCloseTo(50, 1);
+    expect(band("2026-09-01")[1]).toBeCloseTo(50, 1);
+    expect(band("2026-09-02")).toEqual([0, 100]);
+    expect(band("2026-09-03")[0]).toBeCloseTo(0, 1);
+    expect(band("2026-09-03")[1]).toBeCloseTo(50, 1);
+    expect(mark("2026-09-04", "selection")).toBeNull();
+    // The drag reads the window; it never moves it.
+    expect(
+      container.querySelectorAll('svg [data-mark="selection"]'),
+    ).toHaveLength(1);
+  });
 });

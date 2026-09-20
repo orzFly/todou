@@ -1,5 +1,11 @@
 import type { Bucket, BurnResponse, Measure } from "@todou/shared";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
+import {
+  type InsightsLink,
+  spanContains,
+  spanOverlap,
+  type TimeSpan,
+} from "@/lib/insights-selection.ts";
 
 export interface InsightsSelectionProps {
   selectedIndex: number;
@@ -9,6 +15,9 @@ export interface InsightsSelectionProps {
 export interface InsightsBucketProps extends InsightsSelectionProps {
   data: BurnResponse;
   className?: string;
+  // One prop, not four: this component already has an `onSelect` of its own for
+  // the inspected bucket, and the linked selection speaks in instants.
+  link?: InsightsLink;
 }
 
 export interface ChartLegendEntry {
@@ -226,10 +235,15 @@ export function stepPath(
     .join(" ");
 }
 
+// A tap wobbles by a pixel or two between press and release; under this much
+// travel the gesture is a click on one bucket, not a drag over a range.
+const CLICK_SLOP = 3;
+
 export function ChartFrame({
   data,
   selectedIndex,
   onSelect,
+  link,
   className,
   title,
   legend,
@@ -238,11 +252,14 @@ export function ChartFrame({
 }: ChartFrameProps) {
   const id = useId();
   const [inspecting, setInspecting] = useState(false);
+  const dragFrom = useRef<{ clientX: number; at: number } | null>(null);
   const index = selectedBucketIndex(data.buckets.length, selectedIndex);
   const selected = data.buckets[index];
   const x = timeScale(data.buckets);
   const start = Date.parse(data.buckets[0]?.start ?? "");
   const end = Date.parse(data.buckets.at(-1)?.end ?? "");
+  const windowSpan: TimeSpan | null =
+    data.buckets.length && end > start ? { start, end } : null;
   const dateFormat = new Intl.DateTimeFormat(
     undefined,
     end - start <= 2 * 86_400_000
@@ -250,23 +267,63 @@ export function ChartFrame({
       : { month: "short", day: "numeric" },
   );
 
-  function selectAt(clientX: number, element: HTMLElement) {
+  function timeAt(clientX: number, element: HTMLElement): number | null {
     const svg = element.querySelector("svg");
-    if (!svg || !data.buckets.length || !Number.isFinite(clientX)) return;
+    if (!svg || !data.buckets.length || !Number.isFinite(clientX)) return null;
     const bounds = svg.getBoundingClientRect();
-    if (bounds.width <= 0) return;
+    if (bounds.width <= 0) return null;
     const position = ((clientX - bounds.left) / bounds.width) * CHART_WIDTH;
     const ratio = Math.max(
       0,
       Math.min(1, (position - PLOT_LEFT) / (PLOT_RIGHT - PLOT_LEFT)),
     );
     const time = start + ratio * (end - start);
+    // The window is half-open, so the margin past its right edge still points
+    // at the last instant inside it -- `end` itself belongs to the next day.
+    return end > start ? Math.min(time, end - 1) : time;
+  }
+
+  function bucketIndexAt(time: number): number {
     const next = data.buckets.findIndex(
       (bucket) => time < Date.parse(bucket.end),
     );
-    onSelect(next < 0 ? data.buckets.length - 1 : next);
-    setInspecting(true);
+    return next < 0 ? data.buckets.length - 1 : next;
   }
+
+  function selectAt(clientX: number, element: HTMLElement): number | null {
+    const time = timeAt(clientX, element);
+    if (time === null) return null;
+    onSelect(bucketIndexAt(time));
+    setInspecting(true);
+    return time;
+  }
+
+  // A drag reads a range out of the chart; it never rescales it. The window
+  // stays whatever the query asked for, so both charts keep a common x axis.
+  function dragSpan(clientX: number, at: number): TimeSpan | null {
+    const from = dragFrom.current;
+    if (!from || Math.abs(clientX - from.clientX) <= CLICK_SLOP) return null;
+    const span = { start: Math.min(from.at, at), end: Math.max(from.at, at) };
+    return span.start < span.end ? span : null;
+  }
+
+  // Marks live entirely inside this chart's own window: a selection or a hover
+  // that misses it draws nothing at all, rather than a hint at the edge.
+  const selectionBand =
+    windowSpan && link?.selection
+      ? spanOverlap(windowSpan, link.selection)
+      : null;
+  const hoverBand =
+    windowSpan && link?.hover?.span
+      ? spanOverlap(windowSpan, link.hover.span)
+      : null;
+  const hoverAt =
+    windowSpan &&
+    link?.hover &&
+    !link.hover.span &&
+    spanContains(windowSpan, link.hover.at)
+      ? link.hover.at
+      : null;
 
   return (
     <figure
@@ -303,7 +360,10 @@ export function ChartFrame({
         style={{ touchAction: "pan-y" }}
         onFocus={() => setInspecting(true)}
         onBlur={() => setInspecting(false)}
-        onPointerLeave={() => setInspecting(false)}
+        onPointerLeave={() => {
+          setInspecting(false);
+          link?.onHover(null);
+        }}
         onKeyDown={(event) => {
           if (index < 0) return;
           let next: number;
@@ -324,6 +384,9 @@ export function ChartFrame({
               break;
             case "Escape":
               setInspecting(false);
+              // The only way back to no selection: every other gesture sets one.
+              link?.onHover(null);
+              link?.onSelect(null);
               return;
             default:
               return;
@@ -331,12 +394,50 @@ export function ChartFrame({
           event.preventDefault();
           setInspecting(true);
           onSelect(next);
+          // The pointer's mark would otherwise stay pinned where it was left,
+          // and the inspector's own line stays suppressed behind it.
+          link?.onHover(null);
         }}
         onPointerDown={(event) => {
-          selectAt(event.clientX, event.currentTarget);
+          const at = selectAt(event.clientX, event.currentTarget);
+          if (at !== null) {
+            // Only the primary button drags. A right-click opens a context menu
+            // and its release may never reach us, which would leave an anchor
+            // armed and turn plain mouse movement into a selection.
+            if (event.button === 0)
+              dragFrom.current = { clientX: event.clientX, at };
+            link?.onHover({ at });
+          }
           event.currentTarget.setPointerCapture?.(event.pointerId);
         }}
-        onPointerMove={(event) => selectAt(event.clientX, event.currentTarget)}
+        onPointerMove={(event) => {
+          // A release swallowed by a context menu or a native drag never clears
+          // the anchor, so the held button is the authority, not our own record.
+          if (dragFrom.current && (event.buttons & 1) === 0)
+            dragFrom.current = null;
+          const at = selectAt(event.clientX, event.currentTarget);
+          if (at === null) return;
+          link?.onHover({ at });
+          const span = dragSpan(event.clientX, at);
+          if (span) link?.onSelect(span);
+        }}
+        onPointerUp={(event) => {
+          const dragging = dragFrom.current !== null;
+          if (event.currentTarget.hasPointerCapture?.(event.pointerId))
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          const at = dragging
+            ? timeAt(event.clientX, event.currentTarget)
+            : null;
+          const span = at === null ? null : dragSpan(event.clientX, at);
+          dragFrom.current = null;
+          // Only a drag selects. A click keeps its existing meaning — inspect
+          // this bucket — so the first click cannot strand the reader with a
+          // band and no way back.
+          if (span) link?.onSelect(span);
+        }}
+        onPointerCancel={() => {
+          dragFrom.current = null;
+        }}
         onClick={(event) => selectAt(event.clientX, event.currentTarget)}
         onTouchStart={(event) => {
           const touch = event.touches[0];
@@ -355,8 +456,51 @@ export function ChartFrame({
           data-selected-bucket={index >= 0 ? index : undefined}
         >
           <title>{title}</title>
+          {selectionBand && (
+            <rect
+              data-mark="selection"
+              x={x(selectionBand.start)}
+              y={PLOT_TOP}
+              width={Math.max(0, x(selectionBand.end) - x(selectionBand.start))}
+              height={PLOT_BOTTOM - PLOT_TOP}
+              fill="currentColor"
+              opacity={0.12}
+              pointerEvents="none"
+            />
+          )}
+          {hoverBand && (
+            <rect
+              data-mark="hover"
+              data-hover="span"
+              x={x(hoverBand.start)}
+              y={PLOT_TOP}
+              width={Math.max(0, x(hoverBand.end) - x(hoverBand.start))}
+              height={PLOT_BOTTOM - PLOT_TOP}
+              fill="currentColor"
+              opacity={0.08}
+              pointerEvents="none"
+            />
+          )}
+          {hoverAt !== null && (
+            <line
+              data-mark="hover"
+              data-hover="instant"
+              x1={x(hoverAt)}
+              x2={x(hoverAt)}
+              y1={PLOT_TOP}
+              y2={PLOT_BOTTOM}
+              stroke="currentColor"
+              opacity={0.45}
+              pointerEvents="none"
+            />
+          )}
           {children}
-          {selected && inspecting && (
+          {/* The inspector reads the bucket's centre, the linked mark reads the
+              pointer. Drawn together they are two full-height lines claiming
+              two instants, so the shared one wins and the tooltip carries the
+              inspected bucket on its own. Keyboard inspection raises no linked
+              hover, and keeps this line. */}
+          {selected && inspecting && hoverAt === null && (
             <line
               x1={bucketX(selected, x)}
               x2={bucketX(selected, x)}

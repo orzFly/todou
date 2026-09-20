@@ -5,6 +5,7 @@ import {
   ActivityCalendar,
   type ActivityCalendarProps,
 } from "../src/components/activity-calendar/activity-calendar.tsx";
+import type { InsightsLink } from "../src/lib/insights-selection.ts";
 
 /**
  * The server states each cell's instants; fixtures spell out plain UTC ones so
@@ -874,5 +875,227 @@ describe("ActivityCalendar controlled state and recovery", () => {
     // happy-dom has no layout engine; the cells' squareness is a CSS contract.
     expect(tile("2024-01-10").className).toContain("aspect-square");
     expect(tile("2024-01-10").className).toContain("w-full");
+  });
+});
+
+describe("ActivityCalendar insights link", () => {
+  function linkProps(overrides: Partial<InsightsLink> = {}): InsightsLink {
+    return {
+      hover: null,
+      selection: null,
+      onHover: vi.fn(),
+      onSelect: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function at(iso: string): number {
+    return Date.parse(iso);
+  }
+
+  /** The pointer handlers sit on the wrapper, so disabled cells report too. */
+  function cell(date: string): HTMLElement {
+    return tile(date).parentElement as HTMLElement;
+  }
+
+  function mark(date: string, kind: string): HTMLElement {
+    const node = tile(date).querySelector<HTMLElement>(`[data-mark="${kind}"]`);
+    if (!node) throw new Error(`${date} carries no ${kind} mark`);
+    return node;
+  }
+
+  function marks(kind: string): string[] {
+    return Array.from(
+      document.querySelectorAll<HTMLElement>(`[data-mark="${kind}"]`),
+    ).map((node) => node.closest("button")?.dataset.date ?? "");
+  }
+
+  /** A day the server states as 23 hours long; no local midnight is derived. */
+  function shortened(days: ActivityDay[], date: string): ActivityDay[] {
+    return days.map((day) =>
+      day.date === date
+        ? {
+            ...day,
+            start: "2024-03-10T05:00:00.000Z",
+            end: "2024-03-11T04:00:00.000Z",
+          }
+        : day,
+    );
+  }
+
+  it("outlines the cell holding a chart's instant and nothing beside it", () => {
+    const { rerender } = render(
+      <ActivityCalendar
+        {...props({
+          link: linkProps({ hover: { at: at("2024-03-10T13:45:00Z") } }),
+        })}
+      />,
+    );
+    expect(marks("hover")).toEqual(["2024-03-10"]);
+    // A day's end instant belongs to the next cell, never to both.
+    rerender(
+      <ActivityCalendar
+        {...props({
+          link: linkProps({ hover: { at: at("2024-03-11T00:00:00Z") } }),
+        })}
+      />,
+    );
+    expect(marks("hover")).toEqual(["2024-03-11"]);
+    rerender(
+      <ActivityCalendar
+        {...props({
+          link: linkProps({ hover: { at: at("2019-05-04T10:00:00Z") } }),
+        })}
+      />,
+    );
+    expect(marks("hover")).toEqual([]);
+    // A hover that carries a span came from a cell of this grid.
+    rerender(
+      <ActivityCalendar
+        {...props({
+          link: linkProps({
+            hover: {
+              at: at("2024-03-10T13:45:00Z"),
+              span: {
+                start: at("2024-03-10T00:00:00Z"),
+                end: at("2024-03-11T00:00:00Z"),
+              },
+            },
+          }),
+        })}
+      />,
+    );
+    expect(marks("hover")).toEqual([]);
+  });
+
+  it("reports the day's own instants while the pointer is on a cell", () => {
+    const onHover = vi.fn();
+    render(<ActivityCalendar {...props({ link: linkProps({ onHover }) })} />);
+    fireEvent.pointerEnter(cell("2024-03-10"));
+    expect(onHover).toHaveBeenLastCalledWith({
+      at: at("2024-03-10T00:00:00Z"),
+      span: {
+        start: at("2024-03-10T00:00:00Z"),
+        end: at("2024-03-11T00:00:00Z"),
+      },
+    });
+    fireEvent.pointerLeave(cell("2024-03-10"));
+    expect(onHover).toHaveBeenLastCalledWith(null);
+  });
+
+  it("fills every day the selection covers whole, and no day outside it", () => {
+    render(
+      <ActivityCalendar
+        {...props({
+          link: linkProps({
+            selection: {
+              start: at("2024-03-10T00:00:00Z"),
+              end: at("2024-03-12T00:00:00Z"),
+            },
+          }),
+        })}
+      />,
+    );
+    expect(marks("selection")).toEqual(["2024-03-10", "2024-03-11"]);
+    for (const date of ["2024-03-10", "2024-03-11"]) {
+      expect(mark(date, "selection").style.top).toBe("0%");
+      expect(mark(date, "selection").style.height).toBe("100%");
+    }
+  });
+
+  it("bands a partly covered day down its own hours, not down a fixed 24", () => {
+    const { rerender } = render(
+      <ActivityCalendar
+        {...props({
+          link: linkProps({
+            selection: {
+              start: at("2024-03-10T08:00:00Z"),
+              end: at("2024-03-10T20:00:00Z"),
+            },
+          }),
+        })}
+      />,
+    );
+    const band = mark("2024-03-10", "selection");
+    expect(Number.parseFloat(band.style.top)).toBeCloseTo((8 / 24) * 100, 6);
+    expect(Number.parseFloat(band.style.height)).toBeCloseTo(
+      (12 / 24) * 100,
+      6,
+    );
+    // The band is clipped at the bottom of one cell and at the top of the next.
+    rerender(
+      <ActivityCalendar
+        {...props({
+          link: linkProps({
+            selection: {
+              start: at("2024-03-10T18:00:00Z"),
+              end: at("2024-03-11T06:00:00Z"),
+            },
+          }),
+        })}
+      />,
+    );
+    expect(Number.parseFloat(mark("2024-03-10", "selection").style.top)).toBe(
+      75,
+    );
+    expect(mark("2024-03-10", "selection").style.height).toBe("25%");
+    expect(mark("2024-03-11", "selection").style.top).toBe("0%");
+    expect(mark("2024-03-11", "selection").style.height).toBe("25%");
+    // The DTO's own bounds set the divisor: 12 of this day's 23 hours.
+    rerender(
+      <ActivityCalendar
+        {...props({
+          days: shortened(daysFor(), "2024-03-10"),
+          link: linkProps({
+            selection: {
+              start: at("2024-03-10T05:00:00Z"),
+              end: at("2024-03-10T17:00:00Z"),
+            },
+          }),
+        })}
+      />,
+    );
+    expect(mark("2024-03-10", "selection").style.top).toBe("0%");
+    expect(
+      Number.parseFloat(mark("2024-03-10", "selection").style.height),
+    ).toBeCloseTo((12 / 23) * 100, 6);
+  });
+
+  it("selects one day on click and a normalised range across a drag", () => {
+    const onSelect = vi.fn();
+    render(<ActivityCalendar {...props({ link: linkProps({ onSelect }) })} />);
+    fireEvent.click(tile("2024-03-10"));
+    expect(onSelect).toHaveBeenLastCalledWith({
+      start: at("2024-03-10T00:00:00Z"),
+      end: at("2024-03-11T00:00:00Z"),
+    });
+    // The drag starts on the 12th and moves backwards; the range still runs
+    // forward.
+    fireEvent.pointerDown(cell("2024-03-12"));
+    fireEvent.pointerEnter(cell("2024-03-11"));
+    expect(onSelect).toHaveBeenLastCalledWith({
+      start: at("2024-03-11T00:00:00Z"),
+      end: at("2024-03-13T00:00:00Z"),
+    });
+    fireEvent.pointerEnter(cell("2024-03-10"));
+    expect(onSelect).toHaveBeenLastCalledWith({
+      start: at("2024-03-10T00:00:00Z"),
+      end: at("2024-03-13T00:00:00Z"),
+    });
+    const calls = onSelect.mock.calls.length;
+    fireEvent.pointerUp(document.body);
+    fireEvent.pointerEnter(cell("2024-03-09"));
+    expect(onSelect.mock.calls.length).toBe(calls);
+  });
+
+  it("keeps every cell inert for callers that pass no link", () => {
+    const p = props();
+    render(<ActivityCalendar {...p} />);
+    fireEvent.pointerDown(cell("2024-03-10"));
+    fireEvent.pointerEnter(cell("2024-03-11"));
+    fireEvent.click(tile("2024-03-11"));
+    expect(p.onDayChange).toHaveBeenCalledExactlyOnceWith("2024-03-11");
+    expect(marks("selection")).toEqual([]);
+    expect(marks("hover")).toEqual([]);
   });
 });

@@ -4,6 +4,12 @@ import {
   enumLookup,
 } from "@todou/shared";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import {
+  dayCoverage,
+  type InsightsLink,
+  spanContains,
+  type TimeSpan,
+} from "@/lib/insights-selection.ts";
 import { cn } from "@/lib/utils";
 
 export interface ActivityCalendarProps {
@@ -25,6 +31,12 @@ export interface ActivityCalendarProps {
   error?: string | null;
   /** Retry the parent-owned request. */
   onRetry: () => void;
+  /**
+   * Hover and instant selection shared with the insights charts. Callers that
+   * show the calendar on its own omit it, and then the cells report nothing
+   * beyond their own day selection.
+   */
+  link?: InsightsLink;
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -156,6 +168,22 @@ function windowGeometry(from: string, to: string) {
   return { dates, offset, weeks: Math.ceil((dates.length + offset) / 7) };
 }
 
+/**
+ * Each cell's instants, as the server states them. A civil date that was
+ * skipped covers no instant, and such a cell can be neither pointed at nor
+ * covered by a selection, so it is left out of the map.
+ */
+function daySpans(days: readonly ActivityDay[]): Map<string, TimeSpan> {
+  const spans = new Map<string, TimeSpan>();
+  for (const day of days) {
+    const start = Date.parse(day.start);
+    const end = Date.parse(day.end);
+    if (Number.isFinite(start) && start < end)
+      spans.set(day.date, { start, end });
+  }
+  return spans;
+}
+
 function dayLabel(date: string, day: ActivityDay | undefined) {
   const value = day
     ? enumLookup(
@@ -183,14 +211,17 @@ export function ActivityCalendar({
   loading = false,
   error = null,
   onRetry,
+  link,
 }: ActivityCalendarProps) {
   const id = useId();
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const calendar = useRef<HTMLFieldSetElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const heldFocus = useRef(false);
+  const dragAnchor = useRef<TimeSpan | null>(null);
   const { dates, offset, weeks } = windowGeometry(from, to);
   const byDate = new Map(days.map((day) => [day.date, day]));
+  const spans = daySpans(days);
   const levels = activityLevels(
     days.map((day) => (day.state === "recorded" ? day.count : 0)),
   );
@@ -279,6 +310,34 @@ export function ActivityCalendar({
     }
   }, [activeDate, loading, error]);
 
+  // A drag often ends outside the grid, where no cell receives the release,
+  // so the document is what ends the gesture.
+  useEffect(() => {
+    const endDrag = () => {
+      dragAnchor.current = null;
+    };
+    document.addEventListener("pointerup", endDrag);
+    document.addEventListener("pointercancel", endDrag);
+    return () => {
+      document.removeEventListener("pointerup", endDrag);
+      document.removeEventListener("pointercancel", endDrag);
+    };
+  }, []);
+
+  function selectDay(date: string) {
+    const span = spans.get(date);
+    if (link && span) link.onSelect(span);
+  }
+
+  function dragTo(span: TimeSpan | undefined) {
+    const anchor = dragAnchor.current;
+    if (!link || !span || !anchor) return;
+    link.onSelect({
+      start: Math.min(anchor.start, span.start),
+      end: Math.max(anchor.end, span.end),
+    });
+  }
+
   function focusDate(date: string) {
     setRovingDate(date);
     setInspectedDate(date);
@@ -288,9 +347,19 @@ export function ActivityCalendar({
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     if (typeof event.key !== "string") return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.key === "Escape") {
+      // The same way out as the charts offer: every other gesture here sets a
+      // selection, so without this there is no route back to none.
+      link?.onHover(null);
+      link?.onSelect(null);
+      return;
+    }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      if (!event.repeat) onDayChange(dates[index]);
+      if (!event.repeat) {
+        selectDay(dates[index]);
+        onDayChange(dates[index]);
+      }
       return;
     }
     let next = index;
@@ -337,6 +406,10 @@ export function ActivityCalendar({
 
   const readDate =
     inspectedDate && dates.includes(inspectedDate) ? inspectedDate : activeDate;
+  // A hover that carries a span came from a cell of this grid, so only a
+  // chart's bare instant has to be matched against the cells here.
+  const hoverAt =
+    link?.hover && link.hover.span === undefined ? link.hover.at : null;
 
   return (
     <section
@@ -417,6 +490,15 @@ export function ActivityCalendar({
             const intensity = enabled ? level(day.count, levels) : undefined;
             const label = dayLabel(date, day);
             const column = Math.floor((index + offset) / 7) + 2;
+            const span = spans.get(date);
+            const outlined =
+              span !== undefined &&
+              hoverAt !== null &&
+              spanContains(span, hoverAt);
+            const covered =
+              span && link?.selection
+                ? dayCoverage(span, link.selection)
+                : null;
             return (
               <span key={date} className="contents">
                 {date.endsWith("-01") && (
@@ -434,12 +516,18 @@ export function ActivityCalendar({
                     gridColumn: column,
                     gridRow: ((index + offset) % 7) + 2,
                   }}
-                  onPointerEnter={() => setInspectedDate(date)}
+                  onPointerEnter={() => {
+                    setInspectedDate(date);
+                    if (span) link?.onHover({ at: span.start, span });
+                    dragTo(span);
+                  }}
                   onPointerLeave={(event) => {
                     if (event.pointerType !== "touch") setInspectedDate(null);
+                    link?.onHover(null);
                   }}
                   onPointerDown={(event) => {
                     if (event.pointerType === "touch") setInspectedDate(date);
+                    if (event.button === 0) dragAnchor.current = span ?? null;
                   }}
                 >
                   <button
@@ -467,7 +555,7 @@ export function ActivityCalendar({
                     data-state={day?.state ?? "unavailable"}
                     data-level={intensity}
                     className={cn(
-                      "aspect-square w-full min-w-0 rounded-xs border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                      "relative aspect-square w-full min-w-0 rounded-xs border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                       intensity !== undefined
                         ? levels[intensity]?.className
                         : "bg-transparent",
@@ -486,9 +574,33 @@ export function ActivityCalendar({
                     onKeyDown={(event) => onKeyDown(event, index)}
                     onClick={() => {
                       focusDate(date);
+                      selectDay(date);
                       onDayChange(date);
                     }}
-                  />
+                  >
+                    {covered && (
+                      // The cell maps time of day from its top to its bottom,
+                      // so a partly selected day is marked over the hours the
+                      // selection covers. A separate overlay is used here to
+                      // keep the count colour visible underneath it.
+                      <span
+                        aria-hidden="true"
+                        data-mark="selection"
+                        className="pointer-events-none absolute inset-x-0 rounded-xs bg-foreground/30"
+                        style={{
+                          top: `${covered[0] * 100}%`,
+                          height: `${(covered[1] - covered[0]) * 100}%`,
+                        }}
+                      />
+                    )}
+                    {outlined && (
+                      <span
+                        aria-hidden="true"
+                        data-mark="hover"
+                        className="pointer-events-none absolute inset-0 rounded-xs outline-2 outline-ring"
+                      />
+                    )}
+                  </button>
                 </span>
               </span>
             );
