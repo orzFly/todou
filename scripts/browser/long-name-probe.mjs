@@ -3,12 +3,10 @@
  * Serialized into a real Chromium page by scripts/lib/browser-cdp.mjs's
  * evaluate(), so it has no imports and can only reach the DOM.
  *
- * One surface so far: the shell header's account button (T-500), a `UserChip`
- * under a name that does not fit, measured running to 572 past a 390px
- * viewport while the issue header's own chip, fixed in T-486, stayed inside.
- * The event row's author is the other one that does this (T-501); until that
- * is fixed the page still scrolls sideways for a reason this file does not
- * grade, so the page-wide number is reported here and not asserted.
+ * Two surfaces, one page: the shell header's account button (T-500) and an
+ * event row's inline author (T-501). Both are `UserChip` under a name that
+ * does not fit, and each was measured running past a 390px viewport — 572 and
+ * 475 — while the issue header's own chip, fixed in T-486, stayed inside.
  *
  * What counts as "off screen" is the painted box, not the layout box. A chip
  * that ellipsises still has a full-width name span inside it; that span's
@@ -24,8 +22,14 @@
  * mutated page is not a restore.
  */
 export async function probeLongNameOverflow(options = {}) {
-  const { faults = {}, expectPressure = true } = options;
-  const known = ["accountUnshrinkable"];
+  const {
+    faults = {},
+    expectPressure = true,
+    // Which surfaces this page is expected to draw: the issue list has no
+    // event row, and a surface the page never had is not a missing one.
+    surfaces: graded = ["account-button", "event-author"],
+  } = options;
+  const known = ["accountUnshrinkable", "chipUncapped"];
   if (Object.keys(faults).some((key) => !known.includes(key))) {
     throw new Error("unknown long-name fault");
   }
@@ -60,6 +64,10 @@ export async function probeLongNameOverflow(options = {}) {
         button.querySelector('[data-slot="avatar"]'),
       )
     : null;
+  const eventAuthor = document.querySelector(
+    '[id^="event-"] a[href^="/users/"]',
+  );
+
   if (faults.accountUnshrinkable && account) {
     // The cluster and the button as they stood before T-500: content-sized and
     // refusing to narrow, so the name has no way to reach the ellipsis.
@@ -67,6 +75,15 @@ export async function probeLongNameOverflow(options = {}) {
     account.parentElement.style.minWidth = "auto";
     account.style.flexShrink = "0";
     account.style.minWidth = "auto";
+  }
+  if (faults.chipUncapped) {
+    // The chip's percentage cap taken off, which is what let an inline-block
+    // author in a sentence grow without bound before T-501.
+    const style = document.createElement("style");
+    style.dataset.longNameFault = "chipUncapped";
+    style.textContent =
+      'a[href^="/users/"], span[class*="inline-block"]{max-width:none !important}';
+    document.head.append(style);
   }
   await new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(resolve)),
@@ -103,11 +120,11 @@ export async function probeLongNameOverflow(options = {}) {
       coverageErrors.push(`${name}-name-not-under-pressure`);
     }
   };
-  measure("account-button", account);
+  if (graded.includes("account-button")) measure("account-button", account);
+  if (graded.includes("event-author")) measure("event-author", eventAuthor);
 
-  // Anything else painting past the right edge, named rather than summarised.
-  // Recorded and not graded: the event row's author is still one of them
-  // (T-501), so a failure here would be a red for somebody else's card.
+  // Anything else painting past the right edge, named rather than summarised:
+  // the page-wide number is only meaningful if a reader can see what moved it.
   const strays = [];
   for (const element of document.querySelectorAll("body *")) {
     if (paintedRight(element) <= viewport + 1) continue;
@@ -127,12 +144,18 @@ export async function probeLongNameOverflow(options = {}) {
     scrollWidth: document.documentElement.scrollWidth,
     clientWidth: viewport,
   };
+  // Integer CSSOM dimensions: one pixel over is a page that scrolls sideways.
+  if (documentWidth.scrollWidth > documentWidth.clientWidth) {
+    failures.push("document-scroll-overflow");
+  }
+  if (strays.length > 0) failures.push("painted-past-viewport");
 
   return {
     ok: failures.length === 0 && coverageErrors.length === 0,
     failures,
     coverageErrors,
     faults: Object.keys(faults),
+    graded,
     viewport,
     documentWidth,
     surfaces,

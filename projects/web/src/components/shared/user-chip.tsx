@@ -178,6 +178,16 @@ export function UserChip({
   // thing that could (T-486). What the name gives up it gives up in the box
   // around it, above; this one only stops refusing.
   //
+  // `max-w-full` is the same bargain for a chip that is *not* a flex item. In
+  // a sentence an inline-block is sized shrink-to-fit with no upper bound, and
+  // `whitespace-nowrap` leaves the line nothing to break, so an event row's
+  // author simply ran off the side: 455px of chip ending 85px past a 390px
+  // viewport (T-501). A percentage cap resolves against the line's own
+  // containing block, which hands the name the same ellipsis it gets under
+  // flex pressure. It is a bound and not a layout, so at any width where the
+  // chip already fits it changes nothing — measured identical at 700px, where
+  // the row is flex and the chip was never the thing overflowing.
+  //
   // `text-sm` restates the name's own size on the box the avatar is centred
   // in. Inherited instead, a hover card's `text-base` would give the chip a
   // 24px strut and hang the avatar 2px below the 14px name it belongs to.
@@ -186,7 +196,7 @@ export function UserChip({
   // so a chip allowed past it would leave its own avatar hanging outside it.
   const box = cn(
     "inline-block whitespace-nowrap",
-    compact ? "shrink-0" : "relative min-w-5 ps-5 text-sm",
+    compact ? "shrink-0" : "relative max-w-full min-w-5 ps-5 text-sm",
   );
 
   // The avatar's `alt` is empty and the fallback only carries initials, so a
