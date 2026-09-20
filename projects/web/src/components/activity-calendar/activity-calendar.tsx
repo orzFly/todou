@@ -386,10 +386,14 @@ export function ActivityCalendar({
           ref={calendar}
           aria-label={`Activity dates ${from} to ${dates.at(-1) ?? from}`}
           aria-describedby={`${id}-instructions`}
-          className="m-0 grid w-max min-w-0 gap-1 border-0 p-1"
+          className="m-0 grid w-full min-w-0 gap-1 border-0 p-1"
           style={{
-            gridTemplateColumns: `2.5rem repeat(${weeks}, 1rem)`,
-            gridTemplateRows: "1rem repeat(7, 1rem)",
+            // Fluid columns with a floor, not a fixed 1rem: 52 weeks of fixed
+            // cells are wider than any container this sits in, so the grid
+            // always wore a scrollbar. It now takes the width it is given, and
+            // only falls back to scrolling once cells would go under the floor.
+            gridTemplateColumns: `2.5rem repeat(${weeks}, minmax(0.5rem, 1fr))`,
+            gridTemplateRows: "1rem repeat(7, auto)",
           }}
         >
           {WEEKDAYS.map((name, index) => (
@@ -420,7 +424,7 @@ export function ActivityCalendar({
                   </span>
                 )}
                 <span
-                  className="inline-flex"
+                  className="flex w-full min-w-0"
                   style={{
                     gridColumn: column,
                     gridRow: ((index + offset) % 7) + 2,
@@ -458,7 +462,7 @@ export function ActivityCalendar({
                     data-state={day?.state ?? "unavailable"}
                     data-level={intensity}
                     className={cn(
-                      "size-4 shrink-0 rounded-xs border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                      "aspect-square w-full min-w-0 rounded-xs border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                       intensity !== undefined
                         ? levels[intensity]?.className
                         : "bg-transparent",

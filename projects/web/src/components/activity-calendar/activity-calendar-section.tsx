@@ -14,10 +14,7 @@ import {
   type UserActivityCalendarRequest,
   userActivityCalendarQuery,
 } from "@/api/activity-calendar.ts";
-import {
-  activityToday,
-  defaultActivityDay,
-} from "@/lib/activity-calendar-search.ts";
+import { activityToday } from "@/lib/activity-calendar-search.ts";
 import { ActivityCalendar } from "./activity-calendar.tsx";
 import { ActivityCardList } from "./activity-card-list.tsx";
 
@@ -123,19 +120,11 @@ export function ActivityCalendarSection(props: ActivityCalendarSectionProps) {
   const defaulted = useRef(
     new Map<string, WeakSet<ActivityCalendarResponse>>(),
   );
-  const defaultDay =
-    !validDay && initial.isSuccess && initial.data !== undefined
-      ? defaultActivityDay(
-          initial.data,
-          activityToday(new Date(initial.data.cutoff), initial.data.timezone),
-        )
-      : undefined;
   // A background refresh keeps the complete snapshot mounted. Withdrawing
   // layout readiness there would erase an otherwise readable return anchor.
   // A cold/withdrawn snapshot still waits, including 409 and permission clears.
   const ready =
     (query.data !== undefined || (!loading && query.isError)) &&
-    defaultDay === undefined &&
     !(
       props.day !== undefined &&
       !validDay &&
@@ -162,17 +151,16 @@ export function ActivityCalendarSection(props: ActivityCalendarSectionProps) {
     if (seen.has(initial.data)) return;
     seen.add(initial.data);
     defaulted.current.set(requestKey, seen);
+    // No day is picked for the reader. The calendar opens showing the whole
+    // window, and the list below it stays empty until they choose one; a day
+    // chosen for them would answer a question nobody asked.
     if (props.day !== undefined && props.onInvalidDay)
-      props.onInvalidDay(defaultDay);
-    else if (defaultDay !== undefined)
-      props.onDayChange(defaultDay, { replace: true });
+      props.onInvalidDay(undefined);
   }, [
     initial.data,
     initial.isSuccess,
     initial.isFetching,
     validDay,
-    defaultDay,
-    props.onDayChange,
     props.onInvalidDay,
     props.day,
     requestKey,
