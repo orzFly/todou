@@ -4,7 +4,13 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import type { Issue, IssueMuteMode, Status } from "@todou/shared";
+import type {
+  Issue,
+  IssueCreateInput,
+  IssueMuteMode,
+  IssueUpdateInput,
+  Status,
+} from "@todou/shared";
 import { PencilIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -175,13 +181,27 @@ function NewIssueForm({
   const [submitting, setSubmitting] = useState(false);
   const staging = useStagedFiles();
   const blocks = useStagedBlocks();
-  // A retry after a failed attachment upload must not create the issue
-  // twice — the created issue survives the failed attempt here.
+  // Creation and each PATCH are checkpoints, not the end of the draft:
+  // downstream failures leave every field editable on this same card.
   const createdRef = useRef<Issue | null>(null);
+  const savedFieldsRef = useRef<IssueCreateInput | null>(null);
+  const createdDefaultRef = useRef<Status | null>(null);
+  const defaultStatus =
+    createdDefaultRef.current ?? pickDefaultStatus(statuses.data);
+  const defaultStatusId = defaultStatus?.id;
 
-  // A title on its own is a page that would lose everything to a refresh:
-  // the body box is empty, so nothing else on the form registers.
-  useDirtySource(() => title.trim() !== "");
+  // The whole unfinished draft is protected, including sidebar-only work.
+  // Keep this protection until replay completes; successful navigation opts
+  // out below. The editor and staged files retain their own dirty sources.
+  useDirtySource(
+    () =>
+      title.trim() !== "" ||
+      labelIds.length > 0 ||
+      assigneeIds.length > 0 ||
+      (statusId !== "" && Number(statusId) !== defaultStatusId) ||
+      blocks.staged.length > 0 ||
+      mute !== null,
+  );
 
   // Same identity for the editor's lifetime: the compartment reconfigures on
   // a new extension list, which would close whatever panel was open. The
@@ -237,31 +257,70 @@ function NewIssueForm({
             { statusId, labelIds, assigneeIds },
             current.commands,
           );
+    const input: IssueCreateInput = {
+      title: trimmedTitle,
+      body,
+      // Empty triage sets ask for nothing on create; retries only PATCH
+      // changed fields, so reporters never send forbidden triage writes.
+      status_id:
+        canTriage && fields.statusId !== ""
+          ? Number(fields.statusId)
+          : undefined,
+      label_ids: canTriage ? fields.labelIds : [],
+      assignee_ids: canTriage ? fields.assigneeIds : [],
+    };
     setSubmitting(true);
     try {
       let issue = createdRef.current;
       if (!issue) {
-        issue = await api.createIssue(slug, {
-          title: trimmedTitle,
-          body,
-          // Guarded rather than merely unset: the controls behind these are
-          // unmounted without `issue.triage`, and an empty set is what the
-          // server reads as "asked for nothing" — sending one is not a
-          // request it has to refuse.
-          status_id:
-            canTriage && fields.statusId !== ""
-              ? Number(fields.statusId)
-              : undefined,
-          label_ids: canTriage ? fields.labelIds : [],
-          assignee_ids: canTriage ? fields.assigneeIds : [],
-        });
+        issue = await api.createIssue(slug, input);
+        // If creation chose the default, keep the server's actual choice:
+        // a stale statuses query must not immediately PATCH it back.
+        if (input.status_id === undefined) {
+          createdDefaultRef.current = issue.status ?? defaultStatus ?? null;
+        }
+        savedFieldsRef.current = {
+          ...input,
+          status_id: canTriage
+            ? (input.status_id ?? issue.status?.id ?? defaultStatusId)
+            : undefined,
+        };
         createdRef.current = issue;
+      }
+      // Removing a /status command restores the form's default. PATCH
+      // needs its concrete id: undefined would silently leave the old status.
+      if (canTriage && input.status_id === undefined) {
+        input.status_id = createdDefaultRef.current?.id ?? defaultStatusId;
       }
       if (staging.staged.length > 0) {
         const markers = await staging.uploadAll(slug, issue.number);
-        const full = withAttachmentMarkers(body.trimEnd(), markers);
-        if (full !== issue.body) {
-          await api.updateIssue(slug, issue.number, { body: full });
+        // Assemble the final body before diffing it. A retry must not
+        // overwrite uploaded markers with the editor's unadorned body.
+        input.body = withAttachmentMarkers(body.trimEnd(), markers);
+      }
+      const saved = savedFieldsRef.current;
+      if (saved !== null) {
+        const patch: IssueUpdateInput = {};
+        if (input.title !== saved.title) patch.title = input.title;
+        if (input.body !== saved.body) patch.body = input.body;
+        if (input.status_id !== saved.status_id) {
+          patch.status_id = input.status_id;
+        }
+        if (
+          input.label_ids.length !== saved.label_ids.length ||
+          input.label_ids.some((id) => !saved.label_ids.includes(id))
+        ) {
+          patch.label_ids = input.label_ids;
+        }
+        if (
+          input.assignee_ids.length !== saved.assignee_ids.length ||
+          input.assignee_ids.some((id) => !saved.assignee_ids.includes(id))
+        ) {
+          patch.assignee_ids = input.assignee_ids;
+        }
+        if (Object.keys(patch).length > 0) {
+          await api.updateIssue(slug, issue.number, patch);
+          savedFieldsRef.current = { ...input };
         }
       }
       // Everything below needs the card's number, so none of it can run
@@ -298,6 +357,7 @@ function NewIssueForm({
   return (
     <div
       className={cn("grid gap-6", showSidebar && "lg:grid-cols-[1fr_240px]")}
+      inert={submitting}
     >
       <form
         className="min-w-0 space-y-4"
@@ -339,6 +399,7 @@ function NewIssueForm({
             }
             className="min-h-56"
             extensions={extensions}
+            readOnly={submitting}
             onChange={setDraft}
             onSubmit={() => void submit()}
             onPaste={staging.onPaste}
@@ -363,11 +424,8 @@ function NewIssueForm({
             type="button"
             variant="ghost"
             onClick={() => {
-              staging.clear();
-              // Deliberately still blocked when there is a title or a body:
-              // Cancel drops the form on the floor, so it is exactly the kind
-              // of leaving the guard exists to ask about, and it is the only
-              // control here whose confirmation is not a lie (T-317).
+              // Cancel is still a guarded departure. Keep every staged item
+              // intact until the reader actually chooses to discard it.
               navigate({ to: "/projects/$slug", params: { slug }, search: {} });
             }}
           >
@@ -400,9 +458,7 @@ function NewIssueForm({
                 <Select value={statusId} onValueChange={setStatusId}>
                   <SelectTrigger className="w-full">
                     <SelectValue
-                      placeholder={
-                        pickDefaultStatus(statuses.data)?.name ?? "Status"
-                      }
+                      placeholder={defaultStatus?.name ?? "Status"}
                     />
                   </SelectTrigger>
                   <SelectContent>

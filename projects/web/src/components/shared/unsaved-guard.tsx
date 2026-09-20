@@ -50,8 +50,7 @@ export function UnsavedChangesGuard() {
         <DialogHeader>
           <DialogTitle>Leave with unsaved changes?</DialogTitle>
           <DialogDescription>
-            There is text on this page that has not been submitted. Leaving now
-            discards it.
+            There are unsaved changes on this page. Leaving now discards them.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
