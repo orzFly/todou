@@ -1,8 +1,11 @@
 import {
   QueryClient,
+  QueryClientProvider,
   QueryObserver,
   queryOptions,
 } from "@tanstack/react-query";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeBridge, RuntimeMode } from "@/api/runtime/bridge.ts";
 import type { ProjectionDescriptor } from "@/api/runtime/projections.ts";
@@ -17,6 +20,7 @@ import {
   writeRuntimeData,
 } from "@/api/runtime/query-adapter.ts";
 import { resource } from "@/api/runtime/resources.ts";
+import { useTimelineHead, useTimelineTail } from "@/api/timeline.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -140,11 +144,80 @@ function setup(mode?: RuntimeMode) {
   return result;
 }
 afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
   for (const item of owned.splice(0)) item.dispose();
   vi.restoreAllMocks();
 });
 
 describe("shared QueryClient adapter", () => {
+  it.each(["tail", "head"] as const)(
+    "loads a cold %s timeline through the real infinite hook before any worker snapshot",
+    async (kind) => {
+      const h = setup();
+      const requests: string[] = [];
+      const first = {
+        items: [],
+        prev_cursor: kind === "tail" ? "older" : null,
+        next_cursor: "newer",
+        total_count: 2,
+      };
+      const second = {
+        items: [],
+        prev_cursor: null,
+        next_cursor: null,
+        total_count: 2,
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          requests.push(url);
+          return Response.json(url.includes("after=newer") ? second : first);
+        }),
+      );
+      const failures: unknown[] = [];
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={h.client}>{children}</QueryClientProvider>
+      );
+      const useTimeline = kind === "tail" ? useTimelineTail : useTimelineHead;
+      const hook = renderHook(
+        () => {
+          const result = useTimeline("demo", 1, true);
+          if (result.error) failures.push(result.error);
+          return result;
+        },
+        { wrapper },
+      );
+
+      await waitFor(() => expect(hook.result.current.isPending).toBe(false));
+      expect(hook.result.current.error).toBeNull();
+      expect(hook.result.current.data).toEqual({
+        pages: [first],
+        pageParams: [{ dir: kind === "tail" ? "init" : "init-head" }],
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toContain("/projects/demo/issues/1/timeline?");
+      expect(requests[0]?.includes("last=1")).toBe(kind === "tail");
+
+      await act(async () => {
+        await hook.result.current.fetchNextPage();
+      });
+      await waitFor(() =>
+        expect(hook.result.current.data?.pages).toHaveLength(2),
+      );
+      expect(hook.result.current.data).toEqual({
+        pages: [first, second],
+        pageParams: [
+          { dir: kind === "tail" ? "init" : "init-head" },
+          { dir: "after", cursor: "newer" },
+        ],
+      });
+      expect(failures).toEqual([]);
+      expect(h.bridge.readProjection).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["project", "members"] as const)(
     "requires this page's first %s permission read before exposing a shared role",
     async (policy) => {

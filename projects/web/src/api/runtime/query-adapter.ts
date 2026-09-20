@@ -177,7 +177,10 @@ export function installRuntimeQueryAdapter(
   const entries = new Map<string, Entry>();
   const verifiedPermissions = new Set<string>();
   let permissionEpoch = 0;
-  const originals = new WeakMap<object, ObserverOptions>();
+  const originals = new WeakMap<
+    object,
+    { original: ObserverOptions; adjusted: ObserverOptions }
+  >();
   const writes = new Map<
     string,
     { kind: LocalWriteKind; entries: Set<Entry>; order: number }
@@ -409,7 +412,26 @@ export function installRuntimeQueryAdapter(
     );
   }
   function originalOptions(options: ObserverOptions): ObserverOptions {
-    return originals.get(options) ?? options;
+    const saved = originals.get(options);
+    if (!saved) return options;
+    // TanStack annotates the adjusted object after defaulting it (including
+    // its infinite-query type). Undo only our unchanged overrides, preserving
+    // additions, replacements and deletions made by the observer afterwards.
+    const restored = { ...options };
+    for (const key of Object.keys(saved.adjusted)) {
+      const field = key as keyof ObserverOptions;
+      if (
+        Object.hasOwn(options, field) &&
+        Object.is(options[field], saved.adjusted[field])
+      ) {
+        if (Object.hasOwn(saved.original, field)) {
+          Object.assign(restored, { [field]: saved.original[field] });
+        } else {
+          delete restored[field];
+        }
+      }
+    }
+    return restored;
   }
   function prepareOptions(options: ObserverOptions): ObserverOptions {
     const original = originalOptions(options);
@@ -462,7 +484,7 @@ export function installRuntimeQueryAdapter(
           }
         : {}),
     };
-    originals.set(adjusted, original);
+    originals.set(adjusted, { original, adjusted: { ...adjusted } });
     return adjusted;
   }
   client.defaultQueryOptions = ((options: ObserverOptions) => {

@@ -629,6 +629,14 @@ async function applicationScenario(browser, proxy, fixture, fallback = false) {
         await page.send("Emulation.setFocusEmulationEnabled", {
           enabled: true,
         });
+        await page.addScriptToEvaluateOnNewDocument(`
+          globalThis.__runtimeTimelineFailures = [];
+          new MutationObserver(() => {
+            const text = document.body?.innerText ?? "";
+            const error = text.match(/(?:Failed to load timeline|Couldn't refresh the timeline)[^\\n]*/);
+            if (error) globalThis.__runtimeTimelineFailures.push(error[0]);
+          }).observe(document, { subtree: true, childList: true, characterData: true });
+        `);
         if (fallback === true)
           await page.addScriptToEvaluateOnNewDocument(
             'Object.defineProperty(globalThis,"SharedWorker",{value:undefined,configurable:true})',
@@ -659,11 +667,19 @@ async function applicationScenario(browser, proxy, fixture, fallback = false) {
         text.every(
           (body) =>
             body.includes("Shared runtime") &&
-            body.includes("Deterministic browser fixture."),
+            body.includes("Deterministic browser fixture.") &&
+            body.includes("Fixture comment 4"),
         ),
-      "both actual application pages render",
+      "both actual application pages render the timeline through its last comment",
       30_000,
     );
+    for (const page of pages) {
+      assert.deepEqual(
+        await evaluate(page, () => globalThis.__runtimeTimelineFailures),
+        [],
+        "timeline never fails before a later worker snapshot can hide the error",
+      );
+    }
     const contentMs = performance.now() - started;
     const targets = (
       await browser.send("Target.getTargets")
@@ -722,15 +738,20 @@ async function applicationScenario(browser, proxy, fixture, fallback = false) {
           Promise.all(
             pages.map((page) =>
               evaluate(page, () =>
-                document.body?.innerText.includes(
-                  "Deterministic browser fixture.",
-                ),
+                document.body?.innerText.includes("Fixture comment 4"),
               ),
             ),
           ),
         (ready) => ready.every(Boolean),
         "application remains usable after worker restart",
       );
+      for (const page of pages) {
+        assert.deepEqual(
+          await evaluate(page, () => globalThis.__runtimeTimelineFailures),
+          [],
+          "timeline remains healthy throughout worker recovery",
+        );
+      }
     }
     return {
       mode: `${production ? "production" : "development"}-app-${fallback === "missing-worker" ? fallback : fallback ? "fallback" : "worker"}`,
