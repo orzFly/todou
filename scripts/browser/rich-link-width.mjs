@@ -244,3 +244,144 @@ export async function probeRichLinkWidth() {
     host.remove();
   }
 }
+
+/**
+ * Flex siblings divide one line's width between them, so a payment at one of
+ * them comes out of the other and no ordering can help: they are the same
+ * depth. `<summary>` is this repo's own flex row, and a blank line inside one
+ * is all the Markdown it takes (T-496).
+ *
+ * One DOM order per call. The guard's pass over a thousand samples and the
+ * thirty frames this waits out afterwards do not share a CDP evaluate's
+ * budget with probeRichLinkWidth's own scans.
+ */
+export async function probeSummaryFlexWidth(wideFirst) {
+  await document.fonts.ready;
+  const comment = [
+    ...document.querySelectorAll(".comment-link-body.border"),
+  ].find((link) => !link.querySelector("[data-comment-title]"));
+  if (!comment) return { coverageErrors: ["width-chips-missing"] };
+  const root = comment.closest(".markdown-body");
+  const host = document.createElement("div");
+  host.style.cssText =
+    "position:fixed;left:0;top:0;visibility:hidden;width:380px";
+  const failures = [];
+  const overflow = (paragraph, link) =>
+    Math.max(
+      0,
+      ...[...link.getClientRects()].map(
+        (rect) => rect.right - paragraph.getBoundingClientRect().right,
+      ),
+    );
+  try {
+    // Two authors of different widths, in both orders across calls: which
+    // sibling pays decides which one gets the bill.
+    const authors = [" by Alice Neutral Wideword", " by Alice Neutral"];
+    const summaries = [];
+    for (let width = 160; width <= 420; width += 0.25) {
+      const details = document.createElement("details");
+      details.style.cssText = `width:${width}px;position:absolute;top:0;left:0`;
+      const summary = document.createElement("summary");
+      const paragraphs = (wideFirst ? authors : [...authors].reverse()).map(
+        (author) => {
+          const paragraph = document.createElement("p");
+          const chip = comment.cloneNode(true);
+          chip.querySelector("[data-comment-author]").textContent = author;
+          paragraph.append(chip);
+          summary.append(paragraph);
+          return { paragraph, chip };
+        },
+      );
+      details.append(summary);
+      host.append(details);
+      summaries.push({ width, details, paragraphs });
+    }
+    const worst = ({ paragraphs }) =>
+      Math.max(
+        ...paragraphs.map(({ paragraph, chip }) => overflow(paragraph, chip)),
+      );
+    root.append(host);
+    // Before the guard's mutation/resize frame, record the actual old layout.
+    const pressured = summaries.filter((one) => worst(one) > 0.05);
+    // Without a sample the guard has to act on, "no overflow afterwards" is a
+    // reading about an empty set.
+    if (!pressured.length) failures.push("summary-flex-pressure-missing");
+    await new Promise((resolve) =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+    );
+    const settled = summaries.flatMap((one) =>
+      worst(one) > 0.05 ? [{ width: one.width, over: worst(one) }] : [],
+    );
+    if (settled.length) failures.push("sibling-payment-created-overflow");
+
+    // Settled has to mean the guard stopped writing, not that the number
+    // stopped moving: a flow that re-pays every frame reads zero and still
+    // reflows the page forever. Every pass restores before it re-pays, so a
+    // flow that is paying cannot run one without writing.
+    let writes = 0;
+    const watch = new MutationObserver((records) => {
+      writes += records.length;
+    });
+    for (const { details } of summaries)
+      watch.observe(details, {
+        attributes: true,
+        attributeFilter: ["style"],
+        subtree: true,
+      });
+    for (let frame = 0; frame < 30; frame++)
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    writes += watch.takeRecords().length;
+    watch.disconnect();
+    if (writes) failures.push("summary-flex-guard-kept-writing");
+
+    // The fix is those four inline properties and nothing else, so taking them
+    // back off is the chip as it shipped — the same payment, unfrozen. Read in
+    // the same frame: the guard's own resize notification puts them back on
+    // the next one.
+    const frozen = ["flex-grow", "flex-shrink", "flex-basis", "min-width"];
+    for (const { paragraphs } of summaries)
+      for (const { paragraph } of paragraphs)
+        for (const property of frozen) paragraph.style.removeProperty(property);
+    const unfrozen = summaries.flatMap((one) =>
+      worst(one) > 0.05 ? [{ width: one.width, over: worst(one) }] : [],
+    );
+    if (!unfrozen.length) failures.push("summary-flex-fault-not-detected");
+
+    // A guard that had merely stopped running would have been quiet too.
+    await new Promise((resolve) =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+    );
+    const refrozen = summaries.filter(({ paragraphs }) =>
+      paragraphs.some(({ paragraph }) =>
+        paragraph.style.getPropertyValue("flex-basis"),
+      ),
+    ).length;
+    if (!refrozen) failures.push("summary-flex-guard-not-live");
+    if (summaries.some((one) => worst(one) > 0.05))
+      failures.push("summary-flex-did-not-recover");
+
+    return {
+      failures,
+      coverageErrors: [],
+      readings: [
+        {
+          kind: wideFirst ? "summary-wide-first" : "summary-wide-last",
+          samples: summaries.length,
+          pressuredBefore: pressured.length,
+          fixedOver: settled.length,
+          unfrozenOver: unfrozen.length,
+          quietWrites: writes,
+          refrozen,
+          examples: settled.slice(0, 3),
+          unfrozenExamples: unfrozen.slice(0, 3),
+        },
+      ],
+    };
+  } finally {
+    host.remove();
+  }
+}

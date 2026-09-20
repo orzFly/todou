@@ -3,14 +3,23 @@ import { useLayoutEffect, useRef } from "react";
 const ROOT = ".markdown-body";
 const CHIPS = "a.ref-chip-body.border, a.comment-link-body.border";
 const GUTTER = "--ref-chip-gutter";
+/**
+ * Every property a pass may write, captured and put back as one group: a flow
+ * that stops paying must not keep half of what a previous pass gave it.
+ */
+const OWNED = [
+  "padding-left",
+  "padding-right",
+  "flex-grow",
+  "flex-shrink",
+  "flex-basis",
+  "min-width",
+  GUTTER,
+];
 const pixels = (value: string) => Number.parseFloat(value) || 0;
 
 type InlineValue = { value: string; priority: string };
-type FlowStyle = {
-  paddingLeft: InlineValue;
-  paddingRight: InlineValue;
-  gutter: InlineValue;
-};
+type FlowStyle = Map<string, InlineValue>;
 
 function inlineValue(
   style: CSSStyleDeclaration,
@@ -36,10 +45,68 @@ function setInline(
   else style.removeProperty(property);
 }
 
+function capture(element: HTMLElement): FlowStyle {
+  return new Map(
+    OWNED.map((property) => [property, inlineValue(element.style, property)]),
+  );
+}
+
 function restore(element: HTMLElement, original: FlowStyle) {
-  setInline(element.style, "padding-left", original.paddingLeft);
-  setInline(element.style, "padding-right", original.paddingRight);
-  setInline(element.style, GUTTER, original.gutter);
+  for (const [property, value] of original)
+    setInline(element.style, property, value);
+}
+
+/**
+ * A row flex item pays for padding out of its siblings' width rather than its
+ * own: padding enlarges its flex base size, the line re-solves, and the
+ * sibling that just lost those pixels is the one that ends up overflowing —
+ * T-496 measured a `<summary>` of two paragraphs where paying 5.2px at the
+ * second put 2.83px of the first outside its box. No ordering avoids it,
+ * because the two are the same depth.
+ *
+ * Freezing the item at the width the line already gave it makes the payment
+ * local again. A frozen item takes exactly the share it had solved to, so
+ * every sibling keeps the used width that was just measured, and the padding
+ * comes out of this flow's own content box the way it does in block flow —
+ * which is the premise the single pass below rests on.
+ *
+ * `min-width` goes with it: a flex item's automatic minimum is its min-content
+ * size including the padding about to be added, and that would push the item
+ * straight back past the width just frozen.
+ *
+ * Inline sizes derived from content in some other formatting context — an
+ * auto-layout table's columns, a `max-content` grid track — can still carry a
+ * payment outward. Nothing measured has reached one; this is the shape that
+ * was reached.
+ */
+function freezeInlineSize(
+  container: HTMLElement,
+  style: CSSStyleDeclaration,
+  width: number,
+  gutter: number,
+) {
+  const parent = container.parentElement;
+  if (!parent) return;
+  const { display, flexDirection } = getComputedStyle(parent);
+  if (display !== "flex" && display !== "inline-flex") return;
+  if (!flexDirection.startsWith("row")) return;
+  const basis =
+    style.boxSizing === "border-box"
+      ? width
+      : width -
+        gutter -
+        pixels(style.paddingLeft) -
+        pixels(style.paddingRight) -
+        pixels(style.borderLeftWidth) -
+        pixels(style.borderRightWidth);
+  const pins: [string, string][] = [
+    ["flex-grow", "0"],
+    ["flex-shrink", "0"],
+    ["flex-basis", `${basis}px`],
+    ["min-width", "0"],
+  ];
+  for (const [property, value] of pins)
+    setInline(container.style, property, { value, priority: "important" });
 }
 
 // Match comment-reference's contentContainer, stopping at this Markdown root.
@@ -127,11 +194,7 @@ export function useRefChipFlow() {
       }
       for (const element of current) {
         if (!originals.has(element)) {
-          originals.set(element, {
-            paddingLeft: inlineValue(element.style, "padding-left"),
-            paddingRight: inlineValue(element.style, "padding-right"),
-            gutter: inlineValue(element.style, GUTTER),
-          });
+          originals.set(element, capture(element));
           resizeObserver?.observe(element, { box: "border-box" });
         }
         // A child paragraph / embedded Markdown must not refund its parent's
@@ -156,8 +219,10 @@ export function useRefChipFlow() {
       const ordered = [...groups].sort(
         ([left], [right]) => depth(left) - depth(right),
       );
-      // One finite pass, one payment per flow. Descendant padding cannot change
-      // an ancestor's available inline width in these block text flows, so no
+      // One finite pass, one payment per flow, because a payment leaves every
+      // flow's outer inline size where it was: block flow takes it out of the
+      // content box on its own, and freezeInlineSize holds the one context
+      // that would not. Nothing measured after a payment can have moved, so no
       // fixed-point retries or self-scheduled reflows are needed.
       for (const [container, anchors] of ordered) {
         if (container.clientWidth === 0) continue;
@@ -184,6 +249,7 @@ export function useRefChipFlow() {
           gutter = Math.max(gutter, closing);
         }
         if (gutter > 0) {
+          freezeInlineSize(container, style, box.width, gutter);
           setInline(container.style, rtl ? "padding-left" : "padding-right", {
             value: `${padding + gutter}px`,
             priority: "important",

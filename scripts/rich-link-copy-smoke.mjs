@@ -35,6 +35,7 @@ import { fileURLToPath } from "node:url";
 import {
   checkParagraphOverflow,
   probeRichLinkWidth,
+  probeSummaryFlexWidth,
 } from "./browser/rich-link-width.mjs";
 import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
 import {
@@ -1158,6 +1159,19 @@ async function runPass({ browser, stack, fixture, fault }) {
               checkParagraphOverflow(width.injectedOverflow).length === 0
             )
               failures.push(failure("paragraph-overflow-fault-unnoticed", ""));
+            notes.summaryFlex = [];
+            for (const wideFirst of [true, false]) {
+              const flex = await evaluate(
+                page,
+                probeSummaryFlexWidth,
+                wideFirst,
+              );
+              notes.summaryFlex.push(flex);
+              for (const name of flex.coverageErrors ?? [])
+                failures.push(failure("fixture-missing-shapes", name));
+              for (const name of flex.failures ?? [])
+                failures.push(failure(name, JSON.stringify(flex.readings)));
+            }
           }
         } finally {
           await page.close().catch(() => {});
