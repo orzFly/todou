@@ -20,18 +20,33 @@
  *   // Missing elements/font/pressure are coverage errors, NOT a successful red.
  *   // A source-level revert needs no fault argument: run the same clean probe.
  *
+ * The other direction of pressure is the author's own name: PATCH /me with a
+ * display name at the schema's 200-character maximum and run the same probe,
+ * where `document-scroll-overflow` and `timestamp-disappeared` are what T-486
+ * grades. `identityShrink0` is its red, restoring the chip's pre-fix box.
+ *
+ * The row it reads holds two children: the box T-487 gave the participants
+ * that share a baseline, and the action group. Everything graded per element
+ * is in the first of those, and its content box is the width budget.
+ *
  * Seed both cases through the API (POST issue, then PATCH a different body),
  * rather than synthesizing an (edited) button. All measurements use the mounted
  * production header and its real UserChip, RevisionHistory and action buttons.
- * Only timestamp text/title and, optionally, its old class are changed; finally
- * restores them even on failure. Do not run concurrently with edits/navigation.
+ * Only timestamp text/title and, optionally, one of the two pre-fix classes are
+ * changed; finally restores them even on failure. Do not run concurrently with
+ * edits or navigation.
  */
 export async function probeIssueHeaderWidth(options = {}, fault = {}) {
   const { expectedEdited = null, expectTruncation = false } = options;
   if (expectedEdited !== null && typeof expectedEdited !== "boolean") {
     throw new Error("expectedEdited must be a boolean or null");
   }
-  if (fault && Object.keys(fault).some((key) => key !== "timestampShrink0")) {
+  if (
+    fault &&
+    Object.keys(fault).some(
+      (key) => !["timestampShrink0", "identityShrink0"].includes(key),
+    )
+  ) {
     throw new Error("unknown issue-header width fault");
   }
   await document.fonts.ready;
@@ -57,7 +72,14 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
   const menu = menus[0];
   const actions = menu.parentElement;
   const header = actions?.parentElement;
-  const children = [...(header?.children ?? [])];
+  // T-487 put the participants that share the header's baseline in a box of
+  // their own, so the row now holds two children and the identity, timestamp
+  // and edited marker are one level further in. The width budget the checks
+  // below grade is that box's, not the row's.
+  const line = [...(header?.children ?? [])].find(
+    (child) => child !== actions && child.querySelector('a[href^="/users/"]'),
+  );
+  const children = [...(line?.children ?? [])];
   const identity = children.find((child) =>
     child.matches('a[href^="/users/"]'),
   );
@@ -74,7 +96,8 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
     !timestamp ||
     !edit ||
     !visible(edit) ||
-    children.length !== (revision ? 4 : 3)
+    header.children.length !== 2 ||
+    children.length !== (revision ? 3 : 2)
   ) {
     return {
       ok: false,
@@ -92,10 +115,33 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
   ) {
     coverageErrors.push("timestamp-font-not-loaded");
   }
+  // What the chip gives up, it gives up in a box of its own inside the anchor
+  // (T-486). The chip itself must not clip — an agent's badge hangs outside
+  // the avatar's box, and a clipping chip both clips that and takes over as
+  // the first clipping ancestor T-416 walks out to. Neither is visible in the
+  // widths below, so both are preconditions of the identity checks rather
+  // than one of them.
+  // The avatar rides in a positioned span of its own (T-487), so the box that
+  // truncates is the sibling that holds no avatar.
+  const truncating = [...identity.children].find(
+    (child) =>
+      child.tagName === "SPAN" &&
+      child.querySelector('[data-slot="avatar"]') === null,
+  );
+  if (
+    !fault?.identityShrink0 &&
+    (getComputedStyle(identity).overflowX !== "visible" ||
+      truncating === undefined ||
+      getComputedStyle(truncating).overflowX === "visible" ||
+      getComputedStyle(truncating).textOverflow !== "ellipsis")
+  ) {
+    coverageErrors.push("identity-truncating-box-missing");
+  }
   const original = {
     text: timestamp.textContent,
     title: timestamp.getAttribute("title"),
     className: timestamp.className,
+    identityClassName: identity.className,
   };
   const originalDate = new Date(original.title);
   if (
@@ -318,11 +364,21 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
       timestamp.className =
         "shrink-0 text-xs whitespace-nowrap text-muted-foreground";
     }
+    if (fault?.identityShrink0) {
+      // The same, for the chip T-486 taught to give its name up: the box it
+      // carried before, with the `hover:underline` the call site adds. T-487's
+      // half of that box stays — `relative ps-5` is what reserves the avatar it
+      // positions, and taking it away would inject a second, different fault.
+      identity.className =
+        "inline-block shrink-0 whitespace-nowrap relative ps-5 text-sm hover:underline";
+    }
     await new Promise((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(resolve)),
     );
     const headerRect = rectOf(header);
     const content = contentOf(header);
+    const lineRect = rectOf(line);
+    const lineContent = contentOf(line);
     const actionRect = rectOf(actions);
     const timestampRect = rectOf(timestamp);
     const childRects = children.map(rectOf);
@@ -331,15 +387,31 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
     textRange.selectNodeContents(timestamp);
     const naturalWidth = textRange.getBoundingClientRect().width;
     const css = getComputedStyle(timestamp);
-    const gap = parseFloat(getComputedStyle(header).columnGap) || 0;
+    const gap = parseFloat(getComputedStyle(line).columnGap) || 0;
+    // The group wraps (T-487), so "what has to fit" is a row of it, not all of
+    // it: three participants that together exceed the width simply take two
+    // rows, and reading them as one row invents a shortage that is not there.
+    const rowOf = (rect) =>
+      childRects.findIndex(
+        (other) => Math.abs(other.top - rect.top) <= epsilon,
+      );
+    const rows = childRects.map(rowOf);
+    const timestampRow = rows[children.indexOf(timestamp)];
+    const rowIndexes = children
+      .map((_, index) => index)
+      .filter((index) => rows[index] === timestampRow);
     const requiredWidth =
-      childRects.reduce(
-        (sum, rect, index) =>
-          sum + (children[index] === timestamp ? naturalWidth : rect.width),
+      rowIndexes.reduce(
+        (sum, index) =>
+          sum +
+          (children[index] === timestamp
+            ? naturalWidth
+            : childRects[index].width),
         0,
       ) +
-      gap * (children.length - 1);
-    const pressure = requiredWidth > content.right - content.left + epsilon;
+      gap * (rowIndexes.length - 1);
+    const pressure =
+      requiredWidth > lineContent.right - lineContent.left + epsilon;
     const truncated = naturalWidth > timestampRect.width + epsilon;
     const within = (inner, outer) =>
       inner.left >= outer.left - epsilon &&
@@ -361,14 +433,25 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
       failures.push("header-outside-viewport");
     }
     if (!within(actionRect, content)) failures.push("actions-outside-header");
-    if (childRects.some((rect) => !within(rect, content)))
+    // Two boxes to stay inside now: the baseline group inside the row, and
+    // every participant inside the group. A chip that overflows its own box
+    // and a group that overflows the row are the same symptom one level apart.
+    if (
+      !within(lineRect, content) ||
+      childRects.some((rect) => !within(rect, lineContent))
+    )
       failures.push("header-child-outside");
+    // The row, not the group: the group's own scrollable overflow now carries
+    // the chip's clip margin, which is the bot badge's reserved overhang and
+    // not a layout fault.
     if (header.scrollWidth > header.clientWidth + epsilon)
       failures.push("header-scroll-overflow");
     if (
       childRects.some(
         (rect, i) =>
-          i > 0 && rect.left < childRects[i - 1].right + gap - epsilon,
+          i > 0 &&
+          rows[i] === rows[i - 1] &&
+          rect.left < childRects[i - 1].right + gap - epsilon,
       )
     ) {
       failures.push("header-neighbours-overlap");
@@ -408,9 +491,22 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
       failures,
       coverageErrors,
       edited: Boolean(revision),
-      fault: Boolean(fault?.timestampShrink0),
+      fault:
+        Boolean(fault?.timestampShrink0) || Boolean(fault?.identityShrink0),
       viewportWidth: document.documentElement.clientWidth,
       documentWidth,
+      identity: {
+        text: identity.textContent,
+        width: rectOf(identity).width,
+        overflowX: getComputedStyle(identity).overflowX,
+        truncating: truncating
+          ? {
+              width: rectOf(truncating).width,
+              overflowX: getComputedStyle(truncating).overflowX,
+              textOverflow: getComputedStyle(truncating).textOverflow,
+            }
+          : null,
+      },
       timestamp: {
         text: stressText,
         title: stressTitle,
@@ -424,6 +520,8 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
       geometry: {
         header: headerRect,
         content,
+        line: lineRect,
+        lineContent,
         actions: actionRect,
         timestamp: timestampRect,
         children: childRects,
@@ -437,5 +535,6 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
     timestamp.textContent = original.text;
     timestamp.setAttribute("title", original.title);
     timestamp.className = original.className;
+    identity.className = original.identityClassName;
   }
 }

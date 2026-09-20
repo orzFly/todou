@@ -210,11 +210,14 @@ export async function probeT359AvatarFault(options = {}) {
     const chip = row?.querySelector('[data-avatar-participant="author"]');
     const peer = row?.querySelector('[data-avatar-participant="peer"]');
     const avatar = chip?.querySelector('[data-slot="avatar"]');
+    // A descendant, not a child: what the chip is willing to truncate sits in
+    // a box of its own inside the anchor (T-486). Finding no name at all would
+    // report this drill as a missing sample and hide the reason it is really
+    // unproven, which is the avatar leaving the flow in T-487.
     const name = chip
-      ? [...chip.children].find(
+      ? [...chip.querySelectorAll("span")].find(
           (element) =>
             element instanceof HTMLElement &&
-            element.tagName === "SPAN" &&
             element.classList.contains("ml-1.5"),
         )
       : null;

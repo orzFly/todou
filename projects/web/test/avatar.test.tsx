@@ -82,18 +82,58 @@ describe("UserChip names (T-149)", () => {
     const { container, findByText } = renderWithProviders(
       <UserChip user={human} />,
     );
-    const root = (await findByText("Spud Farmer")).parentElement;
+    // The anchor, not the name's parent: the name now sits in a box of its own
+    // inside it (T-486).
+    const root = (await findByText("Spud Farmer")).closest("a");
     expect(root?.className).toContain("inline-block");
-    // `shrink-0` is the entire reason the anchor *replaces* the chip's outer
-    // span instead of wrapping it: the chip is a flex item in the comment
-    // header, the event row and the board's meta row, and a slot held by an
-    // element without this gets squeezed in exactly those dense rows. Drop it
-    // from `box` in user-chip.tsx and this is the line that reds — nothing
-    // else in the suite can see it (T-391).
-    expect(root?.className).toContain("shrink-0");
+    // Why the anchor *replaces* the chip's outer span instead of wrapping it:
+    // the chip is a flex item in the comment header, the event row and the
+    // board's meta row, and a wrapper would hand that slot to an element with
+    // rules of its own. A named chip stops refusing to narrow and is floored
+    // at the width the avatar is positioned against (T-486); drop either from
+    // `box` in user-chip.tsx and this is the line that reds, because nothing
+    // else in the suite can see them (T-391).
+    expect(root?.className).toContain("min-w-5");
+    expect(root?.className).not.toContain("shrink-0");
+
+    // The clip belongs to the text and not to the chip, which also holds an
+    // avatar whose badge hangs outside its box on purpose. Moved up to the
+    // chip, T-416's badge check stops at the chip instead of at the event
+    // row's summary and loses every sample it grades.
+    const truncating = root?.querySelector(":scope > span.overflow-clip");
+    expect(truncating?.className).toContain("text-ellipsis");
+    expect(truncating?.textContent).toBe("Spud Farmer");
+    expect(root?.className).not.toContain("overflow-clip");
 
     const avatarBox = container.querySelector("[data-slot=avatar]");
     expect(avatarBox?.className).toContain("align-middle");
+  });
+
+  // The other half of that decision, and the half T-486 must not have taken
+  // with it: a chip carrying nothing but an avatar has no name to give up, so
+  // it still refuses to narrow in the dense rows it was given `shrink-0` for.
+  it("keeps a compact chip unshrinkable and unclipped (T-487)", async () => {
+    const { findByText } = renderWithProviders(
+      <UserChip user={{ ...human, kind: "machine" }} compact />,
+    );
+    const root = (await findByText("SF")).closest("a");
+    expect(root?.className).toContain("shrink-0");
+    for (const rule of ["min-w-5", "overflow-clip", "text-ellipsis", "ps-5"]) {
+      expect(root?.className).not.toContain(rule);
+    }
+    expect(root?.querySelector(".overflow-clip")).toBeNull();
+  });
+
+  // A second name beside the first still shares the truncating box: making
+  // that box a block put `@login` on a line of its own the first time.
+  it("keeps the login on the name's line (T-486)", async () => {
+    const { findByText } = renderWithProviders(
+      <UserChip user={human} showLogin />,
+    );
+    const name = await findByText("Spud Farmer");
+    const login = await findByText("@spud");
+    expect(name.parentElement).toBe(login.parentElement);
+    expect(name.parentElement?.className).toContain("overflow-clip");
   });
 });
 

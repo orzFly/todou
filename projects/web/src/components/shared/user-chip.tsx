@@ -137,13 +137,22 @@ export function UserChip({
         </span>
       )}
       {!compact && (
-        <span className={cn("ml-1.5 text-sm", nameClassName)}>
-          {displayNameOf(user)}
-        </span>
-      )}
-      {!compact && showLogin && (
-        <span className="ml-1.5 text-muted-foreground text-sm">
-          @{user.login}
+        // Everything the chip is willing to lose, in one box that clips
+        // (T-486). The clip is here and not on the chip because the chip also
+        // holds the avatar, whose badge hangs outside its box on purpose: a
+        // chip that clipped would be clipping that badge, and T-416 grades the
+        // badge against the event row's summary span by walking out from it to
+        // the first box that clips. Nothing hangs out of this one, so it needs
+        // no clip margin either.
+        <span className="block overflow-clip text-ellipsis">
+          <span className={cn("ml-1.5 text-sm", nameClassName)}>
+            {displayNameOf(user)}
+          </span>
+          {showLogin && (
+            <span className="ml-1.5 text-muted-foreground text-sm">
+              @{user.login}
+            </span>
+          )}
         </span>
       )}
     </>
@@ -155,18 +164,29 @@ export function UserChip({
   // above the sentence around it, then jumped the moment the image replaced
   // the initials, which do have one.
   //
-  // The anchor takes these classes rather than sitting outside them: the
-  // chip is a flex item in the comment header, the event row and the board's
-  // meta row, and wrapping it would hand that slot to an element without
-  // `shrink-0`, squeezing the chip in exactly the dense rows it is used in.
+  // The anchor takes these classes rather than sitting outside them: the chip
+  // is a flex item in the comment header, the event row and the board's meta
+  // row, and wrapping it would hand that slot to an element with rules of its
+  // own, in exactly the dense rows the chip is used in.
+  //
+  // Whether the chip may narrow is decided by whether it has anything to give
+  // up. Only an avatar, and it is 20px of pure identity: `shrink-0`, because a
+  // dense row squeezing that buys nothing and there is no text to ellipsise.
+  // With a name, the name is the slack — a legal 32-character one used to take
+  // the issue header to 445px of chip inside a 390px viewport, because the box
+  // refused to narrow by any amount and the timestamp beside it was the only
+  // thing that could (T-486). What the name gives up it gives up in the box
+  // around it, above; this one only stops refusing.
   //
   // `text-sm` restates the name's own size on the box the avatar is centred
   // in. Inherited instead, a hover card's `text-base` would give the chip a
   // 24px strut and hang the avatar 2px below the 14px name it belongs to.
-  // `ps-5` is the width the out-of-flow avatar no longer claims.
+  // `ps-5` is the width the out-of-flow avatar no longer claims, and `min-w-5`
+  // is that same width as a floor: the avatar is positioned against this box,
+  // so a chip allowed past it would leave its own avatar hanging outside it.
   const box = cn(
-    "inline-block shrink-0 whitespace-nowrap",
-    !compact && "relative ps-5 text-sm",
+    "inline-block whitespace-nowrap",
+    compact ? "shrink-0" : "relative min-w-5 ps-5 text-sm",
   );
 
   // The avatar's `alt` is empty and the fallback only carries initials, so a

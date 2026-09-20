@@ -1067,7 +1067,10 @@ async function measureAvatars(page, settle = "initial") {
       return ids.map((id) => {
         const row = document.querySelector(`[data-avatar-case="${id}"]`);
         const author = row?.querySelector('[data-avatar-participant="author"]');
-        const name = author?.querySelector(":scope > span.ml-1\\.5");
+        // A descendant, not a child: what the chip is willing to truncate sits
+        // in a box of its own inside the anchor (T-486), and `textLeaf` in the
+        // row measurements above already looked for the name this way.
+        const name = author?.querySelector("span.ml-1\\.5");
         const peer = row?.querySelector('[data-avatar-participant="peer"]');
         if (!row || !author || !name || !peer) {
           return {

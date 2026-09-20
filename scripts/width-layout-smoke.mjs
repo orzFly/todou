@@ -26,6 +26,11 @@ Restores the original timestamp shrink-0 class temporarily to require a geometry
 failure, then requires a clean pass on the restored page. Every measurement
 also requires documentElement.scrollWidth <= documentElement.clientWidth.
 The timestamp is chosen from measured legal date/time fields in the loaded font.
+Then renames the author to the schema's longest legal display name and repeats,
+where the chip must give its name up instead of leaving the row and the
+timestamp must keep a width of its own. That case's required red is the chip's
+pre-fix shrink-0 box; its page-wide overflow comes from the shell header's own
+account button and is tolerated by name rather than asserted.
 
 --keep  Retain isolated artifacts under .tmp/ after cleanup.
 CHROMIUM overrides /usr/bin/chromium. Uses en-US / UTC for reproducibility.
@@ -76,8 +81,19 @@ async function seed(stack) {
       call("PATCH", `${path}/${issue.number}`, {
         body: "An edited description for the width probe.",
       }),
+    // Through the real endpoint, so the server's own validator is what decides
+    // this name is legal rather than this file's opinion of the limit (T-486).
+    renameAuthor: (display_name) => call("PATCH", "/me", { display_name }),
   };
 }
+
+/**
+ * The widest name the schema admits: `user.ts` caps display_name at 200
+ * characters, and a capital W is the widest glyph the loaded face has to place
+ * 200 of. The reported case was 32 of them; the cap is what the acceptance
+ * criterion asks for, and the two are the same shape one order apart.
+ */
+const LONGEST_LEGAL_NAME = "W".repeat(200);
 
 async function openIssue(context, fixture, edited) {
   const equals = fixture.cookie.indexOf("=");
@@ -104,10 +120,10 @@ async function openIssue(context, fixture, edited) {
           const header = button?.parentElement?.parentElement;
           if (!header || !header.querySelector('[aria-label="edit body"]'))
             return false;
-          const hasRevision = [...header.children].some(
-            (child) =>
-              child.tagName === "BUTTON" &&
-              child.textContent.trim() === "(edited)",
+          // A descendant search, not the row's own children: T-487 moved the
+          // edited marker into the baseline group one level in.
+          const hasRevision = [...header.querySelectorAll("button")].some(
+            (child) => child.textContent.trim() === "(edited)",
           );
           return (
             hasRevision === expectedEdited &&
@@ -140,20 +156,40 @@ async function main() {
   let stack;
   let exitCode = 0;
   const cases = [];
-  const record = (name, result, expectRed = false) => {
+  // A red case says which failures it is a red *for*. Without that a case
+  // passes on any geometry complaint, including one the fault it injected was
+  // never supposed to cause — which is how a drill stops grading its own card.
+  // `tolerated` is the other half: a failure this page really does have, for a
+  // reason outside the case, named here so it cannot quietly become the reason
+  // the case passed or failed.
+  const record = (
+    name,
+    result,
+    { expectRed = false, requiredRed = null, tolerated = [] } = {},
+  ) => {
     const coverageErrors = [...result.coverageErrors];
     if (result.viewportWidth !== 390)
       coverageErrors.push("expected-390px-viewport");
-    const geometryRed = result.failures.some((failure) =>
-      ["actions-outside-header", "header-child-outside"].includes(failure),
+    const failures = result.failures.filter(
+      (failure) => !tolerated.includes(failure),
     );
+    const red =
+      requiredRed === null
+        ? failures.some((failure) =>
+            ["actions-outside-header", "header-child-outside"].includes(
+              failure,
+            ),
+          )
+        : requiredRed.every((failure) => failures.includes(failure));
+    const green = failures.length === 0;
     const pass =
-      coverageErrors.length === 0 &&
-      (expectRed ? !result.ok && geometryRed : result.ok);
+      coverageErrors.length === 0 && (expectRed ? !green && red : green);
     const entry = {
       name,
       status: pass ? "pass" : "fail",
       expectRed,
+      requiredRed,
+      tolerated,
       ...result,
       coverageErrors,
     };
@@ -200,7 +236,7 @@ async function main() {
           await evaluate(edited, probeIssueHeaderWidth, options, {
             timestampShrink0: true,
           }),
-          true,
+          { expectRed: true },
         );
         record(
           "edited-restored-green",
@@ -208,6 +244,52 @@ async function main() {
         );
       } finally {
         await edited.close();
+      }
+      // T-486: the same header, with the pressure coming from the author's
+      // name instead of the timestamp. A fresh page, because the chip renders
+      // from the cached issue payload the first load fetched.
+      //
+      // `document-scroll-overflow` is tolerated here and only here. Measured
+      // on this page at 390px with the same name: the widest thing sticking
+      // out is the shell header's own account button, which is `shrink-0`
+      // around its chip and so cannot narrow whatever the chip does; the
+      // description header's chip is clipped and contributes nothing. Asserting
+      // the page-wide number here would grade that other surface instead.
+      await fixture.renameAuthor(LONGEST_LEGAL_NAME);
+      const renamed = await openIssue(context, fixture, true);
+      try {
+        // Not `expectTruncation`: the width this case takes away is the chip's,
+        // and the timestamp gets a row to itself rather than a squeeze.
+        const options = { expectedEdited: true };
+        const tolerated = ["document-scroll-overflow"];
+        record(
+          "long-name-green",
+          await evaluate(renamed, probeIssueHeaderWidth, options),
+          { tolerated },
+        );
+        record(
+          "identity-shrink-0-red",
+          await evaluate(renamed, probeIssueHeaderWidth, options, {
+            identityShrink0: true,
+          }),
+          // Not `timestamp-disappeared`, which is the half of T-486's report
+          // that T-487 has already carried off: the baseline group wraps now,
+          // so an unshrinkable chip sends the timestamp to a second line at
+          // full width instead of squeezing it to nothing. What is left of the
+          // symptom, and what this grades, is the chip leaving its own row.
+          {
+            expectRed: true,
+            tolerated,
+            requiredRed: ["header-child-outside", "header-scroll-overflow"],
+          },
+        );
+        record(
+          "long-name-restored-green",
+          await evaluate(renamed, probeIssueHeaderWidth, options),
+          { tolerated },
+        );
+      } finally {
+        await renamed.close();
       }
     } finally {
       await context.close();
