@@ -24,6 +24,7 @@ import type {
   SearchItem,
   SearchPage,
 } from "@todou/shared";
+import { SEARCH_QUALIFIERS } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import {
@@ -474,6 +475,56 @@ function seedBox(autolinks: Autolink[] = []): QueryClient {
 }
 
 describe("SearchBox", () => {
+  it("offers search when there are no completions or matching history", async () => {
+    const utils = renderBox(seedBox());
+    const input = await typeInto(utils, "无匹配关键词");
+    const action = await utils.findByRole("option", {
+      name: /Search for “无匹配关键词”/,
+    });
+    expect(optionsOf(utils.container)).toEqual([action]);
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    expect(action.getAttribute("href")).toBe(
+      "/projects/todou/search?q=%E6%97%A0%E5%8C%B9%E9%85%8D%E5%85%B3%E9%94%AE%E8%AF%8D",
+    );
+    fireEvent.click(action);
+    await waitFor(() =>
+      expect(utils.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "无匹配关键词" },
+      }),
+    );
+  });
+
+  it("can dismiss and reopen a search-only panel", async () => {
+    const utils = renderBox(seedBox());
+    const input = await typeInto(utils, "无匹配关键词");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(1));
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(listboxOf(utils.container)).toBeNull();
+    fireEvent.change(input, { target: { value: "另一个关键词" } });
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(1));
+    fireEvent.blur(input);
+    expect(listboxOf(utils.container)).toBeNull();
+  });
+
+  it.each(["", "   "])(
+    "keeps syntax hints and the search-page link for blank input %j",
+    async (value) => {
+      const utils = renderBox(seedBox());
+      const input = await typeInto(utils, value);
+      await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+      const rows = optionsOf(utils.container);
+      expect(rows[0]?.textContent).toContain("search page");
+      expect(rows[0]?.getAttribute("href")).toBe("/projects/todou/search");
+      expect(
+        rows.slice(1).map((row) => row.textContent?.split(":")[0]),
+      ).toEqual(Object.keys(SEARCH_QUALIFIERS));
+      expect(utils.container.textContent).not.toContain("Search for");
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(listboxOf(utils.container)).toBeNull();
+    },
+  );
+
   it("submits to the results page, trimming what it sends", async () => {
     const { container, findByLabelText, where, router } = renderBox();
     const input = (await findByLabelText(
@@ -661,8 +712,9 @@ describe("SearchBox · the jump offer", () => {
     );
     const utils = renderBox(client);
     await typeInto(utils, "T-141");
-    // Nothing on offer yet — the context has not landed.
-    expect(listboxOf(utils.container)).toBeNull();
+    // The search action stays available while the jump context is loading.
+    expect(optionsOf(utils.container)).toHaveLength(1);
+    expect(optionsOf(utils.container)[0]?.textContent).toContain("Search for");
     submit(utils.container);
 
     land(DIRECTORY);
@@ -671,7 +723,7 @@ describe("SearchBox · the jump offer", () => {
     );
   });
 
-  it("offers nothing, and searches as ever, when there is no such card", async () => {
+  it("offers only search when there is no such card", async () => {
     const client = seedBox();
     client.setQueryData(
       issueRefQuery("todou", 141).queryKey,
@@ -679,13 +731,15 @@ describe("SearchBox · the jump offer", () => {
     );
     client.setQueryData(issueRefQuery("todou", 999).queryKey, null);
     const utils = renderBox(client);
-    // Opened on a card that is there, so the listbox going away is the
-    // absence of a card rather than a query that never answered.
+    // Start with a resolved card, then verify its jump offer is removed.
     const input = await typeInto(utils, "T-141");
-    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
 
     fireEvent.change(input, { target: { value: "T-999" } });
-    await waitFor(() => expect(listboxOf(utils.container)).toBeNull());
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(1));
+    expect(optionsOf(utils.container)[0]?.textContent).toContain(
+      "Search for “T-999”",
+    );
 
     submit(utils.container);
     await waitFor(() =>
@@ -867,6 +921,9 @@ describe("SearchBox · the jump offer", () => {
     const onEscape = vi.fn();
     const utils = renderBox(seedBox(), { onEscape });
     const input = await typeInto(utils, "plain words");
+    expect(optionsOf(utils.container)).toHaveLength(1);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onEscape).not.toHaveBeenCalled();
     expect(listboxOf(utils.container)).toBeNull();
 
     fireEvent.keyDown(input, { key: "Escape" });

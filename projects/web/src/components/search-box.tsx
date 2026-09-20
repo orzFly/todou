@@ -276,10 +276,10 @@ export function SearchBox({
     ],
     { kind: "search" },
   );
-  const open = focused && !dismissed && rows.length > 1;
+  const query = value.trim();
+  const open = focused && !dismissed && (query !== "" || rows.length > 1);
   const hl = highlight >= rows.length ? NONE : highlight;
   const elsewhere = jumpRows.some((row) => pointsElsewhere(row, slug));
-  const query = value.trim();
   const optionId = (idx: number) => `${listId}-${idx}`;
 
   useSlashShortcut(() => {
