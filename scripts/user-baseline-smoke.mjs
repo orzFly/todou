@@ -1748,7 +1748,19 @@ async function scopeRun(
             // to the next line rather than overflowing, so a fault that only
             // pins `flex-shrink` proves nothing about the repair.
             row.style.flexWrap = "nowrap";
-            for (const child of row.children) {
+            // The row's flex items, which are not always its element
+            // children: the baseline line (T-487) and the identity group
+            // (T-445) each dissolve into `display: contents` on one side of
+            // the breakpoint, and pinning a box that generates none leaves
+            // everything inside it free to shrink — a fault that cannot fail
+            // proves nothing about the repair.
+            const items = (parent) =>
+              [...parent.children].flatMap((child) =>
+                getComputedStyle(child).display === "contents"
+                  ? items(child)
+                  : [child],
+              );
+            for (const child of items(row)) {
               child.style.flexShrink = "0";
               child.style.whiteSpace = "nowrap";
               child.style.minWidth = "max-content";

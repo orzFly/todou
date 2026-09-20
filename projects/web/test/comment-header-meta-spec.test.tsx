@@ -22,6 +22,7 @@ import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import {
   expectHeaderMeta,
   expectSplitHeader,
+  headerItems,
   headerRowOf,
 } from "./header-meta.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -443,7 +444,7 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
     expectSplitHeader(row, {
       identity: ["Alice", "v2"],
       actions: [
-        [...row.children].find((child) => child.textContent === "resolved"),
+        headerItems(row).find((child) => child.textContent === "resolved"),
       ],
       spacer: true,
     });

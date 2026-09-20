@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import {
   COMMENT_HEADER_ACTION,
   COMMENT_HEADER_IDENTITY,
+  COMMENT_HEADER_LINE,
   COMMENT_HEADER_ROW,
 } from "../src/components/shared/comment-header-meta.tsx";
 
@@ -66,9 +67,29 @@ export function headerRowOf(root: ParentNode): HTMLElement {
     "[data-testid='comment-header-meta']",
   );
   expect(meta, "no comment header in this subtree").not.toBeNull();
-  const row = meta?.parentElement ?? null;
-  expect(row, "the meta is not a child of a header row").not.toBeNull();
+  // One level further out than the meta's own parent: T-487 put a box around
+  // the participants that share the header's baseline, so the row can centre
+  // them as a group instead of hanging them from the top of the buttons.
+  const line = meta?.parentElement ?? null;
+  expect(line, "the meta is not a child of a header line").not.toBeNull();
+  expectClasses(line as Element, COMMENT_HEADER_LINE, "the header line");
+  const row = line?.parentElement ?? null;
+  expect(row, "the header line is not a child of a header row").not.toBeNull();
   return row as HTMLElement;
+}
+
+/**
+ * What the row lays out, read through the baseline line. Above the breakpoint
+ * that line is a box and the identity, the meta and the marks beside them are
+ * its children; below it the line is `contents` and the grid places the same
+ * elements itself. Either way they are what the row arranges, and every
+ * assertion below is about them rather than about which of the two the
+ * element tree happens to show.
+ */
+export function headerItems(row: HTMLElement): Element[] {
+  return [...row.children].flatMap((child) =>
+    child.className === COMMENT_HEADER_LINE ? [...child.children] : [child],
+  );
 }
 
 function expectClasses(element: Element, classes: string, what: string) {
@@ -105,7 +126,7 @@ export function expectSplitHeader(
 ) {
   expectClasses(row, COMMENT_HEADER_ROW, "the header row");
 
-  const identity = [...row.children].filter(
+  const identity = headerItems(row).filter(
     (child) => child.className === COMMENT_HEADER_IDENTITY,
   );
   expect(identity, "expected exactly one identity group").toHaveLength(1);
@@ -122,7 +143,7 @@ export function expectSplitHeader(
     expect(action, "an expected action is not rendered").toBeTruthy();
     // The class belongs on whatever the row itself lays out, which for the
     // timeline is the group around the buttons rather than a button.
-    const placed = [...row.children].find(
+    const placed = headerItems(row).find(
       (child) => child === action || child.contains(action as Node),
     );
     expect(placed, "an action sits outside the header row").toBeTruthy();
@@ -136,7 +157,7 @@ export function expectSplitHeader(
   // Empty, inert and exactly the sort of thing a later reader deletes: it is
   // the `gap-2` between it and the meta that holds the desktop row where it
   // is, so the assertion is that it is still here, not merely hidden.
-  const spacers = [...row.children].filter(
+  const spacers = headerItems(row).filter(
     (child) =>
       child.tagName === "SPAN" &&
       child.classList.contains("ml-auto") &&

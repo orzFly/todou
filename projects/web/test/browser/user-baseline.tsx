@@ -114,16 +114,17 @@ function mark(
 }
 
 /**
- * The author chip of a comment header. One level deeper than in every other
- * row here: a comment header wraps its identity in a group so the row can put
- * the meta on a second line below `sm` (T-445). Still bounded to that one
- * level rather than a bare descendant search, because the rows this marks
+ * The author chip of a comment header. Up to two levels deeper than in every
+ * other row here: a comment header wraps its identity in a group so the row
+ * can put the meta on a second line below `sm` (T-445), and wraps that group
+ * again in the line the row centres as one (T-487). Still bounded to those
+ * levels rather than a bare descendant search, because the rows this marks
  * carry comment bodies that hold user links of their own.
  */
 function authorChipOf(row: Element | null) {
   return (
     row?.querySelector(
-      ':scope > a[href^="/users/"], :scope > span > a[href^="/users/"]',
+      ':scope > a[href^="/users/"], :scope > span > a[href^="/users/"], :scope > span > span > a[href^="/users/"]',
     ) ?? null
   );
 }
@@ -225,8 +226,8 @@ function markRows(commentId?: number, annotationId?: number) {
     mark(
       body,
       "body-block",
-      body.querySelector(':scope > a[href^="/users/"]'),
-      body.querySelector(":scope > span[title]"),
+      authorChipOf(body),
+      body.querySelector(":scope > span[title], :scope > span > span[title]"),
     );
   }
   markCommentHeader("#fixture-comment-item", "comment-item", false);

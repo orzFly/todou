@@ -52,6 +52,7 @@ import {
   COMMENT_HEADER_ACTION,
   COMMENT_HEADER_ROW,
   CommentHeaderIdentity,
+  CommentHeaderLine,
   CommentHeaderMeta,
 } from "@/components/shared/comment-header-meta.tsx";
 import {
@@ -1833,31 +1834,46 @@ function UnplacedComment({
           COMMENT_HEADER_ROW,
         )}
       >
-        <CommentHeaderIdentity>
-          <UserChip user={item.author} />
-          <span>
-            {formatAnchorRange(item.anchor)} · v{item.anchor.version}
-          </span>
-          {item.outdated && (
-            <span className="self-center rounded-full border px-1.5 text-muted-foreground">
-              outdated
+        <CommentHeaderLine>
+          <CommentHeaderIdentity>
+            <UserChip user={item.author} />
+            <span>
+              {formatAnchorRange(item.anchor)} · v{item.anchor.version}
+            </span>
+            {item.outdated && (
+              <span className="self-center rounded-full border px-1.5 text-muted-foreground">
+                outdated
+              </span>
+            )}
+          </CommentHeaderIdentity>
+          {/* Stays, against every instinct to sweep it up: it is what pushes
+              the meta right on the desktop row, and replacing it with an
+              `ml-auto` on the meta itself would cost the row one `gap-2` and
+              shift the desktop 8px (T-445). The grid below the breakpoint
+              places its children itself, where an unplaced box of its own
+              would take a cell. */}
+          <span className="ml-auto max-sm:hidden" />
+          <CommentHeaderMeta
+            slug={slug}
+            issueNumber={issueNumber}
+            commentId={item.comment_id}
+            createdAt={item.created_at}
+          />
+          {/* The mark sits on the header's baseline and the button does not,
+              which is the whole of why the ternary is split across the line's
+              edge (T-487). */}
+          {item.resolved !== null && (
+            <span
+              className={cn(
+                "text-green-700 dark:text-green-400",
+                COMMENT_HEADER_ACTION,
+              )}
+            >
+              resolved
             </span>
           )}
-        </CommentHeaderIdentity>
-        {/* Stays, against every instinct to sweep it up: it is what pushes
-            the meta right on the desktop row, and replacing it with an
-            `ml-auto` on the meta itself would cost the row one `gap-2` and
-            shift the desktop 8px (T-445). The grid below the breakpoint
-            places its children itself, where an unplaced box of its own
-            would take a cell. */}
-        <span className="ml-auto max-sm:hidden" />
-        <CommentHeaderMeta
-          slug={slug}
-          issueNumber={issueNumber}
-          commentId={item.comment_id}
-          createdAt={item.created_at}
-        />
-        {item.resolved === null ? (
+        </CommentHeaderLine>
+        {item.resolved === null && (
           <Button
             size="sm"
             variant="outline"
@@ -1870,15 +1886,6 @@ function UnplacedComment({
           >
             Resolve
           </Button>
-        ) : (
-          <span
-            className={cn(
-              "text-green-700 dark:text-green-400",
-              COMMENT_HEADER_ACTION,
-            )}
-          >
-            resolved
-          </span>
         )}
       </div>
       {item.anchor.quote !== "" && (
@@ -2518,22 +2525,26 @@ function DiffAnnotation({
           COMMENT_HEADER_ROW,
         )}
       >
-        <CommentHeaderIdentity>
-          <UserChip user={item.author} />
-          <span>
-            {formatAnchorRange(item.anchor)} · v{item.anchor.version}
-          </span>
-          {item.resolved !== null && (
-            <span className="text-green-700 dark:text-green-400">resolved</span>
-          )}
-        </CommentHeaderIdentity>
-        <CommentHeaderMeta
-          className="ml-auto"
-          slug={slug}
-          issueNumber={issueNumber}
-          commentId={item.comment_id}
-          createdAt={item.created_at}
-        />
+        <CommentHeaderLine>
+          <CommentHeaderIdentity>
+            <UserChip user={item.author} />
+            <span>
+              {formatAnchorRange(item.anchor)} · v{item.anchor.version}
+            </span>
+            {item.resolved !== null && (
+              <span className="text-green-700 dark:text-green-400">
+                resolved
+              </span>
+            )}
+          </CommentHeaderIdentity>
+          <CommentHeaderMeta
+            className="ml-auto"
+            slug={slug}
+            issueNumber={issueNumber}
+            commentId={item.comment_id}
+            createdAt={item.created_at}
+          />
+        </CommentHeaderLine>
       </div>
       <p className="whitespace-pre-wrap">{item.body}</p>
     </div>

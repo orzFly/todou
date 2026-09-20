@@ -20,6 +20,7 @@ import {
   COMMENT_HEADER_ACTION,
   COMMENT_HEADER_ROW,
   CommentHeaderIdentity,
+  CommentHeaderLine,
   CommentHeaderMeta,
 } from "@/components/shared/comment-header-meta.tsx";
 import {
@@ -176,57 +177,65 @@ export function CommentItem({
           COMMENT_HEADER_ROW,
         )}
       >
-        <CommentHeaderIdentity>
-          <UserChip user={comment.author} />
-          {/* T-433's rule — text of different sizes shares one baseline —
-              applied to the badge here, where T-435 put an id and a time on
-              that same line. The icon opts out and stays centred because a
-              replaced box has no baseline of its own: left in the group, the
-              pill's position would be decided by a synthesized one taken from
-              the glyph's box rather than by the model name beside it. Scoped
-              to this call site; the event and revision rows keep T-433's
-              self-center. */}
-          <AgentContextBadge
-            context={comment.agent_context}
-            className="items-baseline [&>svg]:self-center"
-          />
-          {comment.edited_at && (
-            <RevisionHistory
-              label="comment"
-              editedAt={comment.edited_at}
-              filename="comment.md"
-              queryKey={["revisions", slug, issueNumber, "comment", comment.id]}
-              fetchRevisions={() =>
-                api.getCommentRevisions(slug, issueNumber, comment.id)
-              }
+        <CommentHeaderLine>
+          <CommentHeaderIdentity>
+            <UserChip user={comment.author} />
+            {/* T-433's rule — text of different sizes shares one baseline —
+                applied to the badge here, where T-435 put an id and a time on
+                that same line. The icon opts out and stays centred because a
+                replaced box has no baseline of its own: left in the group, the
+                pill's position would be decided by a synthesized one taken from
+                the glyph's box rather than by the model name beside it. Scoped
+                to this call site; the event and revision rows keep T-433's
+                self-center. */}
+            <AgentContextBadge
+              context={comment.agent_context}
+              className="items-baseline [&>svg]:self-center"
+            />
+            {comment.edited_at && (
+              <RevisionHistory
+                label="comment"
+                editedAt={comment.edited_at}
+                filename="comment.md"
+                queryKey={[
+                  "revisions",
+                  slug,
+                  issueNumber,
+                  "comment",
+                  comment.id,
+                ]}
+                fetchRevisions={() =>
+                  api.getCommentRevisions(slug, issueNumber, comment.id)
+                }
+              />
+            )}
+          </CommentHeaderIdentity>
+          {pending ? (
+            <CommentHeaderMeta
+              pending
+              className="ml-auto"
+              createdAt={comment.created_at}
+            />
+          ) : (
+            <CommentHeaderMeta
+              className="ml-auto"
+              slug={slug}
+              issueNumber={issueNumber}
+              commentId={comment.id}
+              createdAt={comment.created_at}
             />
           )}
-        </CommentHeaderIdentity>
-        {pending ? (
-          <CommentHeaderMeta
-            pending
-            className="ml-auto"
-            createdAt={comment.created_at}
-          />
-        ) : (
-          <CommentHeaderMeta
-            className="ml-auto"
-            slug={slug}
-            issueNumber={issueNumber}
-            commentId={comment.id}
-            createdAt={comment.created_at}
-          />
-        )}
-        {pending && (
-          <span
-            className={cn(
-              "text-xs text-muted-foreground",
-              COMMENT_HEADER_ACTION,
-            )}
-          >
-            sending…
-          </span>
-        )}
+          {pending && (
+            <span
+              className={cn(
+                "text-xs text-muted-foreground",
+                COMMENT_HEADER_ACTION,
+              )}
+            >
+              sending…
+            </span>
+          )}
+        </CommentHeaderLine>
         {!pending && (
           <div
             className={cn(

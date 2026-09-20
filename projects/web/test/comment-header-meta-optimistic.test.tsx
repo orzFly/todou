@@ -20,6 +20,7 @@ import { cmCount, cmSetValue } from "./cm.ts";
 import {
   expectHeaderMeta,
   expectSplitHeader,
+  headerItems,
   headerRowOf,
 } from "./header-meta.ts";
 import { testQueryClient } from "./render.tsx";
@@ -361,7 +362,7 @@ describe("an optimistic comment's narrow-screen shape (T-445)", () => {
     expectSplitHeader(row, {
       identity: ["User"],
       actions: [
-        [...row.children].find((child) => child.textContent === "sending…"),
+        headerItems(row).find((child) => child.textContent === "sending…"),
       ],
     });
   });

@@ -42,7 +42,12 @@ export function probeSplitHeaderCount() {
       // exists": the source view mounts its annotations into a shadow root
       // before they have a box, and a readiness check looser than the
       // measurement lets the measurement run against nothing.
-      const rect = meta.parentElement?.getBoundingClientRect();
+      //
+      // The row, two levels up, and not the meta's own parent: that one is
+      // the baseline line (T-487), which is `display: contents` below `sm`
+      // and reports an empty rect at every width this runner measures
+      // narrow, so asking it would report a drawn page as never ready.
+      const rect = meta.parentElement?.parentElement?.getBoundingClientRect();
       if (rect && rect.width > 0 && rect.height > 0) found += 1;
     }
     for (const element of host.querySelectorAll("*")) {
@@ -159,7 +164,11 @@ export async function probeSplitHeader(options = {}) {
   const seen = new Map();
   const headers = [];
   for (const meta of metasIn(document)) {
-    const row = meta.parentElement;
+    // The meta's own parent is the baseline line the row centres as one
+    // group (T-487); the row is its parent. Walked structurally rather than
+    // matched on the line's class, for the reason the identity below is.
+    const line = meta.parentElement;
+    const row = line?.parentElement ?? null;
     if (!row || !visible(row)) continue;
     // Named by the surface that drew it, so a failure says which entry point
     // moved rather than "header 3". The fixture's sections name their own;
@@ -184,7 +193,14 @@ export async function probeSplitHeader(options = {}) {
     seen.set(base, nth);
     const id = nth === 1 ? base : `${base}#${nth}`;
 
-    const children = [...row.children];
+    // What the row lays out, read through the line: above the breakpoint the
+    // line is a box holding the identity, the meta and the marks beside them,
+    // and below it the line is `contents` and the grid places the same
+    // elements itself. Flattening it keeps every criterion measuring the same
+    // four roles it measured before the line existed.
+    const children = [...row.children].flatMap((child) =>
+      child === line ? [...child.children] : [child],
+    );
     // Structural, never by the classes under test: an identity group found
     // by `max-sm:col-start-1` would go missing exactly when the class did,
     // and the criterion would pass by measuring nothing.
@@ -207,7 +223,7 @@ export async function probeSplitHeader(options = {}) {
     const actions = children.filter(
       (child) => child !== meta && child !== identity && child !== spacer,
     );
-    headers.push({ id, row, meta, identity, spacer, actions });
+    headers.push({ id, row, line, meta, identity, spacer, actions });
   }
 
   if (headers.length === 0) {
@@ -303,7 +319,8 @@ export async function probeSplitHeader(options = {}) {
   const round = (value) =>
     value === null ? null : Math.round(value * 100) / 100;
 
-  const rows = headers.map(({ id, row, meta, identity, spacer, actions }) => {
+  const rows = headers.map((header) => {
+    const { id, row, line, meta, identity, spacer, actions } = header;
     const box = contentBox(row);
     const rowRect = row.getBoundingClientRect();
     const shown = [...row.querySelectorAll("*")].filter(visible);
@@ -346,8 +363,12 @@ export async function probeSplitHeader(options = {}) {
         identityGaps.push(round(after.left - before.right));
       }
     }
+    // Still where the row lays it out, which since T-487 means the line as
+    // well as the row itself — `drop-spacer` removes the element, and this
+    // is what tells that apart from the spacer merely moving a level in.
     const hasSpacer =
-      spacer?.isConnected === true && spacer.parentElement === row;
+      spacer?.isConnected === true &&
+      (spacer.parentElement === row || spacer.parentElement === line);
     const spacerStyle = hasSpacer ? getComputedStyle(spacer) : null;
 
     return {

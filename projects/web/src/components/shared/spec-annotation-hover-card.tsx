@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import {
   COMMENT_HEADER_ROW,
   CommentHeaderIdentity,
+  CommentHeaderLine,
   CommentHeaderMeta,
 } from "@/components/shared/comment-header-meta.tsx";
 import {
@@ -61,16 +62,18 @@ export function SpecAnnotationHoverCard({
               COMMENT_HEADER_ROW,
             )}
           >
-            <CommentHeaderIdentity>
-              <UserChip user={annotation.author} />
-            </CommentHeaderIdentity>
-            <CommentHeaderMeta
-              className="ml-auto"
-              slug={slug}
-              issueNumber={issueNumber}
-              commentId={annotation.comment_id}
-              createdAt={annotation.created_at}
-            />
+            <CommentHeaderLine>
+              <CommentHeaderIdentity>
+                <UserChip user={annotation.author} />
+              </CommentHeaderIdentity>
+              <CommentHeaderMeta
+                className="ml-auto"
+                slug={slug}
+                issueNumber={issueNumber}
+                commentId={annotation.comment_id}
+                createdAt={annotation.created_at}
+              />
+            </CommentHeaderLine>
           </div>
           <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
             <FileTextIcon className="size-3.5 shrink-0" />

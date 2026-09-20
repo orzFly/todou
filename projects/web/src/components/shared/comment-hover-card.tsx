@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import {
   COMMENT_HEADER_ROW,
   CommentHeaderIdentity,
+  CommentHeaderLine,
   CommentHeaderMeta,
 } from "@/components/shared/comment-header-meta.tsx";
 import {
@@ -42,16 +43,18 @@ export function CommentHoverCard({
               COMMENT_HEADER_ROW,
             )}
           >
-            <CommentHeaderIdentity>
-              <UserChip user={comment.author} />
-            </CommentHeaderIdentity>
-            <CommentHeaderMeta
-              className="ml-auto"
-              slug={slug}
-              issueNumber={issueNumber}
-              commentId={comment.id}
-              createdAt={comment.created_at}
-            />
+            <CommentHeaderLine>
+              <CommentHeaderIdentity>
+                <UserChip user={comment.author} />
+              </CommentHeaderIdentity>
+              <CommentHeaderMeta
+                className="ml-auto"
+                slug={slug}
+                issueNumber={issueNumber}
+                commentId={comment.id}
+                createdAt={comment.created_at}
+              />
+            </CommentHeaderLine>
           </div>
           {isHidden(comment) ? (
             <p className="text-sm text-muted-foreground">

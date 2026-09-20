@@ -54,6 +54,7 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { CommentHeaderLine } from "@/components/shared/comment-header-meta.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -454,23 +455,28 @@ export function BodyBlock({
   return (
     <div className="rounded-lg border">
       <div className="flex items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
-        <UserChip user={issue.author} />
-        <span
-          className="min-w-0 truncate text-xs text-muted-foreground"
-          title={issue.created_at}
-        >
-          {new Date(issue.created_at).toLocaleString()}
-        </span>
-        {issue.body_edited_at && (
-          <RevisionHistory
-            label="description"
-            editedAt={issue.body_edited_at}
-            filename="description.md"
-            queryKey={["revisions", slug, issue.number, "issue_body"]}
-            fetchRevisions={() => api.getIssueRevisions(slug, issue.number)}
-          />
-        )}
-        <div className="ml-auto flex shrink-0 self-center items-center gap-0.5">
+        {/* `max-sm:flex` because this one header never splits in two: it
+            carries no meta to send to a second line, so there is no grid
+            below the breakpoint for the line to dissolve into. */}
+        <CommentHeaderLine className="max-sm:flex">
+          <UserChip user={issue.author} />
+          <span
+            className="min-w-0 truncate text-xs text-muted-foreground"
+            title={issue.created_at}
+          >
+            {new Date(issue.created_at).toLocaleString()}
+          </span>
+          {issue.body_edited_at && (
+            <RevisionHistory
+              label="description"
+              editedAt={issue.body_edited_at}
+              filename="description.md"
+              queryKey={["revisions", slug, issue.number, "issue_body"]}
+              fetchRevisions={() => api.getIssueRevisions(slug, issue.number)}
+            />
+          )}
+        </CommentHeaderLine>
+        <div className="flex shrink-0 self-center items-center gap-0.5">
           {!readOnly && (
             <Button
               size="icon-sm"
