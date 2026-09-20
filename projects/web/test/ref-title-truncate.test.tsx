@@ -230,7 +230,7 @@ describe("the chip stops at the body (T-371)", () => {
     REF_CHIP_STRUCTURE,
     ...REF_CHIP_LABEL.split(" "),
     // Only the chip-specific part: an event row's own glyph shares `inline`
-    // and `size-3.5` with it.
+    // with it.
     "ref-chip-icon",
     ...RICH_CHIP_STRUCTURE.split(" "),
     ...RICH_CHIP_SKIN.split(" "),

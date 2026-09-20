@@ -208,9 +208,12 @@ export function IssueLink({
   const currentNote = !isComment && onPageCard && !repeat;
   /** The non-body tail: in a body the ref is one of the `pieces` below. */
   const trailing = isComment || refLeads || inBody ? "" : spelled;
+  // A body glyph is sized in `em` so it follows a heading's font (see
+  // REF_CHIP_ICON); an event row has one font size and T-359 measured its
+  // geometry against this literal, so that one stays in `rem`.
   const iconClass = inBody
     ? isComment
-      ? "comment-reference-icon inline size-3.5"
+      ? "comment-reference-icon inline size-[1em]"
       : REF_CHIP_ICON
     : "mr-0.5 inline size-3.5 align-middle";
   // Ordered contents of an ordinary issue chip, laid out inline with real

@@ -28,8 +28,20 @@ export const REF_CHIP_STRUCTURE = "ref-chip-body";
 export const RICH_CHIP_SKIN =
   "rounded-sm border bg-muted/40 px-[0.3em] py-px no-underline hover:border-ring hover:bg-muted focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-ring";
 
-/** The issue chip's status glyph: spacing and baseline come from the sheet. */
-export const REF_CHIP_ICON = "ref-chip-icon inline size-3.5";
+/**
+ * The issue chip's status glyph: spacing and baseline come from the sheet.
+ *
+ * `1em`, because a chip inside a heading is drawn at the heading's font size
+ * and a glyph in `rem` stays at the body's — 14px beside 28px text, which is
+ * what T-495 reported. The sheet's own `margin-right` and `vertical-align`
+ * were already in `em`, so this is the last fixed length in the glyph.
+ *
+ * It is also not a resize: `.markdown-body` is `font-size: 0.875rem` and the
+ * `size-3.5` this replaces is `0.875rem`, so `1em` is the same 14px
+ * everywhere the chip was measured. The same equality holds under a reader's
+ * root-size zoom, since the body's own size is in `rem` too.
+ */
+export const REF_CHIP_ICON = "ref-chip-icon inline size-[1em]";
 
 /**
  * `overflow: hidden` degrades an inline box's baseline to its bottom edge,
@@ -59,8 +71,10 @@ export const RICH_CHIP_STRUCTURE =
  * `self-center` sits the icon beside the text rather than above it: an SVG
  * has no baseline of its own, so under `items-baseline` it would hang its
  * whole box off the shared one, 1px taller a chip with the glyph riding high.
+ *
+ * `1em` for the reason REF_CHIP_ICON gives.
  */
-export const RICH_CHIP_ICON = "inline size-3.5 self-center";
+export const RICH_CHIP_ICON = "inline size-[1em] self-center";
 
 /**
  * `overflow: hidden` degrades an inline box's baseline to its bottom edge but
