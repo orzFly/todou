@@ -6,6 +6,7 @@ import {
 } from "../src/components/shared/comment-reference.tsx";
 import {
   allocateCommentRef,
+  refTokenParts,
   splitCommentIssueRef,
 } from "../src/lib/comment-ref-layout.ts";
 
@@ -111,6 +112,61 @@ describe("lossless issue spelling decomposition", () => {
       { kind: "prefix", text: "B" },
       { kind: "fixed", text: "-29" },
     ]);
+  });
+});
+
+describe("search ref tokens as allocation parts", () => {
+  const card = { slug: "beta", prefix: "B", number: 29 };
+
+  it("carries the comment suffix as its own immovable part", () => {
+    expect(
+      refTokenParts("beta/B-29#comment-209", { ...card, commentId: 209 }),
+    ).toEqual([
+      { kind: "slug", text: "beta" },
+      { kind: "fixed", text: "/" },
+      { kind: "prefix", text: "B" },
+      { kind: "fixed", text: "-29" },
+      { kind: "fixed", text: "#comment-209" },
+    ]);
+  });
+
+  it("takes a card's own spelling apart without one", () => {
+    expect(refTokenParts("B-29", card)).toEqual([
+      { kind: "prefix", text: "B" },
+      { kind: "fixed", text: "-29" },
+    ]);
+  });
+
+  // The rows T-446 would otherwise not reach: a project offer spells what was
+  // typed, an external row spells the autolink's own text, and a peeked card
+  // spells the home row's prefix with its number stuck on. None decompose, and
+  // a token that cannot shrink is the whole report.
+  it.each([
+    ["a project offer", "mirror/", null],
+    ["an external link", "GH-76", null],
+    ["a peeked card", "mirror/1", null],
+    ["a spelling this card does not own", "gamma/G-1", card],
+  ] as const)("shrinks %s as one whole run", (_what, spelled, identity) => {
+    expect(refTokenParts(spelled, identity)).toEqual([
+      { kind: "free", text: spelled },
+    ]);
+  });
+
+  it.each([
+    ["beta/B-29#comment-209", { ...card, commentId: 209 }],
+    ["beta/B-29", card],
+    ["#29", { slug: "beta", prefix: null, number: 29 }],
+    [
+      "beta#29#comment-7",
+      { slug: "beta", prefix: null, number: 29, commentId: 7 },
+    ],
+    ["whatever the reader typed", null],
+  ] as const)("keeps every character of %s", (spelled, identity) => {
+    expect(
+      refTokenParts(spelled, identity)
+        .map(({ text }) => text)
+        .join(""),
+    ).toBe(spelled);
   });
 });
 

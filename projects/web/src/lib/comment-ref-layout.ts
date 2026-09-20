@@ -1,5 +1,10 @@
 export type CommentRefPart = {
-  kind: "slug" | "prefix" | "fixed";
+  /**
+   * `free` is a whole token nobody could take apart — what a search row shows
+   * for a project, an external link or a peeked card. It shrinks like a slug
+   * does, because a token that never shrinks is the failure itself (T-446).
+   */
+  kind: "slug" | "prefix" | "fixed" | "free";
   text: string;
 };
 
@@ -26,6 +31,46 @@ export function splitCommentIssueRef(
     text: `${prefix === null ? "#" : "-"}${number}`,
   });
   return parts;
+}
+
+/** Which card a spelling names, where the renderer knows that much. */
+export type RefIdentity = {
+  slug: string;
+  prefix: string | null;
+  number: number;
+  commentId?: number;
+};
+
+/**
+ * A ref token as allocation parts, for a caller holding one string and
+ * whatever it knows about the card behind it.
+ *
+ * Two things separate this from `splitCommentIssueRef`. The comment suffix
+ * travels inside the spelling here rather than beside it, and a spelling the
+ * decomposition does not recognize becomes one elidable run instead of an
+ * immovable one — a search row offering an external link or a project has no
+ * card to decompose, and leaving those tokens rigid is the T-446 report.
+ */
+export function refTokenParts(
+  spelled: string,
+  identity: RefIdentity | null,
+): CommentRefPart[] {
+  if (identity === null) return [{ kind: "free", text: spelled }];
+  const suffix =
+    identity.commentId === undefined ? "" : `#comment-${identity.commentId}`;
+  const carried = suffix !== "" && spelled.endsWith(suffix);
+  const base = carried ? spelled.slice(0, -suffix.length) : spelled;
+  const parts = splitCommentIssueRef(
+    base,
+    identity.slug,
+    identity.prefix,
+    identity.number,
+  );
+  const head: CommentRefPart[] =
+    parts.length === 1 && parts[0].kind === "fixed"
+      ? [{ kind: "free", text: base }]
+      : parts;
+  return carried ? [...head, { kind: "fixed", text: suffix }] : head;
 }
 
 export type RefSegmentWidth = {

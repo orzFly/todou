@@ -70,6 +70,12 @@ export type JumpRow =
       number: number;
       commentId?: number;
       spelled: string;
+      /**
+       * The prefix `spelled` was written with, so a row can take the spelling
+       * apart again and shrink the slug and the prefix inside it (T-446).
+       * `null` is a project that writes none, which spells `slug#number`.
+       */
+      prefix: string | null;
       item: IssueListItem;
       commentBy: string | null;
       crossProject: boolean;
@@ -276,16 +282,18 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
           prefixOk &&
           (searchRefPending(issue) || searchRefPending(note)))));
 
+  // Whichever project the row ended up naming writes the prefix: the card may
+  // have moved, and a moved card is spelled where it lives now.
+  const shownPrefix =
+    shown === null || shown.slug === slug
+      ? prefix
+      : (shownConfig.data?.format.prefix ?? null);
   const spelled =
     shown === null
       ? ""
       : shown.slug === slug
-        ? formatRef(prefix, shown.number)
-        : qualifiedRefSpelling(
-            shown.slug,
-            shownConfig.data?.format.prefix ?? null,
-            shown.number,
-          );
+        ? formatRef(shownPrefix, shown.number)
+        : qualifiedRefSpelling(shown.slug, shownPrefix, shown.number);
 
   const rows: JumpRow[] = [];
   if (card !== undefined) {
@@ -310,6 +318,7 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
           commentTarget === null
             ? spelled
             : `${spelled}#comment-${commentTarget.commentId}`,
+        prefix: shownPrefix,
         item: issue.data,
         commentBy:
           commentTarget !== null && note.data
