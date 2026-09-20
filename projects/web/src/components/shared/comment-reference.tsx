@@ -3,6 +3,7 @@ import {
   allocateCommentRef,
   splitCommentIssueRef,
 } from "@/lib/comment-ref-layout.ts";
+import { pixels, segmentMetrics, textWidth } from "@/lib/ref-text-metrics.ts";
 import "./comment-reference.css";
 
 export type CommentReferenceProps = {
@@ -31,8 +32,6 @@ type Layout = {
   available: number;
 };
 
-const pixels = (value: string) => Number.parseFloat(value) || 0;
-
 function contentContainer(element: HTMLElement): HTMLElement | null {
   let parent = element.parentElement;
   while (parent) {
@@ -49,54 +48,6 @@ function contentContainer(element: HTMLElement): HTMLElement | null {
     parent = parent.parentElement;
   }
   return null;
-}
-
-/** Measure the actual rendered text nodes, including their clipped characters. */
-function textWidth(element: Element, start = 0, end = Infinity): number {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  const range = document.createRange();
-  let offset = 0;
-  let width = 0;
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const length = node.textContent?.length ?? 0;
-    const from = Math.max(0, start - offset);
-    const to = Math.min(length, end - offset);
-    if (from < to) {
-      range.setStart(node, from);
-      range.setEnd(node, to);
-      for (const rect of range.getClientRects()) width += rect.width;
-    }
-    offset += length;
-  }
-  return width;
-}
-
-function segmentMeasurer(element: Element, text: string) {
-  const style = getComputedStyle(element);
-  // A clipped DOM Range can report both the full text and an extra visual
-  // ellipsis fragment. Measuring the original substrings on canvas avoids
-  // counting that decoration and keeps 1/3 tail changes independent of layout.
-  // Canvas creates neither a DOM text copy nor a second selectable identity.
-  const context = document.createElement("canvas").getContext("2d");
-  if (context) {
-    context.font = style.font;
-    context.fontKerning = style.fontKerning as CanvasFontKerning;
-    context.fontStretch = style.fontStretch as CanvasFontStretch;
-    context.fontVariantCaps = style.fontVariantCaps as CanvasFontVariantCaps;
-    context.textRendering = style.textRendering as CanvasTextRendering;
-    context.letterSpacing =
-      style.letterSpacing === "normal" ? "0px" : style.letterSpacing;
-    context.wordSpacing =
-      style.wordSpacing === "normal" ? "0px" : style.wordSpacing;
-  }
-  return {
-    width(start = 0, end = text.length) {
-      return context
-        ? context.measureText(text.slice(start, end)).width
-        : textWidth(element, start, end);
-    },
-    ellipsis: context?.measureText("…").width ?? pixels(style.fontSize),
-  };
 }
 
 /** Contents of the existing navigable issue link; never creates another link. */
@@ -170,34 +121,7 @@ export function CommentReference({
       const segments = Array.from(
         element.querySelectorAll<HTMLElement>("[data-comment-segment]"),
       );
-      const metrics = segments.map((segment) => {
-        const text = segment.textContent ?? "";
-        const chars = Array.from(text);
-        const first = chars[0]?.length ?? 0;
-        const last = chars.at(-1)?.length ?? 0;
-        const measured = segmentMeasurer(segment, text);
-        const full = measured.width();
-        const ellipsis = measured.ellipsis;
-        const tailWidth = measured.width(text.length - last);
-        const minimum =
-          chars.length < 3
-            ? full
-            : Math.min(full, measured.width(0, first) + ellipsis + tailWidth);
-        const headThree = chars.slice(0, 3).join("").length;
-        const tailThree = chars.slice(-3).join("").length;
-        return {
-          full,
-          minimum,
-          tailWidth,
-          threeWidth:
-            chars.length > 6
-              ? measured.width(0, headThree) +
-                ellipsis +
-                measured.width(text.length - tailThree)
-              : Infinity,
-          tailThreeWidth: measured.width(text.length - tailThree),
-        };
-      });
+      const metrics = segments.map((segment) => segmentMetrics(segment));
       const fixed = Array.from(
         element.querySelectorAll<HTMLElement>('[data-ref-part="fixed"]'),
       ).reduce((sum, part) => sum + textWidth(part), 0);
