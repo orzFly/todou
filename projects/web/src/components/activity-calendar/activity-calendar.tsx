@@ -148,7 +148,7 @@ function windowGeometry(from: string, to: string) {
   return { dates, offset, weeks: Math.ceil((dates.length + offset) / 7) };
 }
 
-function dayLabel(date: string, day: ActivityDay | undefined, today: string) {
+function dayLabel(date: string, day: ActivityDay | undefined) {
   const value = day
     ? enumLookup(
         {
@@ -161,7 +161,7 @@ function dayLabel(date: string, day: ActivityDay | undefined, today: string) {
         "ActivityDay.state",
       )
     : "No data";
-  return `${date}: ${value}${date === today ? ", today" : ""}`;
+  return `${date}: ${value}`;
 }
 
 /** Pure display and interaction: callers atomically supply a calendar snapshot. */
@@ -395,7 +395,7 @@ export function ActivityCalendar({
               const day = byDate.get(date);
               const enabled = day?.state === "recorded";
               const intensity = enabled ? level(day.count, levels) : undefined;
-              const label = dayLabel(date, day, today);
+              const label = dayLabel(date, day);
               const column = Math.floor((index + offset) / 7) + 2;
               return (
                 <span key={date} className="contents">
@@ -475,14 +475,17 @@ export function ActivityCalendar({
           </fieldset>
         </div>
       )}
+      {/* Still the description `aria-describedby` points at, so it keeps its
+          role; it simply no longer takes a line under the grid restating the
+          count that the selected day's own heading already carries. */}
       {readDate && (
         <p
           id={`${id}-readout`}
           role="tooltip"
           aria-live="polite"
-          className="text-sm text-muted-foreground"
+          className="sr-only"
         >
-          {dayLabel(readDate, byDate.get(readDate), today)}
+          {dayLabel(readDate, byDate.get(readDate))}
         </p>
       )}
       {!loading && !error && recorded.length === 0 && (
