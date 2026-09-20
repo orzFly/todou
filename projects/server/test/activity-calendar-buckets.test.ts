@@ -8,6 +8,19 @@ import {
   validatedTimezone,
 } from "../src/services/calendar.ts";
 
+/**
+ * An independent oracle for this file's UTC fixtures only: a UTC date begins at
+ * plain midnight and ends at the next one. Every other zone here is chosen
+ * precisely because it does something a fixed offset cannot express, so those
+ * cases state their instants outright.
+ */
+function utcDay(date: string): { start: string; end: string } {
+  const next = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  return { start: `${date}T00:00:00.000000Z`, end: `${next}T00:00:00.000000Z` };
+}
+
 describe("activity calendar IANA buckets and shared burn date regressions", () => {
   let handle: DbHandle;
   let db: Db;
@@ -28,31 +41,37 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     expect(plan.days).toHaveLength(366);
     expect(plan.days[0]).toEqual({
       date: "2024-01-01",
+      ...utcDay("2024-01-01"),
       state: "not_applicable",
       count: null,
     });
     expect(plan.days[58]).toEqual({
       date: "2024-02-28",
+      ...utcDay("2024-02-28"),
       state: "not_applicable",
       count: null,
     });
     expect(plan.days[59]).toEqual({
       date: "2024-02-29",
+      ...utcDay("2024-02-29"),
       state: "recorded",
       count: 0,
     });
     expect(plan.days[60]).toEqual({
       date: "2024-03-01",
+      ...utcDay("2024-03-01"),
       state: "recorded",
       count: 0,
     });
     expect(plan.days[61]).toEqual({
       date: "2024-03-02",
+      ...utcDay("2024-03-02"),
       state: "future",
       count: null,
     });
     expect(plan.days.at(-1)).toEqual({
       date: "2024-12-31",
+      ...utcDay("2024-12-31"),
       state: "future",
       count: null,
     });
@@ -117,10 +136,30 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     };
     const plan = await buildActivityBuckets(db, input);
     expect(plan.days).toHaveLength(365);
+    // Apia jumped from -10:00 to +14:00, so the 30th is a civil date that never
+    // happened: it spans nothing, and its neighbours meet at that instant.
     expect(plan.days.slice(-3)).toEqual([
-      { date: "2011-12-29", state: "recorded", count: 0 },
-      { date: "2011-12-30", state: "not_applicable", count: null },
-      { date: "2011-12-31", state: "recorded", count: 0 },
+      {
+        date: "2011-12-29",
+        start: "2011-12-29T10:00:00.000000Z",
+        end: "2011-12-30T10:00:00.000000Z",
+        state: "recorded",
+        count: 0,
+      },
+      {
+        date: "2011-12-30",
+        start: "2011-12-30T10:00:00.000000Z",
+        end: "2011-12-30T10:00:00.000000Z",
+        state: "not_applicable",
+        count: null,
+      },
+      {
+        date: "2011-12-31",
+        start: "2011-12-30T10:00:00.000000Z",
+        end: "2011-12-31T10:00:00.000000Z",
+        state: "recorded",
+        count: 0,
+      },
     ]);
     expect(plan.buckets.find((bucket) => bucket.date === "2011-12-30")).toEqual(
       {
@@ -145,11 +184,13 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     });
     expect(plan.days.find((day) => day.date === "2026-09-18")).toEqual({
       date: "2026-09-18",
+      ...utcDay("2026-09-18"),
       state: "not_applicable",
       count: null,
     });
     expect(plan.days.find((day) => day.date === "2026-09-19")).toEqual({
       date: "2026-09-19",
+      ...utcDay("2026-09-19"),
       state: "future",
       count: null,
     });
@@ -164,6 +205,7 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
       beforeMidnight.days.find((day) => day.date === "2026-09-18"),
     ).toEqual({
       date: "2026-09-18",
+      ...utcDay("2026-09-18"),
       state: "recorded",
       count: 0,
     });
@@ -193,6 +235,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     });
     expect(plan.days[0]).toEqual({
       date: "2026-01-01",
+      start: "2025-12-31T16:00:00.000000Z",
+      end: "2026-01-01T16:00:00.000000Z",
       state: "recorded",
       count: 0,
     });
@@ -240,6 +284,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     expect(plan.to).toBe("0001-12-31T16:00:00.000000Z");
     expect(plan.days[0]).toEqual({
       date: "0001-01-01",
+      start: "0001-12-31T16:00:00.000000Z BC",
+      end: "0001-01-01T16:00:00.000000Z",
       state: "recorded",
       count: 0,
     });
@@ -263,6 +309,8 @@ describe("activity calendar IANA buckets and shared burn date regressions", () =
     );
     expect(plan.days.find((day) => day.date === "2025-11-01")).toEqual({
       date: "2025-11-01",
+      start: "2025-11-01T04:00:00.000000Z",
+      end: "2025-11-02T04:00:00.000000Z",
       state: "not_applicable",
       count: null,
     });

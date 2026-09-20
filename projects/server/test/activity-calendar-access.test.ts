@@ -27,6 +27,19 @@ import {
   type TestApp,
 } from "./helpers.ts";
 
+/**
+ * An independent oracle for this file's UTC fixtures: a UTC calendar date
+ * begins at plain midnight and ends at the next one. Computed here rather than
+ * read back from the service, whose boundaries come out of Postgres IANA
+ * arithmetic — copying those back would assert nothing.
+ */
+function utcDay(date: string): { start: string; end: string } {
+  const next = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  return { start: `${date}T00:00:00.000000Z`, end: `${next}T00:00:00.000000Z` };
+}
+
 type Account = { user: UserRow; headers: { authorization: string } };
 type ProjectRow = typeof projects.$inferSelect;
 type ErrorBody = {
@@ -85,6 +98,7 @@ function expectSelection(
   expect(body.days).toHaveLength(366);
   expect(body.days.find((day) => day.date === DAY)).toEqual({
     date: DAY,
+    ...utcDay(DAY),
     state: "recorded",
     count: total,
   });
@@ -585,6 +599,7 @@ describe.each(PLACEMENTS)(
           const body = await calendar(response);
           expect(body.days.find((day) => day.date === diagnosticDay)).toEqual({
             date: diagnosticDay,
+            ...utcDay(diagnosticDay),
             state: "recorded",
             count: 0,
           });
@@ -668,11 +683,17 @@ describe.each(PLACEMENTS)(
         expect(body.days).toHaveLength(365);
         expect(body.days[0]).toEqual({
           date: "2023-01-01",
+          start: "2023-01-01T00:00:00.000000Z",
+          end: "2023-01-02T00:00:00.000000Z",
           state: "recorded",
           count: 0,
         });
         expect(body.days.at(-1)).toEqual({
           date: "2023-12-31",
+          start: "2023-12-31T00:00:00.000000Z",
+          // The window's last day still ends at the next date's midnight,
+          // which is the exclusive `to` the query asked for.
+          end: "2024-01-01T00:00:00.000000Z",
           state: "recorded",
           count: 0,
         });

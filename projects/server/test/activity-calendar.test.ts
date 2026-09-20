@@ -19,6 +19,30 @@ import {
   type TestApp,
 } from "./helpers.ts";
 
+/**
+ * An independent oracle for this file's two zones. Both are fixed offsets over
+ * the dates used here — Shanghai has not observed daylight saving since 1991 —
+ * so a local date begins at midnight less the offset and runs a full 24 hours.
+ * Derived here rather than read back from the service, whose boundaries come
+ * out of Postgres IANA arithmetic; copying those back would assert nothing.
+ */
+const ORACLE_OFFSET_HOURS: Record<string, number> = {
+  UTC: 0,
+  "Asia/Shanghai": 8,
+};
+function localDay(
+  date: string,
+  timezone: string,
+): { start: string; end: string } {
+  const offset = ORACLE_OFFSET_HOURS[timezone];
+  if (offset === undefined)
+    throw new Error(`no oracle offset for ${timezone}; add one deliberately`);
+  const start = Date.parse(`${date}T00:00:00Z`) - offset * 3_600_000;
+  const stamp = (ms: number) =>
+    `${new Date(ms).toISOString().slice(0, 19)}.000000Z`;
+  return { start: stamp(start), end: stamp(start + 86_400_000) };
+}
+
 const DAY = "2026-09-18";
 const NEXT_DAY = "2026-09-19";
 const TZ = "Asia/Shanghai";
@@ -267,6 +291,9 @@ describe.each(PLACEMENTS)(
       day = DAY,
       limit = 100,
       tz = TZ,
+      // Supplied where the zone shifts under the day in question; the oracle
+      // above only speaks for fixed offsets.
+      bounds?: { start: string; end: string },
     ) {
       const items: ActivityCard[] = [];
       const cursors = new Set<string>();
@@ -277,6 +304,7 @@ describe.each(PLACEMENTS)(
         expect(body.days).toHaveLength(365);
         expect(body.days.find((cell) => cell.date === day)).toEqual({
           date: day,
+          ...(bounds ?? localDay(day, tz)),
           state: "recorded",
           count: expected.length,
         });
@@ -1302,7 +1330,9 @@ describe.each(PLACEMENTS)(
             tz: "UTC",
             day: "2026-01-15",
             previous: "2026-01-14",
+            previousStart: "2026-01-14T00:00:00.000000Z",
             next: "2026-01-16",
+            nextEnd: "2026-01-17T00:00:00.000000Z",
             stamps: [
               "2026-01-14T23:59:59.999999Z",
               "2026-01-15T00:00:00.000000Z",
@@ -1314,7 +1344,9 @@ describe.each(PLACEMENTS)(
             tz: "Asia/Kolkata",
             day: "2026-02-01",
             previous: "2026-01-31",
+            previousStart: "2026-01-30T18:30:00.000000Z",
             next: "2026-02-02",
+            nextEnd: "2026-02-02T18:30:00.000000Z",
             stamps: [
               "2026-01-31T18:29:59.999999Z",
               "2026-01-31T18:30:00.000000Z",
@@ -1325,8 +1357,12 @@ describe.each(PLACEMENTS)(
           {
             tz: "America/New_York",
             day: "2026-03-08",
+            // Spring forward happens inside 2026-03-08: it is 23 hours long,
+            // its neighbours are a full day at -05:00 and at -04:00.
             previous: "2026-03-07",
+            previousStart: "2026-03-07T05:00:00.000000Z",
             next: "2026-03-09",
+            nextEnd: "2026-03-10T04:00:00.000000Z",
             stamps: [
               "2026-03-08T04:59:59.999999Z",
               "2026-03-08T05:00:00.000000Z",
@@ -1336,9 +1372,12 @@ describe.each(PLACEMENTS)(
           },
           {
             tz: "America/New_York",
+            // Fall back happens inside 2026-11-01: it is 25 hours long.
             day: "2026-11-01",
             previous: "2026-10-31",
+            previousStart: "2026-10-31T04:00:00.000000Z",
             next: "2026-11-02",
+            nextEnd: "2026-11-03T05:00:00.000000Z",
             stamps: [
               "2026-11-01T03:59:59.999999Z",
               "2026-11-01T04:00:00.000000Z",
@@ -1370,6 +1409,9 @@ describe.each(PLACEMENTS)(
                 example.day,
                 limit,
                 example.tz,
+                // The fixture already states the day's own edges: the card
+                // written "at start" sits on one, "at end" on the next day's.
+                { start: example.stamps[1], end: example.stamps[3] },
               );
               expect(selected.map((item) => item.last_active_at)).toEqual([
                 example.stamps[2],
@@ -1381,8 +1423,12 @@ describe.each(PLACEMENTS)(
                 example.previous,
                 limit,
                 example.tz,
+                { start: example.previousStart, end: example.stamps[1] },
               );
-              await exhaust(path, [atEnd], example.next, limit, example.tz);
+              await exhaust(path, [atEnd], example.next, limit, example.tz, {
+                start: example.stamps[3],
+                end: example.nextEnd,
+              });
             }
           }
         }
@@ -1399,16 +1445,24 @@ describe.each(PLACEMENTS)(
           expect(apia.days).toHaveLength(365);
           expect(apia.days.find((day) => day.date === "2011-12-30")).toEqual({
             date: "2011-12-30",
+            // The civil date was skipped outright, so it spans no time at all:
+            // both edges are the instant Apia jumped from -10:00 to +14:00.
+            start: "2011-12-30T10:00:00.000000Z",
+            end: "2011-12-30T10:00:00.000000Z",
             state: "not_applicable",
             count: null,
           });
           expect(apia.days.find((day) => day.date === "2011-12-29")).toEqual({
             date: "2011-12-29",
+            start: "2011-12-29T10:00:00.000000Z",
+            end: "2011-12-30T10:00:00.000000Z",
             state: "recorded",
             count: 0,
           });
           expect(apia.days.find((day) => day.date === "2011-12-31")).toEqual({
             date: "2011-12-31",
+            start: "2011-12-30T10:00:00.000000Z",
+            end: "2011-12-31T10:00:00.000000Z",
             state: "recorded",
             count: 0,
           });
@@ -1434,6 +1488,9 @@ describe.each(PLACEMENTS)(
           expect(leap.days.at(-1)?.date).toBe("2024-12-31");
           expect(leap.days.find((day) => day.date === "2024-02-29")).toEqual({
             date: "2024-02-29",
+            start: "2024-02-29T00:00:00.000000Z",
+            // The leap day runs into March, not into a 30th of February.
+            end: "2024-03-01T00:00:00.000000Z",
             state: "recorded",
             count: 0,
           });
