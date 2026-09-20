@@ -17,6 +17,7 @@ import {
   type ResolvedCommentRef,
   type ResolvedIssueRef,
 } from "../src/api/issue-refs.ts";
+import { issueQuery } from "../src/api/issues.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import {
   api,
@@ -445,6 +446,21 @@ describe.each([SOURCE, "999"])(
         const locate = vi.spyOn(api, "locateComment");
         const client = seeded();
         mockDirectories(client);
+        // getIssue serves both reference migration and the live detail body.
+        // Count canonical body fetches separately: invalidation may reread the
+        // body, but must never resolve the static reference metadata again.
+        const bodyKey = issueQuery(DESTINATION, 55).queryKey;
+        let bodyReads = 0;
+        const unsubscribeBody = client.getQueryCache().subscribe((event) => {
+          if (
+            event.type === "updated" &&
+            event.action.type === "fetch" &&
+            event.query ===
+              client.getQueryCache().find({ queryKey: bodyKey, exact: true })
+          ) {
+            bodyReads++;
+          }
+        });
         const href = `/projects/${source}/issues/12${
           kind === "comment" ? "#comment-7" : ""
         }`;
@@ -478,6 +494,7 @@ describe.each([SOURCE, "999"])(
         );
         expect(list).toHaveBeenCalledTimes(1);
         expect(getIssue).toHaveBeenCalledTimes(kind === "comment" ? 2 : 3);
+        expect(bodyReads).toBe(kind === "comment" ? 0 : 1);
         expect(getIssue).toHaveBeenNthCalledWith(1, source, 12);
         expect(getIssue).toHaveBeenNthCalledWith(2, DESTINATION, 55);
         expect(getComment).toHaveBeenCalledTimes(kind === "comment" ? 2 : 0);
@@ -492,12 +509,18 @@ describe.each([SOURCE, "999"])(
         const issueData = client.getQueryData(issueKey);
         const noteData = client.getQueryData(noteKey);
         readable = false;
+        // Also invalidate the historical keys directly: destination-scoped
+        // SSE events alone cannot prove static behavior for migrated refs.
+        await act(async () => {
+          await client.invalidateQueries({ queryKey: issueKey });
+          await client.invalidateQueries({ queryKey: noteKey });
+        });
 
         for (const entity of backgroundEvents) {
           await backgroundEvent(client, entity);
           unchanged();
           expect(list).toHaveBeenCalledTimes(1);
-          expect(getIssue).toHaveBeenCalledTimes(kind === "comment" ? 2 : 3);
+          expect(getIssue).toHaveBeenCalledTimes(2 + bodyReads);
           expect(getComment).toHaveBeenCalledTimes(kind === "comment" ? 2 : 0);
           expect(locate).not.toHaveBeenCalled();
           expect(client.getQueryData(issueKey)).toBe(issueData);
@@ -522,9 +545,10 @@ describe.each([SOURCE, "999"])(
           anchor,
         );
         expect(list).toHaveBeenCalledTimes(1);
-        expect(getIssue).toHaveBeenCalledTimes(kind === "comment" ? 2 : 3);
+        expect(getIssue).toHaveBeenCalledTimes(2 + bodyReads);
         expect(getComment).toHaveBeenCalledTimes(kind === "comment" ? 2 : 0);
         expect(locate).not.toHaveBeenCalled();
+        unsubscribeBody();
       },
     );
   },

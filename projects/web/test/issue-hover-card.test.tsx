@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { type QueryClient, QueryObserver } from "@tanstack/react-query";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 import type {
   BlockRef,
@@ -9,6 +9,7 @@ import type {
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { issueQuery } from "../src/api/issues.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { projectQuery, projectsQuery } from "../src/api/queries.ts";
 import {
@@ -116,8 +117,8 @@ function seeded(overrides: Partial<MePrefs> = {}): QueryClient {
   client.setQueryData(issueRefQuery("todou", 7).queryKey, refItem(7, "Target"));
   client.setQueryData(issueRefQuery("todou", 8).queryKey, refItem(8, "Other"));
   client.setQueryData(prefsQuery.queryKey, { ...PREFS, ...overrides });
-  // Deliberately NOT issueQuery: the body is the one thing a preview pays
-  // for, and seeding it would hide every request this file counts.
+  // Request-count tests leave issueQuery empty; cache-sharing tests seed it
+  // explicitly so they also exercise a body already read on the detail page.
   return client;
 }
 
@@ -226,6 +227,74 @@ describe("issue hover preview (T-408)", () => {
     const again = await opened();
     await waitFor(() => expect(again.textContent).toContain(BODY));
     expect(fetches.reads()).toHaveLength(1);
+  });
+
+  it.each(["save", "invalidate"] as const)(
+    "shows the updated detail body on rehover after %s (T-467)",
+    async (update) => {
+      const updatedBody = "the body the reader just saved";
+      const fetches = countingFetch(updatedBody);
+      const client = seeded();
+      const detail = issueQuery("todou", 7);
+      client.setQueryData(detail.queryKey, {
+        ...refItem(7, "Target"),
+        body: BODY,
+      });
+      const view = renderWithProviders(
+        <MarkdownView slug="todou">{REF}</MarkdownView>,
+        client,
+      );
+      const link = await linkToSeven(view.container);
+      hover(link);
+      const card = await opened();
+      await waitFor(() => expect(card.textContent).toContain(BODY));
+      expect(fetches.reads()).toHaveLength(0);
+      unhover(link);
+      await closed();
+
+      await act(async () => {
+        if (update === "save") {
+          client.setQueryData(detail.queryKey, {
+            ...refItem(7, "Target"),
+            body: updatedBody,
+          });
+        } else {
+          await client.invalidateQueries({ queryKey: detail.queryKey });
+        }
+      });
+      hover(link);
+      const again = await opened();
+      await waitFor(() => expect(again.textContent).toContain(updatedBody));
+      expect(again.textContent).not.toContain(BODY);
+      expect(fetches.reads()).toHaveLength(update === "save" ? 0 : 1);
+    },
+  );
+
+  it("warms the detail cache without another fresh read (T-467)", async () => {
+    const fetches = countingFetch();
+    const client = seeded();
+    // Match the production client's detail freshness window.
+    client.setDefaultOptions({ queries: { retry: false, staleTime: 5_000 } });
+    const view = renderWithProviders(
+      <MarkdownView slug="todou">{REF}</MarkdownView>,
+      client,
+    );
+    const link = await linkToSeven(view.container);
+    hover(link);
+    const card = await opened();
+    await waitFor(() => expect(card.textContent).toContain(BODY));
+    unhover(link);
+    await closed();
+
+    const detail = new QueryObserver(client, issueQuery("todou", 7));
+    const unsubscribe = detail.subscribe(() => {});
+    try {
+      expect(detail.getCurrentResult().data?.body).toBe(BODY);
+      expect(detail.getCurrentResult().fetchStatus).toBe("idle");
+      expect(fetches.reads()).toHaveLength(1);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("opens on a sidebar blocks row, which renders the same link", async () => {

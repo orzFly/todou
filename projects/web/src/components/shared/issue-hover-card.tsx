@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { IssueListItem } from "@todou/shared";
 import type { ReactNode } from "react";
 import { issueQuery } from "@/api/issues.ts";
@@ -92,20 +92,10 @@ export function IssueHoverCard({
  * every reference on the page instead of behind the few a reader stops on.
  */
 function IssueBody({ slug, number }: { slug: string; number: number }) {
-  const client = useQueryClient();
-  const detail = issueQuery(slug, number);
-  // Reuse an already-read body as a snapshot. A separate key keeps detail
-  // page updates independent of the preview's read-once lifetime.
-  const issue = useQuery({
-    ...detail,
-    queryKey: ["issue-preview", slug, number],
-    initialData: () => client.getQueryData(detail.queryKey),
-    staleTime: "static",
-    gcTime: Infinity,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-  });
+  // Share the detail cache so saved bodies reach previews and hovering warms
+  // the detail page. This observer's freshness window avoids repeat reads
+  // on quick rehovers without changing the detail page's own freshness.
+  const issue = useQuery({ ...issueQuery(slug, number), staleTime: 60_000 });
   if (issue.isPending) {
     return (
       <div className="space-y-1.5">
