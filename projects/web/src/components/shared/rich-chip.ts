@@ -57,15 +57,26 @@ export const REF_CHIP_LABEL = "ref-chip-title truncate";
  * off the surrounding text; `align-items: center` or the flex default puts it
  * 2.39px out.
  *
- * `leading-[1.2]` keeps a chip from growing the line it sits on. Against the
- * body's 1.6 the budget is exact: 1.2 lands the line box on the same 22.39px
- * as a chipless one, while vscode's 1.25 overruns it by 0.11px.
+ * `leading-[1.2]` is how tall the chip is drawn. Against the body's 1.6 it
+ * has room to spare, and vscode's 1.25 does not — that one overruns the line
+ * by 0.11px.
+ *
+ * `-my-[2px]` is how tall the line has to think it is. The drawn box is
+ * `1.2em` plus RICH_CHIP_SKIN's `border` and `py-px`, and a heading's line is
+ * `1.25em`, so leading alone only fits wherever `4px` is under `0.05em` —
+ * every heading under 80px was 2.59–3.13px taller than its chipless
+ * neighbour (T-498). A line box measures an atomic inline by its margin box,
+ * so giving those 4px back as margin is what the line reads, while the
+ * border box still paints where the baseline puts it: unchanged at the
+ * body's 22.39px, and T-460's 0.00px title baseline with it. The 2px is the
+ * skin's own border and padding per side, and rich-link-copy.test.tsx fails
+ * if either moves without this following.
  *
  * An attachment chip carries a filename, not a reference anyone copies as an
  * identity, so the clipboard note on REF_CHIP_STRUCTURE does not reach it.
  */
 export const RICH_CHIP_STRUCTURE =
-  "inline-flex max-w-full items-baseline gap-[0.24em] align-baseline leading-[1.2] whitespace-nowrap";
+  "inline-flex max-w-full items-baseline gap-[0.24em] align-baseline -my-[2px] leading-[1.2] whitespace-nowrap";
 
 /**
  * `self-center` sits the icon beside the text rather than above it: an SVG

@@ -90,27 +90,16 @@ const FAULTS = {
     css: `${GLYPHS} { width: 1.4em !important; height: 1.4em !important; }`,
     detects: "chip-grows-its-line",
   },
+  // T-498's bug, in the property its fix added: an attachment chip is drawn
+  // `1.2em + 4px` tall and a heading's line is `1.25em`, so without the
+  // margin that hands those 4px back the line grew by 2.59px at h1, 2.94px
+  // at h2 and 3.13px at h3. `margin-block` is the whole of what the fix put
+  // there, so zeroing it is the chip as it shipped, not a new defect.
+  "chip-keeps-its-box": {
+    css: 'a[href*="/attachments/"] { margin-block: 0 !important; }',
+    detects: "chip-grows-its-line",
+  },
 };
-
-/**
- * Line growth this smoke measures and reports without grading, because it
- * predates the card and is not the glyph's doing — T-498 holds it. Measured
- * on `bd33b43`, before T-495 touched anything, as 2.59px at h1, 2.94px at h2
- * and 3.13px at h3, and byte-identical after: an attachment chip is an
- * `inline-flex` whose own box is `leading-[1.2]` plus a border and `py-px`,
- * and a heading's line is `1.25`, so its box outgrows the line wherever
- * `1.2em + 4px` does. The glyph is not in that sum; the ref and comment
- * chips sit at 0.00px at every tier with the same glyph.
- *
- * The wrap guard still bounds these: a shortfall that reaches half a line is
- * a second line, and is graded as one. When T-498 lands, delete these three
- * entries and this check starts grading them.
- */
-const KNOWN_SHORTFALLS = new Set([
-  "h1/attachment",
-  "h2/attachment",
-  "h3/attachment",
-]);
 
 /** Ratio spread across tiers that still counts as "the same number". */
 const RATIO_TOLERANCE = 0.02;
@@ -327,8 +316,6 @@ async function readScale(kinds) {
 
 function checkScale(measured, tiers, kinds) {
   const failures = [];
-  /** Recorded, not graded: see KNOWN_SHORTFALLS. */
-  const notes = [];
   const byTier = new Map();
   for (const reading of measured.readings) {
     const tier = tiers.find((one) => one.tag === reading.tag);
@@ -422,10 +409,8 @@ function checkScale(measured, tiers, kinds) {
         // in the fixture rather than a defect in the chip.
         if (delta >= group.chipless.lineHeight * 0.5)
           failures.push(failure("row-wrapped", detail));
-        else if (delta > LINE_TOLERANCE) {
-          if (KNOWN_SHORTFALLS.has(at)) notes.push(detail);
-          else failures.push(failure("chip-grows-its-line", detail));
-        }
+        else if (delta > LINE_TOLERANCE)
+          failures.push(failure("chip-grows-its-line", detail));
       }
     }
     ratios[kind] = perTier;
@@ -457,7 +442,7 @@ function checkScale(measured, tiers, kinds) {
       ),
     );
 
-  return { failures, notes, measurements: { ratios, lineDeltas } };
+  return { failures, measurements: { ratios, lineDeltas } };
 }
 
 async function openPage(browser, context, fixture, stack, fault) {
@@ -517,7 +502,6 @@ async function runPass(browser, context, fixture, stack, fault) {
   if (page === null)
     return {
       failures: [failure("page-never-settled", `fault=${fault ?? "none"}`)],
-      notes: [],
       measurements: null,
       faultApplied: fault === null,
     };
@@ -561,10 +545,6 @@ async function main() {
   const record = (entry) => {
     cases.push(entry);
     console.log(`CASE ${JSON.stringify(entry)}`);
-    // A shortfall this smoke measures but does not grade still has to be read
-    // by whoever runs it, or "exit 0" quietly becomes "nothing was wrong".
-    for (const note of entry.notes ?? [])
-      console.log(`NOTE ${entry.name}: known shortfall, not graded — ${note}`);
     if (entry.status !== "pass")
       exitCode = Math.max(exitCode, entry.coverage ? 2 : 1);
   };
@@ -590,7 +570,6 @@ async function main() {
         status: green.failures.length === 0 ? "pass" : "fail",
         coverage: green.failures.some((one) => COVERAGE_FAILURES.has(one.name)),
         failures: green.failures,
-        notes: green.notes,
         measurements: green.measurements,
       });
 
@@ -628,7 +607,6 @@ async function main() {
             faultApplied: red.faultApplied,
             expected: wanted,
             failures: red.failures,
-            notes: red.notes,
             measurements: red.measurements,
           });
         }
@@ -641,7 +619,6 @@ async function main() {
             restored.failures.length > 0 &&
             restored.failures.every((one) => COVERAGE_FAILURES.has(one.name)),
           failures: restored.failures,
-          notes: restored.notes,
           measurements: restored.measurements,
         });
       }

@@ -16,7 +16,10 @@ import { prefsQuery } from "../src/api/prefs.ts";
 import { membersQuery, projectsQuery } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
-import { RICH_CHIP_SKIN } from "../src/components/shared/rich-chip.ts";
+import {
+  RICH_CHIP_SKIN,
+  RICH_CHIP_STRUCTURE,
+} from "../src/components/shared/rich-chip.ts";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 // A module-graph edge to the sheets the second half of this file reads, so
@@ -371,6 +374,16 @@ describe("the sheet says which parts are selectable (T-427)", () => {
     expect(blocks.get(".ref-chip-body .ref-chip-title")).toContain(
       "100% - var(--ref-chip-inset) + var(--ref-chip-gutter, 0px)",
     );
+  });
+
+  // The same debt on the other axis, and the same two files. `border` plus
+  // `py-px` is 2px per side, and the structure's negative margin is what
+  // keeps the line box from paying it — without this, moving the skin's
+  // padding reopens T-498's 2.59–3.13px taller heading instead of failing.
+  it("gives the line back what the skin's own box costs it", () => {
+    expect(RICH_CHIP_SKIN.split(" ")).toContain("border");
+    expect(RICH_CHIP_SKIN.split(" ")).toContain("py-px");
+    expect(RICH_CHIP_STRUCTURE.split(" ")).toContain("-my-[2px]");
   });
 
   // A leading of the chip's own drops the title below the prose, because
