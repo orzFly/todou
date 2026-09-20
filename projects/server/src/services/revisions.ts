@@ -181,7 +181,13 @@ export async function listCommentRevisions(
   // gets asked before the card's own gate redirects to the card and drops it
   // (T-245).
   if (issue.movedAt !== null) {
-    await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
+    await throwIfCommentAliased(
+      ctx,
+      project.id,
+      commentId,
+      role !== null,
+      issueNumber,
+    );
   }
   assertIssueReadable(issue, actor, role);
 
@@ -190,6 +196,16 @@ export async function listCommentRevisions(
     .from(comments)
     .where(and(eq(comments.id, commentId), eq(comments.issueId, issue.id)));
   const comment = commentRows[0];
+  // A return move can leave an old id on a card that is live here again.
+  // Resolve that miss with the same parent binding as the permalink read.
+  if (!comment)
+    await throwIfCommentAliased(
+      ctx,
+      project.id,
+      commentId,
+      role !== null,
+      issueNumber,
+    );
   if (!comment) throw new NotFoundError("comment not found");
 
   const items = await listRevisions(ctx, db, {

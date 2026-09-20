@@ -185,6 +185,7 @@ export async function throwIfCommentAliased(
   projectId: number,
   commentId: number,
   sourceReadable: boolean,
+  issueNumber: number | null,
 ): Promise<void> {
   const alias = await aliasOf(
     ctx.router.system(),
@@ -193,7 +194,12 @@ export async function throwIfCommentAliased(
     commentId,
   );
   if (alias !== null) {
-    throw new CommentMovedError(projectId, commentId, sourceReadable);
+    throw new CommentMovedError(
+      projectId,
+      commentId,
+      sourceReadable,
+      issueNumber,
+    );
   }
 }
 
@@ -649,6 +655,25 @@ async function resolve(
     if (target === undefined) return null;
     const number = await issueNumberOfComment(ctx, target, alias.id);
     if (number === null) return null;
+    // A card-scoped URL must name this comment's lineage, not merely a
+    // project that once held the id. Check the resolved comment's parent
+    // against the address book before destination permissions can produce
+    // a redirect or a gone response. Final 404s still go through T-440's
+    // non-member normalization; bare comment addresses have no parent.
+    if (marker.issueNumber !== null) {
+      const parent = await currentAddressOf(
+        system,
+        marker.projectId,
+        marker.issueNumber,
+      );
+      if (
+        parent === null ||
+        parent.projectId !== target.id ||
+        parent.number !== number
+      ) {
+        throw new NotFoundError("comment not found");
+      }
+    }
     return {
       target,
       path: `/projects/${target.slug}/issues/${number}/comments/${alias.id}`,
@@ -707,6 +732,12 @@ async function issueNumberOfComment(
     .select({ number: issues.number })
     .from(comments)
     .innerJoin(issues, eq(comments.issueId, issues.id))
-    .where(eq(comments.id, commentId));
+    .where(
+      and(
+        eq(comments.id, commentId),
+        eq(comments.projectId, target.id),
+        eq(issues.projectId, target.id),
+      ),
+    );
   return rows[0]?.number ?? null;
 }

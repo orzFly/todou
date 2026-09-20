@@ -223,13 +223,21 @@ export class IssueMovedError extends Error {
 export class CommentMovedError extends Error {
   readonly projectId: number;
   readonly commentId: number;
+  /** Null only for a bare comment address with no parent card in its URL. */
+  readonly issueNumber: number | null;
   /** See `IssueMovedError.sourceReadable`. */
   readonly sourceReadable: boolean;
 
-  constructor(projectId: number, commentId: number, sourceReadable: boolean) {
+  constructor(
+    projectId: number,
+    commentId: number,
+    sourceReadable: boolean,
+    issueNumber: number | null,
+  ) {
     super("comment moved");
     this.projectId = projectId;
     this.commentId = commentId;
+    this.issueNumber = issueNumber;
     this.sourceReadable = sourceReadable;
   }
 }

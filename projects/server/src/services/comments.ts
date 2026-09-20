@@ -288,7 +288,13 @@ export async function getComment(
   // alias knows the id it carries now (T-245). A comment id that was never
   // here falls through to the card's marker, as it did before.
   if (issue.movedAt !== null) {
-    await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
+    await throwIfCommentAliased(
+      ctx,
+      project.id,
+      commentId,
+      role !== null,
+      issueNumber,
+    );
   }
   assertIssueReadable(issue, actor, role);
 
@@ -298,7 +304,13 @@ export async function getComment(
     .where(and(eq(comments.id, commentId), eq(comments.issueId, issue.id)));
   const row = rows[0];
   if (!row)
-    await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
+    await throwIfCommentAliased(
+      ctx,
+      project.id,
+      commentId,
+      role !== null,
+      issueNumber,
+    );
   if (!row) throw new NotFoundError("comment not found");
   return toTimelineComment(ctx, row, { elideHidden: false });
 }
@@ -328,7 +340,13 @@ export async function locateComment(
     .where(and(eq(comments.projectId, project.id), eq(comments.id, commentId)));
   const row = rows[0];
   if (!row)
-    await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
+    await throwIfCommentAliased(
+      ctx,
+      project.id,
+      commentId,
+      role !== null,
+      null,
+    );
   if (!row) throw new NotFoundError("comment not found");
   // This endpoint reaches a comment by id alone, so the issue's own gate
   // never ran: without this, a bare `#comment-M` would hand out the body of
