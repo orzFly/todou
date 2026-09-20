@@ -152,13 +152,40 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
   if (coverageErrors.length)
     return { ok: false, failures, coverageErrors, locale };
 
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-  context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-  context.fontKerning = style.fontKerning;
-  if ("letterSpacing" in context) context.letterSpacing = style.letterSpacing;
-  if ("wordSpacing" in context) context.wordSpacing = style.wordSpacing;
-  const widthOf = (text) => context.measureText(text).width;
+  // Copy the actual text styles, including kerning, letter/word spacing,
+  // variable-font axes and feature settings. DOM shaping avoids approximating
+  // those settings with a canvas font shorthand. Measure an unclipped text
+  // range, not the timestamp's flex allocation or an isolated sum of fields.
+  const measurement = document.createElement("span");
+  for (const property of style) {
+    measurement.style.setProperty(property, style.getPropertyValue(property));
+  }
+  Object.assign(measurement.style, {
+    position: "fixed",
+    inset: "0 auto auto 0",
+    display: "inline-block",
+    visibility: "hidden",
+    pointerEvents: "none",
+    width: "max-content",
+    minWidth: "0",
+    maxWidth: "none",
+    height: "auto",
+    overflow: "visible",
+    whiteSpace: "nowrap",
+    transform: "none",
+    animation: "none",
+    transition: "none",
+  });
+  const measurementRange = document.createRange();
+  const measuredWidths = new Map();
+  const widthOf = (text) => {
+    if (!measuredWidths.has(text)) {
+      measurement.textContent = text;
+      measurementRange.selectNodeContents(measurement);
+      measuredWidths.set(text, measurementRange.getBoundingClientRect().width);
+    }
+    return measuredWidths.get(text);
+  };
   const partsOf = (date) =>
     Object.fromEntries(
       formatter
@@ -166,61 +193,121 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
         .filter((part) => part.type !== "literal")
         .map((part) => [part.type, part.value]),
     );
-  const dateAt = (year, month, day, hour = 12, minute = 0, second = 0) =>
-    new Date(year, month - 1, day, hour, minute, second);
-  const widest = (candidates, textOf) => {
-    let winner = null;
-    let width = -Infinity;
-    for (const candidate of candidates) {
-      const measured = widthOf(textOf(candidate));
-      if (measured > width) {
-        winner = candidate;
-        width = measured;
-      }
-    }
-    return winner;
+  const dateAt = (year, month, day, hour, minute, second) => {
+    const date = new Date(year, month - 1, day, hour, minute, second);
+    // Reject short-month/leap-day rollovers and nonexistent local DST times.
+    return date.getFullYear() === year &&
+      date.getMonth() + 1 === month &&
+      date.getDate() === day &&
+      date.getHours() === hour &&
+      date.getMinutes() === minute &&
+      date.getSeconds() === second
+      ? date
+      : null;
   };
-  const range = (from, to) =>
-    Array.from({ length: to - from + 1 }, (_, i) => from + i);
-  // Measure every legal value of each field, not a handy fixed timestamp or
-  // repeated widest digit (which could create month 88 or minute 88).
-  // Years are the complete four-digit ISO range; report that explicit domain.
-  const year = widest(
-    range(1000, 9999),
-    (value) => partsOf(dateAt(value, 1, 1)).year,
-  );
-  const dates = [];
-  for (let month = 1; month <= 12; month++) {
-    for (let day = 1; day <= 31; day++) {
-      const date = dateAt(year, month, day);
-      if (date.getMonth() + 1 === month && date.getDate() === day)
-        dates.push(date);
-    }
+  const fieldsOf = (date) => [
+    date.getFullYear(),
+    date.getMonth() + 1,
+    date.getDate(),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+  ];
+  // Seed with the concrete kerning counterexample to the former per-field
+  // choice (2000). Strict improvements can never finish narrower than this
+  // complete 5000 string, measured in the current locale and actual styles.
+  let stressDate = dateAt(5000, 10, 20, 10, 0, 0);
+  if (!stressDate) {
+    coverageErrors.push("counterexample-local-date-unavailable");
+    return { ok: false, failures, coverageErrors, locale };
   }
-  // Joint month/day search respects short months and leap years, and measures
-  // the entire string so separators/kerning participate in the choice.
-  const date = widest(dates, (value) => value.toLocaleString());
-  const makeTime = (hour, minute, second) =>
-    dateAt(year, date.getMonth() + 1, date.getDate(), hour, minute, second);
-  const minute = widest(
-    range(0, 59),
-    (value) => partsOf(makeTime(12, value, 0)).minute,
-  );
-  const second = widest(
-    range(0, 59),
-    (value) => partsOf(makeTime(12, minute, value)).second,
-  );
-  // Searching all 24 hours together also chooses the wider AM/PM period.
-  const candidates = range(0, 23).map((hour) => makeTime(hour, minute, second));
-  const stressDate = widest(candidates, (value) => value.toLocaleString());
+  const search = {
+    strategy: "full-string cyclic coordinate ascent",
+    measurement: "DOM Range with timestamp computed styles",
+    blocks: ["year", "month/day", "hour/dayPeriod", "minute", "second"],
+    domains: {
+      year: [1000, 9999],
+      month: [1, 12],
+      day: [1, 31],
+      hour: [0, 23],
+      minute: [0, 59],
+      second: [0, 59],
+    },
+    passes: 0,
+    improvements: 0,
+    converged: false,
+    globalMaximumProven: false,
+  };
+  let fieldWidths;
+  document.body.append(measurement);
+  try {
+    let bestWidth = widthOf(stressDate.toLocaleString());
+    search.counterexample = {
+      text: stressDate.toLocaleString(),
+      title: stressDate.toISOString(),
+      width: bestWidth,
+    };
+    const consider = (fields) => {
+      const candidate = dateAt(...fields);
+      if (!candidate) return;
+      // Every candidate is scored as the real, complete display string;
+      // literals and shaping across field boundaries participate in the score.
+      const width = widthOf(candidate.toLocaleString());
+      if (width > bestWidth) {
+        stressDate = candidate;
+        bestWidth = width;
+        search.improvements++;
+      }
+    };
+    // Each block holds the other fields fixed. Revisit all blocks after any
+    // improvement, since changing a neighbour can change kerning. Ties retain
+    // the incumbent. Cached deterministic widths and strictly increasing
+    // accepted scores on a finite legal domain guarantee termination; this is
+    // a coordinate-wise optimum, not an exhaustive global-maximum proof.
+    let previousWidth;
+    do {
+      previousWidth = bestWidth;
+      search.passes++;
+      let fields = fieldsOf(stressDate);
+      for (let year = 1000; year <= 9999; year++) {
+        consider([year, ...fields.slice(1)]);
+      }
+      fields = fieldsOf(stressDate);
+      for (let month = 1; month <= 12; month++) {
+        for (let day = 1; day <= 31; day++) {
+          consider([fields[0], month, day, ...fields.slice(3)]);
+        }
+      }
+      fields = fieldsOf(stressDate);
+      // All 24 local hours search hour and dayPeriod together.
+      for (let hour = 0; hour <= 23; hour++) {
+        consider([...fields.slice(0, 3), hour, ...fields.slice(4)]);
+      }
+      fields = fieldsOf(stressDate);
+      for (let minute = 0; minute <= 59; minute++) {
+        consider([...fields.slice(0, 4), minute, fields[5]]);
+      }
+      fields = fieldsOf(stressDate);
+      for (let second = 0; second <= 59; second++) {
+        consider([...fields.slice(0, 5), second]);
+      }
+    } while (bestWidth > previousWidth);
+    search.converged = true;
+    search.selectedWidth = bestWidth;
+    search.measuredStrings = measuredWidths.size;
+    // Retain the diagnostic interface; these isolated widths do not select
+    // candidates and must not be summed to infer the full string's width.
+    fieldWidths = Object.fromEntries(
+      Object.entries(partsOf(stressDate)).map(([key, value]) => [
+        key,
+        { value, width: widthOf(value) },
+      ]),
+    );
+  } finally {
+    measurement.remove();
+  }
   const stressText = stressDate.toLocaleString();
   const stressTitle = stressDate.toISOString();
-  const fieldWidths = Object.fromEntries(
-    Object.entries(partsOf(stressDate)).map(([key, value]) => [
-      key,
-      { value, width: widthOf(value) },
-    ]),
-  );
 
   try {
     timestamp.textContent = stressText;
@@ -330,6 +417,7 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
         yearDomain: [1000, 9999],
         locale,
         fieldWidths,
+        search,
         naturalWidth,
         truncated,
       },

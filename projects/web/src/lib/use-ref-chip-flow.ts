@@ -139,13 +139,27 @@ export function useRefChipFlow() {
         setInline(element.style, GUTTER, { value: "0px", priority: "" });
       }
 
-      const payments: {
-        container: HTMLElement;
-        property: "padding-left" | "padding-right";
-        padding: number;
-        gutter: number;
-      }[] = [];
-      for (const [container, anchors] of groups) {
+      // Ancestors must pay before descendants are measured: a parent's gutter
+      // narrows its nested flows and can create an overflow that did not exist
+      // in the original layout. DOM depth makes the dependency order explicit,
+      // even when a parent's first chip follows its nested list in source.
+      const depth = (element: HTMLElement) => {
+        let value = 0;
+        for (
+          let parent = element.parentElement;
+          parent;
+          parent = parent.parentElement
+        )
+          value++;
+        return value;
+      };
+      const ordered = [...groups].sort(
+        ([left], [right]) => depth(left) - depth(right),
+      );
+      // One finite pass, one payment per flow. Descendant padding cannot change
+      // an ancestor's available inline width in these block text flows, so no
+      // fixed-point retries or self-scheduled reflows are needed.
+      for (const [container, anchors] of ordered) {
         if (container.clientWidth === 0) continue;
         const style = getComputedStyle(container);
         const box = container.getBoundingClientRect();
@@ -170,24 +184,15 @@ export function useRefChipFlow() {
           gutter = Math.max(gutter, closing);
         }
         if (gutter > 0) {
-          payments.push({
-            container,
-            property: rtl ? "padding-left" : "padding-right",
-            padding,
-            gutter,
+          setInline(container.style, rtl ? "padding-left" : "padding-right", {
+            value: `${padding + gutter}px`,
+            priority: "important",
+          });
+          setInline(container.style, GUTTER, {
+            value: `${gutter}px`,
+            priority: "",
           });
         }
-      }
-      // All geometry above is from the same unreserved layout.
-      for (const { container, property, padding, gutter } of payments) {
-        setInline(container.style, property, {
-          value: `${padding + gutter}px`,
-          priority: "important",
-        });
-        setInline(container.style, GUTTER, {
-          value: `${gutter}px`,
-          priority: "",
-        });
       }
       for (const element of current) {
         const { width, height } = element.getBoundingClientRect();

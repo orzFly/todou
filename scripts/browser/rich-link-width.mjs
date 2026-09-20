@@ -113,6 +113,69 @@ export async function probeRichLinkWidth() {
         exampleWidths,
       });
     }
+    for (const { paragraph } of cases) paragraph.remove();
+    // Tight lists are different: both the parent and child own inline chips.
+    // An ancestor payment can turn an initially safe child into an overflow.
+    // Exercise both DOM orders; discovery order alone is not ancestor order.
+    for (const parentFirst of [true, false]) {
+      const nested = [];
+      // Keep the child wide enough for the uncapped cloned identity: this
+      // fixture isolates ancestor-induced overflow, not identity allocation.
+      for (let width = 160; width <= 420; width += 0.25) {
+        const list = document.createElement("ul");
+        list.style.cssText = `width:${width}px;position:absolute;top:0;left:0`;
+        const parent = document.createElement("li");
+        const childList = document.createElement("ul");
+        const child = document.createElement("li");
+        const parentChip = comment.cloneNode(true);
+        const childChip = comment.cloneNode(true);
+        for (const chip of [parentChip, childChip])
+          chip.querySelector("[data-comment-author]").textContent =
+            " by Alice Neutral Wideword";
+        child.append(childChip);
+        childList.append(child);
+        parent.append(
+          ...(parentFirst ? [parentChip, childList] : [childList, parentChip]),
+        );
+        list.append(parent);
+        host.append(list);
+        nested.push({ list, parent, child, parentChip, childChip, width });
+      }
+      const parentOnly = nested.filter(
+        ({ parent, child, parentChip, childChip }) =>
+          overflow(parent, parentChip) > 0.05 &&
+          overflow(child, childChip) <= 0.05,
+      );
+      if (!parentOnly.length)
+        failures.push("nested-parent-only-pressure-missing");
+      await new Promise((resolve) =>
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+      );
+      const over = nested.flatMap(
+        ({ parent, child, parentChip, childChip, width }) => {
+          const parentOver = overflow(parent, parentChip);
+          const childOver = overflow(child, childChip);
+          return parentOver > 0.05 || childOver > 0.05
+            ? [{ width, parentOver, childOver }]
+            : [];
+        },
+      );
+      readings.push({
+        kind: parentFirst ? "nested-parent-first" : "nested-parent-last",
+        samples: nested.length,
+        fixedOver: over.length,
+        parentOnlyBefore: parentOnly.length,
+        childPaymentsAfter: parentOnly.filter(
+          ({ child }) =>
+            parseFloat(child.style.getPropertyValue("--ref-chip-gutter")) > 0,
+        ).length,
+        examples: over.slice(0, 3),
+      });
+      if (over.length) failures.push("parent-payment-created-child-overflow");
+      for (const { list } of nested) list.remove();
+    }
     // Loose/nested lists must pay at the actual paragraph, not every ancestor.
     const list = document.createElement("ul");
     list.innerHTML = '<li><ul><li><p style="width:123px"></p></li></ul></li>';
