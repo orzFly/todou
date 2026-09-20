@@ -533,10 +533,9 @@ describe("ActivityCardList selection and request states", () => {
     expect(view.getByRole("link", { name: alpha.title })).toBe(link);
     expect(view.getAllByRole("listitem")).toHaveLength(2);
     expect(view.getByText("17 active cards")).not.toBeNull();
-    const more = view.getByRole("button", {
-      name: "Load more",
-    }) as HTMLButtonElement;
-    expect(more.disabled).toBe(true);
+    // The shared footer reports progress in its label, not by disabling.
+    expect(view.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(view.getByRole("button", { name: "Loading…" })).not.toBeNull();
     view.update({ error: "Refresh failed" });
     expect(view.getByRole("alert").textContent).toContain("Refresh failed");
     expect(view.getByRole("link", { name: alpha.title })).toBe(link);
@@ -594,10 +593,8 @@ describe("ActivityCardList pagination", () => {
     expect(view.getByRole("region").getAttribute("aria-busy")).toBe("true");
     expect(view.getAllByRole("link")).toEqual([first, second]);
     expect(view.getByText("17 active cards")).not.toBeNull();
-    const pending = view.getByRole("button", {
-      name: "Load more",
-    }) as HTMLButtonElement;
-    expect(pending.disabled).toBe(true);
+    const pending = view.getByRole("button", { name: "Loading…" });
+    // Clickable, but a second request is refused while one is in flight.
     fireEvent.click(pending);
     expect(onLoadMore).toHaveBeenCalledTimes(1);
 

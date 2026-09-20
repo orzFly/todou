@@ -1,6 +1,8 @@
 import type { ActivitySelection } from "@todou/shared";
+import { useRef } from "react";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { LoadMoreFooter } from "@/components/shared/load-more.tsx";
 import { Button } from "@/components/ui/button.tsx";
 
 /** State and actions supplied by the calendar owner; this list never queries data. */
@@ -37,6 +39,9 @@ export function ActivityCardList({
     timeStyle: "short",
   });
   const grid = useIssueListGrid({ readMarker: false });
+  // This list reports its own request failures above the group, so the shared
+  // footer is only ever asked for the button half.
+  const focusRequested = useRef(false);
   const busy = loading || loadingMore;
   const hasError = error !== null;
 
@@ -129,15 +134,17 @@ export function ActivityCardList({
         </section>
       )}
       {selection?.has_more && !hasError && (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={busy}
-          onClick={() => onLoadMore()}
-        >
-          Load more
-        </Button>
+        <LoadMoreFooter
+          pending={busy}
+          error={null}
+          // The shared footer reports progress by its label rather than by
+          // disabling itself, so the guard against a second request lives here.
+          // It also passes the click event on, and this prop takes none.
+          onLoadMore={() => {
+            if (!busy) onLoadMore();
+          }}
+          focusRequested={focusRequested}
+        />
       )}
     </section>
   );
