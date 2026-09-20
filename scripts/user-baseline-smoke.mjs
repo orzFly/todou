@@ -22,6 +22,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
 import { createBrowserStack } from "./lib/browser-stack.mjs";
+import { assessPillParity, probePillParity } from "./pill-parity-probe.mjs";
 import {
   assessSplitCopy,
   assessSplitHeaders,
@@ -165,9 +166,15 @@ const AVATAR_CASES = [
 /**
  * `author` and `peer` are T-433's original pair and stay exactly what they
  * were — for a comment header `peer` is still the timestamp link, so that
- * sample survives T-435 unchanged. `badge`, `id` and `time` are the text
- * T-435 put on the same baseline; each role marks the visible text node,
- * never the box around it.
+ * sample survives T-435 unchanged. `id` and `time` are the text T-435 put on
+ * the same baseline; each role marks the visible text node, never the box
+ * around it.
+ *
+ * The agent pill is deliberately not among them. T-435 had put the model
+ * name on the header's baseline too, which is what made the name sit off
+ * centre inside its own pill; T-487 handed the pill back to the shape the
+ * event row draws, and what holds it there is the parity check in
+ * pill-parity-probe.mjs — a comparison against that row, not a baseline.
  */
 const DEFAULT_ROLES = ["author", "peer"];
 
@@ -236,15 +243,15 @@ const CASES = [
     "comment-item-agent-session",
     "author",
     "projects/web/src/components/timeline/comment-item.tsx",
-    /items-baseline \[&>svg\]:self-center/,
-    ["author", "badge", "peer", "id"],
+    /<AgentContextBadge\s+context=\{comment\.agent_context\}\s+className="self-center"/,
+    ["author", "peer", "id"],
   ),
   guard(
     "comment-item-agent-plain",
     "author",
     "projects/web/src/components/timeline/comment-item.tsx",
-    /items-baseline \[&>svg\]:self-center/,
-    ["author", "badge", "peer", "id"],
+    /<AgentContextBadge\s+context=\{comment\.agent_context\}\s+className="self-center"/,
+    ["author", "peer", "id"],
   ),
   guard(
     "revision-history",
@@ -335,10 +342,16 @@ const SOURCE_ONLY_GUARDS = [
 
 /**
  * One fault per rule the implementation may lose, so a failure names which.
- * `row` is T-433's own mutation and every case carries it; the other two
- * restore exactly one of the rules T-435 changed, and each must leave the
- * roles it does not move inside the threshold — "something went red" is not
+ * `row` is T-433's own mutation and every case carries it; `meta` restores
+ * the one rule of T-435's that still stands here, and must leave the roles
+ * it does not move inside the threshold — "something went red" is not
  * evidence that this rule is what holds the row together.
+ *
+ * There was a third, `badge`, which put T-433's `self-center` back on the
+ * agent pill and expected the model name to leave the header's baseline.
+ * T-487 made that the correct rendering, so the fault now injects the
+ * implementation; what guards the pill instead is the parity check against
+ * the event row, which carries a fault of its own.
  */
 const FAULTS = [
   ...CASES.map((entry) => ({
@@ -349,22 +362,10 @@ const FAULTS = [
   })),
   {
     id: "comment-item-agent-session",
-    kind: "badge",
-    expectFail: ["badge"],
-    expectHold: ["peer", "id"],
-  },
-  {
-    id: "comment-item-agent-plain",
-    kind: "badge",
-    expectFail: ["badge"],
-    expectHold: ["peer", "id"],
-  },
-  {
-    id: "comment-item-agent-session",
     kind: "meta",
     // `peer` is the timestamp, which lives in the same group as the id.
     expectFail: ["id", "peer"],
-    expectHold: ["badge"],
+    expectHold: [],
   },
 ];
 
@@ -472,7 +473,7 @@ async function seed(serverPort) {
   // is opt-in provenance on an ordinary authenticated POST, so these are
   // real agent-context comments rather than a DTO edited in the fixture.
   // With a session id the badge is a button, without one a span, and T-435
-  // needs the visible model text of both on the header's baseline.
+  // needs the visible model text of both on the header's line.
   await call(
     "POST",
     `/projects/${slug}/issues/${issue.number}/comments`,
@@ -504,9 +505,23 @@ async function seed(serverPort) {
   await call("PATCH", `/projects/${slug}/issues/${issue.number}`, {
     status_id: statusA.id,
   });
-  await call("PATCH", `/projects/${slug}/issues/${issue.number}`, {
-    status_id: statusB.id,
-  });
+  // The same provenance on an event, which is the row T-487 made the comment
+  // header's pill answer to: the parity check needs both pills drawn from
+  // real agent context on one page, and no event carried any until here.
+  // On this write rather than the one above, which asks for the status the
+  // project already defaults to and so writes no event to carry it.
+  await call(
+    "PATCH",
+    `/projects/${slug}/issues/${issue.number}`,
+    { status_id: statusB.id },
+    {
+      "x-todou-agent-context": JSON.stringify({
+        agent: "claude-code",
+        model: "claude-opus-5",
+        session_id: "0d6b1f52-baseline-smoke",
+      }),
+    },
+  );
   // A net-nonempty assignment run reaches CollapsedGroup; changing the title
   // between writes prevents command coalescing from being the only evidence.
   await call("PATCH", `/projects/${slug}/issues/${issue.number}`, {
@@ -725,11 +740,6 @@ async function measure(page, fault = null, cases = CASES) {
         if (kind === "row" && id === "assignee-row") {
           mutationRoot =
             root.querySelector("[data-baseline-fault-target]") ?? root;
-        } else if (kind === "badge") {
-          const badge = roleOf("badge");
-          mutationRoot =
-            badge?.closest('[data-testid="agent-context-badge"]') ?? badge;
-          property = "alignSelf";
         } else if (kind === "meta") {
           const idPart = roleOf("id");
           mutationRoot =
@@ -772,20 +782,7 @@ async function measure(page, fault = null, cases = CASES) {
           mutation =
             kind === "row"
               ? "text flex row restored to items-center"
-              : kind === "badge"
-                ? "agent badge restored to T-433's self-center"
-                : "id/time group set to self-center";
-          if (kind === "badge") {
-            // Both halves, or the restore is not the old rule: the pill and
-            // the row are the same height here, so moving the box alone
-            // leaves the text exactly where it was and the fault proves
-            // nothing. What T-435 changed is where the text sits inside the
-            // pill, and that is `align-items` on the badge.
-            mutationRoot.style.alignItems = "center";
-            for (const icon of mutationRoot.querySelectorAll(":scope > svg")) {
-              icon.style.alignSelf = "auto";
-            }
-          }
+              : "id/time group set to self-center";
           if (kind === "row" && id === "assignee-row") {
             mutationRoot.style.verticalAlign = "middle";
             mutation = "assignee alignment restored to center/middle";
@@ -1163,6 +1160,9 @@ async function browserRun(browser, base, seeded, viewport, fault = null) {
       fixtureErrors,
       rows: await measure(page, fault, FIXTURE_CASES),
       avatars: { initial: avatarInitial, settled: avatarSettled },
+      // Clean runs only: the fault list damages the very classes this
+      // compares, so a difference under one of them would say nothing.
+      pillParity: fault ? null : await evaluate(page, probePillParity),
     };
     if (options.keep && !fault) {
       const screenshot = await page.cdp.send(
@@ -1976,6 +1976,17 @@ function printRun(run) {
           .join(", ") || "all hit"),
     );
   }
+  if (run.pillParity) {
+    const parityFailures = assessPillParity(run.pillParity);
+    console.log(
+      `  pill parity (header vs event): ${
+        parityFailures.length === 0
+          ? `identical on ${Object.keys(run.pillParity.shapes?.header ?? {}).length} properties, ` +
+            `and ${run.pillParity.faulted.length} of them part on the damaged pill`
+          : parityFailures.join("; ")
+      }`,
+    );
+  }
   if (run.untouched) {
     const untouchedFailures = run.untouched.filter(
       (entry) => entry.status !== "hit",
@@ -2141,7 +2152,8 @@ try {
       run.fixtureErrors.length ||
       run.rows.some((row) => baselineRowFails(row, viewport.width)) ||
       run.avatars.settled.some((row) => row.status !== "hit") ||
-      run.untouched?.some((row) => row.status !== "hit")
+      run.untouched?.some((row) => row.status !== "hit") ||
+      assessPillParity(run.pillParity).length > 0
     )
       fatal = true;
   }

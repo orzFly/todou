@@ -322,6 +322,8 @@ function Samples({ data }: { data: Data }) {
   const opened = events.find((entry) => entry.event_type === "opened");
   const reference = events.find((entry) => entry.event_type === "referenced");
   const assigned = events.filter((entry) => entry.event_type === "assigned");
+  // The event row the comment header's pill is compared against (T-487).
+  const agentEvent = events.find((entry) => entry.agent_context !== null);
   const specVersion = spec?.versions.at(-1);
   const assignedBot = assigned.find(
     (event) =>
@@ -422,6 +424,11 @@ function Samples({ data }: { data: Data }) {
       {opened && (
         <section id="fixture-event-row">
           <EventRow event={opened} slug={slug} issueNumber={issueNumber} />
+        </section>
+      )}
+      {agentEvent && (
+        <section id="fixture-agent-event-row">
+          <EventRow event={agentEvent} slug={slug} issueNumber={issueNumber} />
         </section>
       )}
       {reference && (
