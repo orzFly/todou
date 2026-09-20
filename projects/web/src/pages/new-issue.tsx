@@ -260,8 +260,8 @@ function NewIssueForm({
     const input: IssueCreateInput = {
       title: trimmedTitle,
       body,
-      // Empty triage sets ask for nothing on create; retries only PATCH
-      // changed fields, so reporters never send forbidden triage writes.
+      // Empty triage sets ask for nothing on create. PATCH separately checks
+      // the current capability: even an empty set is a triage write there.
       status_id:
         canTriage && fields.statusId !== ""
           ? Number(fields.statusId)
@@ -303,24 +303,28 @@ function NewIssueForm({
         const patch: IssueUpdateInput = {};
         if (input.title !== saved.title) patch.title = input.title;
         if (input.body !== saved.body) patch.body = input.body;
-        if (input.status_id !== saved.status_id) {
-          patch.status_id = input.status_id;
-        }
-        if (
-          input.label_ids.length !== saved.label_ids.length ||
-          input.label_ids.some((id) => !saved.label_ids.includes(id))
-        ) {
-          patch.label_ids = input.label_ids;
-        }
-        if (
-          input.assignee_ids.length !== saved.assignee_ids.length ||
-          input.assignee_ids.some((id) => !saved.assignee_ids.includes(id))
-        ) {
-          patch.assignee_ids = input.assignee_ids;
+        if (canTriage) {
+          if (input.status_id !== saved.status_id) {
+            patch.status_id = input.status_id;
+          }
+          if (
+            input.label_ids.length !== saved.label_ids.length ||
+            input.label_ids.some((id) => !saved.label_ids.includes(id))
+          ) {
+            patch.label_ids = input.label_ids;
+          }
+          if (
+            input.assignee_ids.length !== saved.assignee_ids.length ||
+            input.assignee_ids.some((id) => !saved.assignee_ids.includes(id))
+          ) {
+            patch.assignee_ids = input.assignee_ids;
+          }
         }
         if (Object.keys(patch).length > 0) {
           await api.updateIssue(slug, issue.number, patch);
-          savedFieldsRef.current = { ...input };
+          // Only sent fields have reached the server. In particular, losing
+          // triage permission must not advance those fields' checkpoints.
+          savedFieldsRef.current = { ...saved, ...patch };
         }
       }
       // Everything below needs the card's number, so none of it can run

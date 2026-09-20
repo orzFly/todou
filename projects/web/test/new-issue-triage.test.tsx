@@ -160,12 +160,23 @@ function renderAs(role: MemberRole) {
       initialEntries: [`/projects/${SLUG}/issues/new`],
     }),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       {/* biome-ignore lint/suspicious/noExplicitAny: shim route tree */}
       <RouterProvider router={router as any} />
     </QueryClientProvider>,
   );
+  return {
+    ...view,
+    setRole: (next: MemberRole) => {
+      act(() => {
+        client.setQueryData(projectQuery(SLUG).queryKey, {
+          ...project,
+          viewer_role: next,
+        });
+      });
+    },
+  };
 }
 
 const triageControls = () => ({
@@ -827,6 +838,63 @@ describe("the new-issue page's edited retries (T-477)", () => {
     label_ids: [7],
     assignee_ids: [1],
   };
+
+  it("omits triage after a downgrade and preserves its saved baseline until permission returns", async () => {
+    const { view, createIssue, updateIssue, error } = start();
+    const upload = vi
+      .spyOn(api, "uploadAttachment")
+      .mockRejectedValueOnce(new Error("upload unavailable"))
+      .mockResolvedValue(attachment);
+    const mute = vi
+      .spyOn(api, "muteIssue")
+      .mockRejectedValueOnce(new Error("mute unavailable"))
+      .mockResolvedValue(undefined);
+    fireEvent.change(await screen.findByLabelText("Title"), {
+      target: { value: "Teh potatos" },
+    });
+    await pickStatus("Done");
+    await toggleBug();
+    await toggleUser();
+    await pickNotifications(true);
+    await stageNotes(view.container);
+    submit();
+    await expectFailure(error, "notes.txt: upload unavailable");
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(SLUG, {
+      title: "Teh potatos",
+      body: "",
+      status_id: 2,
+      label_ids: [7],
+      assignee_ids: [1],
+    });
+
+    // These edits remain unsent while the triage controls are hidden.
+    await pickStatus("Todo");
+    await toggleBug();
+    await toggleUser();
+    view.setRole("reporter");
+    await waitFor(() => expect(triageControls().status).toBeNull());
+    expect(triageControls().editLabels).toBeNull();
+    expect(triageControls().editAssignees).toBeNull();
+    submit();
+    // The body succeeds; a later, independent failure keeps the form here
+    // so restoring permission can exercise the saved triage checkpoint.
+    await expectFailure(error, "mute unavailable");
+    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, {
+      body: marker,
+    });
+
+    view.setRole("admin");
+    await screen.findByRole("heading", { name: "Status" });
+    submit();
+    expect(await screen.findByText("the card")).toBeTruthy();
+    expect(updateIssue.mock.calls).toEqual([
+      [SLUG, 12, { body: marker }],
+      [SLUG, 12, { status_id: 1, label_ids: [], assignee_ids: [] }],
+    ]);
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(mute).toHaveBeenCalledTimes(2);
+  });
 
   it("keeps the server's implicit default through retries when the cached default is stale", async () => {
     const { createIssue, updateIssue, error } = start({
