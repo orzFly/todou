@@ -696,6 +696,70 @@ describe("insights charts", () => {
     },
   );
 
+  it.each([
+    [1, [0, 1]],
+    [7, [0, 2, 4, 6, 8]],
+    [22, [0, 5, 10, 15, 20, 25]],
+    [40, [0, 10, 20, 30, 40]],
+    [45, [0, 10, 20, 30, 40, 50]],
+    [47, [0, 10, 20, 30, 40, 50]],
+  ])(
+    "puts a maximum of %s under a ceiling that follows the data",
+    (max, ticks) => {
+      // Literal oracles, not a second call to countScale: the ceiling is the
+      // whole point. Four rounded steps used to put 22 under 40 and 45 under 80.
+      expect(countScale(max, PLOT_TOP, PLOT_BOTTOM).ticks).toEqual(ticks);
+    },
+  );
+
+  it.each([25, 50])(
+    "lets a maximum of %s sit exactly on the top gridline",
+    (max) => {
+      // A nice step divides these exactly, so the series touches PLOT_TOP with
+      // no headroom. That is deliberate: inventing a step to leave room is what
+      // produced the loose axes, and the SVG has room above PLOT_TOP to draw in.
+      const scale = countScale(max, PLOT_TOP, PLOT_BOTTOM);
+      expect(scale.ticks.at(-1)).toBe(max);
+      expect(scale.y(max)).toBe(PLOT_TOP);
+    },
+  );
+
+  it("reads remaining off the left edge and completed off the right", () => {
+    const { container } = render(
+      <BurnChart data={response()} selectedIndex={1} onSelect={vi.fn()} />,
+    );
+    const axisOf = (label: string) => {
+      const axis = container.querySelector(`[data-axis="${label}"]`)!;
+      const tick = axis.querySelector(":scope > g")!;
+      return {
+        side: axis.getAttribute("data-side"),
+        label: axis.querySelector(":scope > text")!,
+        line: tick.querySelector("line")!,
+        text: tick.querySelector("text")!,
+      };
+    };
+    const left = axisOf("Remaining");
+    const right = axisOf("Completed");
+
+    expect(left.side).toBe("left");
+    expect(left.text.getAttribute("x")).toBe(String(PLOT_LEFT - 10));
+    expect(left.text.getAttribute("text-anchor")).toBe("end");
+    expect(left.label.getAttribute("x")).toBe(String(PLOT_LEFT));
+    expect(left.label.getAttribute("text-anchor")).toBe("start");
+    // Only the left axis owns gridlines; a second full-width set would double
+    // every stroke.
+    expect(left.line.getAttribute("x1")).toBe(String(PLOT_LEFT));
+    expect(left.line.getAttribute("x2")).toBe(String(PLOT_RIGHT));
+
+    expect(right.side).toBe("right");
+    expect(right.text.getAttribute("x")).toBe(String(PLOT_RIGHT + 8));
+    expect(right.text.getAttribute("text-anchor")).toBe("start");
+    expect(right.label.getAttribute("x")).toBe(String(PLOT_RIGHT));
+    expect(right.label.getAttribute("text-anchor")).toBe("end");
+    expect(right.line.getAttribute("x1")).toBe(String(PLOT_RIGHT));
+    expect(right.line.getAttribute("x2")).toBe(String(PLOT_RIGHT + 4));
+  });
+
   it.each(["empty", "zero", "one", "all unknown", "not applicable"])(
     "renders finite geometry for %s data",
     (scenario) => {
