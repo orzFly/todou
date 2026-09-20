@@ -1,33 +1,16 @@
 import {
-  hashKey,
   infiniteQueryOptions,
   queryOptions,
   useInfiniteQuery,
-  useQueryClient,
 } from "@tanstack/react-query";
 import type { TimelineItem, TimelinePage } from "@todou/shared";
+import { drainPaged } from "@todou/shared";
 import { api } from "@/api/queries.ts";
-import {
-  defineProjection,
-  timelineAllResource,
-  timelineResource,
-} from "@/api/runtime/projections.ts";
-import {
-  runtimeQueryOptions,
-  wrapRuntimeRefetch,
-} from "@/api/runtime/query-adapter.ts";
-import {
-  drainTimelineComments,
-  nextTimelinePageParam,
-  previousTimelinePageParam,
-  type TimelinePageParam,
-  type TimelineWindowKind,
-  timelineAllQuery,
-  timelinePageQuery,
-  timelineWindow,
-} from "@/api/runtime/timeline.ts";
 
-export { TIMELINE_PAGE_LIMIT } from "@/api/runtime/timeline.ts";
+export const TIMELINE_PAGE_LIMIT = 50;
+
+/** The server's ceiling on `limit`; one request covers any card we have. */
+const DRAIN_PAGE_LIMIT = 100;
 
 /**
  * Every comment on the card, however folded the page is (T-307). What the
@@ -44,27 +27,24 @@ export { TIMELINE_PAGE_LIMIT } from "@/api/runtime/timeline.ts";
  * `invalidateQueries(["timeline", slug, number])` reaches it.
  */
 export function allCommentsQuery(slug: string, issueNumber: number) {
-  return runtimeQueryOptions(
-    queryOptions({
-      queryKey: ["timeline", slug, issueNumber, "all"] as const,
-      queryFn: ({ signal }): Promise<TimelineItem[]> =>
-        drainTimelineComments((after) =>
-          api
-            .withContext({
-              signal,
-              resource: timelineAllResource(slug, issueNumber, after),
-            })
-            .getTimeline(slug, issueNumber, timelineAllQuery(after)),
-        ),
-    }),
-    {
-      kind: "timeline-all",
-      resources: [timelineAllResource(slug, issueNumber)],
+  return queryOptions({
+    queryKey: ["timeline", slug, issueNumber, "all"] as const,
+    queryFn: async (): Promise<TimelineItem[]> => {
+      const { items } = await drainPaged<TimelineItem>(
+        "timeline",
+        undefined,
+        (after) =>
+          api.getTimeline(slug, issueNumber, {
+            after,
+            types: "comment,question_answered",
+            limit: DRAIN_PAGE_LIMIT,
+          }),
+      );
+      return items;
     },
-  );
+  });
 }
 
-export type { TimelinePageParam } from "@/api/runtime/timeline.ts";
 /**
  * Every page this app reads carries the hidden bodies (T-281). Revealing a
  * run is a view toggle here, not a read: one person looking at one card is
@@ -74,36 +54,27 @@ export type { TimelinePageParam } from "@/api/runtime/timeline.ts";
  *
  * A constant, so it is not part of any query key.
  */
+export const READS = {
+  include_hidden: true,
+  limit: TIMELINE_PAGE_LIMIT,
+} as const;
+
+export type TimelinePageParam =
+  | { dir: "init" }
+  | { dir: "init-head" }
+  | { dir: "before"; cursor: string }
+  | { dir: "after"; cursor: string };
+
 /**
  * Later pages may be empty (SSE-triggered forward polls), so the next
  * cursor is the newest non-null one across all pages — exported for tests.
  */
-export { latestNextCursor, READS } from "@/api/runtime/timeline.ts";
-
-/** Query identity stays page-local; shared projection identity includes its window. */
-export function timelineProjection(
-  slug: string,
-  issueNumber: number,
-  kind: TimelineWindowKind,
-  pageParams?: readonly TimelinePageParam[],
-) {
-  const queryKey = ["timeline", slug, issueNumber, kind];
-  const windowDescriptor = timelineWindow(kind, pageParams);
-  return defineProjection({
-    kind: kind === "tail" ? "timeline-tail" : "timeline-head",
-    version: 1,
-    queryKey,
-    queryHash: hashKey(queryKey),
-    resources: [
-      timelineResource(
-        slug,
-        issueNumber,
-        windowDescriptor.initialPageParam,
-        kind,
-      ),
-    ],
-    windowDescriptor,
-  });
+export function latestNextCursor(pages: TimelinePage[]): string | null {
+  for (let i = pages.length - 1; i >= 0; i--) {
+    const cursor = pages[i]?.next_cursor;
+    if (cursor) return cursor;
+  }
+  return null;
 }
 
 /**
@@ -112,35 +83,38 @@ export function timelineProjection(
  * SSE invalidations refetch it and pick up appended items.
  */
 export function timelineTailOptions(slug: string, issueNumber: number) {
-  return runtimeQueryOptions(
-    infiniteQueryOptions({
-      queryKey: ["timeline", slug, issueNumber, "tail"],
-      initialPageParam: { dir: "init" } as TimelinePageParam,
-      queryFn: ({ pageParam, signal, meta }) =>
-        api
-          .withContext({
-            signal,
-            freshnessMs: (meta?.runtime as { freshnessMs?: number } | undefined)
-              ?.freshnessMs,
-            resource: timelineResource(slug, issueNumber, pageParam, "tail"),
-          })
-          .getTimeline(slug, issueNumber, timelinePageQuery(pageParam, "tail")),
-      getPreviousPageParam: previousTimelinePageParam,
-      getNextPageParam: (_lastPage, allPages) =>
-        nextTimelinePageParam(allPages),
-    }),
-    timelineProjection(slug, issueNumber, "tail"),
-  );
+  return infiniteQueryOptions({
+    queryKey: ["timeline", slug, issueNumber, "tail"],
+    initialPageParam: { dir: "init" } as TimelinePageParam,
+    queryFn: ({ pageParam }) => {
+      if (pageParam.dir === "before") {
+        return api.getTimeline(slug, issueNumber, {
+          ...READS,
+          before: pageParam.cursor,
+        });
+      }
+      if (pageParam.dir === "after") {
+        return api.getTimeline(slug, issueNumber, {
+          ...READS,
+          after: pageParam.cursor,
+        });
+      }
+      // Chat-style initial position: land on the newest page.
+      return api.getTimeline(slug, issueNumber, { ...READS, last: true });
+    },
+    getPreviousPageParam: (firstPage): TimelinePageParam | undefined =>
+      firstPage.prev_cursor
+        ? { dir: "before", cursor: firstPage.prev_cursor }
+        : undefined,
+    getNextPageParam: (_lastPage, allPages): TimelinePageParam | undefined => {
+      const cursor = latestNextCursor(allPages);
+      return cursor ? { dir: "after", cursor } : undefined;
+    },
+  });
 }
 
 export function useTimelineTail(slug: string, issueNumber: number) {
-  const queryClient = useQueryClient();
-  const options = timelineTailOptions(slug, issueNumber);
-  return wrapRuntimeRefetch(
-    queryClient,
-    options.queryKey,
-    useInfiniteQuery(options),
-  );
+  return useInfiniteQuery(timelineTailOptions(slug, issueNumber));
 }
 
 /**
@@ -149,44 +123,30 @@ export function useTimelineTail(slug: string, issueNumber: number) {
  * side has no server end-flag (next_cursor stays non-null so pollers can
  * continue), so callers gate expansion on the remaining count instead.
  */
-export function timelineHeadOptions(
-  slug: string,
-  issueNumber: number,
-  enabled: boolean,
-) {
-  return runtimeQueryOptions(
-    infiniteQueryOptions({
-      queryKey: ["timeline", slug, issueNumber, "head"],
-      enabled,
-      initialPageParam: { dir: "init-head" } as TimelinePageParam,
-      queryFn: ({ pageParam, signal, meta }) =>
-        api
-          .withContext({
-            signal,
-            freshnessMs: (meta?.runtime as { freshnessMs?: number } | undefined)
-              ?.freshnessMs,
-            resource: timelineResource(slug, issueNumber, pageParam, "head"),
-          })
-          .getTimeline(slug, issueNumber, timelinePageQuery(pageParam, "head")),
-      getNextPageParam: (_lastPage, allPages) =>
-        nextTimelinePageParam(allPages),
-    }),
-    timelineProjection(slug, issueNumber, "head"),
-  );
-}
-
 export function useTimelineHead(
   slug: string,
   issueNumber: number,
   enabled: boolean,
 ) {
-  const queryClient = useQueryClient();
-  const options = timelineHeadOptions(slug, issueNumber, enabled);
-  return wrapRuntimeRefetch(
-    queryClient,
-    options.queryKey,
-    useInfiniteQuery(options),
-  );
+  return useInfiniteQuery({
+    queryKey: ["timeline", slug, issueNumber, "head"],
+    enabled,
+    initialPageParam: { dir: "init-head" } as TimelinePageParam,
+    queryFn: ({ pageParam }) => {
+      if (pageParam.dir === "after") {
+        return api.getTimeline(slug, issueNumber, {
+          ...READS,
+          after: pageParam.cursor,
+        });
+      }
+      // No cursor: forward from the very beginning.
+      return api.getTimeline(slug, issueNumber, { ...READS });
+    },
+    getNextPageParam: (_lastPage, allPages): TimelinePageParam | undefined => {
+      const cursor = latestNextCursor(allPages);
+      return cursor ? { dir: "after", cursor } : undefined;
+    },
+  });
 }
 
 /** The head query runs only when the newest page did not reach the start. */

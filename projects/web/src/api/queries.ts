@@ -9,17 +9,6 @@ import {
   ORIGIN_HEADER,
   TodouClient,
 } from "@todou/shared";
-import { createRuntimeBridge } from "@/api/runtime/bridge.ts";
-import { invalidateRuntimeMutation } from "@/api/runtime/mutation-scopes.ts";
-import {
-  installRuntimeQueryAdapter,
-  pageResource as resource,
-  runtimeQueryOptions,
-} from "@/api/runtime/query-adapter.ts";
-import {
-  networkResource,
-  type ResourceDescriptor,
-} from "@/api/runtime/resources.ts";
 
 /**
  * This tab, as far as the server is concerned (T-275). Minted once per
@@ -41,40 +30,9 @@ export const clientOrigin =
  * Batching is off under vitest (MODE=test): the suites stub fetch with
  * per-path fake servers that must keep seeing plain GETs.
  */
-const directApi = new TodouClient({
-  batch: import.meta.env.MODE !== "test",
-  headers: { [ORIGIN_HEADER]: clientOrigin },
-});
-
-export const runtime = createRuntimeBridge({
-  clientOrigin,
-  bootstrapFallback: () => api.me(),
-});
-
 export const api = new TodouClient({
   batch: import.meta.env.MODE !== "test",
   headers: { [ORIGIN_HEADER]: clientOrigin },
-  delegate: async ({ method, path, query, body, context }) => {
-    await runtime.ready;
-    // Public bootstrap/configuration requests do not require a private lease.
-    const publicRead =
-      path === "/me" || path === "/auth/mode" || path === "/version";
-    if (runtime.mode !== "worker" || publicRead) {
-      const fence = publicRead ? undefined : runtime.captureAuthFence();
-      const data = await directApi
-        .withContext(context)
-        .request(method, path, { query, json: body });
-      if (!publicRead) runtime.assertAuthFence(fence);
-      return data;
-    }
-    const descriptor = context.resource as ResourceDescriptor | undefined;
-    return runtime.read(descriptor ?? networkResource(path, query), {
-      signal: context.signal,
-      forceFresh: context.forceFresh,
-      freshnessMs: context.freshnessMs,
-    });
-  },
-  onMutation: (event) => invalidateRuntimeMutation(runtime, event),
 });
 
 export const queryClient = new QueryClient({
@@ -91,13 +49,6 @@ export const queryClient = new QueryClient({
   },
 });
 
-installRuntimeQueryAdapter(queryClient, runtime);
-
-/** The app and browser harness share the same mode-selection boundary. */
-export async function initializeRuntime(): Promise<void> {
-  await runtime.ready;
-}
-
 /**
  * Metadata queries carry a 60s staleTime: the SSE change feed invalidates
  * them per entity the moment they actually change (and reconnects run a
@@ -108,10 +59,7 @@ const METADATA_STALE_MS = 60_000;
 
 export const meQuery = queryOptions({
   queryKey: ["me"],
-  queryFn: async () => {
-    await initializeRuntime();
-    return runtime.bootstrap();
-  },
+  queryFn: () => api.me(),
   staleTime: METADATA_STALE_MS,
   retry: false,
 });
@@ -131,67 +79,39 @@ export const versionQuery = queryOptions({
   staleTime: 5 * 60_000,
 });
 
-export const projectsQuery = runtimeQueryOptions(
-  queryOptions({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-    staleTime: METADATA_STALE_MS,
-  }),
-  { kind: "direct", resources: [resource("projects", "/projects")] },
-);
+export const projectsQuery = queryOptions({
+  queryKey: ["projects"],
+  queryFn: () => api.listProjects(),
+  staleTime: METADATA_STALE_MS,
+});
 
-export const projectQuery = (slug: string) => {
-  const options = queryOptions({
+export const projectQuery = (slug: string) =>
+  queryOptions({
     queryKey: ["project", slug],
     queryFn: () => api.getProject(slug),
     staleTime: METADATA_STALE_MS,
   });
-  // The shell declares this disabled query before a project route is selected.
-  if (!slug) return options;
-  return runtimeQueryOptions(options, {
-    kind: "direct",
-    resources: [resource("project", `/projects/${slug}`)],
-  });
-};
 
 export const statusesQuery = (slug: string) =>
-  runtimeQueryOptions(
-    queryOptions({
-      queryKey: ["statuses", slug],
-      queryFn: () => api.listStatuses(slug),
-      staleTime: METADATA_STALE_MS,
-    }),
-    {
-      kind: "direct",
-      resources: [resource("statuses", `/projects/${slug}/statuses`)],
-    },
-  );
+  queryOptions({
+    queryKey: ["statuses", slug],
+    queryFn: () => api.listStatuses(slug),
+    staleTime: METADATA_STALE_MS,
+  });
 
 export const labelsQuery = (slug: string) =>
-  runtimeQueryOptions(
-    queryOptions({
-      queryKey: ["labels", slug],
-      queryFn: () => api.listLabels(slug),
-      staleTime: METADATA_STALE_MS,
-    }),
-    {
-      kind: "direct",
-      resources: [resource("labels", `/projects/${slug}/labels`)],
-    },
-  );
+  queryOptions({
+    queryKey: ["labels", slug],
+    queryFn: () => api.listLabels(slug),
+    staleTime: METADATA_STALE_MS,
+  });
 
 export const membersQuery = (slug: string) =>
-  runtimeQueryOptions(
-    queryOptions({
-      queryKey: ["members", slug],
-      queryFn: () => api.listMembers(slug),
-      staleTime: METADATA_STALE_MS,
-    }),
-    {
-      kind: "direct",
-      resources: [resource("members", `/projects/${slug}/members`)],
-    },
-  );
+  queryOptions({
+    queryKey: ["members", slug],
+    queryFn: () => api.listMembers(slug),
+    staleTime: METADATA_STALE_MS,
+  });
 
 // Agents told to stop asking for access here (T-280). Invalidated by the
 // `member` branch of the change feed, which is the entity these writes

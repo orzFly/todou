@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   createRootRoute,
   createRoute,
@@ -9,11 +9,9 @@ import {
   Outlet,
   useNavigate,
 } from "@tanstack/react-router";
-import type { Me } from "@todou/shared";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { issueSearchSchema, newIssueSearchSchema } from "@/api/issues.ts";
-import { meQuery, runtime } from "@/api/queries.ts";
-import { getRuntimeQueryAdapter } from "@/api/runtime/query-adapter.ts";
+import { meQuery } from "@/api/queries.ts";
 import { searchPageSchema } from "@/api/search.ts";
 import { userSearchParams, userSearchSchema } from "@/api/users.ts";
 import { ConnectionBanner } from "@/components/connection-banner.tsx";
@@ -90,144 +88,18 @@ const authedRoute = createRoute({
   component: AuthedLayout,
 });
 
-interface SessionReset {
-  generation: number;
-  account?: Me;
-  hadUnsavedWork: boolean;
-  phase: "checking" | "failed" | "lost";
-  error?: Error;
-}
-
 function AuthedLayout() {
-  const queryClient = useQueryClient();
-  const [sessionReset, setSessionReset] = useState<SessionReset | null>(null);
   // The 15s retry interval is what retires the warm-state banner without
   // user action: meQuery only refetches on window focus otherwise, so the
   // banner would outlive the outage by minutes. 401 is excluded — a dead
   // session stays dead, and retrying it only multiplies the 401s.
   const me = useQuery({
     ...meQuery,
-    enabled: sessionReset === null,
     refetchInterval: (query) =>
       query.state.status === "error" && statusOf(query.state.error) !== 401
         ? 15_000
         : false,
   });
-
-  const resetRef = useRef<SessionReset | null>(null);
-  const resetGeneration = useRef(0);
-  const accountRef = useRef(me.data);
-  if (sessionReset === null) accountRef.current = me.data;
-
-  const dropPrivateQueries = useCallback(
-    () =>
-      queryClient.removeQueries({
-        predicate: (query) =>
-          !["me", "auth-mode", "server-version"].includes(
-            String(query.queryKey[0]),
-          ),
-      }),
-    [queryClient],
-  );
-
-  const verifySession = useCallback(
-    async (reset: SessionReset) => {
-      // Cancel the page's old waiter before starting a new online identity
-      // check. The bridge independently fences late results from its epoch.
-      await queryClient.cancelQueries({ queryKey: meQuery.queryKey });
-      if (reset.generation !== resetGeneration.current) return;
-      try {
-        // Verify outside the QueryClient: a different account must never be
-        // published into the old editor's ['me'] query before it can leave.
-        const verified = await runtime.bootstrap();
-        if (reset.generation !== resetGeneration.current) return;
-        const changedAccount =
-          reset.account !== undefined && reset.account.id !== verified.id;
-        if (changedAccount && reset.hadUnsavedWork) {
-          // Keep the old editor and account together. The new identity cannot
-          // resume mirrors until the user actually leaves this draft.
-          const lost = { ...reset, phase: "lost" as const };
-          resetRef.current = lost;
-          setSessionReset(lost);
-          return;
-        }
-        if (changedAccount) dropPrivateQueries();
-        queryClient.setQueryData(meQuery.queryKey, verified);
-        await getRuntimeQueryAdapter(queryClient)?.resumeSession();
-        if (reset.generation !== resetGeneration.current) return;
-        accountRef.current = verified;
-        resetRef.current = null;
-        setSessionReset(null);
-      } catch (error) {
-        if (reset.generation !== resetGeneration.current) return;
-        const failure =
-          error instanceof Error ? error : new Error(String(error));
-        const failed: SessionReset = {
-          ...reset,
-          phase: statusOf(failure) === 401 ? "lost" : "failed",
-          error: failure,
-        };
-        resetRef.current = failed;
-        setSessionReset(failed);
-      }
-    },
-    [queryClient, dropPrivateQueries],
-  );
-
-  useEffect(() => {
-    const unsubscribe = runtime.onSessionReset((reason) => {
-      const previous = resetRef.current;
-      const reset: SessionReset = {
-        generation: ++resetGeneration.current,
-        account: previous?.account ?? accountRef.current,
-        hadUnsavedWork: previous?.hadUnsavedWork ?? hasUnsavedWork(),
-        phase: "checking",
-      };
-      resetRef.current = reset;
-      setSessionReset(reset);
-      // BEGIN must revoke immediately, but verifying while this page holds
-      // the auth lock could wait on its own transition. END/FAILED emits
-      // auth-settled and starts the required online check.
-      if (reason !== "auth-transition") void verifySession(reset);
-    });
-    return () => {
-      unsubscribe();
-      resetGeneration.current++;
-      if (resetRef.current !== null) {
-        // A cancelled leave never unmounts this gate. Only the committed
-        // navigation can retire the old private cache. The next verified
-        // account, after login, can release the mirror pause.
-        dropPrivateQueries();
-        queryClient.removeQueries({ queryKey: meQuery.queryKey });
-      }
-    };
-  }, [queryClient, verifySession, dropPrivateQueries]);
-
-  useEffect(() => {
-    if (sessionReset === null && me.isSuccess) {
-      void getRuntimeQueryAdapter(queryClient)?.resumeSession();
-    }
-  }, [queryClient, sessionReset, me.isSuccess]);
-
-  useEffect(() => {
-    if (sessionReset?.phase !== "failed") return;
-    const timer = setInterval(() => {
-      const checking = { ...sessionReset, phase: "checking" as const };
-      resetRef.current = checking;
-      setSessionReset(checking);
-      void verifySession(checking);
-    }, 15_000);
-    return () => clearInterval(timer);
-  }, [sessionReset, verifySession]);
-
-  const retryIdentity = () => {
-    const reset = resetRef.current;
-    if (reset === null) return me.refetch();
-    const checking = { ...reset, phase: "checking" as const };
-    resetRef.current = checking;
-    setSessionReset(checking);
-    return verifySession(checking);
-  };
 
   // Read once, on the render the 401 arrived in: this is the last moment the
   // content is known to still exist (T-317's premise). Later renders reuse
@@ -242,18 +114,9 @@ function AuthedLayout() {
     announced: boolean;
   } | null>(null);
   const errored401 = me.isError && statusOf(me.error) === 401;
-  const sessionEnded = errored401 || sessionReset?.phase === "lost";
-  if (sessionEnded && sessionLoss === null) {
-    setSessionLoss({
-      hadUnsavedWork: sessionReset?.hadUnsavedWork ?? hasUnsavedWork(),
-      announced: false,
-    });
-  } else if (
-    !sessionEnded &&
-    sessionReset === null &&
-    me.isSuccess &&
-    sessionLoss !== null
-  ) {
+  if (errored401 && sessionLoss === null) {
+    setSessionLoss({ hadUnsavedWork: hasUnsavedWork(), announced: false });
+  } else if (!errored401 && me.isSuccess && sessionLoss !== null) {
     // The session came back (re-login in another tab): back to a clean
     // slate, so a later loss can be announced again.
     setSessionLoss(null);
@@ -282,29 +145,7 @@ function AuthedLayout() {
     setColdStartFailure(null);
   }
 
-  if (sessionReset !== null && !sessionReset.hadUnsavedWork && !sessionEnded) {
-    // A recovered page cannot mount private descendants from its old local
-    // cache while online verification is pending or has failed.
-    return (
-      <AppShell accountUnavailable={sessionReset.error !== undefined}>
-        {sessionReset.error !== undefined ? (
-          <main className="mx-auto max-w-lg px-4 py-20 text-center">
-            <LoadFailure
-              message={`Failed to reach the todou server: ${sessionReset.error?.message}`}
-              detail={sessionReset.error?.message}
-              onRetry={retryIdentity}
-              retrying={sessionReset.phase === "checking"}
-              className="justify-center"
-            />
-          </main>
-        ) : (
-          <PagePending />
-        )}
-      </AppShell>
-    );
-  }
-
-  if (coldStartFailure !== null && !sessionEnded) {
+  if (coldStartFailure !== null && !errored401) {
     // Cold-start failure: there is no cached account, so nothing to keep —
     // but the shell still frames the answer, and the account slot says
     // "unavailable" instead of spinning a skeleton forever.
@@ -314,7 +155,7 @@ function AuthedLayout() {
           <LoadFailure
             message={`Failed to reach the todou server: ${coldStartFailure}`}
             detail={coldStartFailure}
-            onRetry={retryIdentity}
+            onRetry={() => me.refetch()}
             retrying={me.isFetching}
             className="justify-center"
           />
@@ -323,7 +164,7 @@ function AuthedLayout() {
     );
   }
 
-  if (sessionEnded && sessionLoss?.hadUnsavedWork) {
+  if (me.isError && statusOf(me.error) === 401 && sessionLoss?.hadUnsavedWork) {
     // Session lost with unsaved work on screen: keep the page mounted (the
     // guard stays armed; writes fail their own way) and explain instead of
     // throwing the draft away. One dialog per lost session — window-focus
@@ -331,7 +172,7 @@ function AuthedLayout() {
     const here = window.location.pathname + window.location.search;
     return (
       <>
-        <AppShell me={sessionReset?.account ?? me.data}>
+        <AppShell me={me.data}>
           <Outlet />
         </AppShell>
         <Dialog
@@ -378,7 +219,7 @@ function AuthedLayout() {
     );
   }
 
-  if (sessionEnded) {
+  if (me.isError && statusOf(me.error) === 401) {
     // Carry the interrupted location (e.g. /cli-auth?...) through login.
     // Read window.location (the last COMMITTED url), never live router
     // state: that updates mid-transition, so Navigate would re-fire with
@@ -389,21 +230,15 @@ function AuthedLayout() {
     );
   }
 
-  const warmFailure =
-    sessionReset?.phase === "failed" ||
-    (me.isError && statusOf(me.error) !== 401);
+  const warmFailure = me.isError && statusOf(me.error) !== 401;
   return (
     <AppShell
-      me={sessionReset?.account ?? me.data}
+      me={me.data}
       notice={
         warmFailure ? (
           <ConnectionBanner
-            message={
-              sessionReset?.error?.message ??
-              me.error?.message ??
-              "network error"
-            }
-            onRetry={retryIdentity}
+            message={me.error?.message ?? "network error"}
+            onRetry={() => me.refetch()}
           />
         ) : undefined
       }
@@ -413,11 +248,7 @@ function AuthedLayout() {
           a visitor without a session can take the page's 401 first — long
           enough to flash that route's errorComponent before <Navigate> sends
           them to /login. The cost is that first-paint fetching stays serial. */}
-      {me.isPending && !sessionReset?.hadUnsavedWork ? (
-        <PagePending />
-      ) : (
-        <Outlet />
-      )}
+      {me.isPending ? <PagePending /> : <Outlet />}
     </AppShell>
   );
 }

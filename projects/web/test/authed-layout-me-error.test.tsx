@@ -9,15 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { Me, Project } from "@todou/shared";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   api,
   labelsQuery,
@@ -25,7 +17,6 @@ import {
   meQuery,
   projectQuery,
   projectsQuery,
-  runtime,
   statusesQuery,
 } from "../src/api/queries.ts";
 import { router } from "../src/router.tsx";
@@ -34,7 +25,6 @@ import {
   startAtDraftPage,
   teardownAppRouter,
 } from "./app-router.tsx";
-import { deferred } from "./deferred.ts";
 import { testQueryClient } from "./render.tsx";
 
 // Same fixture shape as unsaved-guard.test.tsx.
@@ -483,138 +473,5 @@ describe("/api/me failing while a draft is on screen", () => {
     expect(router.state.location.search).toMatchObject({
       redirect: expect.anything(),
     });
-  });
-});
-
-describe("runtime session resets at the private-page gate", () => {
-  const listeners = new Set<(reason: string) => void>();
-
-  beforeEach(() => {
-    listeners.clear();
-    vi.spyOn(runtime, "onSessionReset").mockImplementation((listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    });
-    vi.spyOn(runtime, "bootstrap").mockResolvedValue(me);
-  });
-
-  async function resetSession(reason = "resume") {
-    await act(async () => {
-      for (const listener of listeners) listener(reason);
-    });
-  }
-
-  it("blocks a clean recovered page until a new online identity check finishes", async () => {
-    await mountDraftPage();
-    await screen.findByLabelText("Title");
-    const identity = deferred<Me>();
-    vi.mocked(runtime.bootstrap).mockReturnValue(identity.promise);
-
-    await resetSession();
-    await waitFor(() => expect(runtime.bootstrap).toHaveBeenCalledOnce());
-    expect(screen.queryByLabelText("Title")).toBeNull();
-
-    await act(async () => identity.resolve(me));
-    await screen.findByLabelText("Title");
-  });
-
-  it("keeps a dirty editor mounted while verifying the recovered session", async () => {
-    await mountDraftPage();
-    await typeDraftTitle("keep this recovery draft");
-    const title = screen.getByLabelText("Title");
-    const identity = deferred<Me>();
-    vi.mocked(runtime.bootstrap).mockReturnValue(identity.promise);
-
-    await resetSession();
-    await waitFor(() => expect(runtime.bootstrap).toHaveBeenCalledOnce());
-    expect(screen.getByLabelText("Title")).toBe(title);
-    expectDraftIntact("keep this recovery draft");
-
-    await act(async () => identity.resolve(me));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByLabelText("Title")).toBe(title);
-    expectDraftIntact("keep this recovery draft");
-  });
-
-  it("keeps the old draft and leave guard when online verification finds another account", async () => {
-    const view = await mountDraftPage();
-    await typeDraftTitle("belongs to the first account");
-    vi.mocked(runtime.bootstrap).mockResolvedValue({
-      ...me,
-      id: 2,
-      login: "newcomer",
-      display_name: "Newcomer",
-    });
-
-    await resetSession("identity-changed");
-    await screen.findByText("Your session has ended");
-    expectDraftIntact("belongs to the first account");
-    expect(screen.queryByText("Newcomer")).toBeNull();
-    expect(view.client.getQueryData(projectQuery("p").queryKey)).toEqual(
-      project,
-    );
-
-    fireEvent.click(screen.getByRole("link", { name: "Go to login" }));
-    await screen.findByText("Leave with unsaved changes?");
-    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
-    await waitFor(() =>
-      expect(screen.queryByText("Leave with unsaved changes?")).toBeNull(),
-    );
-    expect(router.state.location.pathname).not.toBe("/login");
-    expectDraftIntact("belongs to the first account");
-    expect(view.client.getQueryData(projectQuery("p").queryKey)).toEqual(
-      project,
-    );
-  });
-
-  it("retains a draft after reset verification fails and recovers only from an online success", async () => {
-    await mountDraftPage();
-    await typeDraftTitle("recover after an outage");
-    vi.mocked(runtime.bootstrap).mockRejectedValue(
-      new Error("server unreachable"),
-    );
-
-    await resetSession("worker-restarted");
-    await screen.findByText(/Couldn't reach the todou server/);
-    expectDraftIntact("recover after an outage");
-    expect(screen.queryByText("Your session has ended")).toBeNull();
-
-    vi.mocked(runtime.bootstrap).mockResolvedValue(me);
-    fireEvent.click(screen.getByRole("button", { name: "Retry now" }));
-    await waitFor(() =>
-      expect(screen.queryByText(/Couldn't reach the todou server/)).toBeNull(),
-    );
-    expectDraftIntact("recover after an outage");
-  });
-
-  it("a confirmed unauthorized reset reuses the 401 draft protection", async () => {
-    await mountDraftPage();
-    await typeDraftTitle("copy before signing in");
-    vi.mocked(runtime.bootstrap).mockRejectedValue(
-      Object.assign(new Error("HTTP 401"), { status: 401 }),
-    );
-
-    await resetSession("unauthorized");
-    await screen.findByText("Your session has ended");
-    expectDraftIntact("copy before signing in");
-    fireEvent.click(screen.getByRole("button", { name: "Stay on this page" }));
-
-    vi.mocked(runtime.bootstrap).mockResolvedValue(me);
-    await resetSession("auth-settled");
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expectDraftIntact("copy before signing in");
-  });
-
-  it("waits for auth-settled before checking identity after an auth BEGIN", async () => {
-    await mountDraftPage();
-    await typeDraftTitle("held through the auth fence");
-
-    await resetSession("auth-transition");
-    expect(runtime.bootstrap).not.toHaveBeenCalled();
-    expectDraftIntact("held through the auth fence");
-
-    await resetSession("auth-settled");
-    await waitFor(() => expect(runtime.bootstrap).toHaveBeenCalledOnce());
-    expectDraftIntact("held through the auth fence");
   });
 });

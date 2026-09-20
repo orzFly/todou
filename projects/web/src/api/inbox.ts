@@ -1,16 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { InboxItem, InboxPage } from "@todou/shared";
 import { api } from "@/api/queries.ts";
-import { runtimeQueryOptions } from "@/api/runtime/query-adapter.ts";
-import { resource } from "@/api/runtime/resources.ts";
 
-export const inboxQuery = runtimeQueryOptions(
-  queryOptions({
-    queryKey: ["inbox"],
-    queryFn: () => api.getInbox(),
-  }),
-  { kind: "direct", resources: [resource("inbox", "/me/inbox")] },
-);
+export const inboxQuery = queryOptions({
+  queryKey: ["inbox"],
+  queryFn: () => api.getInbox(),
+});
 
 export type InboxGroup = { project: InboxItem["project"]; items: InboxItem[] };
 

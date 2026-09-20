@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
-import { api, authModeQuery, runtime } from "@/api/queries.ts";
+import { api, authModeQuery } from "@/api/queries.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -58,12 +58,7 @@ export function LoginPage() {
       : null;
 
   const login = useMutation({
-    mutationFn: async () => {
-      await runtime.authTransition(() => api.login());
-      // A successful login response alone cannot reopen private reads. Seed
-      // the gate with the identity confirmed after the transition settled.
-      return runtime.bootstrap();
-    },
+    mutationFn: () => api.login(),
     onSuccess: (me) => {
       queryClient.setQueryData(["me"], me);
       if (redirect) {
@@ -76,10 +71,6 @@ export function LoginPage() {
     },
   });
 
-  const oidcLogin = useMutation({
-    mutationFn: () => runtime.authRedirect(oidcLoginUrl(redirect)),
-  });
-
   const modeName = mode.data?.mode;
   useEffect(() => {
     if (attempted.current || modeName === undefined) return;
@@ -87,9 +78,9 @@ export function LoginPage() {
     if (modeName === "single") {
       login.mutate();
     } else if (modeName === "oidc" && !oidcError) {
-      oidcLogin.mutate();
+      window.location.assign(oidcLoginUrl(redirect));
     }
-  }, [modeName, oidcError, login.mutate, oidcLogin.mutate]);
+  }, [modeName, oidcError, redirect, login.mutate]);
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background">
@@ -130,12 +121,11 @@ export function LoginPage() {
                   </p>
                 </div>
               ) : null}
-              <Button onClick={() => oidcLogin.mutate()}>Try again</Button>
-              {oidcLogin.isError && (
-                <p className="text-center text-sm text-destructive">
-                  Could not sign in: {oidcLogin.error.message}
-                </p>
-              )}
+              <Button
+                onClick={() => window.location.assign(oidcLoginUrl(redirect))}
+              >
+                Try again
+              </Button>
             </>
           ) : login.isError ? (
             <>
@@ -143,13 +133,6 @@ export function LoginPage() {
                 Could not sign in: {login.error.message}
               </p>
               <Button onClick={() => login.mutate()}>Try again</Button>
-            </>
-          ) : oidcLogin.isError ? (
-            <>
-              <p className="text-center text-sm text-destructive">
-                Could not sign in: {oidcLogin.error.message}
-              </p>
-              <Button onClick={() => oidcLogin.mutate()}>Try again</Button>
             </>
           ) : (
             <p className="text-sm text-muted-foreground">

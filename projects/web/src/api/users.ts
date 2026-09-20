@@ -2,11 +2,6 @@ import { queryOptions } from "@tanstack/react-query";
 import { UserIssueRole, UserIssueState } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 import {
-  beginRuntimeWrite,
-  settleRuntimeWrite,
-  writeRuntimeData,
-} from "@/api/runtime/query-adapter.ts";
-import {
   type ActivityDateSearch,
   activityDateSearchParams,
   parseActivityDateSearch,
@@ -34,17 +29,7 @@ export const userQuery = (ref: string) =>
       // or every id address costs two reads. A login may not be all digits
       // (`LoginInput`), so this comparison tells the two spellings apart.
       const alias = ref === user.login ? String(user.id) : user.login;
-      const aliasKey = userKey(alias);
-      const ownerToken = beginRuntimeWrite(
-        client,
-        { queryKey: aliasKey, exact: true },
-        "alias",
-      );
-      try {
-        writeRuntimeData(client, aliasKey, user, ownerToken);
-      } finally {
-        void settleRuntimeWrite(client, ownerToken).catch(() => {});
-      }
+      client.setQueryData(userKey(alias), user);
       return user;
     },
     staleTime: 60_000,

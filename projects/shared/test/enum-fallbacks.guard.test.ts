@@ -128,26 +128,16 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Closed qualifier producer: parseSearchQuery maps typed input through Object.hasOwn(SEARCH_QUALIFIER_KEYS, typed); canonical/verdict helpers receive that registry key.",
   "projects/web/src/api/search.ts :: read SEARCH_DOMAIN_IS[d] #1":
     "Closed domain selection: caller domains originate from SEARCH_DOMAINS options or searchDomainsOf parseSearchQuery; SEARCH_DOMAIN_IS maps that local domain union.",
-  "projects/web/src/api/event-rules.ts :: switch event.entity #1":
-    "Parsed SSE boundary: the page onChangeFrame and worker RuntimeWatch.accept parse CrossChangeEvent before invalidationsFor; shared ChangeEntity is a closed enum, including forwarded page frames.",
-  "projects/web/src/api/event-rules.ts :: switch event.entity #2":
-    "Parsed SSE boundary: entityInvalidations receives invalidationsFor's event after CrossChangeEvent parsing in the page handler or worker RuntimeWatch.accept.",
-  "projects/web/src/api/event-rules.ts :: switch event.kind #1":
-    "Parsed SSE boundary: page onMeFrame parses MeEventSchema and worker RuntimeWatch.accept parses MeEvent before meInvalidations dispatches the closed kind union.",
-  "projects/web/src/api/event-rules.ts :: switch verdict.verdict #1":
-    "Closed rule producer: issueRow constructs contains/read literals; issueListInvalidation constructs fields or copies the activity/gone kind from parsed IssueListRow. coalesceBatch preserves those verdicts before the counts decision.",
-  "projects/web/src/api/event-rules.ts :: switch verdict.verdict #2":
-    "Closed rule producer: issueRow and issueListInvalidation construct contains/read/fields/activity/gone from local literals or parsed IssueListRow; entryWantsRefetch receives those verdicts for page membership decisions.",
-  "projects/web/src/api/runtime/projections.ts :: mapping KINDS #1":
-    "Membership-only recipe registry: defineProjection rejects !Object.hasOwn(KINDS, descriptor.kind); no lookup maps an unknown wire discriminator to a known recipe.",
-  "projects/web/src/api/runtime/protocol.ts :: switch message.type #1":
-    "Protocol validation boundary: recognized message cases return only after field validation; invalid fields break and unknown types fall through to the unconditional RuntimeError after the switch. Neither can produce a ClientMessage.",
-  "projects/web/src/api/runtime/resources.ts :: read RESOURCE_POLICIES[descriptor.policyId] #1":
-    "Validated resource: policyFor calls validateResource before lookup; that validator rejects policyId unless Object.hasOwn(RESOURCE_POLICIES, input.policyId), then checks the policy path and version constraints.",
-  "projects/web/src/api/runtime/resources.ts :: read RESOURCE_POLICIES[input.policyId] #1":
-    "Own-key validation in this function: validateResource throws on !Object.hasOwn(RESOURCE_POLICIES, input.policyId) before reading the policy path; inherited and unknown policy IDs cannot reach the lookup.",
-  "projects/web/src/api/runtime/session.ts :: switch message.type #1":
-    "Parsed port protocol: receive calls parseClientMessage, which rejects unknown or malformed types; HELLO returns before this switch, and remaining dispatch also checks bound port, runtime generation and account authorization.",
+  "projects/web/src/api/useUserEvents.ts :: switch event.entity #1":
+    "Parsed SSE boundary: invalidationsFor receives onChangeFrame's CrossChangeEventSchema.parse result; shared events.ts defines entity with the closed ChangeEntity enum. Direct SSE and forwarded BroadcastChannel frames use this same parser before the activity switch.",
+  "projects/web/src/api/useUserEvents.ts :: switch event.entity #2":
+    "Parsed SSE boundary: entityInvalidations receives the same parsed ChangeEvent from invalidationsFor; CrossChangeEventSchema.parse validates shared ChangeEntity for direct SSE and forwarded BroadcastChannel frames before either switch.",
+  "projects/web/src/api/useUserEvents.ts :: switch event.kind #1":
+    "Parsed SSE boundary: onChangeFrame uses CrossChangeEventSchema.parse and onMeFrame uses MeEventSchema.parse; BroadcastChannel messages re-enter these same handlers.",
+  "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #1":
+    "Closed client producer: issueListVerdict constructs contains/read/unknown local literals; entryWantsRefetch switches on that computed result, not HTTP enum fields.",
+  "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #2":
+    "Closed client producer: issueListVerdict constructs contains/read/unknown local literals; entryWantsRefetch switches on that computed result, not HTTP enum fields.",
   "projects/web/src/components/insights/insights-settings.tsx :: read ROLE_LABELS[role] #1":
     "Closed options: Role.options.map((role) => ...) -> ROLE_LABELS[role]. Wire entry.role is only compared in checked={entry.role === role}; it is never the lookup key.",
   "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[t] #1":
@@ -260,26 +250,6 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Router query dictionary: the fixed search.tab property is matched against local INBOX_TABS and falls back to all before tab dispatch or label selection. The search object itself is not an enum label mapping.",
   "projects/web/src/pages/login.tsx :: mapping search #1":
     "Router query dictionary: LoginPage reads fixed redirect/error/subject properties. safeRedirect accepts only same-site paths; error and subject are string-checked, and oidcErrorText has an explicit unknown-code default. The dictionary is not an enum label map.",
-};
-
-/**
- * Baseline identities remain those measured at 5db8c5c. Explicit relocations
- * preserve their guarded state and declaration checks after pure extraction;
- * new sites still need their own declarations and cannot replace a lost site.
- */
-const RELOCATED_BASELINE_SITES: Readonly<Record<string, string>> = {
-  "projects/web/src/api/useUserEvents.ts :: switch event.entity #1":
-    "projects/web/src/api/event-rules.ts :: switch event.entity #1",
-  "projects/web/src/api/useUserEvents.ts :: switch event.entity #2":
-    "projects/web/src/api/event-rules.ts :: switch event.entity #2",
-  "projects/web/src/api/useUserEvents.ts :: switch event.entity #3":
-    "projects/web/src/api/event-rules.ts :: switch event.entity #3",
-  "projects/web/src/api/useUserEvents.ts :: switch event.kind #1":
-    "projects/web/src/api/event-rules.ts :: switch event.kind #1",
-  "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #1":
-    "projects/web/src/api/event-rules.ts :: switch verdict.verdict #1",
-  "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #2":
-    "projects/web/src/api/event-rules.ts :: switch verdict.verdict #2",
 };
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
@@ -404,26 +374,14 @@ describe("repository enum fallback source guard", () => {
     expect(baseline.sites).toHaveLength(177);
     expect(baseline.declared).toHaveLength(87);
     const sites = new Map(scanSources(sources).map((site) => [site.id, site]));
-    const baselineIds = new Set(baseline.sites.map(({ id }) => id));
-    const relocatedIds = Object.values(RELOCATED_BASELINE_SITES);
-    expect(new Set(relocatedIds).size).toBe(relocatedIds.length);
-    for (const [original, relocated] of Object.entries(
-      RELOCATED_BASELINE_SITES,
-    )) {
-      expect(baselineIds.has(original)).toBe(true);
-      expect(sites.has(original)).toBe(false);
-      expect(sites.has(relocated)).toBe(true);
-    }
     expect(
       baseline.sites.map(({ id }) => {
-        const site = sites.get(RELOCATED_BASELINE_SITES[id] ?? id);
-        return site && { id, guarded: site.guarded };
+        const site = sites.get(id);
+        return site && { id: site.id, guarded: site.guarded };
       }),
     ).toEqual(baseline.sites);
     expect(
-      baseline.declared.filter(
-        (id) => !Object.hasOwn(DECLARED, RELOCATED_BASELINE_SITES[id] ?? id),
-      ),
+      baseline.declared.filter((id) => !Object.hasOwn(DECLARED, id)),
     ).toEqual([]);
   }, 20_000);
 

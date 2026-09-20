@@ -45,7 +45,6 @@ export default defineConfig({
     __TODOU_VERSION__: JSON.stringify(buildVersion()),
     __TODOU_REPO_URL__: JSON.stringify(repoUrl()),
   },
-  worker: { format: "es" },
   // svgr serves the `?react` imports in lib/harness-logos.tsx: the brand marks
   // ship as bare .svg files, and only a component can take the badge's sizing
   // class and test id. vitest reads this same plugin array, so the marks

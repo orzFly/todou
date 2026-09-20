@@ -5,10 +5,30 @@ import {
   queryOptions,
 } from "@tanstack/react-query";
 import { type BurnQuery, type PutSettings, TodouError } from "@todou/shared";
-import { insightsKeys } from "@/api/insights-keys.ts";
 import { api } from "@/api/queries.ts";
 
-export { insightsKeys } from "@/api/insights-keys.ts";
+export const insightsKeys = {
+  settings: (slug?: string) =>
+    slug === undefined
+      ? (["insights-settings"] as const)
+      : (["insights-settings", slug] as const),
+  burn: (slug?: string) =>
+    slug === undefined
+      ? (["insights-burn"] as const)
+      : (["insights-burn", slug] as const),
+  burnRequest: (slug: string, request: BurnQuery, settingsVersion: string) =>
+    [
+      "insights-burn",
+      slug,
+      {
+        from: request.from,
+        to: request.to,
+        grain: request.grain,
+        tz: request.tz,
+        settingsVersion,
+      },
+    ] as const,
+};
 
 export const insightsSettingsQuery = (slug: string) =>
   queryOptions({

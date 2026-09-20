@@ -7,25 +7,15 @@ import {
 import { MePrefs, type MePrefsPatch } from "@todou/shared";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
-import {
-  beginRuntimeWrite,
-  runtimeQueryOptions,
-  settleRuntimeWrite,
-  writeRuntimeData,
-} from "@/api/runtime/query-adapter.ts";
-import { resource } from "@/api/runtime/resources.ts";
 
-export const prefsQuery = runtimeQueryOptions(
-  queryOptions({
-    queryKey: ["me-prefs"],
-    queryFn: () => api.getMyPrefs(),
-    // A change from another tab or device arrives as a `me` event (T-275),
-    // and this tab's own toggle invalidates on settle, so the only thing a
-    // focus refetch would add is a request that finds the same values.
-    staleTime: 60_000,
-  }),
-  { kind: "direct", resources: [resource("prefs", "/me/prefs")] },
-);
+export const prefsQuery = queryOptions({
+  queryKey: ["me-prefs"],
+  queryFn: () => api.getMyPrefs(),
+  // A change from another tab or device arrives as a `me` event (T-275),
+  // and this tab's own toggle invalidates on settle, so the only thing a
+  // focus refetch would add is a request that finds the same values.
+  staleTime: 60_000,
+});
 
 const PREF_DEFAULTS = MePrefs.parse({});
 
@@ -82,45 +72,23 @@ export function usePatchPrefs() {
   return useMutation({
     mutationFn: (patch: MePrefsPatch) => api.patchMyPrefs(patch),
     onMutate: async (patch) => {
-      const ownerToken = beginRuntimeWrite(queryClient, {
-        queryKey: ["me-prefs"],
-      });
-      try {
-        await queryClient.cancelQueries({ queryKey: ["me-prefs"] });
-        const before = queryClient.getQueryData<MePrefs>(["me-prefs"]);
-        if (before) {
-          writeRuntimeData<MePrefs>(
-            queryClient,
-            ["me-prefs"],
-            {
-              ...before,
-              ...patch,
-            },
-            ownerToken,
-          );
-        }
-        return { before, ownerToken };
-      } catch (error) {
-        await settleRuntimeWrite(queryClient, ownerToken).catch(() => {});
-        throw error;
+      await queryClient.cancelQueries({ queryKey: ["me-prefs"] });
+      const before = queryClient.getQueryData<MePrefs>(["me-prefs"]);
+      if (before) {
+        queryClient.setQueryData<MePrefs>(["me-prefs"], {
+          ...before,
+          ...patch,
+        });
       }
+      return { before };
     },
     onError: (error, _patch, context) => {
       if (context?.before) {
-        writeRuntimeData(
-          queryClient,
-          ["me-prefs"],
-          context.before,
-          context.ownerToken,
-        );
+        queryClient.setQueryData(["me-prefs"], context.before);
       }
       toast.error(`Could not save preferences: ${error.message}`);
     },
-    onSettled: async (_data, _error, _patch, context) => {
-      if (context)
-        await settleRuntimeWrite(queryClient, context.ownerToken).catch(
-          () => {},
-        );
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["me-prefs"] });
       queryClient.invalidateQueries({ queryKey: ["inbox"] });
     },

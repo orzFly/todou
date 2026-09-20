@@ -15,13 +15,6 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { issuesEntry } from "@/api/issues-cache.ts";
 import { api } from "@/api/queries.ts";
-import {
-  beginRuntimeWrite,
-  pageResource as resource,
-  runtimeQueryOptions,
-  settleRuntimeWrite,
-  writeRuntimeData,
-} from "@/api/runtime/query-adapter.ts";
 import { invalidateSearchRefQueries } from "@/api/search-refs.ts";
 
 export const ID_CSV = /^\d+(,\d+)*$/;
@@ -177,21 +170,13 @@ export function toggleId(ids: number[], id: number): number[] {
 }
 
 export const issuesQuery = (slug: string, search: IssueSearch) =>
-  runtimeQueryOptions(
-    queryOptions({
-      ...issuesEntry(["issues", slug, search], {
-        kind: "page",
-        filter: listFilter(search),
-      }),
-      queryFn: () => api.listIssues(slug, listParams(search)),
+  queryOptions({
+    ...issuesEntry(["issues", slug, search], {
+      kind: "page",
+      filter: listFilter(search),
     }),
-    {
-      kind: "list",
-      resources: [
-        resource("issues", `/projects/${slug}/issues`, listParams(search)),
-      ],
-    },
-  );
+    queryFn: () => api.listIssues(slug, listParams(search)),
+  });
 
 /**
  * Candidates for the editor's `#`/`T-` completion (T-161): the most recently
@@ -246,47 +231,33 @@ export const issueGroupQuery = (
   statusId: number,
   search: IssueSearch,
 ) =>
-  runtimeQueryOptions(
-    queryOptions({
-      // The {group} marker keys the cache under the ["issues", slug] prefix
-      // (existing SSE/mutation invalidations cover it) and lets the status
-      // mutation recognize status-scoped pages.
-      ...issuesEntry(
-        [
-          "issues",
-          slug,
-          { group: statusId },
-          {
-            q: search.q,
-            label: search.label,
-            assignee: search.assignee,
-            ...effectiveSort(search),
-          },
-        ],
-        { kind: "page", filter: groupFilter(search, statusId) },
-      ),
-      queryFn: () =>
-        api.listIssues(slug, {
-          status: [statusId],
+  queryOptions({
+    // The {group} marker keys the cache under the ["issues", slug] prefix
+    // (existing SSE/mutation invalidations cover it) and lets the status
+    // mutation recognize status-scoped pages.
+    ...issuesEntry(
+      [
+        "issues",
+        slug,
+        { group: statusId },
+        {
           q: search.q,
-          label: csvToIds(search.label),
+          label: search.label,
           assignee: search.assignee,
           ...effectiveSort(search),
-        }),
-    }),
-    {
-      kind: "list",
-      resources: [
-        resource("issues", `/projects/${slug}/issues`, {
-          status: [statusId],
-          q: search.q,
-          label: csvToIds(search.label),
-          assignee: search.assignee,
-          ...effectiveSort(search),
-        }),
+        },
       ],
-    },
-  );
+      { kind: "page", filter: groupFilter(search, statusId) },
+    ),
+    queryFn: () =>
+      api.listIssues(slug, {
+        status: [statusId],
+        q: search.q,
+        label: csvToIds(search.label),
+        assignee: search.assignee,
+        ...effectiveSort(search),
+      }),
+  });
 
 /**
  * The status id a cached page is scoped to — {board: id} columns and
@@ -307,70 +278,51 @@ export function statusScopeOf(queryKey: readonly unknown[]): number | null {
  * the list (mutations, SSE, reconnect) refreshes the tab counts with it.
  */
 export const issueCountsQuery = (slug: string, search: IssueSearch) =>
-  runtimeQueryOptions(
-    queryOptions({
-      ...issuesEntry(
-        [
-          "issues",
-          slug,
-          "counts",
-          {
-            q: search.q,
-            status: search.status,
-            label: search.label,
-            assignee: search.assignee,
-          },
-        ],
+  queryOptions({
+    ...issuesEntry(
+      [
+        "issues",
+        slug,
+        "counts",
         {
-          kind: "counts",
-          // Counts span both categories by design — the tabs are drawn from
-          // them — so the category the list is showing is deliberately absent.
-          filter: {
-            ...(search.q === undefined ? {} : { q: search.q }),
-            ...(csvToIds(search.status) === undefined
-              ? {}
-              : { status: csvToIds(search.status) }),
-            ...(csvToIds(search.label) === undefined
-              ? {}
-              : { label: csvToIds(search.label) }),
-            ...(search.assignee === undefined
-              ? {}
-              : { assignee: search.assignee }),
-          },
+          q: search.q,
+          status: search.status,
+          label: search.label,
+          assignee: search.assignee,
         },
-      ),
-      queryFn: () =>
-        api.getIssueCounts(slug, {
-          q: search.q,
-          status: csvToIds(search.status),
-          label: csvToIds(search.label),
-          assignee: search.assignee,
-        }),
-    }),
-    {
-      kind: "counts",
-      resources: [
-        resource("issue-counts", `/projects/${slug}/issues/counts`, {
-          q: search.q,
-          status: csvToIds(search.status),
-          label: csvToIds(search.label),
-          assignee: search.assignee,
-        }),
       ],
-    },
-  );
+      {
+        kind: "counts",
+        // Counts span both categories by design — the tabs are drawn from
+        // them — so the category the list is showing is deliberately absent.
+        filter: {
+          ...(search.q === undefined ? {} : { q: search.q }),
+          ...(csvToIds(search.status) === undefined
+            ? {}
+            : { status: csvToIds(search.status) }),
+          ...(csvToIds(search.label) === undefined
+            ? {}
+            : { label: csvToIds(search.label) }),
+          ...(search.assignee === undefined
+            ? {}
+            : { assignee: search.assignee }),
+        },
+      },
+    ),
+    queryFn: () =>
+      api.getIssueCounts(slug, {
+        q: search.q,
+        status: csvToIds(search.status),
+        label: csvToIds(search.label),
+        assignee: search.assignee,
+      }),
+  });
 
 export const issueQuery = (slug: string, number: number) =>
-  runtimeQueryOptions(
-    queryOptions({
-      queryKey: ["issue", slug, number],
-      queryFn: () => api.getIssue(slug, number),
-    }),
-    {
-      kind: "direct",
-      resources: [resource("issue", `/projects/${slug}/issues/${number}`)],
-    },
-  );
+  queryOptions({
+    queryKey: ["issue", slug, number],
+    queryFn: () => api.getIssue(slug, number),
+  });
 
 /** Pure cache patch, exported for tests. */
 export function patchIssueStatus(
@@ -444,83 +396,59 @@ export function useIssueStatusMutation() {
         status_id: vars.status.id,
       }),
     onMutate: async (vars) => {
-      const ownerToken = beginRuntimeWrite(queryClient, {
-        queryKey: ["issues", vars.slug],
-      });
-      try {
-        await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
-        const snapshots = queryClient.getQueriesData<
-          IssueListPage | IssueCounts
-        >({ queryKey: ["issues", vars.slug] });
-        // The pre-move row, from whichever page holds it: its old status
-        // drives the counts patch and the source-group removal below.
-        let moved: IssueListItem | undefined;
-        for (const [, data] of snapshots) {
-          if (data && "items" in data) {
-            moved = data.items.find((i) => i.number === vars.issueNumber);
-            if (moved) break;
-          }
+      await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
+      const snapshots = queryClient.getQueriesData<IssueListPage | IssueCounts>(
+        { queryKey: ["issues", vars.slug] },
+      );
+      // The pre-move row, from whichever page holds it: its old status
+      // drives the counts patch and the source-group removal below.
+      let moved: IssueListItem | undefined;
+      for (const [, data] of snapshots) {
+        if (data && "items" in data) {
+          moved = data.items.find((i) => i.number === vars.issueNumber);
+          if (moved) break;
         }
-        for (const [key, data] of snapshots) {
-          if (!data) continue;
-          if (!("items" in data)) {
-            // Counts page: keep the group headers and segment totals in step.
-            if (moved) {
-              writeRuntimeData(
-                queryClient,
-                key,
-                patchCountsMove(data, moved.status, vars.status),
-                ownerToken,
-              );
-            }
-            continue;
-          }
-          const scope = statusScopeOf(key);
-          if (scope === null) {
-            // Mixed-status (flat) page: the row stays, only its pill changes.
-            writeRuntimeData(
-              queryClient,
-              key,
-              patchIssueStatus(data, vars.issueNumber, vars.status),
-              ownerToken,
-            );
-          } else if (scope === vars.status.id && moved) {
-            // Target group/column of the move (any cached filter variant).
-            if (moved.status.id !== vars.status.id) {
-              writeRuntimeData(
-                queryClient,
-                key,
-                prependIssue(data, { ...moved, status: vars.status }),
-                ownerToken,
-              );
-            }
-          } else if (scope !== vars.status.id) {
-            writeRuntimeData(
-              queryClient,
-              key,
-              removeIssue(data, vars.issueNumber),
-              ownerToken,
-            );
-          }
-        }
-        return { snapshots, ownerToken };
-      } catch (error) {
-        await settleRuntimeWrite(queryClient, ownerToken).catch(() => {});
-        throw error;
       }
+      for (const [key, data] of snapshots) {
+        if (!data) continue;
+        if (!("items" in data)) {
+          // Counts page: keep the group headers and segment totals in step.
+          if (moved) {
+            queryClient.setQueryData(
+              key,
+              patchCountsMove(data, moved.status, vars.status),
+            );
+          }
+          continue;
+        }
+        const scope = statusScopeOf(key);
+        if (scope === null) {
+          // Mixed-status (flat) page: the row stays, only its pill changes.
+          queryClient.setQueryData(
+            key,
+            patchIssueStatus(data, vars.issueNumber, vars.status),
+          );
+        } else if (scope === vars.status.id && moved) {
+          // Target group/column of the move (any cached filter variant).
+          if (moved.status.id !== vars.status.id) {
+            queryClient.setQueryData(
+              key,
+              prependIssue(data, { ...moved, status: vars.status }),
+            );
+          }
+        } else if (scope !== vars.status.id) {
+          queryClient.setQueryData(key, removeIssue(data, vars.issueNumber));
+        }
+      }
+      return { snapshots };
     },
     onError: (error, _vars, context) => {
       for (const [key, data] of context?.snapshots ?? []) {
-        if (context)
-          writeRuntimeData(queryClient, key, data, context.ownerToken);
+        queryClient.setQueryData(key, data);
       }
       toast.error(`Could not move issue: ${error.message}`);
     },
-    onSettled: async (_data, _error, vars, context) => {
-      if (context)
-        await settleRuntimeWrite(queryClient, context.ownerToken).catch(
-          () => {},
-        );
+    onSettled: (_data, _error, vars) => {
       queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
       queryClient.invalidateQueries({
         queryKey: ["issue", vars.slug, vars.issueNumber],

@@ -171,45 +171,27 @@ describe("MarkAllReadButton (T-100)", () => {
   it("refreshes the inbox badge, which no event ever would (T-112)", async () => {
     vi.spyOn(api, "markAllRead").mockResolvedValue(undefined);
     const client = testQueryClient();
-    const list = ["issues", "greenhouse", {}];
-    const counts = ["issues", "greenhouse", "counts"];
-    client.setQueryData(list, { items: [listItem(1)], next_cursor: null });
-    client.setQueryData(counts, { open: 1, closed: 0, by_status: { "1": 1 } });
-    client.setQueryData(["inbox"], {
-      items: [inboxItem("greenhouse", 1)],
-      unread_counts: { greenhouse: 1 },
-    });
+    const spy = vi.spyOn(client, "invalidateQueries");
     const view = renderWithProviders(
       <MarkAllReadButton slug="greenhouse" />,
       client,
     );
     fireEvent.click(await view.findByRole("button", { name: /mark .* read/i }));
     await waitFor(() =>
-      expect(client.getQueryState(["inbox"])?.isInvalidated).toBe(true),
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] }),
     );
-    expect(client.getQueryState(list)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(counts)?.isInvalidated).toBe(false);
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["issues", "greenhouse"] });
   });
 
-  it("invalidates unread lists across projects on a global sweep", async () => {
+  it("invalidates every project's list on a global sweep", async () => {
     vi.spyOn(api, "markAllRead").mockResolvedValue(undefined);
     const client = testQueryClient();
-    const first = ["issues", "greenhouse", {}];
-    const second = ["issues", "orchard", {}];
-    const alreadyRead = ["issues", "orchard", { board: 2 }];
-    client.setQueryData(first, { items: [listItem(1)], next_cursor: null });
-    client.setQueryData(second, { items: [listItem(2)], next_cursor: null });
-    client.setQueryData(alreadyRead, {
-      items: [listItem(3, { unread: false, unread_comments: 0 })],
-      next_cursor: null,
-    });
+    const spy = vi.spyOn(client, "invalidateQueries");
     const view = renderWithProviders(<MarkAllReadButton />, client);
     fireEvent.click(await view.findByRole("button", { name: /mark .* read/i }));
     await waitFor(() =>
-      expect(client.getQueryState(first)?.isInvalidated).toBe(true),
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] }),
     );
-    expect(client.getQueryState(second)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(alreadyRead)?.isInvalidated).toBe(false);
   });
 });
 

@@ -8,11 +8,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { meQuery } from "@/api/queries.ts";
-import {
-  beginRuntimeWrite,
-  settleRuntimeWrite,
-  writeRuntimeData,
-} from "@/api/runtime/query-adapter.ts";
 import { invalidateSpecState, specQuery } from "@/api/spec.ts";
 import { prepareSpecReviewTarget } from "@/api/spec-review-target.ts";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
@@ -100,42 +95,29 @@ export function useReviewCompletion(slug: string, issueNumber: number) {
             result,
             isCurrent,
           }).catch(() => ({ status: "not-found" as const }));
-          const info = queryClient.getQueryData(specKey);
-          // A GET received during POST may already include a newer round,
-          // even when structural sharing retained the same data object.
-          if (
-            queryClient.getQueryState(specKey)?.dataUpdateCount ===
-              specRevision &&
-            info &&
-            info.current_version === result.version &&
-            viewerId !== undefined &&
-            queryClient.getQueryData(meQuery.queryKey)?.id === viewerId &&
-            info.viewer_review?.user_id === viewerId &&
-            result.verdict !== "comment"
-          ) {
-            const ownerToken = beginRuntimeWrite(queryClient, {
-              queryKey: specKey,
-              exact: true,
-            });
-            try {
-              writeRuntimeData(
-                queryClient,
-                specKey,
-                {
-                  ...info,
-                  viewer_review: {
-                    user_id: viewerId,
-                    approved_in_current_round: result.verdict === "approve",
-                  },
-                },
-                ownerToken,
-              );
-            } finally {
-              // This completion owns its barrier; there is no later mutation
-              // callback that can release it while navigation is waiting.
-              await settleRuntimeWrite(queryClient, ownerToken).catch(() => {});
-            }
-          }
+          queryClient.setQueryData(specKey, (info) => {
+            if (
+              // A GET received while POST was in flight may already include
+              // another reviewer's new round. An older verdict must not
+              // overwrite it, even if structural sharing kept the same data.
+              queryClient.getQueryState(specKey)?.dataUpdateCount !==
+                specRevision ||
+              !info ||
+              info.current_version !== result.version ||
+              viewerId === undefined ||
+              queryClient.getQueryData(meQuery.queryKey)?.id !== viewerId ||
+              info.viewer_review?.user_id !== viewerId ||
+              result.verdict === "comment"
+            )
+              return info;
+            return {
+              ...info,
+              viewer_review: {
+                user_id: viewerId,
+                approved_in_current_round: result.verdict === "approve",
+              },
+            };
+          });
           void invalidateSpecState(queryClient, slug, issueNumber).catch(
             () => {},
           );
