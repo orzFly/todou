@@ -33,6 +33,7 @@ import { EventGroup } from "@/components/timeline/event-group.tsx";
 import { EventRow } from "@/components/timeline/event-row.tsx";
 import { BodyBlock, Sidebar } from "@/pages/issue-detail.tsx";
 import { MembersSection } from "@/pages/project-settings.tsx";
+import { findUserChipName } from "../../../../scripts/user-chip-name-probe.mjs";
 import { AvatarBaselineSamples } from "./avatar-baseline.tsx";
 import {
   type UntouchedBaselineData,
@@ -57,11 +58,15 @@ window.__USER_BASELINE_ERRORS__ = errors;
 
 function firstTextTop(
   element: Element,
+  authorExpectedName?: string,
 ): { top: number; lineHeight: number } | null {
-  const name = [...element.querySelectorAll("span")].find((span) =>
-    span.classList.contains("ml-1.5"),
-  );
-  const host = name ?? element;
+  // Ordinary peers may be timestamps, badges, or summaries. Only authors
+  // require a UserChip name, and they must never fall back to avatar/login text.
+  const host =
+    authorExpectedName === undefined
+      ? element
+      : findUserChipName(element, authorExpectedName);
+  if (!host) return null;
   const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
   while (node && !node.textContent?.trim()) node = walker.nextNode();
@@ -91,7 +96,8 @@ function mark(
   allowWrap = false,
 ) {
   if (!row || !author || !peer) return;
-  const authorLine = firstTextTop(author);
+  // Independent names from the smoke seed, not text inferred from this DOM.
+  const authorLine = firstTextTop(author, "Alice");
   const peerLine = firstTextTop(peer);
   if (!authorLine || !peerLine) return;
   if (
@@ -165,6 +171,7 @@ function markCommentHeader(selector: string, id: string, withBadge: boolean) {
     ...(withBadge ? { badge } : {}),
   };
   if (Object.values(roles).some((element) => !element)) return;
+  if (!author || !firstTextTop(author, "Alice")) return;
   row.setAttribute("data-baseline-case", id);
   for (const [role, element] of Object.entries(roles)) {
     element?.setAttribute("data-baseline-participant", role);

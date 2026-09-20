@@ -16,9 +16,10 @@
  * url), release the avatar network and wait for settlement. Close EVERY page
  * in finally via Target.closeTarget. The clean calls use newly created pages.
  *
- *   const fault = await evaluate(page390, probeT359AvatarFault, { mode: "fault" });
+ *   const nameFinderSource = findUserChipName.toString();
+ *   const fault = await evaluate(page390, probeT359AvatarFault, { mode: "fault", nameFinderSource });
  *   await page390.cdp.send("Target.closeTarget", { targetId: page390.targetId });
- *   const restored = await evaluate(freshPage390, probeT359AvatarFault, { mode: "clean" });
+ *   const restored = await evaluate(freshPage390, probeT359AvatarFault, { mode: "clean", nameFinderSource });
  *   const verdict = assessT359FreshPageRestore(fault, restored);
  *
  *   const fault = await evaluate(pageDesktop, probeT416BadgeClippingFault, { mode: "fault" });
@@ -38,6 +39,8 @@ export const USER_BASELINE_FAULT_INTEGRATION = Object.freeze({
     fixture: "/test/browser/user-baseline.html",
     browserFunction: "probeT359AvatarFault",
     assessment: "assessT359FreshPageRestore",
+    nameFinderSource:
+      "required: findUserChipName.toString() from user-chip-name-probe.mjs",
     preparation: Object.freeze([
       "wait for window.__USER_BASELINE_READY__ and document.fonts.ready",
       "release the delayed avatar request and wait for avatar images to settle",
@@ -79,6 +82,16 @@ export async function probeT359AvatarFault(options = {}) {
   const mode = options.mode ?? "fault";
   const epsilon = options.epsilon ?? 0.125;
   const expectedWidth = options.expectedWidth ?? 390;
+  if (typeof options.nameFinderSource !== "string") {
+    return {
+      id: "T-359",
+      mode,
+      status: "invalid",
+      reason: "nameFinderSource is required",
+      samples: [],
+    };
+  }
+  const findName = new Function(`return (${options.nameFinderSource});`)();
   const expectedCases = [
     "human-none",
     "human-success",
@@ -149,7 +162,7 @@ export async function probeT359AvatarFault(options = {}) {
     };
   };
 
-  const styles = (chip, name, avatar, machineWrapper) => {
+  const styles = (chip, name, avatar, machineWrapper, avatarOuter, clip) => {
     const chipStyle = getComputedStyle(chip);
     const nameStyle = getComputedStyle(name);
     const avatarStyle = getComputedStyle(avatar);
@@ -162,6 +175,8 @@ export async function probeT359AvatarFault(options = {}) {
         alignItems: chipStyle.alignItems,
         columnGap: chipStyle.columnGap,
         whiteSpace: chipStyle.whiteSpace,
+        paddingInlineStart: chipStyle.paddingInlineStart,
+        minWidth: chipStyle.minWidth,
       },
       name: {
         marginLeft: nameStyle.marginLeft,
@@ -177,28 +192,57 @@ export async function probeT359AvatarFault(options = {}) {
             verticalAlign: wrapperStyle.verticalAlign,
           }
         : null,
+      avatarOuter: {
+        display: getComputedStyle(avatarOuter).display,
+        position: getComputedStyle(avatarOuter).position,
+        alignItems: getComputedStyle(avatarOuter).alignItems,
+      },
+      clip: {
+        display: getComputedStyle(clip).display,
+        overflowX: getComputedStyle(clip).overflowX,
+        overflowY: getComputedStyle(clip).overflowY,
+      },
     };
   };
 
   const currentStyleConfirmed = (value, kind) =>
     value.chip.display === "inline-block" &&
     value.chip.whiteSpace === "nowrap" &&
+    Math.abs(Number.parseFloat(value.chip.paddingInlineStart) - 20) <= 0.01 &&
     Number.parseFloat(value.name.marginLeft) > 0 &&
-    // A machine avatar is a flex item: computed display blockifies inline-flex.
-    value.avatar.display === (kind === "machine" ? "flex" : "inline-flex") &&
+    // Both kinds sit inside the absolute flex branch. Human avatars are
+    // flex items too, and inline-flex therefore computes to flex.
+    value.avatar.display === "flex" &&
     value.avatar.verticalAlign === "middle" &&
-    (kind !== "machine" || value.machineWrapper?.verticalAlign === "middle");
+    value.avatarOuter.display === "flex" &&
+    value.avatarOuter.position === "absolute" &&
+    value.avatarOuter.alignItems === "center" &&
+    value.clip.display === "block" &&
+    value.clip.overflowX === "clip" &&
+    value.clip.overflowY === "clip" &&
+    (kind !== "machine" ||
+      (value.machineWrapper?.display === "flex" &&
+        value.machineWrapper?.verticalAlign === "middle"));
 
   const historicalStyleConfirmed = (value, kind) =>
     value.chip.display === "inline-flex" &&
     value.chip.alignItems === "center" &&
     Math.abs(Number.parseFloat(value.chip.columnGap) - 6) <= 0.01 &&
     value.chip.whiteSpace === "normal" &&
+    value.chip.paddingInlineStart === "0px" &&
+    value.chip.minWidth === "0px" &&
+    value.avatarOuter.position === "static" &&
+    value.avatarOuter.display === "contents" &&
+    value.clip.display === "contents" &&
+    value.clip.overflowX === "visible" &&
+    value.clip.overflowY === "visible" &&
     value.name.marginLeft === "0px" &&
     value.name.whiteSpace === "nowrap" &&
     value.avatar.display === "flex" &&
     value.avatar.verticalAlign === "baseline" &&
-    (kind !== "machine" || value.machineWrapper?.verticalAlign === "baseline");
+    (kind !== "machine" ||
+      (value.machineWrapper?.display === "flex" &&
+        value.machineWrapper?.verticalAlign === "baseline"));
 
   const samples = [];
   const matrix = document.querySelector(
@@ -210,32 +254,39 @@ export async function probeT359AvatarFault(options = {}) {
     const chip = row?.querySelector('[data-avatar-participant="author"]');
     const peer = row?.querySelector('[data-avatar-participant="peer"]');
     const avatar = chip?.querySelector('[data-slot="avatar"]');
-    // A descendant, not a child: what the chip is willing to truncate sits in
-    // a box of its own inside the anchor (T-486). Finding no name at all would
-    // report this drill as a missing sample and hide the reason it is really
-    // unproven, which is the avatar leaving the flow in T-487.
-    const name = chip
-      ? [...chip.querySelectorAll("span")].find(
-          (element) =>
-            element instanceof HTMLElement &&
-            element.classList.contains("ml-1.5"),
-        )
-      : null;
     const kind = id.startsWith("machine-") ? "machine" : "human";
+    // Independent literals from AvatarBaselineSamples, never from the lookup.
+    const expectedName = kind === "machine" ? "Bot One" : "Alice";
+    const name = findName(chip, expectedName);
+    const clip = name?.parentElement;
+    const avatarOuter = avatar
+      ? [...(chip?.children ?? [])].find((child) => child.contains(avatar))
+      : null;
     const state = id.slice(id.indexOf("-") + 1);
     const badge = chip?.querySelector('svg[aria-label="agent"]') ?? null;
     const machineWrapper =
-      kind === "machine" && avatar?.parentElement !== chip
+      kind === "machine" && avatar?.parentElement !== avatarOuter
         ? (avatar?.parentElement ?? null)
         : null;
 
-    if (!row || !chip || !peer || !avatar || !name) {
+    if (
+      !row ||
+      !chip ||
+      !peer ||
+      !avatar ||
+      !name ||
+      !clip ||
+      !avatarOuter ||
+      clip.parentElement !== chip ||
+      avatarOuter.parentElement !== chip
+    ) {
       samples.push({
         id,
         kind,
         state,
         status: "missing",
-        reason: "real avatar matrix row or UserChip participant did not render",
+        reason:
+          "real avatar matrix row, chip structure, or unique expected name did not render",
       });
       continue;
     }
@@ -261,14 +312,26 @@ export async function probeT359AvatarFault(options = {}) {
         image?.complete === true &&
         image.naturalWidth > 0);
 
-    const beforeStyle = styles(chip, name, avatar, machineWrapper);
-    const geometry = [row, chip, name, peer];
+    const beforeStyle = styles(
+      chip,
+      name,
+      avatar,
+      machineWrapper,
+      avatarOuter,
+      clip,
+    );
+    const geometry = [row, chip, name, peer, avatar];
     const nameBefore = baseline(name, geometry);
     const peerBefore = baseline(peer, geometry);
     const before = {
       nameBaselineCssPx: nameBefore.cssPx,
       peerBaselineCssPx: peerBefore.cssPx,
       nameMinusPeerCssPx: round(nameBefore.cssPx - peerBefore.cssPx),
+      absoluteDeltaCssPx: round(Math.abs(nameBefore.cssPx - peerBefore.cssPx)),
+      excessCssPx: round(
+        Math.max(0, Math.abs(nameBefore.cssPx - peerBefore.cssPx) - epsilon),
+      ),
+      thresholdCssPx: epsilon,
       rowHeightCssPx: rect(row).height,
       chipHeightCssPx: rect(chip).height,
       markers: { name: nameBefore, peer: peerBefore },
@@ -279,6 +342,16 @@ export async function probeT359AvatarFault(options = {}) {
       chip.style.alignItems = "center";
       chip.style.gap = "0.375rem";
       chip.style.whiteSpace = "normal";
+      // T-487 moved the avatar out of flow and reserved its width with ps-5.
+      // Dissolve that positioning box and T-486's clipping box, so the actual
+      // avatar (or machine wrapper) and name become the historical flex items.
+      // Retain nodes/classes for diagnostics; restoration needs a new document.
+      chip.style.paddingInlineStart = "0px";
+      chip.style.minWidth = "0px";
+      avatarOuter.style.position = "static";
+      avatarOuter.style.display = "contents";
+      clip.style.display = "contents";
+      clip.style.overflow = "visible";
       name.style.marginLeft = "0px";
       name.style.whiteSpace = "nowrap";
       avatar.style.display = "flex";
@@ -286,13 +359,25 @@ export async function probeT359AvatarFault(options = {}) {
       if (machineWrapper) machineWrapper.style.verticalAlign = "baseline";
     }
 
-    const afterStyle = styles(chip, name, avatar, machineWrapper);
+    const afterStyle = styles(
+      chip,
+      name,
+      avatar,
+      machineWrapper,
+      avatarOuter,
+      clip,
+    );
     const nameAfter = baseline(name, geometry);
     const peerAfter = baseline(peer, geometry);
     const after = {
       nameBaselineCssPx: nameAfter.cssPx,
       peerBaselineCssPx: peerAfter.cssPx,
       nameMinusPeerCssPx: round(nameAfter.cssPx - peerAfter.cssPx),
+      absoluteDeltaCssPx: round(Math.abs(nameAfter.cssPx - peerAfter.cssPx)),
+      excessCssPx: round(
+        Math.max(0, Math.abs(nameAfter.cssPx - peerAfter.cssPx) - epsilon),
+      ),
+      thresholdCssPx: epsilon,
       rowHeightCssPx: rect(row).height,
       chipHeightCssPx: rect(chip).height,
       markers: { name: nameAfter, peer: peerAfter },
@@ -326,6 +411,14 @@ export async function probeT359AvatarFault(options = {}) {
               ? "historical chip/avatar declarations were not effective"
               : "fresh page does not expose the current chip/avatar declarations"
             : null,
+      expectedName,
+      measuredName: name.textContent?.trim(),
+      targets: {
+        chip: chip.tagName.toLowerCase(),
+        avatarOuter: avatarOuter.className,
+        clip: clip.className,
+        avatar: avatar.className,
+      },
       image: imageState,
       style: {
         before: beforeStyle,
@@ -748,7 +841,11 @@ export function assessT359FreshPageRestore(fault, restored, epsilon = 0.125) {
   ) {
     reasons.push("restore run is not an ok T-359 clean result");
   }
-  if (!fault?.documentId || fault.documentId === restored?.documentId) {
+  if (
+    !fault?.documentId ||
+    !restored?.documentId ||
+    fault.documentId === restored.documentId
+  ) {
     reasons.push("restore was not measured in a fresh document");
   }
   if (
@@ -775,6 +872,14 @@ export function assessT359FreshPageRestore(fault, restored, epsilon = 0.125) {
     }
   }
   for (const sample of fault?.samples ?? []) {
+    if (
+      !Number.isFinite(sample.baseline?.before?.nameMinusPeerCssPx) ||
+      Math.abs(sample.baseline.before.nameMinusPeerCssPx) > epsilon
+    ) {
+      reasons.push(
+        `${sample.id ?? "unknown"}: pre-fault baseline was not healthy`,
+      );
+    }
     if (
       sample.status !== "measured" ||
       !sample.style?.effectiveMutationConfirmed
@@ -805,6 +910,20 @@ export function assessT359FreshPageRestore(fault, restored, epsilon = 0.125) {
     id: "T-359",
     status: reasons.length === 0 ? "pass" : "fail",
     reasons,
+    thresholdCssPx: epsilon,
+    samples: expected.map((id) => {
+      const faulty = fault?.samples?.find((sample) => sample.id === id);
+      const clean = restored?.samples?.find((sample) => sample.id === id);
+      return {
+        id,
+        fault: faulty?.baseline ?? null,
+        restore: clean?.baseline ?? null,
+        faultStyle: faulty?.style ?? null,
+        restoreStyle: clean?.style ?? null,
+        faultStatus: faulty?.status ?? "missing",
+        restoreStatus: clean?.status ?? "missing",
+      };
+    }),
   };
 }
 

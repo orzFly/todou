@@ -36,6 +36,10 @@ import {
   probeT359AvatarFault,
   probeT416BadgeClippingFault,
 } from "./user-baseline-faults.mjs";
+import {
+  findUserChipName,
+  probeUserChipNameLookup,
+} from "./user-chip-name-probe.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const FIXTURE_URL = "/test/browser/user-baseline.html";
@@ -663,7 +667,8 @@ async function load(page, url) {
 async function measure(page, fault = null, cases = CASES) {
   return await evaluate(
     page,
-    (specs, epsilon, faultSpec) => {
+    (specs, epsilon, faultSpec, nameFinderSource) => {
+      const findName = new Function(`return (${nameFinderSource})`)();
       const rows = [];
       const rect = (box) => ({
         x: box.x,
@@ -682,13 +687,8 @@ async function measure(page, fault = null, cases = CASES) {
         }
         return null;
       };
-      const textLeaf = (element, role) => {
-        const name =
-          role === "author"
-            ? [...element.querySelectorAll("span")].find((span) =>
-                span.classList.contains("ml-1.5"),
-              )
-            : null;
+      const textLeaf = (element, role, expectedName) => {
+        const name = role === "author" ? findName(element, expectedName) : null;
         // The author participant must be UserChip's visible name. Falling
         // back to the whole chip can silently measure avatar initials.
         if (role === "author" && !name) return null;
@@ -699,7 +699,7 @@ async function measure(page, fault = null, cases = CASES) {
         return node;
       };
       for (const spec of specs) {
-        const { id, roles } = spec;
+        const { id, roles, expectedName } = spec;
         const root = deepQuery(`[data-baseline-case="${CSS.escape(id)}"]`);
         if (!root) {
           rows.push({
@@ -738,16 +738,41 @@ async function measure(page, fault = null, cases = CASES) {
         }
         const roleOf = (role) => participants[roles.indexOf(role)];
 
-        // What the fault moves, and what "moved" means for it. `row` is
-        // T-433's own mutation; the other two restore exactly one of the
-        // rules T-435 changed, so a failure names which.
-        const kind = faultSpec && faultSpec.id === id ? faultSpec.kind : null;
+        // T-487 put the text in a self-centred inner line. Mutating the
+        // labelled outer header now leaves all baselines untouched. Walk the
+        // author's ancestors to the first flex box containing every role.
+        const selected = faultSpec?.id === id;
+        const kind = selected && !faultSpec.control ? faultSpec.kind : null;
+        if (selected && faultSpec.pressure) {
+          // Identical on the healthy control, fault and fresh restore. Equal
+          // font metrics otherwise make centre and baseline coincide.
+          roleOf("peer").style.fontSize = "11px";
+          roleOf("peer").style.lineHeight = "16px";
+        }
         let mutationRoot = root;
         let property = "alignItems";
-        if (kind === "row" && id === "assignee-row") {
-          mutationRoot =
-            root.querySelector("[data-baseline-fault-target]") ?? root;
-        } else if (kind === "meta") {
+        if (selected && faultSpec.kind === "row") {
+          if (id === "assignee-row") {
+            mutationRoot = root.querySelector("[data-baseline-fault-target]");
+          } else {
+            mutationRoot = null;
+            for (
+              let candidate = roleOf("author").parentElement;
+              candidate && root.contains(candidate);
+              candidate = candidate.parentElement
+            ) {
+              if (
+                ["flex", "inline-flex"].includes(
+                  getComputedStyle(candidate).display,
+                ) &&
+                participants.every((part) => candidate.contains(part))
+              ) {
+                mutationRoot = candidate;
+                break;
+              }
+            }
+          }
+        } else if (selected && faultSpec.kind === "meta") {
           const idPart = roleOf("id");
           mutationRoot =
             idPart?.closest('[data-testid="comment-header-meta"]') ?? idPart;
@@ -761,7 +786,12 @@ async function measure(page, fault = null, cases = CASES) {
           }
           property = "alignSelf";
         }
-        if (kind && !mutationRoot) {
+        if (
+          selected &&
+          (!mutationRoot ||
+            !mutationRoot.isConnected ||
+            mutationRoot.getBoundingClientRect().width <= 0)
+        ) {
           rows.push({
             id,
             status: "invalid",
@@ -793,15 +823,6 @@ async function measure(page, fault = null, cases = CASES) {
           if (kind === "row" && id === "assignee-row") {
             mutationRoot.style.verticalAlign = "middle";
             mutation = "assignee alignment restored to center/middle";
-          }
-          if (
-            kind === "row" &&
-            ["unplaced-comment", "annotation-chip"].includes(id)
-          ) {
-            root.style.whiteSpace = "nowrap";
-            root.style.width = "max-content";
-            root.style.zoom = "2";
-            mutation += " at 200% zoom without wrapping";
           }
           const after = getComputedStyle(mutationRoot);
           if (
@@ -837,6 +858,25 @@ async function measure(page, fault = null, cases = CASES) {
             continue;
           }
         }
+        const afterStyle = getComputedStyle(mutationRoot);
+        const mutationLayout = selected
+          ? {
+              target:
+                mutationRoot === root ? "marked-row" : "inner-baseline-line",
+              tag: mutationRoot.tagName,
+              classes: mutationRoot.className,
+              before,
+              after: {
+                display: afterStyle.display,
+                alignItems: afterStyle.alignItems,
+                alignSelf: afterStyle.alignSelf,
+                verticalAlign: afterStyle.verticalAlign,
+              },
+              pressure: faultSpec.pressure
+                ? { role: "peer", fontSize: "11px", lineHeight: "16px" }
+                : null,
+            }
+          : null;
 
         const rowBox = rect(root.getBoundingClientRect());
         const baselines = [];
@@ -844,7 +884,7 @@ async function measure(page, fault = null, cases = CASES) {
         let invalid = null;
         let perturbed = false;
         for (const [index, element] of participants.entries()) {
-          const node = textLeaf(element, roles[index]);
+          const node = textLeaf(element, roles[index], expectedName);
           if (!node) {
             invalid =
               roles[index] === "author"
@@ -956,6 +996,7 @@ async function measure(page, fault = null, cases = CASES) {
             alignItems: before.alignItems,
           },
           styles,
+          mutationLayout,
           mutation,
           reason:
             compared.length === 0
@@ -972,9 +1013,15 @@ async function measure(page, fault = null, cases = CASES) {
       }
       return rows;
     },
-    cases.map((entry) => ({ id: entry.id, roles: entry.roles })),
+    // These are seed values, independent of the DOM lookup being tested.
+    cases.map((entry) => ({
+      id: entry.id,
+      roles: entry.roles,
+      expectedName: "Alice",
+    })),
     EPSILON,
     fault,
+    findUserChipName.toString(),
   );
 }
 
@@ -1053,7 +1100,8 @@ async function armAvatarNetwork(page) {
 async function measureAvatars(page, settle = "initial") {
   return await evaluate(
     page,
-    async (ids, epsilon, phase) => {
+    async (ids, epsilon, phase, nameFinderSource) => {
+      const findName = new Function(`return (${nameFinderSource})`)();
       await document.fonts.ready;
       if (phase === "settled") {
         await Promise.all(
@@ -1067,10 +1115,10 @@ async function measureAvatars(page, settle = "initial") {
       return ids.map((id) => {
         const row = document.querySelector(`[data-avatar-case="${id}"]`);
         const author = row?.querySelector('[data-avatar-participant="author"]');
-        // A descendant, not a child: what the chip is willing to truncate sits
-        // in a box of its own inside the anchor (T-486), and `textLeaf` in the
-        // row measurements above already looked for the name this way.
-        const name = author?.querySelector("span.ml-1\\.5");
+        const name = findName(
+          author,
+          id.startsWith("human-") ? "Alice" : "Bot One",
+        );
         const peer = row?.querySelector('[data-avatar-participant="peer"]');
         if (!row || !author || !name || !peer) {
           return {
@@ -1122,6 +1170,7 @@ async function measureAvatars(page, settle = "initial") {
     AVATAR_CASES,
     EPSILON,
     settle,
+    findUserChipName.toString(),
   );
 }
 
@@ -1557,8 +1606,22 @@ async function historicalFaultRun(browser, base, seeded, kind, mode) {
     return await evaluate(
       page,
       kind === "T-359" ? probeT359AvatarFault : probeT416BadgeClippingFault,
-      { mode },
+      { mode, nameFinderSource: findUserChipName.toString() },
     );
+  } finally {
+    await page.close();
+  }
+}
+
+async function nameLookupRun(browser, base, seeded) {
+  const url = `${base}${FIXTURE_URL}?slug=${encodeURIComponent(seeded.slug)}&number=${seeded.number}`;
+  const page = await pageFor(browser, VIEWPORTS.at(-1), seeded.cookie, url);
+  try {
+    const fixtureErrors = await load(page, url);
+    const result = await evaluate(page, probeUserChipNameLookup, {
+      nameFinderSource: findUserChipName.toString(),
+    });
+    return { ...result, fixtureErrors };
   } finally {
     await page.close();
   }
@@ -2289,6 +2352,7 @@ try {
       "split",
       "split-copy-both-error",
       "non-header-wrap",
+      "name-lookup",
       ...SPLIT_FAULTS.map((entry) => entry[1]),
       ...SCOPE_FAULTS,
     ];
@@ -2298,6 +2362,11 @@ try {
       !SECTION_CASES.includes(options.selfTestCase)
     ) {
       throw new Error(`unknown self-test case: ${options.selfTestCase}`);
+    }
+    if (!options.selfTestCase || options.selfTestCase === "name-lookup") {
+      const lookup = await nameLookupRun(browser, base, seeded);
+      console.log(`\nNAME LOOKUP: ${JSON.stringify(lookup)}`);
+      if (lookup.status !== "pass" || lookup.fixtureErrors.length) fatal = true;
     }
     console.log(
       `\nSELF-TEST: ${selfTestCases.length} rule mutation(s), each followed by a clean page`,
@@ -2310,13 +2379,21 @@ try {
           : REVISION_CASES.includes(entry)
             ? revisionRun(browser, base, seeded, viewport, fault)
             : browserRun(browser, base, seeded, viewport, fault);
-      const run = await execute({ id: spec.id, kind: spec.kind });
+      const fault = {
+        id: spec.id,
+        kind: spec.kind,
+        pressure:
+          spec.kind === "row" && ["event-row", "list-group"].includes(spec.id),
+      };
+      const control = await execute({ ...fault, control: true });
+      const controlTarget = control.rows.find((row) => row.id === spec.id);
+      const run = await execute(fault);
       const target = run.rows.find((row) => row.id === spec.id);
       const unexpected = run.rows.filter(
         (row) =>
           row.id !== spec.id && !["hit", "unmeasurable"].includes(row.status),
       );
-      const restored = await execute(null);
+      const restored = await execute({ ...fault, control: true });
       const restoredTarget = restored.rows.find((row) => row.id === spec.id);
       // Which role moved, not merely that the row went red: a badge fault
       // that fails because the id drifted proves nothing about the badge.
@@ -2324,20 +2401,32 @@ try {
         target?.pairs?.find((pair) => pair.role === role);
       const moved = spec.expectFail.filter((role) => {
         const pair = spreadOf(role);
-        return pair?.sameLine === true && pair.spread > EPSILON;
+        return (
+          pair?.sameLine === true &&
+          Number.isFinite(pair.spread) &&
+          pair.spread > EPSILON
+        );
       });
       const held = spec.expectHold.filter((role) => {
         const pair = spreadOf(role);
-        return pair?.sameLine === true && pair.spread <= EPSILON;
+        return (
+          pair?.sameLine === true &&
+          Number.isFinite(pair.spread) &&
+          pair.spread <= EPSILON
+        );
       });
       const detected =
+        controlTarget?.status === "hit" &&
+        !control.rows.some((row) => baselineRowFails(row, viewport.width)) &&
+        !control.fixtureErrors.length &&
         target?.status === "failure" &&
-        target.mutation !== null &&
-        moved.length > 0 &&
+        target.mutation != null &&
+        moved.length === spec.expectFail.length &&
         held.length === spec.expectHold.length &&
         unexpected.length === 0 &&
         !run.fixtureErrors.length &&
         restoredTarget?.status === "hit" &&
+        !restored.rows.some((row) => baselineRowFails(row, viewport.width)) &&
         !restored.fixtureErrors.length;
       console.log(
         `  ${spec.id}/${spec.kind}: ${detected ? "RED → restored GREEN" : "NOT PROVEN"} ` +
@@ -2346,6 +2435,19 @@ try {
           `fault ${target?.spread ?? target?.status ?? "missing"}px ${target?.reason ?? ""}, ` +
           `restore ${restoredTarget?.spread ?? restoredTarget?.status ?? "missing"}px, ` +
           `unexpected ${unexpected.map((row) => `${row.id}:${row.status}`).join(",") || "none"})`,
+      );
+      const evidence = (row) => ({
+        status: row?.status ?? "missing",
+        baselines: row?.baselines,
+        roles: row?.roles,
+        pairs: row?.pairs?.map((pair) => ({
+          ...pair,
+          exceedsBy: Number((pair.spread - EPSILON).toFixed(5)),
+        })),
+        layout: row?.mutationLayout,
+      });
+      console.log(
+        `    geometry threshold=${EPSILON}px control=${JSON.stringify(evidence(controlTarget))} fault=${JSON.stringify(evidence(target))} restore=${JSON.stringify(evidence(restoredTarget))}`,
       );
       if (!detected) fatal = true;
     }
@@ -2696,6 +2798,16 @@ try {
           `(fault=${fault.status}, clean=${restored.status}, samples=${fault.samples?.length ?? 0}, ` +
           `reasons=${verdict.reasons.join("; ") || "none"})`,
       );
+      if (kind === "T-359") {
+        for (const sample of fault.samples ?? []) {
+          const back = restored.samples?.find(
+            (entry) => entry.id === sample.id,
+          );
+          console.log(
+            `    ${sample.id}: fault=${JSON.stringify(sample)} restore=${JSON.stringify(back)}`,
+          );
+        }
+      }
       if (verdict.status !== "pass") fatal = true;
     }
   }
