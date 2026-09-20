@@ -776,6 +776,20 @@ describe("ActivityCalendar controlled state and recovery", () => {
     expect(tile("2025-01-10").disabled).toBe(true);
   });
 
+  it("keeps the grid at its size through a refresh with no snapshot", () => {
+    const p = props();
+    const { container, rerender } = render(<ActivityCalendar {...p} />);
+    const cells = container.querySelectorAll("button[data-date]").length;
+    expect(cells).toBe(366);
+    // The window, not the response, decides the geometry. A refresh that has
+    // withdrawn its days must not collapse the grid or swap a differently
+    // sized placeholder in for it.
+    rerender(<ActivityCalendar {...p} days={[]} selection={null} loading />);
+    expect(container.querySelectorAll("button[data-date]").length).toBe(cells);
+    expect(container.querySelector(".animate-pulse")).toBeNull();
+    expect(screen.getByRole("status").className).toContain("sr-only");
+  });
+
   it("confines the wide weekly grid to a local scroll container at narrow widths", () => {
     const { container } = render(
       <div style={{ width: 390 }}>

@@ -617,3 +617,25 @@ describe("ActivityCardList pagination", () => {
     expect(onLoadMore).not.toHaveBeenCalled();
   });
 });
+it("announces a refresh without taking a line from the cards", async () => {
+  const selection = {
+    date: "2026-07-02",
+    total: 1,
+    items: [alpha],
+    has_more: false,
+    next_cursor: null,
+  };
+  const view = renderWithProviders(
+    <ActivityCardList
+      selection={selection}
+      timezone="UTC"
+      loading
+      onLoadMore={vi.fn()}
+      onRetry={vi.fn()}
+    />,
+  );
+  await view.findByRole("link", { name: alpha.title });
+  // The progress report belongs to the screen reader; a visible line would
+  // push the row the reader is pointing at down the page on every refresh.
+  expect(view.getByRole("status").className).toContain("sr-only");
+});
