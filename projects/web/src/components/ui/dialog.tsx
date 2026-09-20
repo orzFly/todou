@@ -1,6 +1,7 @@
 import { XIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import type * as React from "react";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -23,10 +24,10 @@ function hasScrollRoom(node: Element, horizontal: boolean, delta: number) {
 }
 
 /**
- * The modal scroll lock decides whether a wheel would overscroll by walking up
- * from `event.target`, and an open shadow root retargets that to its host — so
- * a scroller *inside* the shadow tree is invisible to it and every wheel over
- * one is cancelled. Scrollers above the host are visible, which is why a
+ * The modal scroll lock decides whether a gesture would overscroll by walking
+ * up from `event.target`, and an open shadow root retargets that to its host —
+ * so a scroller *inside* the shadow tree is invisible to it and every gesture
+ * over one is cancelled. Scrollers above the host are visible, which is why a
  * dialog's own body already scrolls while pierre's diff does not (T-450).
  *
  * Measured on Chromium 153: over the diff all ten wheels were cancelled and
@@ -35,12 +36,14 @@ function hasScrollRoom(node: Element, horizontal: boolean, delta: number) {
  * gesture's own direction, so a scroller at its end still reaches the lock and
  * the page behind the dialog stays where it was.
  */
-function releaseShadowScroll(event: React.WheelEvent<HTMLElement>) {
+function releaseShadowScroll(
+  event: React.SyntheticEvent<HTMLElement>,
+  horizontal: boolean,
+  delta: number,
+) {
   const target = event.nativeEvent.target;
   const path = event.nativeEvent.composedPath();
   if (path[0] === target) return;
-  const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
-  const delta = horizontal ? event.deltaX : event.deltaY;
   if (delta === 0) return;
   for (const node of path) {
     // From the host upwards the lock reads the same nodes this loop would.
@@ -52,6 +55,41 @@ function releaseShadowScroll(event: React.WheelEvent<HTMLElement>) {
       return;
     }
   }
+}
+
+function releaseShadowWheel(event: React.WheelEvent<HTMLElement>) {
+  const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+  releaseShadowScroll(
+    event,
+    horizontal,
+    horizontal ? event.deltaX : event.deltaY,
+  );
+}
+
+/**
+ * The same release for a finger (T-471): one `shouldPrevent` is registered for
+ * `wheel` and `touchmove` alike, so a drag reaches the identical dead end.
+ *
+ * A touchmove carries no delta, and the lock derives one by subtracting the
+ * live touch from where the gesture started — not from the previous move. This
+ * subtracts the same pair, because the two answers have to match: a
+ * move-to-move delta is a few noisy pixels, and a drag it puts on one axis is a
+ * drag the lock is judging on the other.
+ */
+function releaseShadowDrag(
+  event: React.TouchEvent<HTMLElement>,
+  origin: { x: number; y: number } | null,
+) {
+  // A second finger is the lock's pinch-zoom case, which it answers before it
+  // ever asks about scrollers; `origin` is dropped for the same reason. With
+  // the one finger left, `touches[0]` is the same point the lock reads out of
+  // `changedTouches`.
+  if (origin === null || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  const deltaX = origin.x - touch.clientX;
+  const deltaY = origin.y - touch.clientY;
+  const horizontal = Math.abs(deltaX) > Math.abs(deltaY);
+  releaseShadowScroll(event, horizontal, horizontal ? deltaX : deltaY);
 }
 
 function Dialog({
@@ -99,10 +137,13 @@ function DialogContent({
   children,
   showCloseButton = true,
   onWheel,
+  onTouchStart,
+  onTouchMove,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
 }) {
+  const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -114,7 +155,19 @@ function DialogContent({
         )}
         onWheel={(event) => {
           onWheel?.(event);
-          if (!event.isPropagationStopped()) releaseShadowScroll(event);
+          if (!event.isPropagationStopped()) releaseShadowWheel(event);
+        }}
+        onTouchStart={(event) => {
+          onTouchStart?.(event);
+          dragOrigin.current =
+            event.touches.length === 1
+              ? { x: event.touches[0].clientX, y: event.touches[0].clientY }
+              : null;
+        }}
+        onTouchMove={(event) => {
+          onTouchMove?.(event);
+          if (!event.isPropagationStopped())
+            releaseShadowDrag(event, dragOrigin.current);
         }}
         {...props}
       >

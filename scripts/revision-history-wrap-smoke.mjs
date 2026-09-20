@@ -15,8 +15,11 @@
  * missing prerequisite, startup failure, or a check that could not reach the
  * thing it grades (a coverage failure).
  * Limitations: headless Chromium measures CSS geometry, not painted pixels or
- * OS scrollbar themes. Touch/coarse-pointer rules are not exercised: the
- * narrow viewport is emulated with `mobile: false` so widths stay literal.
+ * OS scrollbar themes. Coarse-pointer CSS rules are not exercised: the narrow
+ * viewport is emulated with `mobile: false` so widths stay literal, and the
+ * finger drags go in without `setTouchEmulationEnabled` for the same reason —
+ * injected touches are delivered and scroll either way, and leaving it off
+ * keeps `(pointer: coarse)` false for every other check in the pass.
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
@@ -90,6 +93,9 @@ const COVERAGE_FAILURES = new Set([
   "fault-not-confirmed",
   "no-wheel-delivered",
   "wheel-target-not-retargeted",
+  "no-touch-delivered",
+  "touch-target-not-retargeted",
+  "no-drag-room",
   "page-cannot-scroll",
   "page-already-at-top",
   "self-test-baseline-not-clean",
@@ -291,17 +297,31 @@ function probeSource(fault) {
       probe.stopPropagation();
       return { applied: probe.cancelBubble === false };
     }
-    if (FAULT === 'scroll-lock-removed') {
-      // Both halves of the modal lock: the wheel it cancels, and the
-      // overflow it takes off the body. An inline !important is the one
-      // declaration that outranks the stylesheet the lock injects.
-      Object.defineProperty(WheelEvent.prototype, 'preventDefault',
+    if (FAULT === 'touch-release-disabled') {
+      // The touchmove half of what dialog.tsx added, taken away again. Kept
+      // apart from the wheel fault so that each gesture's release is graded
+      // by a fault only it can feel.
+      Object.defineProperty(TouchEvent.prototype, 'stopPropagation',
         { value() {}, configurable: true, writable: true });
+      const probe = new TouchEvent('touchmove');
+      probe.stopPropagation();
+      return { applied: probe.cancelBubble === false };
+    }
+    if (FAULT === 'scroll-lock-removed') {
+      // Both halves of the modal lock, for both gestures: the events it
+      // cancels, and the overflow it takes off the body. An inline !important
+      // is the one declaration that outranks the stylesheet the lock injects.
+      for (const constructor of [WheelEvent, TouchEvent])
+        Object.defineProperty(constructor.prototype, 'preventDefault',
+          { value() {}, configurable: true, writable: true });
       for (const node of [document.documentElement, document.body])
         node.style.setProperty('overflow', 'auto', 'important');
-      const probe = new WheelEvent('wheel', { cancelable: true });
-      probe.preventDefault();
-      return { applied: probe.defaultPrevented === false &&
+      const wheel = new WheelEvent('wheel', { cancelable: true });
+      wheel.preventDefault();
+      const touch = new TouchEvent('touchmove', { cancelable: true });
+      touch.preventDefault();
+      return { applied: wheel.defaultPrevented === false &&
+        touch.defaultPrevented === false &&
         getComputedStyle(document.body).overflowY !== 'hidden' };
     }
     if (FAULT === 'prose-rewrapped') {
@@ -497,6 +517,51 @@ function probeSource(fault) {
     },
     wheelEvents: () => window.__t425.wheelSeen,
     wheelVerdicts: () => window.__t425.wheelSettled,
+    touchSeen: [],
+    touchSettled: [],
+    // The same two-listener split as watchWheel, for the same reason: a
+    // released touchmove never reaches the bubbling listener where
+    // defaultPrevented is final, so only the capturing count can say it came.
+    watchTouch: () => {
+      window.__t425.touchSeen = [];
+      window.__t425.touchSettled = [];
+      if (window.__t425.touchWatching) return true;
+      window.__t425.touchWatching = true;
+      window.addEventListener('touchmove', event => {
+        window.__t425.touchSeen.push({ cancelable: event.cancelable,
+          touches: event.touches.length,
+          retargeted: event.target !== event.composedPath()[0],
+          target: event.target?.tagName?.toLowerCase() ?? null });
+      }, { passive: true, capture: true });
+      window.addEventListener('touchmove', event => {
+        window.__t425.touchSettled.push({ cancelable: event.cancelable,
+          defaultPrevented: event.defaultPrevented });
+      }, { passive: true });
+      return true;
+    },
+    touchEvents: () => window.__t425.touchSeen,
+    touchVerdicts: () => window.__t425.touchSettled,
+    /**
+     * Where a finger starts and ends, in viewport coordinates. Sideways it
+     * stays inside the diff box: at 390px the box is narrower than the 600px
+     * the wheel gesture travels, and a touch point off the left edge of the
+     * screen is not a gesture the browser will route here. Downwards is the
+     * direction that scrolls the page *up*, which is the one the lock has to
+     * keep holding.
+     */
+    dragPath: axis => {
+      const code = shadow()?.querySelector('[data-code]');
+      if (!code) return { error: 'no code' };
+      const r = code.getBoundingClientRect();
+      const mid = { x: round(r.left + r.width / 2), y: round(r.top + r.height / 2) };
+      if (axis === 'h') {
+        const from = { x: round(r.right - 8), y: mid.y };
+        const to = { x: round(r.left + 8), y: mid.y };
+        return { from, to, distance: round(from.x - to.x) };
+      }
+      const room = Math.min(240, innerHeight - mid.y - 8);
+      return { from: mid, to: { x: mid.x, y: round(mid.y + room) }, distance: round(room) };
+    },
     pageScroll: () => ({
       y: Math.round(window.scrollY),
       max: Math.round(document.documentElement.scrollHeight - window.innerHeight),
@@ -687,6 +752,100 @@ async function wheelOver(page, x, y, xDistance, yDistance) {
 }
 
 /**
+ * One finger, dragged in a straight line. `Input.synthesizeScrollGesture` with
+ * a touch source was measured to deliver nothing at all here — no touchmove
+ * and no scroll, with or without touch emulation — so the sequence is dispatched
+ * by hand, which does both. The steps are paced so the drag passes Chromium's
+ * slop distance early and the compositor treats it as a scroll rather than a tap.
+ */
+async function dragOver(page, from, to, steps = 20) {
+  await evaluate(page, () => window.__t425.watchTouch());
+  await page.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: from.x, y: from.y, id: 1 }],
+  });
+  for (let step = 1; step <= steps; step += 1) {
+    await page.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [
+        {
+          x: Math.round(from.x + ((to.x - from.x) * step) / steps),
+          y: Math.round(from.y + ((to.y - from.y) * step) / steps),
+          id: 1,
+        },
+      ],
+    });
+    await sleep(16);
+  }
+  await page.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await sleep(300);
+  return {
+    arrived: await evaluate(page, () => window.__t425.touchEvents()),
+    settled: await evaluate(page, () => window.__t425.touchVerdicts()),
+  };
+}
+
+/**
+ * What a trusted finger over the diff does, in both directions (T-471).
+ *
+ * `react-remove-scroll` registers one `shouldPrevent` for `wheel` and
+ * `touchmove` alike, so a drag walks into the same retargeted dead end a wheel
+ * did and is cancelled for the same reason. Everything T-450's wheel pair
+ * grades is graded here again for the gesture a reader on a phone actually
+ * makes — and the 390px viewport in this file is a phone's width.
+ *
+ * Only the first touchmove of a scrolling gesture stays cancelable: once the
+ * compositor is scrolling, Chromium stops asking. That is why the sideways
+ * verdict is `scrollLeft`, not a cancellation count, while the downward one —
+ * where nothing ever starts scrolling — can count cancellations directly.
+ */
+async function probeTouch(page) {
+  await evaluate(page, () => window.__t425.resetCodeScroll());
+  const start = await evaluate(page, () => window.__t425.codeScroll());
+  if (start.error) return { error: start.error };
+  const sideways = await evaluate(page, () => window.__t425.dragPath("h"));
+  if (sideways.error) return { error: sideways.error };
+  const target = await evaluate(
+    page,
+    (x, y) => window.__t425.pointTarget(x, y),
+    sideways.from.x,
+    sideways.from.y,
+  );
+  const left = await dragOver(page, sideways.from, sideways.to);
+  const end = await evaluate(page, () => window.__t425.codeScroll());
+
+  const box = await evaluate(page, () => window.__t425.scrollBoxToBottom());
+  await evaluate(page, () => window.__t425.parkPageAtBottom());
+  const downwards = await evaluate(page, () => window.__t425.dragPath("v"));
+  const pageBefore = await evaluate(page, () => window.__t425.pageScroll());
+  const down = await dragOver(page, downwards.from, downwards.to);
+  const pageAfter = await evaluate(page, () => window.__t425.pageScroll());
+
+  return {
+    target,
+    horizontal: {
+      from: start.scrollLeft,
+      to: end.scrollLeft,
+      max: end.max,
+      distance: sideways.distance,
+      arrived: left.arrived.length,
+      retargeted: left.arrived.every((event) => event.retargeted),
+      cancelled: left.settled.filter((event) => event.defaultPrevented).length,
+    },
+    vertical: {
+      distance: downwards.distance,
+      arrived: down.arrived.length,
+      cancelled: down.settled.filter((event) => event.defaultPrevented).length,
+      box,
+      page: { before: pageBefore.y, after: pageAfter.y, max: pageBefore.max },
+    },
+  };
+}
+
+/**
  * What a trusted wheel over the diff does, in both directions (T-450).
  *
  * Sideways it has to scroll. The modal scroll lock judges a wheel by
@@ -761,7 +920,7 @@ async function probeWheel(page) {
  * is what makes this pair falsifiable rather than decorative.
  */
 function checkWheel(result, viewport, entry, baselineHeight) {
-  const at = { viewport: viewport.name, entry };
+  const at = { viewport: viewport.name, entry, gesture: "wheel" };
   if (result.error) return [failure("no-scrolling-line", result.error, at)];
   const failures = [];
   const { horizontal, vertical } = result;
@@ -820,6 +979,86 @@ function checkWheel(result, viewport, entry, baselineHeight) {
       failure(
         "page-already-at-top",
         `the upward gesture started at 0 of ${vertical.page.max}, so there was nothing for the lock to prevent`,
+        at,
+      ),
+    );
+  else if (vertical.page.after !== vertical.page.before)
+    failures.push(
+      failure(
+        "page-scrolled-behind-dialog",
+        `window.scrollY ${vertical.page.before} → ${vertical.page.after}`,
+        at,
+      ),
+    );
+  return failures;
+}
+
+/** The same pair of questions asked of a finger; see `probeTouch`. */
+function checkTouch(result, viewport, entry, baselineHeight) {
+  const at = { viewport: viewport.name, entry, gesture: "touch" };
+  if (result.error) return [failure("no-scrolling-line", result.error, at)];
+  const failures = [];
+  const { horizontal, vertical } = result;
+  if (horizontal.arrived === 0 || vertical.arrived === 0)
+    return [
+      failure(
+        "no-touch-delivered",
+        `${horizontal.arrived} sideways, ${vertical.arrived} downwards`,
+        at,
+      ),
+    ];
+  if (!horizontal.retargeted)
+    failures.push(
+      failure(
+        "touch-target-not-retargeted",
+        `drags landed on ${JSON.stringify(result.target)} unretargeted`,
+        at,
+      ),
+    );
+  // A finger cannot travel further than the box it starts in, so unlike the
+  // wheel this half can be starved of room by the layout rather than by the
+  // lock, and a green run would then mean nothing was asked.
+  if (horizontal.distance < 40 || vertical.distance < 40)
+    failures.push(
+      failure(
+        "no-drag-room",
+        `${horizontal.distance}px sideways, ${vertical.distance}px downwards`,
+        at,
+      ),
+    );
+  else if (horizontal.max < 1)
+    failures.push(
+      failure("no-scrolling-line", "nothing to scroll sideways", at),
+    );
+  else if (horizontal.to <= horizontal.from)
+    failures.push(
+      failure(
+        "horizontal-touch-blocked",
+        `scrollLeft stayed at ${horizontal.to} of ${horizontal.max} over a ${horizontal.distance}px drag; ${horizontal.cancelled} of ${horizontal.arrived} touchmoves cancelled`,
+        at,
+      ),
+    );
+  if (vertical.cancelled === 0)
+    failures.push(
+      failure(
+        "vertical-touch-not-cancelled",
+        `${vertical.arrived} downward touchmoves, none cancelled, with the dialog's own scroller at ${JSON.stringify(vertical.box)}`,
+        at,
+      ),
+    );
+  if (baselineHeight < 1)
+    failures.push(
+      failure(
+        "page-cannot-scroll",
+        `the issue page is ${baselineHeight}px short of scrolling, so the lock has nothing to hold`,
+        at,
+      ),
+    );
+  else if (vertical.page.before < 1)
+    failures.push(
+      failure(
+        "page-already-at-top",
+        `the downward drag started at 0 of ${vertical.page.max}, so there was nothing for the lock to prevent`,
         at,
       ),
     );
@@ -1310,7 +1549,12 @@ async function openPage(browser, context, stack, fixture, fault, viewport) {
 
 async function runPass({ browser, stack, fixture, fault, label }) {
   const failures = [];
-  const notes = { fault: fault ?? null, faultApplied: null, wheel: [] };
+  const notes = {
+    fault: fault ?? null,
+    faultApplied: null,
+    wheel: [],
+    touch: [],
+  };
   const context = await browser.newContext();
   await browser.send("Browser.grantPermissions", {
     browserContextId: context.browserContextId,
@@ -1420,6 +1664,11 @@ async function runPass({ browser, stack, fixture, fault, label }) {
               notes.wheel.push({ viewport: viewport.name, entry, ...wheel });
               failures.push(
                 ...checkWheel(wheel, viewport, entry, baselineHeight),
+              );
+              const touch = await probeTouch(page);
+              notes.touch.push({ viewport: viewport.name, entry, ...touch });
+              failures.push(
+                ...checkTouch(touch, viewport, entry, baselineHeight),
               );
             }
             if (wrap && entry === "description") {
@@ -1653,6 +1902,7 @@ const FAULTS = [
   { fault: "wrap-over-close", expect: "wrap-overlaps-close" },
   { fault: "prose-rewrapped", expect: "prose-whiteSpace-changed" },
   { fault: "wheel-release-disabled", expect: "horizontal-wheel-blocked" },
+  { fault: "touch-release-disabled", expect: "horizontal-touch-blocked" },
   { fault: "scroll-lock-removed", expect: "page-scrolled-behind-dialog" },
 ];
 
