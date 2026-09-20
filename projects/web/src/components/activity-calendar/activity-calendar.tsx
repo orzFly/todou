@@ -179,7 +179,8 @@ export function ActivityCalendar({
   const id = useId();
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const calendar = useRef<HTMLFieldSetElement>(null);
-  const restoreRemovedFocus = useRef(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const heldFocus = useRef(false);
   const { dates, offset, weeks } = windowGeometry(from, to);
   const byDate = new Map(days.map((day) => [day.date, day]));
   const levels = activityLevels(
@@ -228,11 +229,11 @@ export function ActivityCalendar({
   // After removal activeElement is body, so a post-commit contains() cannot
   // tell whether this calendar owned focus. Never steal it from another control.
   useEffect(() => {
-    if (!restoreRemovedFocus.current) return;
+    if (!heldFocus.current) return;
     if (document.activeElement !== document.body) {
-      restoreRemovedFocus.current = false;
+      heldFocus.current = false;
     } else if (activeDate) {
-      restoreRemovedFocus.current = false;
+      heldFocus.current = false;
       buttons.current.get(activeDate)?.focus();
     }
   });
@@ -243,7 +244,7 @@ export function ActivityCalendar({
         event.target instanceof Node &&
         !calendar.current?.contains(event.target)
       ) {
-        restoreRemovedFocus.current = false;
+        heldFocus.current = false;
       }
     };
     document.addEventListener("focusin", releaseFocus);
@@ -252,10 +253,18 @@ export function ActivityCalendar({
 
   useEffect(() => {
     const focused = document.activeElement;
-    // Without a year control there is nowhere inside this section to park
-    // focus once every date is gone, so leave it where the browser put it.
+    // Losing every selectable date must not drop a keyboard reader on <body>.
+    // The heading outlives any window, so it is the landing point once the grid
+    // can no longer hold focus -- whether its dates were removed outright or
+    // merely turned unselectable, which blurs them without unmounting them.
     if (activeDate === null) {
-      if (!loading && !error) restoreRemovedFocus.current = false;
+      const owned =
+        calendar.current?.contains(focused) ||
+        (heldFocus.current && focused === document.body);
+      if (!loading && !error && owned) {
+        heldFocus.current = false;
+        heading.current?.focus();
+      }
     } else if (
       calendar.current?.contains(focused) &&
       focused instanceof HTMLButtonElement &&
@@ -331,7 +340,12 @@ export function ActivityCalendar({
       className="w-full min-w-0 max-w-full space-y-3 rounded-xl border bg-card p-4 sm:p-5"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id={`${id}-heading`} className="font-semibold">
+        <h2
+          ref={heading}
+          id={`${id}-heading`}
+          tabIndex={-1}
+          className="font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+        >
           Activity
         </h2>
       </div>
@@ -429,7 +443,7 @@ export function ActivityCalendar({
                           if (
                             buttons.current.get(date) === document.activeElement
                           ) {
-                            restoreRemovedFocus.current = true;
+                            heldFocus.current = true;
                           }
                           buttons.current.delete(date);
                         }
@@ -459,6 +473,7 @@ export function ActivityCalendar({
                           "outline-2 outline-offset-2 outline-primary",
                       )}
                       onFocus={() => {
+                        heldFocus.current = true;
                         setRovingDate(date);
                         setInspectedDate(date);
                       }}

@@ -612,6 +612,11 @@ describe("ActivityCalendar controlled state and recovery", () => {
     rerender(<ActivityCalendar {...p} days={days} selection={null} />);
     expect(tabStops(container)).toEqual([]);
     expect(screen.queryByRole("spinbutton")).toBeNull();
+    // Disabling every cell blurs the focused one without unmounting it, which
+    // is the quietest of the three ways to strand a keyboard reader on <body>.
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { name: "Activity" }),
+    );
     expect(
       screen.getByText("No available dates in this range."),
     ).not.toBeNull();
@@ -621,7 +626,7 @@ describe("ActivityCalendar controlled state and recovery", () => {
   });
 
   it.each([false, true])(
-    "empty window leaves focus wherever it already sits: %s",
+    "an emptied window lands focus on the heading unless it moved outside: %s",
     (moveOutside) => {
       const p = props();
       const tree = (loading: boolean) => (
@@ -652,15 +657,38 @@ describe("ActivityCalendar controlled state and recovery", () => {
       expect(
         screen.getByText("No available dates in this range."),
       ).not.toBeNull();
-      // Without a year control there is nowhere inside the section to park
-      // focus, so an emptied window must not yank it anywhere either.
+      // Removing the dates unmounts the focused cell. The heading survives every
+      // window, so it is where the reader lands -- but never by stealing focus
+      // back from somewhere they deliberately moved it.
       expect(document.activeElement).toBe(
         moveOutside
           ? screen.getByRole("textbox", { name: "Outside calendar" })
-          : document.body,
+          : screen.getByRole("heading", { name: "Activity" }),
       );
     },
   );
+
+  it("lands focus on the heading when a replacement window has no dates at all", () => {
+    const p = props();
+    const { rerender } = render(<ActivityCalendar {...p} />);
+    focus("2024-01-10");
+    const notApplicable = daysFor(2025).map(({ date }) => ({
+      date,
+      state: "not_applicable" as const,
+      count: null,
+    }));
+    rerender(
+      <ActivityCalendar
+        {...p}
+        {...windowOf(2025)}
+        days={notApplicable}
+        selection={null}
+      />,
+    );
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { name: "Activity" }),
+    );
+  });
 
   it("offers no year, timezone or project-metadata control of its own", () => {
     const p = props();
