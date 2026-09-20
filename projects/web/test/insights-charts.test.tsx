@@ -14,16 +14,17 @@ import {
   CHART_HEIGHT,
   CHART_WIDTH,
   countScale,
-  FLOW_TOP,
   PLOT_BOTTOM,
   PLOT_LEFT,
   PLOT_RIGHT,
   PLOT_TOP,
-  STOCK_BOTTOM,
   stepPath,
   timeScale,
 } from "../src/components/insights/chart-frame.tsx";
 import { StatusFlowChart } from "../src/components/insights/status-flow-chart.tsx";
+
+// Both burn axes span the whole plot rectangle; they stay independent of each other.
+const burnScale = (max: number) => countScale(max, PLOT_TOP, PLOT_BOTTOM);
 
 const exact = (value: number): Measure => ({ value, known: value, unknown: 0 });
 const unknown = (known: number, count: number): Measure => ({
@@ -426,7 +427,7 @@ describe("insights charts", () => {
       <BurnChart data={data} selectedIndex={1} onSelect={vi.fn()} />,
     );
     const x = timeScale(data.buckets);
-    const y = countScale(10, PLOT_TOP, STOCK_BOTTOM).y;
+    const y = burnScale(10).y;
     const path = container
       .querySelector('[data-series="remaining"]')!
       .getAttribute("d")!;
@@ -580,7 +581,7 @@ describe("insights charts", () => {
         PLOT_LEFT + (width * [12, 35.5, 50][index]!) / 53,
       );
     }
-    const y = countScale(22, PLOT_TOP, STOCK_BOTTOM).y;
+    const y = burnScale(22).y;
     const remaining = container.querySelector('[data-series="remaining"]')!;
     expect(remaining.getAttribute("d")).toContain(
       `L${x(Date.parse(boundaries[1]!))},${y(10)} L${x(Date.parse(boundaries[1]!))},${y(22)}`,
@@ -650,14 +651,14 @@ describe("insights charts", () => {
         {
           label: "Remaining",
           top: PLOT_TOP,
-          bottom: STOCK_BOTTOM,
+          bottom: PLOT_BOTTOM,
           intervals: 4,
         },
         {
           label: "Completed",
-          top: FLOW_TOP,
+          top: PLOT_TOP,
           bottom: PLOT_BOTTOM,
-          intervals: 2,
+          intervals: 4,
         },
         { label: "Open", top: PLOT_TOP, bottom: PLOT_BOTTOM, intervals: 4 },
       ];
@@ -795,7 +796,7 @@ describe("insights charts", () => {
               .getAttribute("cx"),
           ),
         ).toBe(midpoint);
-        const y = countScale(10, PLOT_TOP, STOCK_BOTTOM).y(10);
+        const y = burnScale(10).y(10);
         expect(
           container
             .querySelector('[data-series="remaining"]')!
@@ -821,7 +822,7 @@ describe("insights charts", () => {
         );
         expect(points).toHaveLength(3);
         for (const point of points) {
-          expect(Number(point.getAttribute("cy"))).toBe(STOCK_BOTTOM);
+          expect(Number(point.getAttribute("cy"))).toBe(PLOT_BOTTOM);
         }
       }
       if (scenario === "all unknown" || scenario === "not applicable") {

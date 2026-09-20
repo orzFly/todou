@@ -5,11 +5,9 @@ import {
   ChartYAxis,
   chartValue,
   countScale,
-  FLOW_TOP,
   type InsightsBucketProps,
   PLOT_BOTTOM,
   PLOT_TOP,
-  STOCK_BOTTOM,
   stepPath,
   timeScale,
 } from "./chart-frame.tsx";
@@ -32,16 +30,18 @@ export function BurnChart(props: InsightsBucketProps) {
   const completed = buckets.map(
     (bucket) => bucket.flow?.completed.value ?? null,
   );
+  // Both series share the plot area and the x axis, reading off opposite edges.
+  // The two y axes stay independent on purpose: a surge in one measure must not
+  // silently rescale the other series under a reader comparing them over time.
   const stockScale = countScale(
     Math.max(0, ...remaining.map((value) => value ?? 0)),
     PLOT_TOP,
-    STOCK_BOTTOM,
+    PLOT_BOTTOM,
   );
   const flowScale = countScale(
     Math.max(0, ...completed.map((value) => value ?? 0)),
-    FLOW_TOP,
+    PLOT_TOP,
     PLOT_BOTTOM,
-    2,
   );
   const x = timeScale(buckets);
 
@@ -61,7 +61,8 @@ export function BurnChart(props: InsightsBucketProps) {
       <ChartYAxis
         scale={flowScale}
         label="Completed"
-        top={FLOW_TOP}
+        top={PLOT_TOP}
+        side="right"
         color={legend[1]?.color}
       />
       {buckets.map((bucket, index) => {

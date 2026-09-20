@@ -27,11 +27,12 @@ export interface ChartFrameProps extends InsightsBucketProps {
 export const CHART_WIDTH = 560;
 export const CHART_HEIGHT = 340;
 export const PLOT_LEFT = 43;
-export const PLOT_RIGHT = 531;
+// Symmetric margins leave the right-hand axis the same room as the left, and
+// keep every chart's plot rectangle identical so one x position means the same
+// instant in all of them -- which is what makes the linked hover line up.
+export const PLOT_RIGHT = 517;
 export const PLOT_TOP = 30;
 export const PLOT_BOTTOM = 295;
-export const STOCK_BOTTOM = 182;
-export const FLOW_TOP = 226;
 
 export function selectedBucketIndex(length: number, index: number): number {
   if (length === 0) return -1;
@@ -92,23 +93,59 @@ export interface CountScale {
 }
 
 // Card and transition counts use whole-number ticks, even for small ranges.
+// `intervals` is the preferred tick count, not a fixed one: the ceiling is the
+// least wasteful nice multiple that still covers `max`, so an axis follows its
+// data instead of rounding a maximum of 45 up to a fixed four steps of 20.
+function niceStep(target: number, intervals: number): number {
+  const exponent = Math.floor(Math.log10(target / intervals));
+  const candidates = new Set<number>();
+  for (let power = exponent - 1; power <= exponent + 2; power++) {
+    for (const multiplier of [1, 2, 2.5, 5]) {
+      const step = multiplier * 10 ** power;
+      if (Number.isSafeInteger(step) && step > 0) candidates.add(step);
+    }
+  }
+  let step = Math.ceil(target / intervals);
+  let best: { waste: number; distance: number } | null = null;
+  for (const candidate of candidates) {
+    const count = Math.ceil(target / candidate);
+    if (count > intervals + 1) continue;
+    const waste = candidate * count - target;
+    const distance = Math.abs(count - intervals);
+    if (
+      best &&
+      (waste > best.waste ||
+        (waste === best.waste && distance >= best.distance))
+    )
+      continue;
+    best = { waste, distance };
+    step = candidate;
+  }
+  return step;
+}
+
+function scaleFrom(
+  step: number,
+  count: number,
+  top: number,
+  bottom: number,
+): CountScale {
+  const ceiling = step * count;
+  return {
+    ticks: Array.from({ length: count + 1 }, (_, index) => index * step),
+    y: (value: number) => bottom - (value / ceiling) * (bottom - top),
+  };
+}
+
 export function countScale(
   max: number,
   top: number,
   bottom: number,
   intervals = 4,
 ): CountScale {
-  const roughStep = Math.max(1, max / intervals);
-  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
-  const step = Math.ceil(
-    ([1, 2, 2.5, 5, 10].find((value) => value * magnitude >= roughStep) ?? 10) *
-      magnitude,
-  );
-  const ceiling = step * intervals;
-  return {
-    ticks: Array.from({ length: intervals + 1 }, (_, index) => index * step),
-    y: (value: number) => bottom - (value / ceiling) * (bottom - top),
-  };
+  const target = Math.max(1, Math.ceil(max));
+  const step = niceStep(target, intervals);
+  return scaleFrom(step, Math.ceil(target / step), top, bottom);
 }
 
 export function ChartYAxis({
@@ -116,34 +153,46 @@ export function ChartYAxis({
   label,
   top,
   color,
+  side = "left",
 }: {
   scale: CountScale;
   label: string;
   top: number;
   color?: string;
+  side?: "left" | "right";
 }) {
+  const right = side === "right";
+  // Only one axis may own the gridlines; a second full-width set at the same
+  // rows would just double every stroke. The right axis draws stubs instead.
+  const edge = right ? PLOT_RIGHT : PLOT_LEFT;
   return (
     <g
       data-axis={label}
+      data-side={side}
       className="text-[16px] text-muted-foreground sm:text-[10px]"
     >
-      <text x={PLOT_LEFT} y={top - 14} fill={color ?? "currentColor"}>
+      <text
+        x={edge}
+        y={top - 14}
+        textAnchor={right ? "end" : "start"}
+        fill={color ?? "currentColor"}
+      >
         {label}
       </text>
       {scale.ticks.map((tick) => (
         <g key={tick}>
           <line
-            x1={PLOT_LEFT}
-            x2={PLOT_RIGHT}
+            x1={right ? PLOT_RIGHT : PLOT_LEFT}
+            x2={right ? PLOT_RIGHT + 4 : PLOT_RIGHT}
             y1={scale.y(tick)}
             y2={scale.y(tick)}
             stroke="currentColor"
-            opacity={0.13}
+            opacity={right ? 0.35 : 0.13}
           />
           <text
-            x={PLOT_LEFT - 10}
+            x={right ? PLOT_RIGHT + 8 : PLOT_LEFT - 10}
             y={scale.y(tick) + 3.5}
-            textAnchor="end"
+            textAnchor={right ? "start" : "end"}
             fill="currentColor"
           >
             {tick}
