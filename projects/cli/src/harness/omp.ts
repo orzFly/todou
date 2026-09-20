@@ -16,6 +16,7 @@ import {
   publishedStateAttempt,
   readOmpStateAt,
 } from "./omp-state.ts";
+import { type Ancestor, hostIndex } from "./process-tree.ts";
 import { contains, currentSessionFile, flagValue } from "./session-log.ts";
 import type {
   Harness,
@@ -121,8 +122,43 @@ export const omp = {
   },
 } satisfies Harness;
 
+/**
+ * An inner omp can inherit OMPCODE from its parent. Its executable still
+ * identifies the nearest host, including when it loaded no extension.
+ */
+export function ompHostAncestor(
+  chain: readonly Ancestor[],
+): Ancestor | undefined {
+  // omp v18.2.5 re-enters its CLI for eval with a hidden worker-mode
+  // argument (subprocess/worker-client.ts), not a second session host.
+  const boundary = hostIndex((env) => env.OMPCODE === "1", chain);
+  for (const ancestor of chain) {
+    const workerArg =
+      basename(ancestor.argv[0] ?? "") === "omp"
+        ? ancestor.argv[1]
+        : ancestor.argv[2];
+    if (workerArg?.startsWith("__omp_worker_")) continue;
+    const executable = basename(ancestor.argv[0] ?? "");
+    if (executable === "omp") return ancestor;
+    if (executable !== "node" && executable !== "bun") continue;
+    const script = ancestor.argv[1] ?? "";
+    if (
+      basename(script) === "omp" ||
+      /(?:^|[/\\])(?:omp[/\\]cli\.[cm]?js|coding-agent[/\\](?:src[/\\]cli\.ts|dist[/\\](?:bundle[/\\])?cli\.[cm]?js))$/.test(
+        script,
+      )
+    ) {
+      return ancestor;
+    }
+  }
+  if (!chain.some((ancestor) => ancestor.env.OMPCODE === "1")) {
+    return undefined;
+  }
+  return boundary === undefined ? undefined : chain[boundary];
+}
+
 /** Shared namespace records belong to their publisher, not every descendant. */
-function ompStateAttempt({
+export function ompStateAttempt({
   env,
   host,
   ancestorPids,

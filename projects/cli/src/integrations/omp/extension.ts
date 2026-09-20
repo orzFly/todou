@@ -71,7 +71,10 @@ const TOOL_NAME = "todou_watch";
 const TOKEN_BYTES = 24;
 
 export type ExtensionHost = {
-  on(event: string, handler: (event: unknown, ctx: PiContext) => void): void;
+  on(
+    event: string,
+    handler: (event: unknown, ctx: PiContext) => void | Promise<void>,
+  ): void;
   sendMessage(
     message: {
       customType: string;
@@ -99,6 +102,8 @@ type PiContext = {
     notify?(text: string, level: string): void;
   };
 };
+
+type SessionIdentity = { id: string; file?: string };
 
 /** One line of the push protocol, as far as this reads it. */
 type Frame = {
@@ -205,6 +210,20 @@ export default function todou(
   let server: ReturnType<typeof createServer> | undefined;
   const connections = new Set<Socket>();
   let closed = false;
+  let subordinate = false;
+  let activeSessionId: string | undefined;
+  let generation = 0;
+  let lifecycle = Promise.resolve();
+
+  /** Admission and lifecycle changes share one queue; child grace does not hold it. */
+  function serialize<T>(operation: () => T | Promise<T>): Promise<T> {
+    const result = lifecycle.then(operation);
+    lifecycle = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
 
   /** Where this process's pair of files live, created on first use. */
   function paths(): { state: string; socket: string } {
@@ -235,7 +254,7 @@ export default function todou(
   }
 
   /** The session omp holds at this instant, or nothing worth publishing. */
-  function session(ctx: PiContext): { id: string; file?: string } | undefined {
+  function session(ctx: PiContext): SessionIdentity | undefined {
     const id = ctx?.sessionManager?.getSessionId?.();
     if (typeof id !== "string" || id === "") return undefined;
     const file = ctx?.sessionManager?.getSessionFile?.();
@@ -248,8 +267,7 @@ export default function todou(
    * half-written record would read as corrupt — which costs it the whole
    * fast path for the length of one write.
    */
-  function publish(ctx: PiContext): void {
-    const here = session(ctx);
+  function publish(here: SessionIdentity | undefined): void {
     if (!here || statePath === undefined) return;
     const temp = `${statePath}.tmp`;
     writeFileSync(
@@ -415,15 +433,22 @@ export default function todou(
   function listen(): void {
     if (socketPath === undefined) return;
     const path = socketPath;
+    const listeningGeneration = generation;
+    const current = () => !closed && generation === listeningGeneration;
     // A crash leaves the node behind and the bind would fail EADDRINUSE.
     rmSync(path, { force: true });
     const created = createServer((socket) => {
+      if (!current()) {
+        socket.destroy();
+        return;
+      }
       connections.add(socket);
       socket.on("close", () => connections.delete(socket));
       socket.setEncoding("utf8");
       let buffer = "";
       const authed = { ok: false };
       socket.on("data", (chunk: string) => {
+        if (!current()) return socket.destroy();
         buffer += chunk;
         // Measured before the split, exactly as the sender assumes: its cap
         // covers the auth line, the frame and the newline together.
@@ -449,7 +474,7 @@ export default function todou(
       socket.on("end", () => {
         const line = buffer;
         buffer = "";
-        if (line !== "") handle(line, authed);
+        if (current() && line !== "") handle(line, authed);
       });
       socket.on("error", () => {});
     });
@@ -457,6 +482,7 @@ export default function todou(
     // take omp down — which is the one thing this must never do.
     created.on("error", () => {});
     created.listen(path, () => {
+      if (!current()) return;
       // Node creates the node under the process umask, so it lands group- and
       // world-writable on a machine with a permissive one, leaving the 0700
       // directory above as the only fence — and `mkdirSync`'s mode does not
@@ -473,44 +499,54 @@ export default function todou(
     server = created;
   }
 
-  function shutdown(): void {
+  async function shutdown(): Promise<void> {
     closed = true;
-    if (profile.reclaimOnStart) {
-      for (const connection of connections) connection.destroy();
-      connections.clear();
-    }
-    try {
-      server?.close();
-    } catch {
-      // Already closed, or never opened.
-    }
+    generation += 1;
+    // Revoke already authenticated peers before waiting for children. A partial
+    // frame on an old connection must never complete into the next session.
+    for (const connection of connections) connection.destroy();
+    connections.clear();
+    const previousServer = server;
     server = undefined;
+    const serverClosed = new Promise<void>((resolve) => {
+      if (previousServer === undefined) return resolve();
+      try {
+        previousServer.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+    const previousWatches = [...watches.values()];
+    for (const watch of previousWatches) stop(watch, "shutdown");
+    watches.clear();
+    paintWidget();
+    await Promise.all([
+      serverClosed,
+      ...previousWatches.map((watch) => watch.ended),
+    ]);
+    // A sub-agent owns its watches, but never the root's manifest or socket.
+    if (!owner) return;
     if (statePath !== undefined) rmSync(statePath, { force: true });
     if (socketPath !== undefined) rmSync(socketPath, { force: true });
-    if (profile.reclaimOnStart) {
-      // Remove only the environment values this instance published.
-      if (process.env[profile.stateEnv] === statePath)
-        delete process.env[profile.stateEnv];
-      if (process.env.TODOU_MESSAGING_TOKEN === token) {
-        delete process.env.TODOU_MESSAGING_SOCKET;
-        delete process.env.TODOU_MESSAGING_TOKEN;
-        delete process.env[profile.toolsEnv];
-      }
-      owner = false;
-      statePath = undefined;
-      socketPath = undefined;
-      token = undefined;
+    if (process.env[profile.stateEnv] === statePath)
+      delete process.env[profile.stateEnv];
+    if (process.env.TODOU_MESSAGING_TOKEN === token) {
+      delete process.env.TODOU_MESSAGING_SOCKET;
+      delete process.env.TODOU_MESSAGING_TOKEN;
+      delete process.env[profile.toolsEnv];
     }
+    owner = false;
+    statePath = undefined;
+    socketPath = undefined;
+    token = undefined;
   }
 
   /**
-   * Claims the environment for this process's tools. It runs once, because
-   * omp fixes the environment its tools inherit early in the session and
-   * every later write to `process.env` is invisible to them — measured, and
-   * the reason the session id itself is not a variable: after a `/resume` it
-   * would be a stale value that looks precise.
+   * Claims a fresh channel generation for this process's tools. omp can retain
+   * the environment captured at startup, so its tools must prefer the live
+   * manifest over a stale socket/token snapshot after a session transition.
    */
-  function claim(ctx: PiContext): void {
+  function claim(here: SessionIdentity | undefined): void {
     closed = false;
     const { state, socket } = paths();
     statePath = state;
@@ -523,7 +559,7 @@ export default function todou(
     // the pair above is: one export instead of a record read.
     process.env[profile.toolsEnv] = TOOL_NAME;
     owner = true;
-    publish(ctx);
+    publish(here);
     listen();
   }
 
@@ -568,6 +604,8 @@ export default function todou(
     exit: number | null;
     /** Who stopped it, when something did; `null` while it runs on. */
     stoppedBy: "tool" | "command" | "shutdown" | null;
+    ended: Promise<void>;
+    killTimer?: NodeJS.Timeout;
     /**
      * The watches this one was stopped together with, when `/todou stop`
      * took a set: the one message for them waits for the last of the set.
@@ -762,22 +800,24 @@ export default function todou(
   /** Stop one watch: record who, signal, and escalate if it lingers. */
   function stop(watch: Watch, by: "tool" | "command" | "shutdown"): void {
     if (watch.exit !== null) return;
-    watch.stoppedBy = by;
+    // Lifecycle disposal wins over a command stop already waiting for exit.
+    if (watch.stoppedBy !== "shutdown") watch.stoppedBy = by;
+    if (watch.killTimer !== undefined) return;
     try {
       watch.child.kill("SIGTERM");
     } catch {
       // Already gone; the exit event will record it.
     }
-    if (watch.child.pid !== undefined) {
-      const pid = watch.child.pid;
-      setTimeout(() => {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          // It died of the TERM; nothing to escalate.
-        }
-      }, 1000).unref();
-    }
+    // Keep this timer referenced: an awaited shutdown must reap even a child
+    // ignoring TERM. Clear it on exit, rather than killing a reused numeric pid.
+    watch.killTimer = setTimeout(() => {
+      if (watch.exit !== null) return;
+      try {
+        watch.child.kill("SIGKILL");
+      } catch {
+        // The child exited between the check and the signal.
+      }
+    }, 1000);
   }
 
   /** The tool's `list`: processes, with what became of them. */
@@ -819,7 +859,18 @@ export default function todou(
       debounce?: unknown;
     },
     ctx: PiContext,
+    requested: SessionIdentity | undefined,
+    requestedGeneration: number,
   ): Promise<string> {
+    if (closed) return "could not start — this session is closing.";
+    if (
+      requested
+        ? requested.id !== activeSessionId
+        : requestedGeneration !== generation
+    ) {
+      return "could not start — the session changed before the watch started.";
+    }
+    const watchGeneration = generation;
     const cwd = typeof ctx.cwd === "string" && ctx.cwd !== "" ? ctx.cwd : ".";
     const key = keyFor(args, cwd);
     for (const watch of watches.values()) {
@@ -857,6 +908,7 @@ export default function todou(
       exit: null,
       stoppedBy: null,
       stopGroup: null,
+      ended: Promise.resolve(),
     };
     watches.set(id, watch);
     child.stdout?.setEncoding("utf8");
@@ -870,13 +922,16 @@ export default function todou(
     const ended = new Promise<void>((resolve) => {
       child.on("exit", (code) => {
         watch.exit = code ?? -1;
+        clearTimeout(watch.killTimer);
         resolve();
       });
       child.on("error", () => {
         watch.exit = -1;
+        clearTimeout(watch.killTimer);
         resolve();
       });
     });
+    watch.ended = ended;
     // Exit beats the timer: a child that died in milliseconds has its own
     // stderr to show and never needed the grace period to say so.
     await Promise.race([
@@ -885,6 +940,9 @@ export default function todou(
         setTimeout(resolve, startGraceMs()).unref(),
       ),
     ]);
+    if (generation !== watchGeneration || closed) {
+      return "could not start — the session changed while the watch was starting.";
+    }
     if (watch.exit === -1 && watch.stderr === "" && watch.stdout === "") {
       // spawn's ENOENT arrives here rather than in the throw: the message
       // the model needs is the one about PATH and TODOU_BIN.
@@ -916,6 +974,7 @@ export default function todou(
       // else is said here — not in `stop()` — because this is the moment
       // the child's last output exists to say it with.
       watch.exit = code ?? -1;
+      if (generation !== watchGeneration || closed) return;
       paintWidget();
       if (watch.stoppedBy === "tool" || watch.stoppedBy === "shutdown") {
         return;
@@ -947,70 +1006,63 @@ export default function todou(
     ].join("\n");
   }
 
-  pi.on("session_start", (_event, ctx) => {
-    uiContext = ctx;
+  function syncSession(ctx: PiContext, replace: boolean, mayClaim: boolean) {
+    // Managers can mutate while cleanup awaits a child; publish the identity
+    // observed at this completed event, never a later manager value.
+    let here: SessionIdentity | undefined;
     try {
-      if (profile.reclaimOnStart) {
-        // Native Pi emits start after rebinding contexts, including reloads
-        // in the same pid. An inherited path is never a sub-agent guard.
-        for (const watch of watches.values()) stop(watch, "shutdown");
-        watches.clear();
-        if (owner) shutdown();
-        claim(ctx);
-        paintWidget();
-        return;
-      }
-      if (owner) {
-        publish(ctx);
-        return;
-      }
-      const existing = process.env[profile.stateEnv];
-      if (existing !== undefined && ours(existing)) return;
-      claim(ctx);
+      here = session(ctx);
     } catch {
-      // An extension that throws here takes the session with it.
+      return Promise.resolve();
     }
-  });
-
-  // omp switches the manager in place; native Pi uses shutdown/start instead.
-  if (!profile.reclaimOnStart) {
-    pi.on("session_switch", (_event, ctx) => {
-      try {
-        if (owner) publish(ctx);
-      } catch {
-        // Leaves the previous record in place, which the reader will believe.
+    return serialize(async () => {
+      if (!here) return;
+      const changed =
+        activeSessionId !== undefined && here.id !== activeSessionId;
+      if (changed || (replace && activeSessionId !== undefined)) {
+        await shutdown();
       }
+      uiContext = ctx;
+      activeSessionId = here.id;
+      if (owner) {
+        publish(here);
+      } else if (subordinate) {
+        closed = false;
+      } else if (mayClaim || changed) {
+        const existing = process.env[profile.stateEnv];
+        if (
+          !profile.reclaimOnStart &&
+          existing !== undefined &&
+          ours(existing)
+        ) {
+          subordinate = true;
+          closed = false;
+        } else {
+          claim(here);
+        }
+      }
+      paintWidget();
+    }).catch(() => {
+      // A failed extension must not take its host down.
     });
   }
 
-  // Re-sync rather than a claim: a reload can replace this extension mid-run
-  // without another session_start, and a turn is the moment the answer is
-  // about to be asked for.
-  pi.on("agent_start", (_event, ctx) => {
-    uiContext = ctx;
-    try {
-      if (owner) publish(ctx);
-    } catch {
-      // As above.
+  pi.on("session_start", (_event, ctx) =>
+    syncSession(ctx, profile.reclaimOnStart, true),
+  );
+  // Completed events only: cancelled before-switch/branch/tree events leave
+  // the current session and every watch intact.
+  if (!profile.reclaimOnStart) {
+    for (const event of ["session_switch", "session_branch", "session_tree"]) {
+      pi.on(event, (_event, ctx) => syncSession(ctx, false, false));
     }
-  });
-
-  pi.on("session_shutdown", () => {
-    try {
-      // No message for these: the session reading it is ending. What each
-      // watch had not handed over goes with it — the same loss a bash
-      // background job takes when omp is killed, and the reason a cursor
-      // worth resuming from is printed by `list`'s records too.
-      for (const watch of watches.values()) stop(watch, "shutdown");
-      if (owner) shutdown();
-      if (profile.reclaimOnStart) {
-        watches.clear();
-        paintWidget();
-      }
-    } catch {
+  }
+  pi.on("agent_start", (_event, ctx) => syncSession(ctx, false, false));
+  pi.on("session_shutdown", () =>
+    serialize(shutdown).catch(() => {
       // Leaves a stale record, which the reader rejects on the dead pid.
-    }
-  });
+    }),
+  );
 
   pi.registerCommand("todou", {
     description: "what todou is following in this session, and how to stop it",
@@ -1232,7 +1284,14 @@ export default function todou(
           };
         }
         if (args.action === "start") {
-          const text = await startWatch(args, ctx);
+          // Return the grace promise inside an object so admission releases the
+          // queue immediately; a transition can stop a still-starting child.
+          const requested = session(ctx);
+          const requestedGeneration = generation;
+          const admitted = await serialize(() => ({
+            result: startWatch(args, ctx, requested, requestedGeneration),
+          }));
+          const text = await admitted.result;
           return { content: [{ type: "text", text }] };
         }
         return {

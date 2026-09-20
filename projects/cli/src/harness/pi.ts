@@ -89,9 +89,7 @@ export function piHostAncestor(
   chain: readonly Ancestor[],
 ): Ancestor | undefined {
   const boundary = hostIndex((env) => env.PI_CODING_AGENT === "true", chain);
-  const candidates =
-    boundary === undefined ? chain : chain.slice(0, boundary + 1);
-  for (const ancestor of candidates) {
+  for (const ancestor of chain) {
     const executable = basename(ancestor.argv[0] ?? "");
     if (executable === "pi") return ancestor;
     if (executable !== "node" && executable !== "bun") continue;

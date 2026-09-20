@@ -1059,6 +1059,10 @@ export class IssueWatchCommand extends ProjectCommand {
   });
   follow = followOption();
 
+  protected bindWatchOwner(): boolean {
+    return !this.poll;
+  }
+
   protected async run(client: TodouClient): Promise<number> {
     // Ahead of resolveIssueRef, which is a network round trip: `--follow=uds`
     // with no socket in the environment fails whatever the card turns out to
@@ -1067,10 +1071,9 @@ export class IssueWatchCommand extends ProjectCommand {
     //
     // Read once and carried down to `openFollow`: the refusal here and the
     // dial there have to be talking about the same endpoint.
-    const messaging = harnessMessaging(
-      this.context.env,
-      this.context.processTree,
-    );
+    const messaging =
+      this.watchLifetime?.owner ??
+      harnessMessaging(this.context.env, this.context.processTree);
     const transport = followTransport({
       raw: this.follow,
       poll: this.poll,
@@ -1088,6 +1091,7 @@ export class IssueWatchCommand extends ProjectCommand {
       (line) => this.note(line),
       this.clock,
     );
+    retry.signal = this.watchLifetime?.signal;
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
     const self = await this.resolveFilter(client, project, retry);
@@ -1244,6 +1248,7 @@ export class IssueWatchCommand extends ProjectCommand {
         session: () => this.ownSession(),
         home: this.context.home,
         clock: this.clock,
+        signal: this.watchLifetime?.signal,
         note: (line) => this.note(line),
         open: this.context.openPeerPush,
       });
@@ -1259,6 +1264,8 @@ export class IssueWatchCommand extends ProjectCommand {
           wait: follow.wait,
           afterItems: clearCardsAfterBatch(cards, follow.afterItems),
           shouldStop: follow.shouldStop,
+          signal: this.watchLifetime?.signal,
+          onStop: follow.stopped,
           onQuiet: (cursor, totalMs) => {
             follow.seen(cursor);
             this.note(quietNote("still watching", timeoutSec, totalMs));

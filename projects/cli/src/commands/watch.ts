@@ -314,6 +314,10 @@ export class WatchCommand extends ProjectCommand {
   });
   follow = followOption();
 
+  protected bindWatchOwner(): boolean {
+    return !this.poll;
+  }
+
   protected async run(client: TodouClient): Promise<number> {
     // Every one of these is decided before the first request: a watch that
     // cannot push has to say so up front, not after a batch is in hand with
@@ -322,10 +326,9 @@ export class WatchCommand extends ProjectCommand {
     // Read once and carried: the refusal below and the dial further down have
     // to be talking about the same endpoint, and resolving it twice makes a
     // disagreement between them representable.
-    const messaging = harnessMessaging(
-      this.context.env,
-      this.context.processTree,
-    );
+    const messaging =
+      this.watchLifetime?.owner ??
+      harnessMessaging(this.context.env, this.context.processTree);
     const transport = followTransport({
       raw: this.follow,
       poll: this.poll,
@@ -343,6 +346,7 @@ export class WatchCommand extends ProjectCommand {
       (line) => this.note(line),
       this.clock,
     );
+    retry.signal = this.watchLifetime?.signal;
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
     const timeoutSec = watchTimeoutSec(this.timeout, mode);
@@ -529,6 +533,7 @@ export class WatchCommand extends ProjectCommand {
         session: () => this.ownSession(),
         home: this.context.home,
         clock: this.clock,
+        signal: this.watchLifetime?.signal,
         note: (line) => this.note(line),
         open: this.context.openPeerPush,
       });
@@ -544,6 +549,8 @@ export class WatchCommand extends ProjectCommand {
           wait: follow.wait,
           afterItems: clearCardsAfterBatch(cards, follow.afterItems),
           shouldStop: follow.shouldStop,
+          signal: this.watchLifetime?.signal,
+          onStop: follow.stopped,
           onQuiet: (cursor, totalMs) => {
             follow.seen(cursor);
             onQuiet(cursor, totalMs);
@@ -687,6 +694,7 @@ export class WatchCommand extends ProjectCommand {
       home: this.context.home,
       clock: this.clock,
       note: (line) => this.note(line),
+      signal: this.watchLifetime?.signal,
       open: this.context.openPeerPush,
     });
     try {
@@ -701,6 +709,8 @@ export class WatchCommand extends ProjectCommand {
         wait: follow.wait,
         afterItems: clearCardsAfterBatch(cards, follow.afterItems),
         shouldStop: follow.shouldStop,
+        signal: this.watchLifetime?.signal,
+        onStop: follow.stopped,
         onQuiet: (cursor, totalMs) => {
           follow.seen(cursor);
           onQuiet(cursor, totalMs);

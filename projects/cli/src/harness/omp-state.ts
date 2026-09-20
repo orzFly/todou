@@ -115,6 +115,7 @@ export function readOmpStateAt(path: string): OmpState | undefined {
     // Absent, half-written, or unreadable: the scan still stands on its own.
     return undefined;
   }
+  if (record === null || typeof record !== "object") return undefined;
   if (record.v !== VERSION) return undefined;
   // Records outlive the processes they name and pids get reused, so the pid
   // is checked twice over: against the one the path names, which is what ties

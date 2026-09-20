@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import type { Env } from "../config.ts";
 import { detectHarnessId } from "./index.ts";
-import { publishedState, readOmpState } from "./omp-state.ts";
+import { ompHostAncestor, ompStateAttempt } from "./omp.ts";
+import type { OmpState } from "./omp-state.ts";
 import { piHostAncestor, piState } from "./pi.ts";
 import {
   ancestorPids,
@@ -27,6 +29,63 @@ export type HarnessMessaging = {
    */
   tools?: readonly string[];
 };
+
+/**
+ * A live native extension owner. All fields identify the watch's lifetime:
+ * changing any of them, or losing the record, invalidates the old watch.
+ * Environment-only channels cannot provide this proof and have no owner.
+ */
+export type NativeWatchOwner = {
+  peer: "omp" | "pi";
+  pid: number;
+  path: string;
+  sessionId: string;
+  socket: string;
+  token: string;
+};
+
+function ownedStateAttempt(
+  peer: "omp" | "pi",
+  env: Env,
+  io?: Partial<ProcessTreeIo>,
+): { state?: OmpState; unreadable?: string } {
+  const ctx = {
+    env,
+    host: () => {
+      const chain = readAncestors(io);
+      return peer === "omp" ? ompHostAncestor(chain) : piHostAncestor(chain);
+    },
+    ancestorPids: () => ancestorPids(io),
+  };
+  return peer === "omp" ? ompStateAttempt(ctx) : { state: piState(ctx) };
+}
+
+/**
+ * Read current owned state, including publisher liveness, on every call.
+ * Supplying an empty process-tree seam bypasses the command-level ancestry
+ * cache: a long-running watch must observe its host disappearing.
+ */
+export function nativeWatchOwner(
+  env: Env,
+  io: Partial<ProcessTreeIo> = {},
+): NativeWatchOwner | undefined {
+  const peer = detectHarnessId(env, io);
+  if (peer !== "omp" && peer !== "pi") return undefined;
+  const { state } = ownedStateAttempt(peer, env, io);
+  if (state?.socket === undefined || state.token === undefined)
+    return undefined;
+  // Messaging keeps compatibility with explicit paths outside a visible
+  // process tree. A lifetime guard requires positive ancestry as well.
+  if (!ancestorPids(io).includes(state.pid)) return undefined;
+  return {
+    peer,
+    pid: state.pid,
+    path: state.path,
+    sessionId: state.sessionId,
+    socket: state.socket,
+    token: state.token,
+  };
+}
 
 /**
  * `TODOU_OMP_TOOLS` as the bash tool's environment carries it: one
@@ -76,62 +135,10 @@ export function harnessMessaging(
   // reason the other probes take one: an answer that depends on the real
   // /proc is one a test cannot state.
   switch (detectHarnessId(env, io)) {
-    case "omp": {
-      // Older omp extensions export only this pair. A pi parent can now
-      // export it too, so an inherited pi state requires positive omp ownership.
-      const own = env.TODOU_PI_STATE ? readOmpState(env) : undefined;
-      if (
-        env.TODOU_MESSAGING_SOCKET &&
-        (!env.TODOU_PI_STATE ||
-          ((own?.agent === "omp" || own?.agent === undefined) &&
-            own?.socket === env.TODOU_MESSAGING_SOCKET &&
-            own?.token === env.TODOU_MESSAGING_TOKEN))
-      ) {
-        return {
-          socket: env.TODOU_MESSAGING_SOCKET,
-          token: env.TODOU_MESSAGING_TOKEN,
-          peer: "omp",
-          ...toolsFromEnv(env),
-        };
-      }
-      // Every other context omp spawns — the `!` shell, both eval runtimes —
-      // gets a curated environment with none of the pair in it, so without
-      // this an omp with the extension running and its socket listening
-      // reports no push channel at all, and says so in prose that blames the
-      // extension for not being installed.
-      //
-      // Asked by ancestor pid, exactly as the session id is (T-312), and just
-      // as lazily: a machine that never installed the extension pays one
-      // failed `readdir` and never walks the tree. The record's pair is
-      // believed or dropped whole, so a socket here always has its token.
-      const state = publishedState(env, () => ancestorPids(io));
-      return state?.socket === undefined ||
-        (state.agent !== undefined && state.agent !== "omp")
-        ? {}
-        : {
-            socket: state.socket,
-            token: state.token,
-            peer: "omp",
-            ...(state.tools === undefined ? {} : { tools: state.tools }),
-          };
-    }
-    case "pi": {
-      // The shared socket variables can belong to an outer omp or pi.
-      // Resolve the publisher by ancestry and verify its harness instead.
-      const state = piState({
-        env,
-        host: () => piHostAncestor(readAncestors(io)),
-        ancestorPids: () => ancestorPids(io),
-      });
-      return state?.agent !== "pi" || state.socket === undefined
-        ? {}
-        : {
-            socket: state.socket,
-            token: state.token,
-            peer: "pi",
-            ...(state.tools === undefined ? {} : { tools: state.tools }),
-          };
-    }
+    case "omp":
+      return nativeMessaging("omp", env, io);
+    case "pi":
+      return nativeMessaging("pi", env, io);
     case "claude-code":
     case null:
       return {
@@ -144,4 +151,61 @@ export function harnessMessaging(
       // the claude-code socket some of them inherit is not theirs to use.
       return {};
   }
+}
+
+function nativeMessaging(
+  peer: "omp" | "pi",
+  env: Env,
+  io?: Partial<ProcessTreeIo>,
+): HarnessMessaging {
+  const { state, unreadable } = ownedStateAttempt(peer, env, io);
+  if (state?.socket !== undefined) {
+    return {
+      socket: state.socket,
+      token: state.token,
+      peer,
+      ...(state.tools === undefined ? {} : { tools: state.tools }),
+    };
+  }
+  // An identity-only legacy record can still accompany an env channel.
+  // Invalid/partial channel fields are not legacy: never revive their
+  // stale exported credentials. Recheck the record rather than confusing
+  // omitted fields with the channel parser rejecting supplied fields.
+  let legacyState = false;
+  if (peer === "omp" && state) {
+    try {
+      const record = JSON.parse(readFileSync(state.path, "utf8"));
+      legacyState =
+        record?.v === 1 &&
+        record.pid === state.pid &&
+        record.session_id === state.sessionId &&
+        record.socket === undefined &&
+        record.token === undefined;
+    } catch {
+      return {};
+    }
+  }
+  // Legacy env-only channels require no conflicting manifest claim or
+  // evidence that an outer host supplied the inherited channel.
+  if (
+    peer === "omp" &&
+    !unreadable &&
+    env.TODOU_MESSAGING_SOCKET &&
+    (legacyState || (!state && !env.TODOU_OMP_STATE && !env.TODOU_PI_STATE))
+  ) {
+    const host = ompHostAncestor(readAncestors(io));
+    if (
+      !host?.env.TODOU_MESSAGING_SOCKET &&
+      (legacyState ||
+        (host?.env.OMPCODE !== "1" && host?.env.PI_CODING_AGENT !== "true"))
+    ) {
+      return {
+        socket: env.TODOU_MESSAGING_SOCKET,
+        token: env.TODOU_MESSAGING_TOKEN,
+        peer,
+        ...toolsFromEnv(env),
+      };
+    }
+  }
+  return {};
 }

@@ -78,7 +78,7 @@ describe("the omp extension's half of the push protocol", () => {
 
 const originalRuntimeDir = process.env.XDG_RUNTIME_DIR;
 const dirs: string[] = [];
-const instances: Array<{ stop: () => void }> = [];
+const instances: Array<{ stop: () => Promise<void> }> = [];
 const listeners: Server[] = [];
 /** The connections each listener has accepted, keyed by its server. */
 const peers = new WeakMap<Server, Set<Socket>>();
@@ -99,7 +99,7 @@ const userFrame = (opts: { content?: string; from?: string } = {}) => {
 
 const authFrame = (token: string) => JSON.stringify({ type: "auth", token });
 
-type Handler = (event: unknown, ctx: unknown) => void;
+type Handler = (event: unknown, ctx: unknown) => void | Promise<void>;
 
 type Booted = {
   /** Every message the extension handed the agent, with the tier it asked for. */
@@ -121,7 +121,7 @@ type Booted = {
  * swallows every exception, so a claim that failed would show up as every case
  * below failing to connect instead of as one wrong answer.
  */
-function boot(name: string): Booted {
+async function boot(name: string): Promise<Booted> {
   const runtime = mkdtempSync(join(tmpdir(), `todou-omp-${name}-`));
   dirs.push(runtime);
   process.env.XDG_RUNTIME_DIR = runtime;
@@ -156,7 +156,7 @@ function boot(name: string): Booted {
     },
   };
   todou(pi as never);
-  handlers.session_start?.[0]?.(
+  await handlers.session_start?.[0]?.(
     {},
     { sessionManager: { getSessionId: () => "test-session" } },
   );
@@ -168,10 +168,10 @@ function boot(name: string): Booted {
   }
   let stopped = false;
   instances.push({
-    stop() {
+    async stop() {
       if (stopped) return;
       stopped = true;
-      handlers.session_shutdown?.[0]?.({}, {});
+      await handlers.session_shutdown?.[0]?.({}, {});
     },
   });
   return { sent, socket, token, commands, dir: join(runtime, "todou-omp") };
@@ -320,7 +320,7 @@ afterEach(async () => {
         }),
     ),
   );
-  for (const instance of instances.splice(0)) instance.stop();
+  for (const instance of instances.splice(0)) await instance.stop();
   for (const dir of dirs.splice(0))
     rmSync(dir, { recursive: true, force: true });
   delete process.env.TODOU_MESSAGING_SOCKET;
@@ -338,7 +338,7 @@ describe("an unauthenticated push", () => {
    * token — say nothing about a gate that was never closed.
    */
   it("does not deliver a user frame with no auth line", async () => {
-    const { sent, socket } = boot("no-auth");
+    const { sent, socket } = await boot("no-auth");
     await exchange(socket, [`${userFrame().line}\n`]);
     expect(sent).toEqual([]);
   });
@@ -350,7 +350,7 @@ describe("an unauthenticated push", () => {
    * which is why this case cannot share the one above.
    */
   it("does not deliver a user frame with no auth line and no newline", async () => {
-    const { sent, socket } = boot("no-auth-no-newline");
+    const { sent, socket } = await boot("no-auth-no-newline");
     await exchange(socket, [userFrame().line]);
     expect(sent).toEqual([]);
   });
@@ -362,13 +362,13 @@ describe("an unauthenticated push", () => {
    * the bad token causes protects only the lines after it.
    */
   it("does not deliver a user frame that arrives before the auth line", async () => {
-    const { sent, socket } = boot("user-first");
+    const { sent, socket } = await boot("user-first");
     await exchange(socket, [`${userFrame().line}\n${authFrame("wrong")}\n`]);
     expect(sent).toEqual([]);
   });
 
   it("does not deliver a user frame behind a line that is not JSON", async () => {
-    const { sent, socket } = boot("junk-first");
+    const { sent, socket } = await boot("junk-first");
     await exchange(socket, ["not json\n", `${userFrame().line}\n`]);
     expect(sent).toEqual([]);
   });
@@ -381,7 +381,7 @@ describe("a push the gate already stopped", () => {
    * and the frames below never reaching `handle` would be invisible.
    */
   it("delivers a user frame behind a correct auth line", async () => {
-    const { sent, socket, token } = boot("good-token");
+    const { sent, socket, token } = await boot("good-token");
     await exchange(socket, [
       `${authFrame(token)}\n${userFrame({ content: "carried" }).line}\n`,
     ]);
@@ -399,13 +399,13 @@ describe("a push the gate already stopped", () => {
    * the two look like an unhandled race to the next reader.
    */
   it("does not deliver a user frame behind a wrong token in one write", async () => {
-    const { sent, socket } = boot("bad-token-one-write");
+    const { sent, socket } = await boot("bad-token-one-write");
     await exchange(socket, [`${authFrame("wrong")}\n${userFrame().line}\n`]);
     expect(sent).toEqual([]);
   });
 
   it("does not deliver a user frame behind a wrong token in two writes", async () => {
-    const { sent, socket } = boot("bad-token-two-writes");
+    const { sent, socket } = await boot("bad-token-two-writes");
     await exchange(socket, [
       `${authFrame("wrong")}\n`,
       `${userFrame().line}\n`,
@@ -414,7 +414,7 @@ describe("a push the gate already stopped", () => {
   });
 
   it("does not deliver a user frame behind an auth frame with no token", async () => {
-    const { sent, socket } = boot("auth-without-token");
+    const { sent, socket } = await boot("auth-without-token");
     await exchange(socket, ['{"type":"auth"}\n', `${userFrame().line}\n`]);
     expect(sent).toEqual([]);
   });
@@ -429,7 +429,7 @@ describe("what a refused push is told", () => {
    * The receipt is what turns that into a degradation the user sees.
    */
   it("answers an unauthenticated user frame with a refused receipt", async () => {
-    const { socket, dir } = boot("refused-receipt");
+    const { socket, dir } = await boot("refused-receipt");
     const receipt = await receiptListener(dir, "no-reply-todou-watch-1.sock");
     const frame = userFrame({ from: receipt.from });
     await exchange(socket, [`${frame.line}\n`]);
@@ -451,7 +451,7 @@ describe("what a refused push is told", () => {
    * its own listener; this is the receiving half of it.
    */
   it("says nothing to an unauthenticated control frame", async () => {
-    const { socket, dir } = boot("control-silent");
+    const { socket, dir } = await boot("control-silent");
     const receipt = await receiptListener(dir, "no-reply-todou-watch-2.sock");
     await exchange(socket, [
       `${JSON.stringify({
@@ -476,7 +476,7 @@ describe("what a refused push is told", () => {
    * above proves by landing its receipt there.
    */
   it("writes no receipt to an address outside its own directory", async () => {
-    const { socket } = boot("receipt-elsewhere");
+    const { socket } = await boot("receipt-elsewhere");
     const outside = mkdtempSync(join(tmpdir(), "todou-omp-elsewhere-"));
     dirs.push(outside);
     const elsewhere = await receiptListener(
@@ -504,7 +504,7 @@ describe("the socket's own permissions", () => {
    * would race it.
    */
   it("is not group- or world-writable", async () => {
-    const { socket, token } = boot("socket-mode");
+    const { socket, token } = await boot("socket-mode");
     await exchange(socket, [`${authFrame(token)}\n`]);
     expect(statSync(socket).mode & 0o777).toBe(0o600);
   });
@@ -539,7 +539,10 @@ describe("the todou_watch tool (T-357)", () => {
     command: Record<string, unknown>;
   };
 
-  function bootWatch(name: string, sessionCtx: unknown = {}): WatchBooted {
+  async function bootWatch(
+    name: string,
+    sessionCtx: unknown = {},
+  ): Promise<WatchBooted> {
     const runtime = mkdtempSync(join(tmpdir(), `todou-omp-${name}-`));
     dirs.push(runtime);
     process.env.XDG_RUNTIME_DIR = runtime;
@@ -572,7 +575,7 @@ describe("the todou_watch tool (T-357)", () => {
       arktype: (definition: unknown) => definition,
     };
     todou(pi as never);
-    handlers.session_start?.[0]?.(
+    await handlers.session_start?.[0]?.(
       {},
       // The extension keeps this ctx for its repaints — the same object the
       // host keeps writing `ui` and `hasUI` onto — so the widget cases hand
@@ -616,10 +619,10 @@ describe("the todou_watch tool (T-357)", () => {
 
     let stopped = false;
     instances.push({
-      stop() {
+      async stop() {
         if (stopped) return;
         stopped = true;
-        handlers.session_shutdown?.[0]?.({}, {});
+        await handlers.session_shutdown?.[0]?.({}, {});
       },
     });
     return { sent, run, runCommand, completions, command };
@@ -693,7 +696,7 @@ describe("the todou_watch tool (T-357)", () => {
   it("reports a child that exits inside the grace, with its stderr", async () => {
     const { bin } = fakeTodou("fail", 'echo "no project selected" >&2\nexit 1');
     process.env.TODOU_BIN = bin;
-    const { run } = bootWatch("start-fail");
+    const { run } = await bootWatch("start-fail");
     const text = await run({ action: "start" });
     expect(text).toContain("could not start");
     // The CLI's own words, verbatim: they say more than this file can.
@@ -703,7 +706,7 @@ describe("the todou_watch tool (T-357)", () => {
   it("starts, lists, stops, and does not announce a tool stop", async () => {
     const { bin, pids } = fakeTodou("live", "exec sleep 30");
     process.env.TODOU_BIN = bin;
-    const { run, sent } = bootWatch("start-stop");
+    const { run, sent } = await bootWatch("start-stop");
     const started = await run({ action: "start" });
     expect(started).toMatch(/^started w1 — /);
     expect(started).toContain("--follow=uds");
@@ -723,7 +726,7 @@ describe("the todou_watch tool (T-357)", () => {
   it("returns the first watch's id for the same request again", async () => {
     const { bin } = fakeTodou("dedupe", "exec sleep 30");
     process.env.TODOU_BIN = bin;
-    const { run } = bootWatch("dedupe");
+    const { run } = await bootWatch("dedupe");
     const first = await run({ action: "start", issue: "T-16" });
     expect(first).toMatch(/^started w1/);
     const again = await run({ action: "start", issue: "T-16" });
@@ -736,7 +739,7 @@ describe("the todou_watch tool (T-357)", () => {
   it("starts a fresh watch once the same-keyed one has ended", async () => {
     const { bin, pids } = fakeTodou("restart", "exec sleep 30");
     process.env.TODOU_BIN = bin;
-    const { run, sent } = bootWatch("restart");
+    const { run, sent } = await bootWatch("restart");
     const first = await run({ action: "start" });
     expect(first).toMatch(/^started w1/);
     // Kill it from outside the tool, the way a dead server would.
@@ -754,7 +757,7 @@ describe("the todou_watch tool (T-357)", () => {
     // the exact shape a server-side hangup leaves behind.
     const { bin } = fakeTodou("cursor", "sleep 1\necho 'cursor: c1'\nexit 3");
     process.env.TODOU_BIN = bin;
-    const { run, sent } = bootWatch("cursor");
+    const { run, sent } = await bootWatch("cursor");
     const text = await run({ action: "start" });
     expect(text).toMatch(/^started w1/);
     await sentCount({ sent }, 1);
@@ -765,7 +768,7 @@ describe("the todou_watch tool (T-357)", () => {
   it("tells a stop without an id where the ids are", async () => {
     const { bin } = fakeTodou("noid", "exec sleep 30");
     process.env.TODOU_BIN = bin;
-    const { run } = bootWatch("noid");
+    const { run } = await bootWatch("noid");
     const text = await run({ action: "stop" });
     expect(text).toContain("stop needs an id");
     expect(text).toContain('"action": "list"');
@@ -781,7 +784,7 @@ describe("the todou_watch tool (T-357)", () => {
       'env | grep -E "^(OMPCODE|TODOU_)" | sort >&2\nexit 7',
     );
     process.env.TODOU_BIN = bin;
-    const { run } = bootWatch("env");
+    const { run } = await bootWatch("env");
     const text = await run({ action: "start" });
     expect(text).toContain("OMPCODE=1");
     expect(text).toContain("TODOU_OMP_STATE=");
@@ -798,7 +801,7 @@ describe("the todou_watch tool (T-357)", () => {
       "trap 'echo \"cursor: c-all\" ; exit 0' TERM\nwhile true; do sleep 1; done",
     );
     process.env.TODOU_BIN = bin;
-    const { run, runCommand, sent } = bootWatch("command");
+    const { run, runCommand, sent } = await bootWatch("command");
     await run({ action: "start", issue: "T-16" });
     await run({ action: "start", issue: "T-18" });
     const notify: string[] = [];
@@ -832,7 +835,7 @@ describe("the todou_watch tool (T-357)", () => {
     // messages as it stopped watches.
     const { bin, pids } = fakeTodou("together", "exec sleep 30");
     process.env.TODOU_BIN = bin;
-    const { run, runCommand, sent } = bootWatch("together");
+    const { run, runCommand, sent } = await bootWatch("together");
     // Four members, not two. The fault needs every `exit` to land before
     // every `close`, and a loaded event loop — the whole file running,
     // which is how CI runs it — pairs a child's own two events up often
@@ -876,7 +879,7 @@ describe("the todou_watch tool (T-357)", () => {
         "while true; do sleep 0.05; done",
     );
     process.env.TODOU_BIN = bin;
-    const { run, runCommand, sent } = bootWatch("stagger");
+    const { run, runCommand, sent } = await bootWatch("stagger");
     await run({ action: "start", issue: "T-16" });
     await run({ action: "start", issue: "T-18" });
     await runCommand("stop", { hasUI: false });
@@ -902,7 +905,7 @@ describe("the todou_watch tool (T-357)", () => {
       "trap 'echo \"cursor: c-one\" ; exit 0' TERM\nwhile true; do sleep 1; done",
     );
     process.env.TODOU_BIN = bin;
-    const { run, runCommand, sent } = bootWatch("command-one");
+    const { run, runCommand, sent } = await bootWatch("command-one");
     await run({ action: "start", issue: "T-16" });
     const notify: string[] = [];
     await runCommand("stop w1", {
@@ -927,7 +930,7 @@ describe("the todou_watch tool (T-357)", () => {
     );
     process.env.TODOU_BIN = bin;
     const lines: Array<string[] | undefined> = [];
-    const { run } = bootWatch("widget", {
+    const { run } = await bootWatch("widget", {
       cwd: dirname(bin),
       hasUI: true,
       ui: {
@@ -949,7 +952,7 @@ describe("the todou_watch tool (T-357)", () => {
     const { bin } = fakeTodou("silent", "exec sleep 30");
     process.env.TODOU_BIN = bin;
     const lines: Array<string[] | undefined> = [];
-    const { run } = bootWatch("silent", {
+    const { run } = await bootWatch("silent", {
       cwd: dirname(bin),
       hasUI: true,
       ui: {
@@ -964,7 +967,7 @@ describe("the todou_watch tool (T-357)", () => {
     const { bin } = fakeTodou("no-ui", "exec sleep 30");
     process.env.TODOU_BIN = bin;
     let painted = 0;
-    const { run } = bootWatch("no-ui", {
+    const { run } = await bootWatch("no-ui", {
       cwd: dirname(bin),
       hasUI: false,
       ui: {
@@ -981,13 +984,13 @@ describe("the todou_watch tool (T-357)", () => {
   it("starts fine with no ui object at all", async () => {
     const { bin } = fakeTodou("no-ui-object", "exec sleep 30");
     process.env.TODOU_BIN = bin;
-    const { run } = bootWatch("no-ui-object");
+    const { run } = await bootWatch("no-ui-object");
     const text = await run({ action: "start" }, { cwd: dirname(bin) });
     expect(text).toMatch(/^started/);
   });
 
-  it("completes /todou's stop argument", () => {
-    const { completions } = bootWatch("complete");
+  it("completes /todou's stop argument", async () => {
+    const { completions } = await bootWatch("complete");
     expect(completions("st")).toEqual([
       {
         value: "stop ",
@@ -1004,8 +1007,8 @@ describe("the todou_watch tool (T-357)", () => {
    * that registers, lists, completes — and does nothing when it is typed.
    * That was T-396's first defect, live from the day /todou shipped.
    */
-  it("registers its callback as handler, the name omp dispatches", () => {
-    const { command } = bootWatch("callback-name");
+  it("registers its callback as handler, the name omp dispatches", async () => {
+    const { command } = await bootWatch("callback-name");
     expect(typeof command.handler).toBe("function");
     expect(command.run).toBeUndefined();
   });
@@ -1016,7 +1019,7 @@ describe("the todou_watch tool (T-357)", () => {
    * branch. That is what makes the last two comparable.
    */
   it("splits the argument text on runs of whitespace", async () => {
-    const { runCommand } = bootWatch("arg-split");
+    const { runCommand } = await bootWatch("arg-split");
     const notify: string[] = [];
     const ctx = { hasUI: false, ui: { notify: (t: string) => notify.push(t) } };
     await runCommand("", ctx);
@@ -1039,8 +1042,8 @@ describe("the todou_watch tool (T-357)", () => {
    * every try/catch, so an item without it takes the whole session down —
    * T-396's second defect, and the only value we hand omp that can.
    */
-  it("hands omp completion items it can read", () => {
-    const { completions } = bootWatch("completion-shape");
+  it("hands omp completion items it can read", async () => {
+    const { completions } = await bootWatch("completion-shape");
     const items = ["", "s", "st", "stop"].flatMap((input) =>
       completions(input),
     );

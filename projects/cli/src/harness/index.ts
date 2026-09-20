@@ -4,7 +4,7 @@ import type { Env } from "../config.ts";
 import { claudeCode } from "./claude-code.ts";
 import { codex } from "./codex.ts";
 import { hermesAgent } from "./hermes-agent.ts";
-import { omp } from "./omp.ts";
+import { omp, ompHostAncestor } from "./omp.ts";
 import { publishedState } from "./omp-state.ts";
 import { pi, piHostAncestor } from "./pi.ts";
 import {
@@ -94,9 +94,14 @@ function select(
   const chain = ancestors();
   let best: { harness: Harness; depth: number } | undefined;
   for (const harness of candidates) {
-    const piHost = harness.id === "pi" ? piHostAncestor(chain) : undefined;
-    const depth = piHost
-      ? chain.indexOf(piHost)
+    const nativeHost =
+      harness.id === "pi"
+        ? piHostAncestor(chain)
+        : harness.id === "omp"
+          ? ompHostAncestor(chain)
+          : undefined;
+    const depth = nativeHost
+      ? chain.indexOf(nativeHost)
       : hostIndex((e) => harness.matches(e), chain);
     // Strictly nearer, so an equal depth leaves the registry order in charge.
     if (depth !== undefined && (best === undefined || depth < best.depth)) {
@@ -149,7 +154,11 @@ function hostResolver(
     resolved = true;
     const chain = ancestors();
     const found =
-      (selection.harness.id === "pi" ? piHostAncestor(chain) : undefined) ??
+      (selection.harness.id === "pi"
+        ? piHostAncestor(chain)
+        : selection.harness.id === "omp"
+          ? ompHostAncestor(chain)
+          : undefined) ??
       (selection.hostPid === undefined
         ? nearestUnmarked(selection.harness, chain)
         : chain.find((a) => a.pid === selection.hostPid));

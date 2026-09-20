@@ -67,7 +67,9 @@ export type RetryOptions = {
   /** Progress line per retry, for stderr. */
   onRetry?: (line: string) => void;
   /** Backoff waits; unset means the system clock. */
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /** A verified native owner retired; never retry an aborted watch. */
+  signal?: AbortSignal;
   /** Test seam. */
   random?: () => number;
 };
@@ -192,9 +194,11 @@ export async function retryTransient<T>(
   const random = opts.random ?? Math.random;
   let failures = 0;
   for (;;) {
+    opts.signal?.throwIfAborted();
     try {
       return await fn();
     } catch (error) {
+      opts.signal?.throwIfAborted();
       if (!isTransientError(error)) throw error;
       failures += 1;
       if (failures >= opts.maxAttempts) {
@@ -214,7 +218,7 @@ export async function retryTransient<T>(
       opts.onRetry?.(
         `transient failure ${budget} (${describeError(error)}); retrying in ${(delayMs / 1000).toFixed(1)}s`,
       );
-      await wait(delayMs);
+      await wait(delayMs, opts.signal);
     }
   }
 }
@@ -354,6 +358,10 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
    * may be hours away. Pairs with a `wait` that the same event cuts short.
    */
   shouldStop?: () => boolean;
+  /** Independent lifetime cancellation, including requests and retries. */
+  signal?: AbortSignal;
+  /** Flush collected entries directly, without pushing into a retired session. */
+  onStop?: (items: T[], cursor: string | undefined) => void;
   onEmpty: (cursor: string | undefined) => void;
   /** `forever` only: one heartbeat per elapsed quiet phase, for stderr. */
   onQuiet?: (cursor: string | undefined, totalMs: number) => void;
@@ -375,88 +383,91 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
   wait?: (maxMs: number) => Promise<void>;
 }): Promise<number> {
   let cursor = opts.baseline;
+  let pending: T[] = [];
   const clock = opts.clock ?? systemClock;
   const start = clock.now();
   let deadline = start + opts.timeoutSec * 1000;
-  const retry =
-    opts.retry ??
-    watchRetryOptions(
-      { poll: opts.poll, forever: opts.forever },
-      undefined,
-      clock,
-    );
+  const retry = {
+    ...(opts.retry ??
+      watchRetryOptions(
+        { poll: opts.poll, forever: opts.forever },
+        undefined,
+        clock,
+      )),
+    signal: opts.signal ?? opts.retry?.signal,
+  };
   const wait =
     opts.wait ??
-    ((maxMs) => clock.sleep(Math.min(opts.intervalSec * 1000, maxMs)));
+    ((maxMs) =>
+      clock.sleep(Math.min(opts.intervalSec * 1000, maxMs), opts.signal));
+  const stopped = () => opts.signal?.aborted || opts.shouldStop?.();
 
-  // Cursors are absolute stream positions and only advance once a drain
-  // has returned, so re-draining with the held cursor after a failure
-  // loses nothing and repeats nothing. That makes retryTransient safe at
-  // this one seam, which both the quiet-phase and the debounce loops drain
-  // through; a success resets the consecutive-failure count. Retry sleeps
-  // may overrun the quiet-phase deadline or the debounce window — that only
-  // delays the verdict, and beats a false "no news" exit while unreachable.
+  // Advance only after a complete drain: cancellation of a partial page
+  // leaves the held cursor safe to resume, including through an outage.
   const drainOnce = async (): Promise<T[]> => {
     const page = await retryTransient(() => opts.drain(cursor), retry);
     cursor = page.cursor ?? cursor;
     return page.items;
   };
+  const flushStop = () => {
+    if (opts.onStop !== undefined) opts.onStop(pending, cursor);
+    else if (pending.length > 0) opts.onItems(pending, cursor);
+    pending = [];
+    return 0;
+  };
 
-  for (;;) {
-    if (opts.shouldStop?.()) return 0;
-    const items = await drainOnce();
-    if (items.length > 0) {
-      if (opts.debounceSec !== undefined && !opts.poll) {
-        // The window is anchored on when the newest entry of this first
-        // batch happened, not on when the watcher saw it (T-50): resuming
-        // with an old cursor over already-quiet history returns at once
-        // instead of idling out a full window, while live entries
-        // (created_at ≈ now) still get the whole window. The anchor is
-        // clamped to now — server clock skew or an unparsable timestamp
-        // (NaN → 0) must never stretch the wait — and never moves once
-        // set, so sustained activity cannot defer the return forever.
-        // Entries landing after the window closes stay beyond `cursor`
-        // for the caller's next watch.
-        const newest = Math.max(
-          ...items.map((item) => Date.parse(item.created_at) || 0),
-        );
-        const windowEnd =
-          Math.min(clock.now(), newest) + opts.debounceSec * 1000;
-        for (;;) {
-          const remaining = windowEnd - clock.now();
-          if (remaining <= 0) break;
-          await wait(remaining);
-          items.push(...(await drainOnce()));
+  try {
+    for (;;) {
+      if (stopped()) return flushStop();
+      pending = await drainOnce();
+      if (pending.length > 0) {
+        if (opts.debounceSec !== undefined && !opts.poll) {
+          // Anchor on the first batch's newest entry, never extend the
+          // window when another batch lands.
+          const newest = Math.max(
+            ...pending.map((item) => Date.parse(item.created_at) || 0),
+          );
+          const windowEnd =
+            Math.min(clock.now(), newest) + opts.debounceSec * 1000;
+          for (;;) {
+            if (stopped()) return flushStop();
+            const remaining = windowEnd - clock.now();
+            if (remaining <= 0) break;
+            await wait(remaining);
+            if (stopped()) return flushStop();
+            pending.push(...(await drainOnce()));
+          }
         }
-      }
-      opts.onItems(items, cursor);
-      if (opts.afterItems === undefined) return 0;
-      if ((await opts.afterItems(items, cursor)) === "stop") return 0;
-      // Same re-arming as the forever quiet phase, and for the same reason:
-      // the cursor the loop already holds is the one to carry on from, since
-      // asking the server for a fresh "now" would skip whatever landed
-      // while this batch was being handed over.
-      deadline = clock.now() + opts.timeoutSec * 1000;
-      continue;
-    }
-    if (opts.poll) {
-      opts.onEmpty(cursor);
-      return 0;
-    }
-    const remaining = deadline - clock.now();
-    if (remaining <= 0) {
-      if (opts.forever) {
-        // Re-arm and carry on with the cursor the loop already holds:
-        // asking the server for a fresh "now" position here would skip
-        // whatever landed while it was quiet. The heartbeat exists so a
-        // reader of the stderr feed can tell waiting apart from wedged.
-        opts.onQuiet?.(cursor, clock.now() - start);
+        if (stopped()) return flushStop();
+        const items = pending;
+        opts.onItems(items, cursor);
+        // Ownership passes to stdout or afterItems. Follow's finish owns
+        // unconfirmed pushes, so these must not also enter the stop flush.
+        pending = [];
+        if (opts.afterItems === undefined) return 0;
+        if ((await opts.afterItems(items, cursor)) === "stop") return 0;
         deadline = clock.now() + opts.timeoutSec * 1000;
         continue;
       }
-      opts.onEmpty(cursor);
-      return 3;
+      if (stopped()) return flushStop();
+      if (opts.poll) {
+        opts.onEmpty(cursor);
+        return 0;
+      }
+      const remaining = deadline - clock.now();
+      if (remaining <= 0) {
+        if (opts.forever) {
+          opts.onQuiet?.(cursor, clock.now() - start);
+          deadline = clock.now() + opts.timeoutSec * 1000;
+          continue;
+        }
+        opts.onEmpty(cursor);
+        return 3;
+      }
+      await wait(remaining);
     }
-    await wait(remaining);
+  } catch (error) {
+    if (opts.signal?.aborted) return flushStop();
+    throw error;
   }
 }

@@ -180,6 +180,7 @@ export type PeerPushOptions<T> = {
   ) => string;
 } & PeerPushReceiver & {
     clock?: Clock;
+    signal?: AbortSignal;
     receiptWindowMs?: number;
     /**
      * The session's CLAUDE_CODE_MESSAGING_TOKEN, absent on Claude Code before
@@ -280,7 +281,10 @@ export async function openPeerPush<T>(
 ): Promise<PeerPush<T>> {
   const clock = opts.clock ?? systemClock;
   const receiptWindowMs = opts.receiptWindowMs ?? RECEIPT_WINDOW_MS;
-  const dial = opts.dial ?? dialSocket;
+  const dial =
+    opts.dial ??
+    ((target: string, payload: string) =>
+      dialSocket(target, payload, opts.signal));
   // Native Windows is the only platform that requires the auth line, and the
   // only one where the socket is a named pipe rather than a file. WSL 2
   // reports "linux", which is the split the docs draw as well.
@@ -627,17 +631,25 @@ export async function openPeerPush<T>(
 }
 
 /** One frame per connection, write end shut so the peer sees its length. */
-function dialSocket(target: string, payload: string): Promise<void> {
+function dialSocket(
+  target: string,
+  payload: string,
+  signal?: AbortSignal,
+): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
     const socket = connect(target);
     let settled = false;
     const settle = (error?: Error) => {
       if (settled) return;
       settled = true;
       socket.destroy();
+      signal?.removeEventListener("abort", onAbort);
       if (error) reject(error);
       else resolve();
     };
+    const onAbort = () => settle(signal?.reason);
+    signal?.addEventListener("abort", onAbort, { once: true });
     socket.on("error", settle);
     socket.on("connect", () => socket.end(payload, () => settle()));
   });

@@ -44,6 +44,7 @@ import {
   localizeIssueUrl,
   unknownServerError,
 } from "./server-alias.ts";
+import { openWatchLifetime, type WatchLifetime } from "./watch-lifetime.ts";
 import type { SessionSource } from "./watch-loop.ts";
 
 export type CursorRecord = {
@@ -134,6 +135,12 @@ export abstract class ApiCommand extends Command<CliContext> {
   protected agentContext: AgentContext | null = null;
   /** Replaced in `execute` once the environment is known (T-289). */
   protected liveSession: () => LiveSession = () => ({});
+  protected watchLifetime?: WatchLifetime;
+
+  /** Only resident raw watches opt in; ordinary commands keep their lifetime. */
+  protected bindWatchOwner(): boolean {
+    return false;
+  }
 
   /** Who this process is now: the id it holds live, else the one it began with. */
   protected ownSession(): string | undefined {
@@ -162,7 +169,7 @@ export abstract class ApiCommand extends Command<CliContext> {
   }
 
   protected get clock(): Clock {
-    return this.context.clock ?? systemClock;
+    return this.watchLifetime?.clock ?? this.context.clock ?? systemClock;
   }
 
   async execute(): Promise<number | undefined> {
@@ -215,6 +222,16 @@ export abstract class ApiCommand extends Command<CliContext> {
         home: this.context.home,
         io: this.context.processTree,
       });
+      if (this.bindWatchOwner()) {
+        this.watchLifetime = openWatchLifetime({
+          env: this.context.env,
+          io: this.context.processTree,
+          clock: this.context.clock,
+          note: (line) => this.note(line),
+        });
+      }
+      const signal = this.watchLifetime?.signal;
+      const fetchImpl = this.context.fetchImpl ?? globalThis.fetch;
       const announced = new Set<string>();
       this.client = new TodouClient({
         baseUrl: this.ctx.server,
@@ -222,7 +239,16 @@ export abstract class ApiCommand extends Command<CliContext> {
         headers: this.agentContext
           ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(this.agentContext) }
           : undefined,
-        fetch: this.context.fetchImpl,
+        fetch:
+          signal === undefined
+            ? this.context.fetchImpl
+            : (input, init) =>
+                fetchImpl(input, {
+                  ...init,
+                  signal: init?.signal
+                    ? AbortSignal.any([signal, init.signal])
+                    : signal,
+                }),
         onCanonicalSlug: (canonical, requested) => {
           // The header also fires for a project named by its id, which is
           // a spelling every route takes rather than one that has been
@@ -244,7 +270,10 @@ export abstract class ApiCommand extends Command<CliContext> {
       const code = await this.run(this.client);
       return typeof code === "number" ? code : 0;
     } catch (error) {
+      if (this.watchLifetime?.signal.aborted) return 0;
       return await this.report(error);
+    } finally {
+      this.watchLifetime?.close();
     }
   }
 

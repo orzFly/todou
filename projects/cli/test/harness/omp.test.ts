@@ -1265,6 +1265,7 @@ describe("the session omp published, found by ancestor pid", () => {
     };
     write(CHILD_PID, OMP_PID, opts.childEnv ?? {}, [
       opts.childComm ?? "python3",
+      ...(opts.childComm === "omp" ? ["__omp_worker_js_eval_process"] : []),
     ]);
     write(OMP_PID, 1, {}, ["omp"], opts.openLogs);
     return {
@@ -1333,10 +1334,9 @@ describe("the session omp published, found by ancestor pid", () => {
   });
 
   /*
-   * The two shapes measured inside omp: the JavaScript runtime is another omp
-   * process and the Python one is a plain python3, and neither carries a
-   * marker. Selection has nothing in the environment to go on, so the record
-   * is what says we are in a session at all.
+   * The JavaScript runtime re-enters omp with its hidden worker-mode argument
+   * (omp v18.2.5 subprocess/worker-client.ts); Python uses python3. Neither
+   * carries a marker, so the published host record selects the session.
    */
   for (const comm of ["python3", "omp"]) {
     it(`finds omp from a bare ${comm} eval runtime`, () => {

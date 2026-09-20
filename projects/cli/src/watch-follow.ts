@@ -177,6 +177,8 @@ export type Follow<T> = {
   silent: boolean;
   /** Records a position the loop reported, for the exit flush. */
   seen: (cursor: string | undefined) => void;
+  /** Retain a collected batch for stdout when its native owner retires. */
+  stopped: (items: T[], cursor: string | undefined) => void;
   /** Hands over what is not known to have landed, then closes. */
   finish: () => void;
 };
@@ -281,6 +283,7 @@ export async function openFollow<T>(opts: {
   /** Test seam; production leaves it unset and the real home is read. */
   home?: string;
   clock: Clock;
+  signal?: AbortSignal;
   note: (line: string) => void;
   /** Test seam; production leaves it unset and a real socket is dialled. */
   open?: typeof openPeerPush;
@@ -294,6 +297,7 @@ export async function openFollow<T>(opts: {
     since: () => undefined,
     silent: false,
     seen: () => {},
+    stopped: (items, cursor) => opts.emit(items, undefined, cursor),
     finish: () => {},
   };
   if (opts.transport === null) return oneShot;
@@ -329,6 +333,7 @@ export async function openFollow<T>(opts: {
         token: opts.messaging.token,
         note: opts.note,
         clock: opts.clock,
+        signal: opts.signal,
         ...receiver,
         render: (items, since, cursor) =>
           [
@@ -351,11 +356,22 @@ export async function openFollow<T>(opts: {
   }
 
   const push = opened;
+  let stoppedItems: T[] = [];
+  let stoppedCursor: string | undefined;
+  let finished = false;
   return {
     since: () => rangeStart,
     silent: push !== null,
     seen: (cursor) => {
       seenCursor = cursor;
+    },
+    stopped: (items, cursor) => {
+      seenCursor = cursor;
+      if (push === null) opts.emit(items, rangeStart, cursor);
+      else {
+        stoppedItems = items;
+        stoppedCursor = cursor;
+      }
     },
     wait:
       push === null
@@ -380,6 +396,8 @@ export async function openFollow<T>(opts: {
     },
     shouldStop: push === null ? undefined : () => push.rejected !== null,
     finish: () => {
+      if (finished) return;
+      finished = true;
       if (push === null) return;
       const held = push.unconfirmed();
       // The one moment uds mode writes to stdout. Whatever ended the
@@ -388,7 +406,11 @@ export async function openFollow<T>(opts: {
       // before this flag: print and exit, only with the accumulated
       // batches. The position goes out even with nothing held, so a
       // restart has a `--since` to resume from.
-      opts.emit(held.items, held.since, held.cursor ?? seenCursor);
+      opts.emit(
+        [...held.items, ...stoppedItems],
+        held.since ?? (stoppedItems.length > 0 ? rangeStart : undefined),
+        stoppedCursor ?? held.cursor ?? seenCursor,
+      );
       const why = push.rejected;
       if (why !== null) {
         opts.note(

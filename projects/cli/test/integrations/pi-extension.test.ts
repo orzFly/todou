@@ -25,7 +25,7 @@ type Command = Parameters<Host["registerCommand"]>[1];
 
 let savedEnv: NodeJS.ProcessEnv;
 let dir: string;
-const shutdowns: Array<() => void> = [];
+const shutdowns: Array<() => Promise<void>> = [];
 const sockets = new Set<Socket>();
 const poll = { timeout: 5000, interval: 20 };
 
@@ -102,7 +102,7 @@ async function gone() {
 
 afterEach(async () => {
   try {
-    for (const shutdown of shutdowns.splice(0).reverse()) shutdown();
+    for (const shutdown of shutdowns.splice(0).reverse()) await shutdown();
     for (const socket of sockets) socket.destroy();
     sockets.clear();
     for (const pid of livePids()) {
@@ -147,9 +147,9 @@ function host(factory = piExtension) {
   expect(tools).toHaveLength(1);
   const tool = tools[0];
   if (tool === undefined) throw new Error("todou_watch was not registered");
-  function emit(event: string, context = ctx) {
+  async function emit(event: string, context = ctx) {
     expect(handlers.get(event)?.length).toBeGreaterThan(0);
-    for (const handler of handlers.get(event) ?? []) handler({}, context);
+    for (const handler of handlers.get(event) ?? []) await handler({}, context);
   }
   const shutdown = () => emit("session_shutdown");
   shutdowns.push(shutdown);
@@ -160,7 +160,7 @@ function host(factory = piExtension) {
     widgets,
     shutdown,
     start(id = "pi-session") {
-      emit("session_start", {
+      return emit("session_start", {
         ...ctx,
         sessionManager: {
           getSessionId: () => id,
@@ -296,7 +296,7 @@ describe("native Pi extension", () => {
       TODOU_OMP_STATE: join(dir, "parent.json"),
       TODOU_OMP_TOOLS: "omp-tool",
     });
-    pi.start();
+    await pi.start();
     const channel = address();
     expect(await pi.run({ action: "list" })).toContain("no watches");
     expect(
@@ -361,7 +361,7 @@ describe("native Pi extension", () => {
     process.env.TODOU_PI_STATE = inherited;
     process.env.TODOU_MESSAGING_TOKEN = "stale-token";
     const pi = host();
-    pi.start();
+    await pi.start();
     const channel = address();
     expect(channel.state).not.toBe(inherited);
     await exchange(channel.socket, [frame("unauthenticated")]);
@@ -376,7 +376,7 @@ describe("native Pi extension", () => {
 
   it("/todou stop delivers one native notification for the entire stopped group", async () => {
     const pi = host();
-    pi.start();
+    await pi.start();
     for (const issue of ["T-16", "T-17", "T-18", "T-19"]) {
       expect(await pi.run({ action: "start", issue })).toMatch(/^started w\d/);
     }
@@ -406,7 +406,7 @@ describe("native Pi extension", () => {
     "%s can reclaim the same PID after closing watches and old sockets",
     async (mode) => {
       const first = host();
-      first.start("before");
+      await first.start("before");
       const old = address("before");
       expect(await first.run({ action: "start", issue: "T-16" })).toMatch(
         /^started w1/,
@@ -424,9 +424,9 @@ describe("native Pi extension", () => {
       );
       let next = first;
       if (mode === "reload") {
-        first.start("after");
+        await first.start("after");
       } else {
-        first.shutdown();
+        await first.shutdown();
         expect(existsSync(old.state)).toBe(false);
         expect(existsSync(old.socket)).toBe(false);
         for (const key of [
@@ -448,7 +448,7 @@ describe("native Pi extension", () => {
       expect(first.widgets.at(-1)).toEqual(["todou", undefined]);
       if (mode !== "reload") {
         if (mode === "fresh factory") next = host();
-        next.start("after");
+        await next.start("after");
       }
       const current = address("after");
       expect(current.state).toBe(old.state);
@@ -470,7 +470,7 @@ describe("native Pi extension", () => {
         /^started w\d+ — /,
       );
       await vi.waitFor(() => expect(livePids()).toHaveLength(1), poll);
-      next.shutdown();
+      await next.shutdown();
       await gone();
       expect(existsSync(current.state)).toBe(false);
       expect(existsSync(current.socket)).toBe(false);
