@@ -1,5 +1,15 @@
+import type { Logger } from "drizzle-orm/logger";
 import type { Config, ProjectRouteInfo } from "../config.ts";
 import { type Db, type DbHandle, openDb } from "./driver.ts";
+
+export type DbTestHooks = {
+  onQuery?(sql: string, params: unknown[], url: string): void;
+};
+
+function queryLogger(url: string, hooks?: DbTestHooks): Logger | undefined {
+  const onQuery = hooks?.onQuery;
+  return onQuery && { logQuery: (sql, params) => onQuery(sql, params, url) };
+}
 
 /**
  * Routes queries to the system database and to per-project databases.
@@ -13,15 +23,20 @@ export class DbRouter {
   #projectHandles = new Map<string, DbHandle>();
   /** urls whose project-tier migrations already ran in this process */
   #migrated = new Set<string>();
+  // Kept on the instance rather than resolved into loggers once in open():
+  // project handles are opened lazily, so at open() time they do not exist.
+  #hooks: DbTestHooks | undefined;
 
-  private constructor(config: Config, system: DbHandle) {
+  private constructor(config: Config, system: DbHandle, hooks?: DbTestHooks) {
     this.#config = config;
     this.#system = system;
+    this.#hooks = hooks;
   }
 
-  static async open(config: Config): Promise<DbRouter> {
+  static async open(config: Config, hooks?: DbTestHooks): Promise<DbRouter> {
     const system = await openDb(config.database.system, {
       pool: config.database.pool,
+      logger: queryLogger(config.database.system, hooks),
     });
     if (shouldAutoMigrate(config, system.kind)) {
       await system.migrate("system");
@@ -30,7 +45,7 @@ export class DbRouter {
         await system.migrate("project");
       }
     }
-    return new DbRouter(config, system);
+    return new DbRouter(config, system, hooks);
   }
 
   system(): Db {
@@ -72,6 +87,7 @@ export class DbRouter {
     const handle = await openDb(url, {
       workerHost: this.#config.database.projects.workers,
       pool: this.#config.database.pool,
+      logger: queryLogger(url, this.#hooks),
     });
     if (
       shouldAutoMigrate(this.#config, handle.kind) &&

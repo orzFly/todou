@@ -1,7 +1,11 @@
 import { type App, createApp } from "../src/app.ts";
-import { type AppContext, bootstrap } from "../src/bootstrap.ts";
+import {
+  type AppContext,
+  bootstrap,
+  type TestHooks,
+} from "../src/bootstrap.ts";
 import { type Config, loadConfig } from "../src/config.ts";
-import { DbRouter } from "../src/db/router.ts";
+import { DbRouter, type DbTestHooks } from "../src/db/router.ts";
 import { users } from "../src/db/system-schema.ts";
 import { issueToken } from "../src/services/tokens.ts";
 import { testTmpDir } from "./setup.ts";
@@ -111,10 +115,70 @@ export function testConfig(
 export async function makeRouter(
   placement: PlacementMode = "shared",
   overrides?: ConfigOverrides,
+  hooks?: DbTestHooks,
 ): Promise<{ config: Config; router: DbRouter }> {
   const config = testConfig(placement, overrides);
-  const router = await DbRouter.open(config);
+  const router = await DbRouter.open(config, hooks);
   return { config, router };
+}
+
+type Sink = (sql: string, params: unknown[], url: string) => void;
+type CounterSlot = { sink: Sink | null };
+
+const counters = new WeakMap<AppContext, CounterSlot>();
+
+export type StatementLog = {
+  total: number;
+  byUrl: Record<string, number>;
+  txControl: number;
+  statements: {
+    sql: string;
+    params: unknown[];
+    url: string;
+    txControl: boolean;
+  }[];
+};
+
+// Transaction control is counted apart from the rest because the two drivers
+// expose complementary halves of it: PGlite delegates BEGIN/COMMIT to the
+// client so only `set transaction` reaches the logger, while node-postgres
+// sends BEGIN/COMMIT through the logger and no `set transaction` at all.
+// Folding them into one total makes the same assertion disagree with itself
+// between the default run and TODOU_TEST_POSTGRES_URL.
+const TX_CONTROL =
+  /^\s*(begin|commit|rollback|savepoint|release savepoint|rollback to savepoint|set transaction)\b/i;
+
+export async function countStatements(
+  t: TestApp,
+  fn: () => Promise<unknown>,
+): Promise<StatementLog> {
+  const slot = counters.get(t.ctx);
+  if (!slot) throw new Error("countStatements needs an app from makeTestApp");
+  if (slot.sink) {
+    throw new Error("countStatements windows cannot nest or run concurrently");
+  }
+  const log: StatementLog = {
+    total: 0,
+    byUrl: {},
+    txControl: 0,
+    statements: [],
+  };
+  slot.sink = (sql, params, url) => {
+    const txControl = TX_CONTROL.test(sql);
+    log.statements.push({ sql, params, url, txControl });
+    if (txControl) {
+      log.txControl += 1;
+      return;
+    }
+    log.total += 1;
+    log.byUrl[url] = (log.byUrl[url] ?? 0) + 1;
+  };
+  try {
+    await fn();
+  } finally {
+    slot.sink = null;
+  }
+  return log;
 }
 
 export type TestApp = {
@@ -128,11 +192,26 @@ export type TestApp = {
 export async function makeTestApp(
   placement: PlacementMode = "shared",
   overrides?: ConfigOverrides,
-  testHooks?: AppContext["testHooks"],
+  testHooks?: TestHooks,
 ): Promise<TestApp> {
   const config = testConfig(placement, overrides);
-  const ctx = await bootstrap(config);
-  if (testHooks !== undefined) ctx.testHooks = testHooks;
+  // Installed unconditionally because installing it means rebuilding the
+  // whole app: making it per-fixture would force countStatements to grow a
+  // second constructor. With no window open each statement costs one closure
+  // call and one null check, which is what drizzle's NoopLogger cost anyway,
+  // and production never reaches this file.
+  const slot: CounterSlot = { sink: null };
+  const ctx = await bootstrap(config, {
+    ...testHooks,
+    onQuery: (sql, params, url) => {
+      // The caller's hook runs first and is deliberately not wrapped: the
+      // fault-injection tests prove rollback by throwing from here, which
+      // only works if the exception reaches the statement's call site.
+      testHooks?.onQuery?.(sql, params, url);
+      slot.sink?.(sql, params, url);
+    },
+  });
+  counters.set(ctx, slot);
   const app = createApp(ctx);
   return {
     app,

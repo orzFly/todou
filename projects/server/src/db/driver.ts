@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
+import type { Logger } from "drizzle-orm/logger";
 import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
 import { migrate as migrateNodePg } from "drizzle-orm/node-postgres/migrator";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -61,7 +62,7 @@ export type PoolOptions = {
 
 export async function openDb(
   url: string,
-  opts?: { workerHost?: boolean; pool?: PoolOptions },
+  opts?: { workerHost?: boolean; pool?: PoolOptions; logger?: Logger },
 ): Promise<DbHandle> {
   const kind = dbKindOf(url);
   if (kind === "pglite") {
@@ -82,7 +83,7 @@ export async function openDb(
       : isMemory
         ? new PGlite({ extensions: PGLITE_EXTENSIONS })
         : new PGlite(target, { extensions: PGLITE_EXTENSIONS });
-    const db = drizzlePglite(client);
+    const db = drizzlePglite(client, { logger: opts?.logger });
     return {
       db: db as unknown as Db,
       kind,
@@ -97,7 +98,7 @@ export async function openDb(
     idleTimeoutMillis: opts?.pool?.idle_timeout_ms,
     connectionTimeoutMillis: opts?.pool?.connection_timeout_ms,
   });
-  const db = drizzleNodePg(pool);
+  const db = drizzleNodePg(pool, { logger: opts?.logger });
   return {
     db: db as unknown as Db,
     kind,

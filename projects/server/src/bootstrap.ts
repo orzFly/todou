@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { type CliDist, loadCliDist } from "./cli-dist.ts";
 import { type Config, ConfigError } from "./config.ts";
 import type { Db } from "./db/driver.ts";
-import { DbRouter } from "./db/router.ts";
+import { DbRouter, type DbTestHooks } from "./db/router.ts";
 import { users } from "./db/system-schema.ts";
 import { EventBus } from "./events/bus.ts";
 import { FsStorage } from "./storage/fs.ts";
@@ -31,10 +31,18 @@ export type AppContext = {
    * Injected only by tests. The cross-database move has no transaction to
    * roll back, so the only way to prove its recovery works is to stop it
    * between two steps and let the sweep finish the job.
+   *
+   * A query tap can only be installed by passing hooks to `bootstrap` — the
+   * system handle is built inside `DbRouter.open`, and under the default
+   * `shared` placement `#handleForProject` hands that same handle back for
+   * every project, so anything assigned to `ctx.testHooks` after bootstrap
+   * returns samples nothing at all.
    */
-  testHooks?: {
-    afterMoveStep?(step: 1 | 2 | 3 | 4 | 5 | 6): Promise<void>;
-  };
+  testHooks?: TestHooks;
+};
+
+export type TestHooks = DbTestHooks & {
+  afterMoveStep?(step: 1 | 2 | 3 | 4 | 5 | 6): Promise<void>;
 };
 
 /**
@@ -44,8 +52,11 @@ export type AppContext = {
  */
 export type DbContext = Pick<AppContext, "router">;
 
-export async function bootstrap(config: Config): Promise<AppContext> {
-  const router = await DbRouter.open(config);
+export async function bootstrap(
+  config: Config,
+  testHooks?: TestHooks,
+): Promise<AppContext> {
+  const router = await DbRouter.open(config, testHooks);
   if (config.auth.mode === "single") {
     await ensureBuiltinUser(router.system());
   }
@@ -58,6 +69,7 @@ export async function bootstrap(config: Config): Promise<AppContext> {
       ? await loadCliDist(config.http.cli_dist_dir)
       : null,
     shutdown: new AbortController(),
+    testHooks,
   };
 }
 
