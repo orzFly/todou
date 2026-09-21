@@ -44,6 +44,14 @@ async function statusCount(router: DbRouter, projectId: number) {
 
 const routeOf = (p: ReturnType<typeof project>) => p;
 
+function gate() {
+  let open!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open };
+}
+
 describe("system tier", () => {
   it("migrates and serves the system schema", async () => {
     const { router } = await open("shared");
@@ -202,5 +210,57 @@ describe("perDatabase", () => {
     ).toEqual([2]);
     expect(router.openHandleCount()).toBe(0);
     expect(await router.perDatabase([], routeOf, async () => 1)).toEqual([]);
+  });
+});
+
+// File-backed on purpose: `#evictIfNeeded` never evicts a `pglite://memory`
+// handle, so the whole eviction path — and with it everything a pin has to
+// survive — is unreachable from the in-memory templates every other fixture
+// in the suite uses.
+describe("handles in flight", () => {
+  it("keeps the handle a task body is reading", async () => {
+    const dir = testTmpDir("todou-router-pin-");
+    const { router } = await open("dedicated", {
+      maxOpen: 1,
+      urlTemplate: `pglite://${dir}/p\${project.id}`,
+    });
+    await insertStatus(router, 1);
+    await insertStatus(router, 2);
+    const inTx = gate();
+    const intruder = gate();
+    const task = router.perDatabase([project(1)], routeOf, (db) =>
+      db.transaction(async (tx) => {
+        await tx.select().from(statuses);
+        inTx.open();
+        await intruder.wait;
+        return (await tx.select().from(statuses)).length;
+      }),
+    );
+    await inTx.wait;
+    // Another request, arriving mid-transaction.
+    await router.forProject(project(2));
+    // Assert BEFORE letting the transaction continue: a statement issued on a
+    // closed PGlite inside an open transaction wedges the event loop (no
+    // rejection, timers stop, the 20s testTimeout never fires either), so a
+    // failure here has to leave the body parked at the gate.
+    expect(router.openHandleCount()).toBe(2);
+    intruder.open();
+    expect(await task).toEqual([1]);
+  });
+
+  it("releases the pin when the task body throws", async () => {
+    const dir = testTmpDir("todou-router-pin-throw-");
+    const { router } = await open("dedicated", {
+      maxOpen: 1,
+      urlTemplate: `pglite://${dir}/p\${project.id}`,
+    });
+    await insertStatus(router, 1);
+    await expect(
+      router.perDatabase([project(1)], routeOf, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    await router.forProject(project(2));
+    expect(router.openHandleCount()).toBe(1);
   });
 });

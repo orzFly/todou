@@ -268,7 +268,11 @@ host; rerun it on yours):
   grows linearly with the number of busy projects.
 - Each worker adds a thread and V8 isolate on top of the WASM heap the
   PGlite instance needs in either mode — budget roughly one thread per
-  open handle, bounded by `max_open`.
+  open handle. `max_open` bounds the idle cache, not the peak: a handle
+  that a cross-project request is reading is never closed, because
+  closing it would cut off a transaction, so a burst of concurrent
+  requests holds a few extra handles open until the next open reclaims
+  them.
 - If a worker crashes, in-flight queries on that database fail (they are
   never retried automatically) and a fresh worker reopens the data
   directory, recovering committed data; other projects never notice.
@@ -287,10 +291,15 @@ idle_timeout_ms = 10000
 connection_timeout_ms = 0   # 0 = wait forever
 ```
 
-Under `dedicated` placement each open project database is a separate pool,
-so the theoretical connection ceiling is `database.projects.max_open ×
-pool.max` (plus one pool for the system database). Work backwards from the
-PostgreSQL server's `max_connections` when raising either knob.
+Under `dedicated` placement each open project database is a separate pool.
+`database.projects.max_open` bounds the idle handle cache, and every
+cross-project request in flight can hold up to `max_open` handles that the
+cache will not close while they are being read, so the theoretical
+connection ceiling is `database.projects.max_open × (1 + C) × pool.max`
+(plus one pool for the system database), where C is the number of
+cross-project requests allowed to run at once. Work backwards from the
+PostgreSQL server's `max_connections`: either lower `max_open` or
+`pool.max`, or cap C at the reverse proxy.
 
 ## The unit
 

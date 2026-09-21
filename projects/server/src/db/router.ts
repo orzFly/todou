@@ -21,6 +21,21 @@ export class DbRouter {
   #system: DbHandle;
   /** url → handle, insertion order doubles as LRU order. */
   #projectHandles = new Map<string, DbHandle>();
+  /**
+   * Resolved url → how many task bodies are holding that handle right now.
+   * Keyed by url rather than kept on the DbHandle: a handle can be evicted
+   * and reopened as a new object, while eviction, closeUrl and #migrated all
+   * account by url — a count on the object would silently reset.
+   */
+  #pins = new Map<string, number>();
+  /**
+   * url → the open already under way for it. Opening awaits the driver and
+   * the migration before the handle reaches #projectHandles, so without this
+   * two concurrent callers each build a PGlite on the same data directory —
+   * PGlite does not lock it — and the first one written is then overwritten,
+   * left out of the table and never closed.
+   */
+  #opening = new Map<string, Promise<DbHandle>>();
   /** urls whose project-tier migrations already ran in this process */
   #migrated = new Set<string>();
   // Kept on the instance rather than resolved into loggers once in open():
@@ -84,6 +99,20 @@ export class DbRouter {
       return cached;
     }
 
+    const pending = this.#opening.get(url);
+    if (pending) return pending;
+    const opening = this.#openProject(url);
+    this.#opening.set(url, opening);
+    try {
+      return await opening;
+    } finally {
+      // Only the initiator clears the entry, and it clears it on failure too
+      // so the next caller retries the open instead of joining a dead one.
+      this.#opening.delete(url);
+    }
+  }
+
+  async #openProject(url: string): Promise<DbHandle> {
     const handle = await openDb(url, {
       workerHost: this.#config.database.projects.workers,
       pool: this.#config.database.pool,
@@ -140,11 +169,36 @@ export class DbRouter {
     }
     return inFlight(
       this.#config.database.projects.max_open,
-      [...groups.values()].map((group) => async () => {
-        const db = await this.forProject(group.route);
-        return run(db, group.members);
-      }),
+      [...groups.values()].map(
+        (group) => () =>
+          this.#withPinnedHandle(group.route, (db) => run(db, group.members)),
+      ),
     );
+  }
+
+  /**
+   * A handle is not an eviction candidate while a task body holds it.
+   *
+   * Closing a handle mid-transaction does not "cut the query off": on inline
+   * PGlite the next statement inside the open transaction wedges the whole
+   * event loop (measured on 0.5.4 — no rejection, and timers stop firing),
+   * and on the worker host the evicting side first waits out close()'s 2s
+   * grace race. So the pin is taken before the open: the handle is claimed
+   * from the first moment it exists.
+   */
+  async #withPinnedHandle<R>(
+    project: ProjectRouteInfo,
+    run: (db: Db) => Promise<R>,
+  ): Promise<R> {
+    const url = this.resolveProjectUrl(project);
+    this.#pins.set(url, (this.#pins.get(url) ?? 0) + 1);
+    try {
+      return await run(await this.forProject(project));
+    } finally {
+      const left = (this.#pins.get(url) ?? 1) - 1;
+      if (left > 0) this.#pins.set(url, left);
+      else this.#pins.delete(url);
+    }
   }
 
   /**
@@ -171,28 +225,58 @@ export class DbRouter {
     return otherProjects.some((p) => this.resolveProjectUrl(p) === url);
   }
 
+  /**
+   * max_open bounds the idle cache, not the peak. A handle a task body holds
+   * (#withPinnedHandle), an in-memory instance, and the most recently touched
+   * max_open handles all stay, so one pass may legitimately end over budget;
+   * the excess is collected by the next open's pass.
+   *
+   * The candidate window is the OLDEST `size - max` entries rather than
+   * "scan until size <= max": once pins keep the table over budget, an
+   * unwindowed scan walks all the way to the MRU end, which is exactly the
+   * handle a concurrent open just created and is about to hand to its caller.
+   */
   async #evictIfNeeded(): Promise<void> {
     const max = this.#config.database.projects.max_open;
-    while (this.#projectHandles.size > max) {
-      const [oldestUrl, oldest] = this.#projectHandles.entries().next()
-        .value as [string, DbHandle];
-      this.#projectHandles.delete(oldestUrl);
+    const overBudget = this.#projectHandles.size - max;
+    if (overBudget <= 0) return;
+    for (const [url, handle] of [...this.#projectHandles].slice(
+      0,
+      overBudget,
+    )) {
+      if (this.#projectHandles.size <= max) return;
+      // close() is awaited, and another pass may have closed or reopened this
+      // url meanwhile: neither driver's close is idempotent (PGlite throws
+      // "PGlite is closed", pg-pool "Called end on pool more than once").
+      if (this.#projectHandles.get(url) !== handle) continue;
+      if ((this.#pins.get(url) ?? 0) > 0) continue;
       // In-memory instances lose their data on close; never evict them
       // (only reachable in tests, which bound their own handle counts).
-      if (oldest.url.startsWith("pglite://memory")) {
-        this.#projectHandles.set(oldestUrl, oldest);
-        return;
-      }
-      await oldest.close();
-      this.#migrated.delete(oldestUrl);
+      if (url.startsWith("pglite://memory")) continue;
+      this.#projectHandles.delete(url);
+      // Dropped before the await: a concurrent reopen of this url would
+      // otherwise have its fresh migration marker deleted by our tail.
+      this.#migrated.delete(url);
+      await handle.close();
     }
   }
 
+  /**
+   * The cache's current size, which can briefly exceed `max_open`: pinned
+   * handles, in-memory ones, and the most recently touched `max_open` are all
+   * kept by an eviction pass.
+   */
   openHandleCount(): number {
     return this.#projectHandles.size;
   }
 
-  /** Close and forget the cached handle for a resolved URL, if any. */
+  /**
+   * Close and forget the cached handle for a resolved URL, if any.
+   *
+   * Ignores pins on purpose: its only caller deletes the project and then rm's
+   * the data directory, so a reader still on this handle has nothing left to
+   * read. A second caller would make this a new source of cut-off queries.
+   */
   async closeUrl(url: string): Promise<void> {
     const handle = this.#projectHandles.get(url);
     if (handle) {
@@ -214,12 +298,10 @@ export class DbRouter {
 /**
  * Run `tasks`, at most `limit` of them in flight, results in input order.
  *
- * The bound is a correctness requirement, not a tuning knob. `DbRouter` keeps
- * at most `database.projects.max_open` project handles and closes the LRU one
- * past that; serially that handle is always idle, but concurrently it could be
- * a handle with queries on it, and closing it cuts them off mid-flight. At or
- * under `max_open` every handle in flight was just touched by `forProject` and
- * so is never the eviction candidate.
+ * The bound is `database.projects.max_open` because that is the router's
+ * handle budget, not because safety rests on it: a handle a task body holds
+ * is pinned (`#withPinnedHandle`) and is never an eviction candidate, so a
+ * burst past the budget costs open connections rather than cut-off queries.
  *
  * One task runs exactly as sequentially as a bare `await` would, which is the
  * whole of `placement=shared` — hence no separate serial path to keep in step
