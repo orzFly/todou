@@ -3,7 +3,7 @@ import {
   queryOptions,
   useInfiniteQuery,
 } from "@tanstack/react-query";
-import type { TimelineItem, TimelinePage } from "@todou/shared";
+import type { TimelineEvent, TimelineItem, TimelinePage } from "@todou/shared";
 import { drainPaged } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 
@@ -123,14 +123,9 @@ export function useTimelineTail(slug: string, issueNumber: number) {
  * side has no server end-flag (next_cursor stays non-null so pollers can
  * continue), so callers gate expansion on the remaining count instead.
  */
-export function useTimelineHead(
-  slug: string,
-  issueNumber: number,
-  enabled: boolean,
-) {
-  return useInfiniteQuery({
+export function timelineHeadOptions(slug: string, issueNumber: number) {
+  return infiniteQueryOptions({
     queryKey: ["timeline", slug, issueNumber, "head"],
-    enabled,
     initialPageParam: { dir: "init-head" } as TimelinePageParam,
     queryFn: ({ pageParam }) => {
       if (pageParam.dir === "after") {
@@ -147,6 +142,68 @@ export function useTimelineHead(
       return cursor ? { dir: "after", cursor } : undefined;
     },
   });
+}
+
+export function useTimelineHead(
+  slug: string,
+  issueNumber: number,
+  enabled: boolean,
+) {
+  return useInfiniteQuery({
+    ...timelineHeadOptions(slug, issueNumber),
+    enabled,
+  });
+}
+
+function openedIn(pages: TimelinePage[] | undefined): TimelineEvent | null {
+  for (const page of pages ?? []) {
+    for (const item of page.items) {
+      if (item.type === "event" && item.event_type === "opened") return item;
+    }
+  }
+  return null;
+}
+
+/**
+ * The card's `opened` event, taken out of the timeline the page is already
+ * reading — the harness and session behind the description, which the body
+ * header wears beside its author.
+ *
+ * No read of its own. The tail window reaches the start of any card that fits
+ * one page, and where it does not `needsHead` turns on the head query, which
+ * begins at the very beginning; between them the event always arrives. Both
+ * observers here are disabled, so this hook only ever watches what `Timeline`
+ * fetches, and a caller mounted without one simply never resolves.
+ *
+ * `pending` is the difference between "not here yet" and "this card has
+ * none", which is what lets a header hold a place for a badge that is coming
+ * instead of growing one under the reader a moment later.
+ */
+export function useOpenedEvent(
+  slug: string,
+  issueNumber: number,
+): { event: TimelineEvent | null; pending: boolean } {
+  const tail = useInfiniteQuery({
+    ...timelineTailOptions(slug, issueNumber),
+    enabled: false,
+  });
+  const head = useInfiniteQuery({
+    ...timelineHeadOptions(slug, issueNumber),
+    enabled: false,
+  });
+  const fromTail = openedIn(tail.data?.pages);
+  if (fromTail !== null) return { event: fromTail, pending: false };
+  const firstTail = tail.data?.pages[0];
+  if (firstTail === undefined) return { event: null, pending: true };
+  // The tail reached the start and the event was not in it, so there is none
+  // to wait for — a card old enough to predate the event, or one whose
+  // `opened` was left behind by a move.
+  if (!needsHead(firstTail)) return { event: null, pending: false };
+  const fromHead = openedIn(head.data?.pages);
+  return {
+    event: fromHead,
+    pending: fromHead === null && head.data === undefined,
+  };
 }
 
 /** The head query runs only when the newest page did not reach the start. */

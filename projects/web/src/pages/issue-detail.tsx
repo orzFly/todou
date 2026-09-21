@@ -22,6 +22,7 @@ import {
   statusesQuery,
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import { useOpenedEvent } from "@/api/timeline.ts";
 import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
 import {
   AttachmentList,
@@ -54,7 +55,14 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { CommentHeaderLine } from "@/components/shared/comment-header-meta.tsx";
+import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
+import {
+  COMMENT_HEADER_ACTION,
+  COMMENT_HEADER_ROW,
+  CommentHeaderIdentity,
+  CommentHeaderLine,
+  CommentHeaderMeta,
+} from "@/components/shared/comment-header-meta.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -81,10 +89,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { useScrollInsets } from "@/lib/scroll-insets.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
+import { cn } from "@/lib/utils";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -408,6 +418,7 @@ export function BodyBlock({
   const [editing, setEditing] = useState(false);
   const editor = useRef<MarkdownEditorHandle>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const opened = useOpenedEvent(slug, issue.number);
   const refCompletion = useRefCompletion(slug);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
@@ -454,29 +465,64 @@ export function BodyBlock({
 
   return (
     <div className="rounded-lg border">
-      <div className="flex items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
-        {/* `max-sm:flex` because this one header never splits in two: it
-            carries no meta to send to a second line, so there is no grid
-            below the breakpoint for the line to dissolve into. */}
-        <CommentHeaderLine className="max-sm:flex">
-          <UserChip user={issue.author} />
-          <span
-            className="min-w-0 truncate text-xs text-muted-foreground"
-            title={issue.created_at}
-          >
-            {new Date(issue.created_at).toLocaleString()}
-          </span>
-          {issue.body_edited_at && (
-            <RevisionHistory
-              label="description"
-              editedAt={issue.body_edited_at}
-              filename="description.md"
-              queryKey={["revisions", slug, issue.number, "issue_body"]}
-              fetchRevisions={() => api.getIssueRevisions(slug, issue.number)}
-            />
-          )}
+      {/* The comment header, to the class: this block is the first entry on
+          the card and drifting from the ones under it made the description
+          look like a different kind of thing. Everything that decides the
+          shape comes from comment-header-meta.tsx, so the two can only move
+          together. */}
+      <div
+        className={cn(
+          "flex flex-wrap items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm",
+          COMMENT_HEADER_ROW,
+        )}
+      >
+        <CommentHeaderLine>
+          <CommentHeaderIdentity>
+            <UserChip user={issue.author} />
+            {/* The harness that opened the card. The issue itself records
+                none, so this comes from its `opened` event — the same
+                provenance the timeline row for that event carries, and it
+                arrives with the timeline rather than before it.
+
+                An agent account has a badge coming, so the place for it is
+                held while the timeline lands; a human's card would hold a
+                place for something that never arrives. */}
+            {opened.event ? (
+              <AgentContextBadge
+                context={opened.event.agent_context}
+                className="self-center"
+              />
+            ) : (
+              opened.pending &&
+              issue.author.kind === "machine" && (
+                <Skeleton
+                  aria-hidden="true"
+                  className="h-4 w-24 shrink-0 self-center rounded-md"
+                />
+              )
+            )}
+            {issue.body_edited_at && (
+              <RevisionHistory
+                label="description"
+                editedAt={issue.body_edited_at}
+                filename="description.md"
+                queryKey={["revisions", slug, issue.number, "issue_body"]}
+                fetchRevisions={() => api.getIssueRevisions(slug, issue.number)}
+              />
+            )}
+          </CommentHeaderIdentity>
+          <CommentHeaderMeta
+            unlinked
+            className="ml-auto"
+            createdAt={issue.created_at}
+          />
         </CommentHeaderLine>
-        <div className="flex shrink-0 self-center items-center gap-0.5">
+        <div
+          className={cn(
+            "flex shrink-0 self-center items-center gap-0.5",
+            COMMENT_HEADER_ACTION,
+          )}
+        >
           {!readOnly && (
             <Button
               size="icon-sm"

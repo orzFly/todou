@@ -114,15 +114,26 @@ export function CommentHeaderMeta(
   props: { createdAt: string; className?: string } & (
     | {
         /**
+         * Nothing to point at, so the time stands alone.
+         *
          * An optimistic comment has no persisted id — not a placeholder one,
          * which is why this branch cannot be handed a `commentId` to render.
          * The temporary ids the composer mints decrement (`-1 - key`), so
          * anything testing for `-1` instead would let the second unsent
          * comment of a session claim a permalink of its own.
+         *
+         * The issue body takes the same branch for a different reason: it is
+         * not a comment, and the card around it is already where a permalink
+         * would send the reader.
          */
-        pending: true;
+        unlinked: true;
       }
-    | { pending?: false; slug: string; issueNumber: number; commentId: number }
+    | {
+        unlinked?: false;
+        slug: string;
+        issueNumber: number;
+        commentId: number;
+      }
   ),
 ) {
   const returnState = useReturnLinkState();
@@ -153,7 +164,7 @@ export function CommentHeaderMeta(
     "--user-chip-name-indent": USER_CHIP_NAME_INDENT,
   } as CSSProperties;
 
-  if (props.pending) {
+  if (props.unlinked) {
     return (
       <span className={box} style={indent} data-testid="comment-header-meta">
         <span className={TEXT}>

@@ -211,7 +211,7 @@ export function CommentItem({
           </CommentHeaderIdentity>
           {pending ? (
             <CommentHeaderMeta
-              pending
+              unlinked
               className="ml-auto"
               createdAt={comment.created_at}
             />
