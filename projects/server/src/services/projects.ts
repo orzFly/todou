@@ -332,9 +332,15 @@ export async function listProjects(
  * qualified form wins — so a rename into a slug some project already
  * autolinks would silently kill that rule. The mirror check lives in
  * reference-config.ts, which refuses the autolink when the slug exists
- * first. Rules live in each project's own database, so this opens them all;
- * a database that will not open is logged and skipped, because the check is
- * a guard rail rather than a security boundary.
+ * first. Rules live in each project's own database, and failing to read one
+ * costs different amounts: a query that errors forfeits only that database's
+ * verdict, while a database that will not open at all forfeits the whole
+ * pass. Either way the worst case is one autolink rule going quietly
+ * inactive until the shadowing slug is renamed away again, which is why the
+ * check is allowed to give up — it is a guard rail, not a security boundary.
+ * It asks every project in the registry rather than the ones the caller can
+ * see, because an autolink in a project they cannot read is shadowed just
+ * the same.
  */
 async function assertNoAutolinkShadow(
   ctx: AppContext,
@@ -342,26 +348,56 @@ async function assertNoAutolinkShadow(
 ): Promise<void> {
   const prefix = `${newSlug}#`;
   const rows = await ctx.router.system().select().from(projects);
-  for (const row of rows) {
-    let hits: { id: number }[];
-    try {
-      const db = await ctx.router.forProject(routeInfoOf(row));
-      hits = await db
-        .select({ id: autolinks.id })
-        .from(autolinks)
-        .where(
-          and(eq(autolinks.projectId, row.id), eq(autolinks.prefix, prefix)),
+  const verdicts = await ctx.router
+    .perDatabase(rows, routeInfoOf, async (db, group) => {
+      try {
+        const hits = await db
+          .select({ id: autolinks.id })
+          .from(autolinks)
+          .where(
+            and(
+              eq(autolinks.prefix, prefix),
+              // Narrowing to the group's own projects is not redundant with
+              // asking their database: `deleteProject` leaves autolinks
+              // behind, and an orphan row must not block somebody else's
+              // rename. It is also what keeps the index in play —
+              // `autolinks_project_prefix_idx` leads on project_id.
+              inArray(
+                autolinks.projectId,
+                group.map((row) => row.id),
+              ),
+            ),
+          )
+          .limit(1);
+        return hits.length > 0;
+      } catch (cause) {
+        // With the default configuration a postgres project database that
+        // cannot be reached does not fail in `openDb` — the pool is lazy —
+        // so this is where it surfaces. Not unconditional: `auto_migrate` on
+        // (router.ts `shouldAutoMigrate`) makes it throw before the callback
+        // runs, and then the outer catch is what sees it.
+        console.error(
+          `autolink shadow check skipped for ${group.map((row) => row.slug).join(", ")}`,
+          cause,
         );
-    } catch (cause) {
-      console.error(`autolink shadow check skipped for ${row.slug}`, cause);
-      continue;
-    }
-    if (hits.length > 0) {
-      throw new ValidationFailedError(
-        `slug "${newSlug}" would shadow the autolink prefix "${prefix}" ` +
-          "configured in this deployment — remove that autolink first",
+        return false;
+      }
+    })
+    .catch((cause: unknown) => {
+      console.error(
+        "autolink shadow check skipped: a project database would not open",
+        cause,
       );
-    }
+      return [];
+    });
+  // Outside both catches. Thrown from the callback it would be swallowed by
+  // the one above; thrown inside the `.catch` chain it would be reported as
+  // an unopenable database. Either way a real shadow would answer 200.
+  if (verdicts.some(Boolean)) {
+    throw new ValidationFailedError(
+      `slug "${newSlug}" would shadow the autolink prefix "${prefix}" ` +
+        "configured in this deployment — remove that autolink first",
+    );
   }
 }
 
