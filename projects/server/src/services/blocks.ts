@@ -380,31 +380,66 @@ export async function evaluateBlockerStatus(
     );
   if (edges.length === 0) return [];
 
-  const verdicts = await clearedNumbers(db, project.id, [
+  const states = await cardStatesOf(db, project.id, [
     ...new Set(edges.map((e) => e.blockerNumber)),
   ]);
+  return applyVerdicts(system, edges, states);
+}
+
+/**
+ * Write the verdicts `states` implies onto `edges`, in two batches.
+ *
+ * The returned changes are re-ordered back onto `edges`: `UPDATE … RETURNING`
+ * makes no promise about row order, and this list is what decides the order
+ * the timeline entries land in.
+ */
+async function applyVerdicts(
+  system: Db,
+  edges: BlockRow[],
+  states: Map<string, CardState>,
+): Promise<BlockChange[]> {
   const now = new Date();
+  const verdicts = new Map<number, boolean>();
+  const clearedIds: number[] = [];
+  const reblockedIds: number[] = [];
+  for (const edge of edges) {
+    const state = states.get(
+      cardKey(edge.blockerProjectId, edge.blockerNumber),
+    );
+    // A number with no row left is not a verdict of "clear", and neither is
+    // one whose status row will not resolve: leaving the edge where it stands
+    // is the only answer that cannot invent one.
+    if (state === undefined || state.cleared === undefined) continue;
+    if (state.cleared === (edge.clearedAt !== null)) continue;
+    verdicts.set(edge.id, state.cleared);
+    (state.cleared ? clearedIds : reblockedIds).push(edge.id);
+  }
+
+  const updated = new Map<number, BlockRow>();
+  for (const [ids, values] of [
+    [clearedIds, { clearedAt: now }],
+    // Re-blocking clears the announcement stamp with the verdict, or the next
+    // clearing would look to the repair sweep like one that had already been
+    // announced.
+    [reblockedIds, { clearedAt: null, clearedNotifiedAt: null }],
+  ] as const) {
+    for (const slice of chunks(ids)) {
+      const rows = await system
+        .update(issueBlocks)
+        .set(values)
+        .where(inArray(issueBlocks.id, slice))
+        .returning();
+      for (const row of rows) updated.set(row.id, row);
+    }
+  }
+
   const changes: BlockChange[] = [];
   for (const edge of edges) {
-    const cleared = verdicts.get(edge.blockerNumber);
-    // A number with no row left is not a verdict of "clear": leaving the
-    // edge where it stands is the only answer that cannot invent one.
-    if (cleared === undefined) continue;
-    if (cleared === (edge.clearedAt !== null)) continue;
-    const updated = await system
-      .update(issueBlocks)
-      .set(
-        cleared
-          ? { clearedAt: now }
-          : // Re-blocking clears the announcement stamp with the verdict, or
-            // the next clearing would look to the repair sweep like one that
-            // had already been announced.
-            { clearedAt: null, clearedNotifiedAt: null },
-      )
-      .where(eq(issueBlocks.id, edge.id))
-      .returning();
-    const after = updated[0];
-    if (after !== undefined) changes.push({ edge: after, cleared });
+    const after = updated.get(edge.id);
+    const cleared = verdicts.get(edge.id);
+    if (after !== undefined && cleared !== undefined) {
+      changes.push({ edge: after, cleared });
+    }
   }
   return changes;
 }
@@ -418,56 +453,143 @@ async function clearedAtOf(
     ?.project;
   if (project === undefined) return null;
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const verdicts = await clearedNumbers(db, project.id, [card.number]);
-  return verdicts.get(card.number) === true ? new Date() : null;
+  const states = await cardStatesOf(db, project.id, [card.number]);
+  return states.get(cardKey(project.id, card.number))?.cleared === true
+    ? new Date()
+    : null;
 }
 
 /**
- * The clear line, applied in the project's own database: at or past the
+ * What a card is worth to an edge: whether it is past its project's clear
+ * line, and whether it is in the trash.
+ *
+ * The two are deliberately separate values rather than one boolean. A card
+ * whose status row will not resolve yields NO verdict — `cleared` is
+ * undefined — while its trash flag is still perfectly well defined, and
+ * folding them together would silently stop the trash flag from syncing for
+ * exactly those rows.
+ */
+type CardState = { cleared: boolean | undefined; deleted: boolean };
+
+/**
+ * `inArray` binds one parameter per value and PostgreSQL refuses a statement
+ * with more than 65535 of them. The sweep's only caller logs and swallows,
+ * so going over would not surface as a failure — it would quietly repair
+ * nothing.
+ */
+const CHUNK = 1000;
+
+/**
+ * Yields nothing for an empty list, which is also the guard every batched
+ * write here needs: drizzle 0.45.2 compiles `inArray(col, [])` to `false`
+ * rather than refusing it, so an unguarded empty batch is a statement sent
+ * on every sweep that found nothing to do.
+ */
+function* chunks<T>(values: readonly T[]): Generator<T[]> {
+  for (let i = 0; i < values.length; i += CHUNK) {
+    yield values.slice(i, i + CHUNK);
+  }
+}
+
+/** `cardStates` for a single project, which is what the live paths ask for. */
+const cardStatesOf = (
+  db: Db,
+  projectId: number,
+  numbers: number[],
+): Promise<Map<string, CardState>> =>
+  cardStates(db, new Map([[projectId, numbers]]));
+
+/**
+ * The clear line and the trash flag for every wanted card, read from the one
+ * database all these projects live in.
+ *
+ * The line is applied in the project's own database: at or past the
  * configured status by position, or — with none configured — in the closed
  * category. A configured status that is no longer there falls back to the
  * same default; `deleteStatus` refuses to remove a line, so that can only be
  * a hand-edited database, and inventing a different answer for it would be
- * a second rule nobody wrote down.
+ * a second rule nobody wrote down. A status belonging to a DIFFERENT project
+ * does not resolve either, which is why the lookup is keyed by the pair.
+ *
+ * The projects are asked for with `inArray` rather than one `or()` branch
+ * each, so the statement text stays the same size whatever the deployment
+ * looks like — under shared placement one call covers every project there is.
+ * The price is read amplification: `projectId IN (…) AND number IN (…)` is a
+ * rectangle, so at worst projects × numbers rows come back and the pairing
+ * below throws the extras away. A VALUES-derived table would cut that, but by
+ * standing convention this repo inlines one in `services/calendar.ts` and
+ * `services/user-issues.ts` only, and this is not a third site for it.
  */
-async function clearedNumbers(
+async function cardStates(
   db: Db,
-  projectId: number,
-  numbers: number[],
-): Promise<Map<number, boolean>> {
-  const out = new Map<number, boolean>();
-  if (numbers.length === 0) return out;
-  const meta = await db
-    .select({ lineId: projectMeta.blockClearStatusId })
-    .from(projectMeta)
-    .where(eq(projectMeta.projectId, projectId));
-  const statusRows = await db
-    .select({
-      id: statuses.id,
-      position: statuses.position,
-      category: statuses.category,
-    })
-    .from(statuses)
-    .where(eq(statuses.projectId, projectId));
-  const byId = new Map(statusRows.map((s) => [s.id, s]));
-  const lineId = meta[0]?.lineId ?? null;
-  const line = lineId === null ? undefined : byId.get(lineId);
+  wanted: Map<number, number[]>,
+): Promise<Map<string, CardState>> {
+  const out = new Map<string, CardState>();
+  const pairs: [number, number][] = [];
+  for (const [projectId, numbers] of wanted) {
+    for (const number of numbers) pairs.push([projectId, number]);
+  }
 
-  const rows = await db
-    .select({ number: issues.number, statusId: issues.statusId })
-    .from(issues)
-    .where(
-      and(eq(issues.projectId, projectId), inArray(issues.number, numbers)),
+  for (const slice of chunks(pairs)) {
+    const ids = [...new Set(slice.map(([projectId]) => projectId))];
+    const numbers = [...new Set(slice.map(([, number]) => number))];
+    const meta = await db
+      .select({
+        projectId: projectMeta.projectId,
+        lineId: projectMeta.blockClearStatusId,
+      })
+      .from(projectMeta)
+      .where(inArray(projectMeta.projectId, ids));
+    const statusRows = await db
+      .select({
+        id: statuses.id,
+        projectId: statuses.projectId,
+        position: statuses.position,
+        category: statuses.category,
+      })
+      .from(statuses)
+      .where(inArray(statuses.projectId, ids));
+    const byId = new Map(
+      statusRows.map((s) => [cardKey(s.projectId, s.id), s]),
     );
-  for (const row of rows) {
-    const status = byId.get(row.statusId);
-    if (status === undefined) continue;
-    out.set(
-      row.number,
-      line === undefined
-        ? status.category === "closed"
-        : status.position >= line.position,
+    const lines = new Map(
+      meta.map((m) => [
+        m.projectId,
+        m.lineId === null
+          ? undefined
+          : byId.get(cardKey(m.projectId, m.lineId)),
+      ]),
     );
+
+    const rows = await db
+      .select({
+        projectId: issues.projectId,
+        number: issues.number,
+        statusId: issues.statusId,
+        deletedAt: issues.deletedAt,
+      })
+      .from(issues)
+      .where(
+        and(inArray(issues.projectId, ids), inArray(issues.number, numbers)),
+      );
+    const asked = new Set(
+      slice.map(([projectId, number]) => cardKey(projectId, number)),
+    );
+    for (const row of rows) {
+      const key = cardKey(row.projectId, row.number);
+      if (!asked.has(key)) continue;
+      const status = byId.get(cardKey(row.projectId, row.statusId));
+      const line = lines.get(row.projectId);
+      out.set(key, {
+        cleared:
+          status === undefined
+            ? undefined
+            : line === undefined
+              ? status.category === "closed"
+              : status.position >= line.position,
+        deleted: row.deletedAt !== null,
+      });
+    }
   }
   return out;
 }
@@ -885,30 +1007,85 @@ export type BlockRepairResult = { recomputed: number; announced: number };
  * blocker is done" is the whole feature — one silently lost notification is
  * the feature failing once with nobody the wiser. Edges are far fewer than
  * cards, so a full recompute is affordable.
+ *
+ * This sweep does NOT skip projects that share the system database, unlike
+ * the mirror sweep next door. What it repairs has nothing to do with where a
+ * project's rows live: a drifted verdict is a status in the project tier
+ * disagreeing with an edge in the system tier, and there is no transaction
+ * spanning those two writes even when one database holds both. Nor is the
+ * announcement one: it is deliberately outside the verdict's write —
+ * `evaluateBlockerStatus` says so in as many words, `landEvent` logs its
+ * failures and returns false, and `cleared_notified_at` is a separate write
+ * that follows a successful announcement. Colocation closes none of that.
+ *
+ * Two things the batching changed, said out loud rather than left to be
+ * rediscovered:
+ *
+ * - The window between reading an edge and writing its verdict is now the
+ *   whole sweep rather than one project's turn. A concurrent live write can
+ *   be overwritten by a verdict computed from a slightly older read. The race
+ *   is not new — `evaluateBlockerStatus` also reads edges before writing them
+ *   — only wider, and it converges: the sweep writes the verdict that today's
+ *   card state implies, which is the same question the live write answered,
+ *   and the next sweep settles any remaining disagreement.
+ * - Announcements used to interleave with the verdicts, project by project.
+ *   They now all follow all of the verdicts, in `edges` order.
  */
 export async function repairBlocks(
   ctx: AppContext,
 ): Promise<BlockRepairResult> {
   const system = ctx.router.system();
-  const blockerProjects = [
-    ...new Set(
-      (
-        await system
-          .select({ projectId: issueBlocks.blockerProjectId })
-          .from(issueBlocks)
-      ).map((r) => r.projectId),
-    ),
-  ];
+  const edges = await system.select().from(issueBlocks);
   let recomputed = 0;
-  for (const projectId of blockerProjects) {
-    const project = (await findProjectByRef(ctx, String(projectId)))?.project;
-    if (project === undefined) continue;
-    const db = await ctx.router.forProject(routeInfoOf(project));
-    const changes = await reevaluateProjectBlocks(ctx, project, db);
-    recomputed += changes.length;
-    await syncBlockerDeleted(ctx, project, db);
+  if (edges.length > 0) {
+    const wantedBy = new Map<number, Set<number>>();
+    for (const edge of edges) {
+      const numbers = wantedBy.get(edge.blockerProjectId);
+      if (numbers === undefined) {
+        wantedBy.set(edge.blockerProjectId, new Set([edge.blockerNumber]));
+      } else {
+        numbers.add(edge.blockerNumber);
+      }
+    }
+    // `issue_blocks.blocker_project_id` has a foreign key onto `projects.id`,
+    // so this is the same set of rows the old per-edge `findProjectByRef`
+    // returned — that call took its id branch and one query. A project the
+    // registry cannot produce yields no card state, and its edges keep the
+    // verdict they already have.
+    const projectRows: ProjectRow[] = [];
+    for (const slice of chunks([...wantedBy.keys()])) {
+      projectRows.push(
+        ...(await system
+          .select()
+          .from(projects)
+          .where(inArray(projects.id, slice))),
+      );
+    }
+
+    const states = new Map<string, CardState>();
+    const groups = await ctx.router.perDatabase(
+      projectRows,
+      routeInfoOf,
+      (db, group) => {
+        const wanted = new Map<number, number[]>();
+        for (const project of group) {
+          const numbers = wantedBy.get(project.id);
+          if (numbers !== undefined) wanted.set(project.id, [...numbers]);
+        }
+        return cardStates(db, wanted);
+      },
+    );
+    for (const group of groups) {
+      for (const [key, state] of group) states.set(key, state);
+    }
+
+    const changes = await applyVerdicts(system, edges, states);
+    recomputed = changes.length;
+    await syncBlockerTrash(system, edges, states);
     // Announced through the same path as a live change, so a verdict the
-    // sweep repaired is indistinguishable from one a write produced.
+    // sweep repaired is indistinguishable from one a write produced. It has
+    // to happen before the pending scan below, or the clearings this half
+    // just stamped would be announced a second time by the other half.
     await announceBlockChanges(ctx, changes, null);
   }
 
@@ -927,22 +1104,39 @@ export async function repairBlocks(
   return { recomputed, announced: pending.length };
 }
 
-/** The trash flag, recomputed from the blockers' own rows. */
-async function syncBlockerDeleted(
-  ctx: AppContext,
-  project: ProjectRow,
-  db: Db,
+/**
+ * The trash flag, brought back in line with the blockers' own rows.
+ *
+ * Only the edges that disagree are written. Re-stamping every live edge's
+ * `blocker_deleted_at` back to null was one write per project per sweep for
+ * nothing: the steady state is that nothing is in the trash, and the flag is
+ * only ever read for its null-ness.
+ */
+async function syncBlockerTrash(
+  system: Db,
+  edges: BlockRow[],
+  states: Map<string, CardState>,
 ): Promise<void> {
-  const numbers = await blockerNumbersOf(ctx, project.id);
-  if (numbers.length === 0) return;
-  const rows = await db
-    .select({ number: issues.number, deletedAt: issues.deletedAt })
-    .from(issues)
-    .where(
-      and(eq(issues.projectId, project.id), inArray(issues.number, numbers)),
+  const trashed: number[] = [];
+  const alive: number[] = [];
+  for (const edge of edges) {
+    const state = states.get(
+      cardKey(edge.blockerProjectId, edge.blockerNumber),
     );
-  const trashed = rows.filter((r) => r.deletedAt !== null).map((r) => r.number);
-  const alive = rows.filter((r) => r.deletedAt === null).map((r) => r.number);
-  await markBlockerDeleted(ctx, project, trashed, true);
-  await markBlockerDeleted(ctx, project, alive, false);
+    if (state === undefined) continue;
+    if (state.deleted === (edge.blockerDeletedAt !== null)) continue;
+    (state.deleted ? trashed : alive).push(edge.id);
+  }
+  for (const slice of chunks(trashed)) {
+    await system
+      .update(issueBlocks)
+      .set({ blockerDeletedAt: new Date() })
+      .where(inArray(issueBlocks.id, slice));
+  }
+  for (const slice of chunks(alive)) {
+    await system
+      .update(issueBlocks)
+      .set({ blockerDeletedAt: null })
+      .where(inArray(issueBlocks.id, slice));
+  }
 }

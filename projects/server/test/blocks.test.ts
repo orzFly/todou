@@ -723,6 +723,11 @@ describe("issue block edges T-377", () => {
     expect(afterClearing).toEqual([]);
   });
 
+  // The next two run on the default placement, where every project shares the
+  // system database — so they are also the guard that `repairBlocks` does NOT
+  // skip colocated projects the way the mirror sweep does. What it repairs is
+  // state that has to converge, not a pair of writes that colocation turned
+  // into one transaction, and the sweeps only earn a skip in the second case.
   it("repairs a drifted verdict and sends the clearing nobody was told about", async () => {
     expect((await setClearLine(PA, "Shipped")).status).toBe(200);
     const blocked = await createIssue(PA, "repair target");
