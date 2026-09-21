@@ -6,14 +6,16 @@ import type {
 } from "@todou/shared";
 import { useEffect, useMemo, useRef } from "react";
 import { userIssuesPageQuery, userIssuesQuery } from "@/api/users.ts";
-import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
-import { StatusPill } from "@/components/issue/status-pill.tsx";
+import {
+  IssueRow,
+  IssueRowProjectTrailing,
+  useIssueListGrid,
+} from "@/components/issue/issue-row.tsx";
 import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
 import { LoadMoreFooter } from "@/components/shared/load-more.tsx";
-import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import {
   useCancelReturnRestore,
   useRegisterReturnArea,
@@ -261,21 +263,14 @@ export function UserIssuesSection({
                 slug={item.project.slug}
                 issue={item}
                 trailing={
-                  <span className="ml-auto flex shrink-0 items-center gap-2 max-sm:hidden">
-                    <StatusPill status={item.status} />
-                    <ProjectIcon
-                      project={{
-                        name: item.project.name,
-                        prefix: refs.get(item.project.slug)?.prefix ?? null,
-                        icon_url: item.project.icon_url,
-                      }}
-                      className="size-5"
-                      aria-hidden
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      {item.project.name}
-                    </span>
-                  </span>
+                  <IssueRowProjectTrailing
+                    status={item.status}
+                    project={{
+                      name: item.project.name,
+                      prefix: refs.get(item.project.slug)?.prefix ?? null,
+                      icon_url: item.project.icon_url,
+                    }}
+                  />
                 }
               />
             ))}

@@ -1,7 +1,10 @@
 import type { ActivitySelection } from "@todou/shared";
 import { useRef } from "react";
-import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
-import { StatusPill } from "@/components/issue/status-pill.tsx";
+import {
+  IssueRow,
+  IssueRowProjectTrailing,
+  useIssueListGrid,
+} from "@/components/issue/issue-row.tsx";
 import { LoadMoreFooter } from "@/components/shared/load-more.tsx";
 import { Button } from "@/components/ui/button.tsx";
 
@@ -38,7 +41,11 @@ export function ActivityCardList({
     dateStyle: "medium",
     timeStyle: "short",
   });
-  const grid = useIssueListGrid({ readMarker: false });
+  // The same columns as the cards this list is swapped in for on the user
+  // page, marker track included. The DTO carries no read state, so that track
+  // stays empty here — which is exactly what an already-read card looks like
+  // in the other list, and is why picking a day does not shift every title.
+  const grid = useIssueListGrid();
   // This list reports its own request failures above the group, so the shared
   // footer is only ever asked for the button half.
   const focusRequested = useRef(false);
@@ -99,8 +106,8 @@ export function ActivityCardList({
             <ul className={grid}>
               {selection.items.map((card) => (
                 // The shared row, with every affordance it cannot back switched
-                // off: this list reports what happened on a day, and has no read
-                // state, questions, spec review or blocks to offer.
+                // off: this list reports what happened on a day, and has no
+                // questions, spec review or blocks to offer.
                 <IssueRow
                   key={`${card.project.id}:${card.issue_id}`}
                   slug={card.project.slug}
@@ -109,23 +116,21 @@ export function ActivityCardList({
                     number: card.number,
                     title: card.title,
                   }}
-                  readMarker={false}
                   badges={false}
                   blocked={false}
                   returnAnchor={false}
                   trailing={
-                    <span className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                      {/* Unbounded, unlike the inbox's trailing pair: this
-                          list's group is a day, so the project has to be named
-                          on the row and a long name must give way first. */}
-                      <span className="min-w-0 truncate max-sm:hidden">
-                        {card.project.name}
-                      </span>
-                      <StatusPill status={card.status} className="shrink-0" />
-                      <time className="shrink-0" dateTime={card.last_active_at}>
-                        {timestamp.format(new Date(card.last_active_at))}
-                      </time>
-                    </span>
+                    <IssueRowProjectTrailing
+                      status={card.status}
+                      project={{
+                        name: card.project.name,
+                        prefix: card.project.issue_prefix,
+                      }}
+                      activeAt={{
+                        dateTime: card.last_active_at,
+                        text: timestamp.format(new Date(card.last_active_at)),
+                      }}
+                    />
                   }
                 />
               ))}

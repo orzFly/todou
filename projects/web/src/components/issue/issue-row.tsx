@@ -19,6 +19,7 @@ import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { LabelPicker } from "@/components/issue/label-picker.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
@@ -262,6 +263,58 @@ export function IssueRow({
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * What closes a row in a list that spans projects: what the card is doing,
+ * and where it lives.
+ *
+ * One component rather than one spelling per list, because the user page's
+ * two lists stand in the same slot — picking a day on the calendar swaps that
+ * day's cards in for "Their cards" — and two orderings of these same three
+ * things would read as the rows themselves changing shape when a day is
+ * picked.
+ *
+ * The status pill survives the phone; the project is hidden there instead of
+ * shrunk, because what is left of a name at phone width is a letter and a
+ * half.
+ *
+ * The group does not shrink, and the project name is capped rather than left
+ * to take whatever the name happens to be: the row's flexible space belongs
+ * to the title, and a shrinkable group divides it in proportion instead, which
+ * on a long title cut `Refract Engine` down to `F`. What the cap gives up is
+ * the tail of an unusually long name; the title keeps the room.
+ */
+export function IssueRowProjectTrailing({
+  status,
+  project,
+  activeAt,
+}: {
+  status: Pick<Status, "name" | "color">;
+  project: { name: string; prefix: string | null; icon_url?: string | null };
+  /** Last activity, for the list whose group is a date rather than a person. */
+  activeAt?: { dateTime: string; text: string };
+}) {
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+      <StatusPill status={status} className="shrink-0" />
+      <span className="flex max-w-40 items-center gap-2 max-sm:hidden">
+        <ProjectIcon
+          project={project}
+          className="size-5 shrink-0"
+          aria-hidden
+        />
+        {/* No `min-w-0`: `truncate` brings `overflow-hidden`, which already
+            resolves this flex item's `min-width: auto` to 0. */}
+        <span className="truncate">{project.name}</span>
+      </span>
+      {activeAt && (
+        <time className="shrink-0" dateTime={activeAt.dateTime}>
+          {activeAt.text}
+        </time>
+      )}
+    </span>
   );
 }
 

@@ -255,11 +255,15 @@ describe("ActivityCardList cards", () => {
     expect(view.queryByText("2 active cards")).toBeNull();
     expect(view.queryByText("34 active cards")).toBeNull();
 
+    // Status, then the project icon's glyphs beside its name, then the time:
+    // the trailing group the user page's own card list wears, so that picking
+    // a day swaps the rows' contents and not their shape. A project with no
+    // prefix falls back to its initials in the icon.
     expect(cards[0].textContent).toBe(
-      `AX-42Repair the schedulerAlpha EngineIn review${wallTime("2026-07-02T00:30:00Z")}`,
+      `AX-42Repair the schedulerIn reviewAXAlpha Engine${wallTime("2026-07-02T00:30:00Z")}`,
     );
     expect(cards[1].textContent).toBe(
-      `#42Publish the packageBeta ToolsDone${wallTime("2026-07-02T01:45:00Z")}`,
+      `#42Publish the packageDoneBTBeta Tools${wallTime("2026-07-02T01:45:00Z")}`,
     );
     for (const card of cards) {
       const row = within(card);
@@ -591,10 +595,19 @@ describe("ActivityCardList selection and request states", () => {
     // The shared row defends the width with a floorless flexible track plus
     // per-cell truncation, not with break-words on every cell.
     expect(view.getByRole("list").className).toContain("minmax(0,1fr)");
-    for (const element of [link, view.getByText(name)]) {
-      expect(element.className).toContain("min-w-0");
-      expect(element.className).toContain("truncate");
-    }
+    expect(link.className).toContain("min-w-0");
+    expect(link.className).toContain("truncate");
+    // The project is capped rather than shrunk. A trailing group that gave way
+    // with the title divided the flexible track between them in proportion,
+    // and on a long title that cut `Refract Engine` down to `F`. No `min-w-0`
+    // on the name itself: `truncate` brings `overflow-hidden`, which already
+    // resolves a flex item's `min-width: auto` to 0.
+    const project = view.getByText(name);
+    expect(project.className).toContain("truncate");
+    expect(project.parentElement?.className).toMatch(/\bmax-w-/);
+    expect(project.parentElement?.parentElement?.className).toContain(
+      "shrink-0",
+    );
     // The ref keeps its own width instead of wrapping; the title gives way.
     expect(view.getByText(`${prefix}-42`).className).toContain(
       "whitespace-nowrap",
