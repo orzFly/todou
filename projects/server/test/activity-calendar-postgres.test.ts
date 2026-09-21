@@ -902,7 +902,7 @@ for (const placement of PLACEMENTS) {
           expect((await calendar(p, day)).selection?.total).toBe(1);
           const transaction = p.db.transaction.bind(p.db);
           let attempts = 0;
-          // projectSnapshot has read moveHeads and prefetched system boundaries
+          // groupSnapshot has read moveHeads and prefetched system boundaries
           // when it calls transaction. Commit the new head before BEGIN so the
           // in-snapshot head check must detect the stale prefetched token.
           const race = vi
