@@ -299,7 +299,14 @@ describe("read_frontiers is written in one row order everywhere", () => {
       const res = await t.app.request("/api/me/read", {
         method: "PUT",
         headers: { "content-type": "application/json", ...bob.headers },
-        body: "{}",
+        // The slugs are named in descending id order on purpose, and an
+        // explicit list rather than `{}`: the `{}` path takes its scope from
+        // `accessibleProjectRows`, whose `where id in (…)` already hands back
+        // ascending order, so this assertion would hold with the sort under
+        // test deleted. `requireCapabilities` instead pushes one row per ref
+        // in the client's own order, which is the order that reaches the
+        // multi-row upsert — so only this shape can witness the sort.
+        body: JSON.stringify({ projects: ["brl-p2", "brl-p1", "brl-p0"] }),
       });
       expect(res.status).toBe(204);
     });
