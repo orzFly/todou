@@ -393,6 +393,21 @@ function rowIds(container: HTMLElement): string[] {
 }
 
 /**
+ * How many swatches the calendar's legend carries — one for the empty level
+ * alone while it has no snapshot to stand on, two once a recorded count
+ * arrives. That is the readable difference between a withdrawn response and a
+ * kept one, and the difference the restore has to wait out.
+ *
+ * Read here rather than off the grid because the fixture's recorded day sits
+ * outside the rolling window the page asks for, so no cell in the grid is
+ * ever drawn for it.
+ */
+function legendLevels(container: HTMLElement): number {
+  return container.querySelectorAll('[aria-label="Active cards per day"] > li')
+    .length;
+}
+
+/**
  * The window scrolls this feature performed, and not the router's.
  * `@tanstack/router-core` resets the viewport on its own navigations with
  * `{top, left, behavior}`; `applyArea` moves one axis and names only that one,
@@ -1506,26 +1521,18 @@ describe("the user page", () => {
       input: Parameters<typeof api.getUserActivityCalendar>[1],
     ) => userCalendar(input, true);
     const first = mountUser(path, undefined, { calendar });
-    await settleUntil(
-      () =>
-        rowIds(first.container).includes("11") &&
-        first.queryByText("calendar card") !== null,
-    );
-    expect(rowIds(first.container)).toEqual(["11"]);
-    expect(first.getByText("u one")).toBeTruthy();
-    expect(first.getByText("calendar card")).toBeTruthy();
-    fireEvent.click(first.getByRole("button", { name: "Load more" }));
-    await settleUntil(
-      () => rowIds(first.container).includes("12") && settled(first.router)(),
-    );
-    expect(rowIds(first.container)).toEqual(["11", "12"]);
-    expect(first.getByText("u two")).toBeTruthy();
+    await settleUntil(() => first.queryByText("calendar card") !== null);
+    // The day's cards stand where "Their cards" was, so the page has no flat
+    // lane to remember and no row to put a returning reader back on. The
+    // address is still the whole of what this page is, dates included.
+    expect(rowIds(first.container)).toEqual([]);
+    expect(first.queryByText("u one")).toBeNull();
     act(() => fireEvent.pointerDown(first.container));
     const captured = entryOf(first.router).view;
     // This assertion reads UserProfilePage's actual hook output. Copying URL
     // search into the harness's pending snapshot cannot satisfy it.
     expect(captured?.target).toEqual({ kind: "user", ref: "alice", search });
-    expect(captured?.pages).toEqual([{ lane: "flat", extraPages: 1 }]);
+    expect(captured?.pages).toEqual([]);
     expect(captured).toBeDefined();
     writeReturnEntry(first.router, {
       pending: { view: captured as ReturnView, locate: true },
@@ -1538,19 +1545,16 @@ describe("the user page", () => {
     const restored = mountUser(path, undefined, { state, calendar });
     await settleUntil(
       () =>
-        rowIds(restored.container).includes("12") && settled(restored.router)(),
+        restored.queryByText("calendar card") !== null &&
+        settled(restored.router)(),
     );
-    expect(rowIds(restored.container)).toEqual(["11", "12"]);
-    expect(restored.getByText("u two")).toBeTruthy();
     expect(entryOf(restored.router).pending).toBeUndefined();
     expect(restored.router.state.location.search).toEqual(search);
     // mountUser reuses the API spy, so only calls made by this mount count.
+    // None, because the section that would make them is not on the page.
     expect(
       restored.listUserIssues.mock.calls.slice(previousIssueCalls),
-    ).toEqual([
-      ["alice", { role: "assignee", state: "all" }],
-      ["alice", { role: "assignee", state: "all", after: "u1" }],
-    ]);
+    ).toEqual([]);
     act(() => fireEvent.pointerDown(restored.container));
     expect(entryOf(restored.router).view?.target).toEqual({
       kind: "user",
@@ -1559,11 +1563,14 @@ describe("the user page", () => {
     });
   });
 
-  it.each(["success", "empty", "error", "selected pending", "lazy"] as const)(
+  // No `activity_day` in any of these: a picked day puts its own cards where
+  // "Their cards" was, and the anchor under test is a row of that list. What
+  // the calendar does to the rows *below* it is what this covers, and that is
+  // the same question whichever way its own read lands.
+  it.each(["success", "empty", "error", "lazy"] as const)(
     "waits for calendar layout before restoring a card anchor: %s",
     async (outcome) => {
       const base = deferred<ActivityCalendarResponse>();
-      const selected = deferred<ActivityCalendarResponse>();
       const moduleGate = deferred<void>();
       const scrollTo = vi
         .spyOn(window, "scrollTo")
@@ -1572,11 +1579,7 @@ describe("the user page", () => {
         4000,
       );
       vi.spyOn(window, "scrollY", "get").mockReturnValue(0);
-      const search = {
-        role: "assignee" as const,
-        state: "all" as const,
-        ...(outcome === "empty" ? {} : { activity_day: "2025-03-04" }),
-      };
+      const search = { role: "assignee" as const, state: "all" as const };
       if (outcome === "lazy") userCalendarModule.wait = moduleGate.promise;
       const pending = snapshot({
         target: { kind: "user", ref: "alice", search },
@@ -1588,14 +1591,9 @@ describe("the user page", () => {
           }),
         ],
       });
-      const view = mountUser(
-        `/users/alice?role=assignee&state=all${outcome === "empty" ? "" : "&activity_day=2025-03-04"}`,
-        pending,
-        {
-          calendar: async (_subject, input) =>
-            input.day ? selected.promise : base.promise,
-        },
-      );
+      const view = mountUser("/users/alice?role=assignee&state=all", pending, {
+        calendar: async () => base.promise,
+      });
       try {
         await view.findByText("u one");
         const row = view.container.querySelector<HTMLElement>(
@@ -1621,36 +1619,15 @@ describe("the user page", () => {
         }
         await waitFor(() => expect(view.calendar).toHaveBeenCalled());
         const input = view.calendar.mock.calls[0]![1];
-        const recorded =
-          outcome === "success" ||
-          outcome === "selected pending" ||
-          outcome === "lazy";
-        if (!recorded) top = 950;
+        // The grid takes its height once the window lands, which is what
+        // moves the rows underneath it — so the measurement the restore ends
+        // up making is the one taken after that.
+        top = 950;
         await act(async () => {
           if (outcome === "error")
             base.reject(new Error("calendar unavailable"));
-          else base.resolve(userCalendar(input, recorded));
+          else base.resolve(userCalendar(input, outcome !== "empty"));
         });
-        if (recorded) {
-          await waitFor(() =>
-            expect(view.calendar).toHaveBeenCalledWith(
-              alice.id,
-              expect.objectContaining({ day: "2025-03-04" }),
-            ),
-          );
-          await settle(150);
-          // The grid is now present, but the selected first-page list has not
-          // settled. Measuring here would still anchor above the final rows.
-          expect(entryOf(view.router).pending?.locate).toBe(true);
-          expect(restoreScrolls(scrollTo)).toEqual([]);
-          top = 950;
-          await act(async () => {
-            selected.resolve(
-              userCalendar({ ...input, day: "2025-03-04" }, true),
-            );
-          });
-          await view.findByText("calendar card");
-        }
         await settleUntil(settled(view.router));
         expect(entryOf(view.router).pending).toBeUndefined();
         // Final row top minus the real fallback shell inset and saved offset.
@@ -1659,9 +1636,6 @@ describe("the user page", () => {
         userCalendarModule.wait = null;
         moduleGate.resolve();
         base.resolve(
-          userCalendar({ from: "2025-01-01", to: "2026-01-01", tz: "UTC" }),
-        );
-        selected.resolve(
           userCalendar({ from: "2025-01-01", to: "2026-01-01", tz: "UTC" }),
         );
         view.unmount();
@@ -1677,30 +1651,21 @@ describe("the user page", () => {
       4000,
     );
     vi.spyOn(window, "scrollY", "get").mockReturnValue(400);
-    const search = {
-      role: "assignee",
-      state: "all",
-      activity_day: "2025-03-04",
-    };
-    const view = mountUser(
-      "/users/alice?role=assignee&state=all&activity_day=2025-03-04",
-      undefined,
-      {
-        calendar: async (_subject, input) => {
-          if (refreshing) await refetch.promise;
-          return userCalendar(input, true);
-        },
+    const search = { role: "assignee", state: "all" };
+    const view = mountUser("/users/alice?role=assignee&state=all", undefined, {
+      calendar: async (_subject, input) => {
+        if (refreshing) await refetch.promise;
+        return userCalendar(input, true);
       },
-    );
+    });
     try {
       await settleUntil(
         () =>
-          view.queryByText("calendar card") !== null &&
+          legendLevels(view.container) > 1 &&
           rowIds(view.container).includes("11") &&
           view.client.isFetching({ queryKey: ["activity-user"] }) === 0,
       );
       expect(rowIds(view.container)).toEqual(["11"]);
-      expect(view.getByText("calendar card")).toBeTruthy();
       const row = view.container.querySelector<HTMLElement>(
         '[data-return-id="11"]',
       )!;
@@ -1738,7 +1703,7 @@ describe("the user page", () => {
         view.client.isFetching({ queryKey: ["activity-user"] }),
       ).toBeGreaterThan(0);
       expect(rowIds(view.container)).toEqual(["11"]);
-      expect(view.getByText("calendar card")).toBeTruthy();
+      expect(legendLevels(view.container)).toBeGreaterThan(1);
       act(() => fireEvent.pointerDown(row));
       expect(entryOf(view.router).view?.scroll).toEqual(before?.scroll);
       expect(entryOf(view.router).view?.target).toEqual({
@@ -1771,13 +1736,9 @@ describe("the user page", () => {
         4000,
       );
       vi.spyOn(window, "scrollY", "get").mockReturnValue(0);
-      const search = {
-        role: "assignee" as const,
-        state: "all" as const,
-        activity_day: "2025-03-04",
-      };
+      const search = { role: "assignee" as const, state: "all" as const };
       const view = mountUser(
-        "/users/alice?role=assignee&state=all&activity_day=2025-03-04",
+        "/users/alice?role=assignee&state=all",
         snapshot({
           target: { kind: "user", ref: "alice", search },
           pages: [{ lane: "flat", extraPages: 1 }],
@@ -1803,14 +1764,13 @@ describe("the user page", () => {
       try {
         await settleUntil(
           () =>
-            view.queryByText("calendar card") !== null &&
+            legendLevels(view.container) > 1 &&
             view.listUserIssues.mock.calls.some(
               ([, q]) => (q as Query)?.after === "u1",
             ) &&
             view.client.isFetching({ queryKey: ["activity-user"] }) === 0,
         );
         expect(rowIds(view.container)).toEqual(["11"]);
-        expect(view.getByText("calendar card")).toBeTruthy();
         const row = view.container.querySelector<HTMLElement>(
           '[data-return-id="11"]',
         )!;
@@ -1835,7 +1795,7 @@ describe("the user page", () => {
         );
         // Let the real Section commit its fetch state before the independent page response.
         if (layout === "withdrawn")
-          await settleUntil(() => view.queryByText("calendar card") === null);
+          await settleUntil(() => legendLevels(view.container) === 1);
         else {
           await settleUntil(
             () =>
@@ -1859,12 +1819,12 @@ describe("the user page", () => {
           view.client.isFetching({ queryKey: ["activity-user"] }),
         ).toBeGreaterThan(0);
         if (layout === "withdrawn") {
-          expect(view.queryByText("calendar card")).toBeNull();
+          expect(legendLevels(view.container)).toBe(1);
           await settle(100);
           expect(entryOf(view.router).pending?.locate).toBe(true);
           expect(restoreScrolls(scrollTo)).toEqual([]);
         } else {
-          expect(view.getByText("calendar card")).toBeTruthy();
+          expect(legendLevels(view.container)).toBeGreaterThan(1);
           await settleUntil(settled(view.router));
           expect(entryOf(view.router).pending).toBeUndefined();
           expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
@@ -1874,9 +1834,7 @@ describe("the user page", () => {
           await finished;
         });
         await settleUntil(
-          () =>
-            settled(view.router)() &&
-            view.queryByText("calendar card") !== null,
+          () => settled(view.router)() && legendLevels(view.container) > 1,
         );
         expect(entryOf(view.router).pending).toBeUndefined();
         expect(rowIds(view.container)).toEqual(["11", "12"]);

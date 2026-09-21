@@ -1,15 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
-import { projectsQuery } from "@/api/queries.ts";
 import { userProjectsQuery } from "@/api/users.ts";
 import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
-import {
-  ProjectCard,
-  ProjectCardGrid,
-} from "@/components/shared/project-card.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { roleDotOf } from "@/lib/roles.ts";
@@ -17,12 +14,18 @@ import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
-/** Cards to occupy the grid while the seats load, at the height one holds. */
+/** Rows to occupy the list while the seats load, at the height one holds. */
 const SKELETONS = [0, 1, 2];
 
 /**
  * Where this person holds a seat, and at what role (T-374) — narrowed to the
- * projects the reader can see, drawn on the projects home's own card (T-390).
+ * projects the reader can see.
+ *
+ * A row rather than the projects home's card (T-390): this list stands in the
+ * user page's sidebar, which is a single narrow column, and the card carries a
+ * three-line description and a REF watermark sized against its own box. The
+ * seats are here to say *where* this person works, and the reader is one click
+ * from the project itself for everything else.
  */
 export function UserProjectsSection({ login }: { login: string }) {
   const query = userProjectsQuery(login);
@@ -39,7 +42,6 @@ export function UserProjectsSection({ login }: { login: string }) {
   // per render would rematch the whole directory on every one of them.
   const seats = useMemo(() => items?.map((item) => item.project), [items]);
   const refs = useProjectRefs(seats);
-  const descriptions = useProjectDescriptions();
 
   return (
     <section className="space-y-3">
@@ -54,7 +56,7 @@ export function UserProjectsSection({ login }: { login: string }) {
       )}
 
       {replace ? (
-        <div className="rounded-lg border border-dashed p-10 text-center">
+        <div className="rounded-lg border border-dashed p-6 text-center">
           <LoadFailure
             message={`Could not load these projects: ${replace}`}
             detail={replace}
@@ -64,73 +66,51 @@ export function UserProjectsSection({ login }: { login: string }) {
           />
         </div>
       ) : !hasContent ? (
-        <ProjectCardGrid>
+        <div className="space-y-2">
           {SKELETONS.map((i) => (
-            <Skeleton key={i} className="h-34" />
+            <Skeleton key={i} className="h-11" />
           ))}
-        </ProjectCardGrid>
+        </div>
       ) : data.items.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
+        <div className="rounded-lg border border-dashed p-6 text-center text-muted-foreground">
           No projects you are both in 🥔
         </div>
       ) : (
-        <ProjectCardGrid>
-          {data.items.map((item) => {
-            const description = descriptions.get(item.project.slug);
-            return (
-              <ProjectCard
-                key={item.project.id}
-                project={{
-                  slug: item.project.slug,
-                  name: item.project.name,
-                  prefix: refs.get(item.project.slug)?.prefix ?? null,
-                  icon_url: item.project.icon_url,
-                }}
-                badge={
-                  <Badge variant="outline">
-                    <span
-                      className={cn(
-                        "size-1.5 rounded-full",
-                        roleDotOf(item.role),
-                      )}
-                      aria-hidden="true"
-                    />
-                    {item.role}
-                  </Badge>
-                }
+        <ul className="overflow-hidden rounded-lg border">
+          {data.items.map((item) => (
+            <li key={item.project.id} className="border-b last:border-0">
+              <Link
+                to="/projects/$slug"
+                params={{ slug: item.project.slug }}
+                className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-muted/50"
               >
-                {item.project.slug}
-                {description ? ` — ${description}` : ""}
-              </ProjectCard>
-            );
-          })}
-        </ProjectCardGrid>
+                <ProjectIcon
+                  aria-hidden="true"
+                  project={{
+                    name: item.project.name,
+                    prefix: refs.get(item.project.slug)?.prefix ?? null,
+                    icon_url: item.project.icon_url,
+                  }}
+                  className="size-7 shrink-0"
+                />
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {item.project.name}
+                </span>
+                <Badge variant="outline" className="shrink-0">
+                  <span
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      roleDotOf(item.role),
+                    )}
+                    aria-hidden="true"
+                  />
+                  {item.role}
+                </Badge>
+              </Link>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
-  );
-}
-
-/**
- * Each readable project's description, by slug.
- *
- * `/users/<ref>/projects` answers with `ProjectBrief`s, which carry no
- * description, and giving them one is not an option: a `ProjectBrief` is
- * embedded in every row of the card list as well, so a description running to
- * 4000 characters would ride along with each row. What makes the join sound is
- * that the endpoint returns a subset of the reader's own readable projects —
- * the same membership query `listProjects` runs — so every seat shown here has
- * a row in the list the home page already reads. A slug that finds nothing
- * (the list is still loading, or failed) draws no description, the degrade the
- * watermark takes when the directory is away.
- *
- * `useQuery`, not the home's `useSuspenseQuery`: this is one supplementary
- * field, and a failing list must not drop the whole user page into an error
- * boundary.
- */
-function useProjectDescriptions(): Map<string, string> {
-  const projects = useQuery(projectsQuery);
-  return useMemo(
-    () => new Map((projects.data ?? []).map((p) => [p.slug, p.description])),
-    [projects.data],
   );
 }

@@ -33,9 +33,17 @@ const ActivityCalendarSection = lazy(() =>
 );
 
 /**
- * The user page: who this is (T-373), then the cards they are involved in
- * and the projects they hold a seat in (T-374). Both of those sections show
- * only what the *reader* may see, never what the subject may.
+ * The user page: who this is (T-373), the cards they are involved in and the
+ * projects they hold a seat in (T-374). Every section shows only what the
+ * *reader* may see, never what the subject may.
+ *
+ * Two columns from `lg` up. The left one answers "who is this" and never
+ * changes while the reader is here; the right one is the part they come to
+ * read, and the part that swaps: picking a day on the calendar puts that
+ * day's cards where "Their cards" was, because two card lists one above the
+ * other would leave the reader to work out which one their click had
+ * answered. Page-level layout, so viewport breakpoints rather than container
+ * queries — the column widths are a statement about the window.
  *
  * Reached by login (`/users/alice`) and, until the router replaces the
  * address, by id (`/users/12` → replace to `/users/alice`), which is the
@@ -96,6 +104,10 @@ export function UserProfilePage({
   const [rowsReady, setRowsReady] = useState(false);
   // Calendar loading changes the position of the card rows beneath it.
   const [calendarReady, setCalendarReady] = useState(false);
+  // A day the calendar can actually answer for: the calendar is only mounted
+  // once the viewer is known, and with it away there is no day list to put in
+  // the cards' place — so the cards stay.
+  const daySelected = viewer.data !== undefined && activity.day !== undefined;
   // The canonical login, never the id half of the address: `/users/12`
   // replaces itself with `/users/<login>`, and a snapshot naming the id would
   // send the reader back through that redirect. It is also the accessible
@@ -112,15 +124,22 @@ export function UserProfilePage({
       search: userSearchParams({ role, state, activity_day }),
     },
     userLabel: login,
-    ready: rowsReady && calendarReady,
+    // Whichever list is standing in the right-hand column is the one a
+    // restore has to wait for. With a day picked the cards section is not
+    // mounted, and its parting `onReady(false)` would otherwise hold the page
+    // un-measurable — and un-restorable — for as long as the day is selected.
+    ready: daySelected ? calendarReady : rowsReady && calendarReady,
   });
 
   if (!replace && !hasContent) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="size-16 rounded-full" />
-        <Skeleton className="h-6 w-48" />
-        <Skeleton className="h-4 w-64" />
+      <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start">
+        <div className="space-y-4">
+          <Skeleton className="size-20 rounded-full lg:size-64" />
+          <Skeleton className="h-6 w-48 max-w-full" />
+          <Skeleton className="h-4 w-64 max-w-full" />
+        </div>
+        <Skeleton className="h-48 w-full" />
       </div>
     );
   }
@@ -170,7 +189,7 @@ export function UserProfilePage({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {notice && (
         <RefreshFailure
           what="this user"
@@ -179,72 +198,101 @@ export function UserProfilePage({
           retrying={user.isFetching}
         />
       )}
-      <div className="max-w-lg space-y-6">
-        <div className="flex items-center gap-4">
-          <UserAvatar
-            user={me}
-            badge
-            className="size-16 text-[20px] [&_svg]:size-4"
-          />
-          <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold">
-              {displayNameOf(me)}
-            </h1>
-            <p className="text-muted-foreground">@{me.login}</p>
-          </div>
-        </div>
+      <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start">
+        {/* Below `lg` this column comes first and the reader scrolls past it,
+            which is the order it is written in — identity, then where they
+            work, then what they have been doing. */}
+        <aside className="min-w-0 space-y-6">
+          <div className="flex items-center gap-4 lg:block lg:space-y-4">
+            {/* No bot badge on this one: the line below already says "agent",
+                and at this size the badge's fixed corner offsets sit well
+                outside the circle rather than on its edge.
 
-        <div className="space-y-2 text-sm">
-          {me.kind === "machine" && (
-            <p className="text-muted-foreground">
-              agent{me.owner ? ` · belongs to @${me.owner.login}` : ""}
+                The fallback initials need the inherit rule to follow the two
+                `text-*` sizes beside it: `UserAvatar` sets `text-[10px]` on
+                the fallback itself, so a size passed to the box never reaches
+                the letters — and at 256px they stay 10px tall with nothing in
+                this call to explain why. */}
+            <UserAvatar
+              user={me}
+              className="size-20 shrink-0 text-2xl lg:size-64 lg:text-7xl [&_[data-slot=avatar-fallback]]:text-[length:inherit]"
+            />
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-semibold lg:text-2xl">
+                {displayNameOf(me)}
+              </h1>
+              <p className="truncate text-muted-foreground lg:text-lg">
+                @{me.login}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2 text-sm">
+            {me.kind === "machine" && (
+              <p className="text-muted-foreground">
+                agent{me.owner ? ` · belongs to @${me.owner.login}` : ""}
+              </p>
+            )}
+            <p className="flex items-center gap-1.5 text-muted-foreground">
+              <CalendarIcon aria-hidden className="size-4" />
+              joined {new Date(me.created_at).toLocaleDateString()}
             </p>
+          </div>
+
+          <UserProjectsSection login={me.login} />
+        </aside>
+
+        <div className="min-w-0 space-y-6">
+          {viewer.data && (
+            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+              <ActivityCalendarSection
+                viewerId={viewer.data.id}
+                scope={{ kind: "user", subjectId: me.id }}
+                {...rollingActivityWindow(
+                  activityToday(activityContext.now, activityContext.timezone),
+                )}
+                day={activity.day}
+                timezone={activityContext.timezone}
+                today={activityToday(
+                  activityContext.now,
+                  activityContext.timezone,
+                )}
+                onReady={setCalendarReady}
+                onInvalidDay={(day) => {
+                  if (!activityInvalidNotified.current) {
+                    activityInvalidNotified.current = true;
+                    toast("Invalid activity date was reset.");
+                  }
+                  onActivityDateChange(
+                    { activity_day: day },
+                    { replace: true },
+                  );
+                }}
+                onDayChange={(day, options) =>
+                  onActivityDateChange({ activity_day: day }, options)
+                }
+                onClearDay={() =>
+                  onActivityDateChange({ activity_day: undefined })
+                }
+              />
+            </Suspense>
           )}
-          <p className="flex items-center gap-1.5 text-muted-foreground">
-            <CalendarIcon aria-hidden className="size-4" />
-            joined {new Date(me.created_at).toLocaleDateString()}
-          </p>
+
+          {/* Keyed on the login: arriving by id renders this page once against
+              the id before the redirect lands, and a stale section would
+              otherwise keep querying the old ref. */}
+          {!daySelected && (
+            <UserIssuesSection
+              key={me.login}
+              login={me.login}
+              role={role}
+              state={state}
+              onFilters={onFilters}
+              onReady={setRowsReady}
+            />
+          )}
         </div>
       </div>
-
-      {viewer.data && (
-        <Suspense fallback={<Skeleton className="h-48 w-full" />}>
-          <ActivityCalendarSection
-            viewerId={viewer.data.id}
-            scope={{ kind: "user", subjectId: me.id }}
-            {...rollingActivityWindow(
-              activityToday(activityContext.now, activityContext.timezone),
-            )}
-            day={activity.day}
-            timezone={activityContext.timezone}
-            today={activityToday(activityContext.now, activityContext.timezone)}
-            onReady={setCalendarReady}
-            onInvalidDay={(day) => {
-              if (!activityInvalidNotified.current) {
-                activityInvalidNotified.current = true;
-                toast("Invalid activity date was reset.");
-              }
-              onActivityDateChange({ activity_day: day }, { replace: true });
-            }}
-            onDayChange={(day, options) =>
-              onActivityDateChange({ activity_day: day }, options)
-            }
-          />
-        </Suspense>
-      )}
-
-      {/* Keyed on the login: arriving by id renders this page once against
-          the id before the redirect lands, and a stale section would
-          otherwise keep querying the old ref. */}
-      <UserIssuesSection
-        key={me.login}
-        login={me.login}
-        role={role}
-        state={state}
-        onFilters={onFilters}
-        onReady={setRowsReady}
-      />
-      <UserProjectsSection login={me.login} />
     </div>
   );
 }

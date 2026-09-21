@@ -524,11 +524,21 @@ describe("the registered user route's activity dates", () => {
       expect(
         new URLSearchParams(invalidLink.searchStr).has("activity_invalid"),
       ).toBe(false);
-      fireEvent.click(view.getByRole("tab", { name: "Created" }));
+      // The cards and the filters that govern them are not on the page while
+      // a day stands in their place, so the route back to them is the
+      // calendar's own control.
+      fireEvent.click(view.getByRole("button", { name: "Clear selection" }));
       await waitFor(() =>
         expect(view.router.state.location.search).toEqual({
-          ...search,
+          role: "assignee",
+          state: "closed",
+        }),
+      );
+      fireEvent.click(await view.findByRole("tab", { name: "Created" }));
+      await waitFor(() =>
+        expect(view.router.state.location.search).toEqual({
           role: "author",
+          state: "closed",
         }),
       );
       expect(view.router.state.location.searchStr).not.toContain(
@@ -677,14 +687,44 @@ describe("the registered user route's activity dates", () => {
     });
   });
 
-  it("keeps dates through role/state changes and resetting both defaults", async () => {
+  it("puts the day's cards where the cards and their filters were, until the selection is cleared", async () => {
     const view = renderAt(`/users/alice${address}`, clientWith(alice));
     await view.findByText("No active cards on 2026-03-04.");
-    fireEvent.click(view.getByRole("tab", { name: "Created" }));
+    // Filters with nothing on screen to filter: the list they govern is the
+    // one the day replaced.
+    expect(view.queryByRole("tablist", { name: "Involvement" })).toBeNull();
+    expect(view.queryByRole("heading", { name: "Their cards" })).toBeNull();
+
+    fireEvent.click(view.getByRole("button", { name: "Clear selection" }));
     await waitFor(() =>
       expect(view.router.state.location.search).toEqual({
-        ...search,
+        role: "assignee",
+        state: "closed",
+      }),
+    );
+    expect(
+      await view.findByRole("heading", { name: "Their cards" }),
+    ).toBeTruthy();
+    expect(view.queryByText("No active cards on 2026-03-04.")).toBeNull();
+    // Back is what undoes the clearing: it was the reader's own selection,
+    // not a default chosen for them.
+    expect(view.router.history.canGoBack()).toBe(true);
+    act(() => view.router.history.back());
+    await view.findByText("No active cards on 2026-03-04.");
+    expect(view.router.state.location.search).toEqual(search);
+    expect(view.queryByRole("tablist", { name: "Involvement" })).toBeNull();
+  });
+
+  it("resets both filter defaults out of the URL", async () => {
+    const view = renderAt(
+      "/users/alice?role=assignee&state=closed",
+      clientWith(alice),
+    );
+    fireEvent.click(await view.findByRole("tab", { name: "Created" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
         role: "author",
+        state: "closed",
       }),
     );
     fireEvent.click(
@@ -694,7 +734,6 @@ describe("the registered user route's activity dates", () => {
     );
     await waitFor(() =>
       expect(view.router.state.location.search).toEqual({
-        ...dates,
         role: "author",
         state: "all",
       }),
@@ -706,16 +745,10 @@ describe("the registered user route's activity dates", () => {
       ),
     );
     await waitFor(() =>
-      expect(view.router.state.location.search).toEqual({
-        ...dates,
-        state: "all",
-      }),
+      expect(view.router.state.location.search).toEqual({ state: "all" }),
     );
     fireEvent.click(view.getByRole("tab", { name: "Open" }));
-    await waitFor(() =>
-      expect(view.router.state.location.search).toEqual(dates),
-    );
-    expect(view.getByText("No active cards on 2026-03-04.")).toBeTruthy();
+    await waitFor(() => expect(view.router.state.location.search).toEqual({}));
     expect(view.router.history.canGoBack()).toBe(false);
   });
 
@@ -725,8 +758,13 @@ describe("the registered user route's activity dates", () => {
     expect(view.router.state.location.pathname).toBe("/users/alice");
     expect(view.router.state.location.search).toEqual(search);
     expect(view.router.history.canGoBack()).toBe(false);
+    // The filters carried through the redirect are still the ones in force;
+    // the day's cards are simply standing where the list they govern was.
+    fireEvent.click(view.getByRole("button", { name: "Clear selection" }));
     expect(
-      view.getByRole("tab", { name: "Assigned" }).getAttribute("aria-selected"),
+      (await view.findByRole("tab", { name: "Assigned" })).getAttribute(
+        "aria-selected",
+      ),
     ).toBe("true");
     expect(
       view.getByRole("tab", { name: "Closed" }).getAttribute("aria-selected"),
@@ -870,10 +908,11 @@ describe("the registered user route's activity dates", () => {
       expect(notify).toHaveBeenCalledExactlyOnceWith(
         "Invalid activity date was reset.",
       );
+      fireEvent.click(view.getByRole("button", { name: "Clear selection" }));
       expect(
-        view
-          .getByRole("tab", { name: "Assigned" })
-          .getAttribute("aria-selected"),
+        (await view.findByRole("tab", { name: "Assigned" })).getAttribute(
+          "aria-selected",
+        ),
       ).toBe("true");
       expect(
         view.getByRole("tab", { name: "Closed" }).getAttribute("aria-selected"),
