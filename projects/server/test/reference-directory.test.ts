@@ -1,8 +1,11 @@
-import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { refPrefixes } from "../src/db/system-schema.ts";
 import { syncRefPrefixMirror } from "../src/services/reference-directory.ts";
-import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
+import {
+  addUserWithToken,
+  countStatements,
+  makeTestApp,
+  type TestApp,
+} from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -129,17 +132,18 @@ describe("reference prefix directory T-150", () => {
     ).toBe(true);
   });
 
-  it("re-copies missing mirror rows and stays idempotent", async () => {
-    const system = t.ctx.router.system();
-    const before = await system.select().from(refPrefixes);
-    const victim = before.find((row) => row.prefix === "XX");
-    if (!victim) throw new Error("expected a mirrored XX row");
-    await system.delete(refPrefixes).where(eq(refPrefixes.id, victim.id));
-
-    expect(await syncRefPrefixMirror(t.ctx)).toBe(1);
-    expect(await syncRefPrefixMirror(t.ctx)).toBe(0);
-    const after = await system.select().from(refPrefixes);
-    expect(after).toHaveLength(before.length);
+  it("leaves a colocated mirror alone — the write path cannot leave a gap", async () => {
+    const log = await countStatements(t, async () => {
+      // Regression watchdog: green on the parent commit too, where there was
+      // simply nothing to repair.
+      expect(await syncRefPrefixMirror(t.ctx)).toBe(0);
+    });
+    // This one is the card's criterion: the sweep used to spend 1 + 2N
+    // statements to find that out. The repair case that needs a real gap
+    // lives in ref-mirror-placements.test.ts, which can afford to keep the
+    // gap: it does not share an app with the directory cases below.
+    expect(log.total).toBe(1);
+    expect(Object.keys(log.byUrl)).toEqual([t.ctx.router.systemHandle().url]);
   });
 
   // A prefix chosen at creation (T-148) has to reach the directory by the

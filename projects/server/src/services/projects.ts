@@ -103,18 +103,90 @@ async function checkSlugAvailable(
   }
 }
 
-export async function createProject(
-  ctx: AppContext,
-  actor: UserRow,
+/**
+ * Everything a new project owns beyond its registry row, split by tier: the
+ * system database holds the slug history and the memberships, the project's
+ * own database the rest. Taking both handles as parameters is what lets a
+ * colocated create pass the same transaction twice.
+ */
+async function seedProject(
+  system: Db,
+  db: Db,
+  row: ProjectRow,
   input: ProjectCreateInput,
-): Promise<Project> {
-  const system = ctx.router.system();
+  actor: UserRow,
+): Promise<void> {
+  // Anchored at createdAt for the same reason the ref format is: the
+  // history has to cover every instant this project could hold content.
+  await system.insert(slugHistory).values({
+    projectId: row.id,
+    slug: row.slug,
+    effectiveFrom: row.createdAt,
+  });
+  await db
+    .insert(projectMeta)
+    .values({ projectId: row.id })
+    .onConflictDoNothing();
+  await db.insert(statuses).values(
+    CANONICAL_STATUSES.map((s, i) => ({
+      projectId: row.id,
+      name: s.name,
+      category: s.category,
+      color: s.color,
+      position: i,
+      isDefault: s.is_default ?? false,
+    })),
+  );
+  // Anchored at the registry row's own createdAt, not now(): the history
+  // then covers every instant the project could already hold content.
+  if (input.ref_prefix != null) {
+    await db.insert(refFormats).values({
+      projectId: row.id,
+      prefix: input.ref_prefix,
+      effectiveFrom: row.createdAt,
+    });
+  }
+  // A machine creating a project brings its owner in as admin alongside it
+  // (T-340). Creation is the one path that writes a membership row without
+  // going through the ceiling checks, so without this a machine holding a
+  // PAT could make itself an admin of a project its owner has no role in —
+  // the invariant broken at the moment of birth. Writing the owner's row
+  // instead of refusing the create keeps every existing caller working, and
+  // leaves the project with a human admin rather than a lone machine whose
+  // role nobody is left able to change.
+  //
+  // No guard on the actor's kind, deliberately: a machine has always been
+  // able to create projects here, and taking that away belongs to a card
+  // that can go and look at who would break.
+  await system.insert(projectMembers).values(
+    actor.kind === "machine" && actor.ownerId !== null
+      ? [
+          { projectId: row.id, userId: actor.id, role: "admin" as const },
+          {
+            projectId: row.id,
+            userId: actor.ownerId,
+            role: "admin" as const,
+          },
+        ]
+      : [{ projectId: row.id, userId: actor.id, role: "admin" as const }],
+  );
+  if (input.ref_prefix != null) {
+    await mirrorRefFormat(system, row.id, {
+      prefix: input.ref_prefix,
+      effectiveFrom: row.createdAt,
+    });
+  }
+}
 
-  await checkSlugAvailable(system, input.slug, null, input.reclaim ?? false);
-
-  // The check above races anyone creating the same slug concurrently; the
-  // unique index is what actually decides, so translate its verdict rather
-  // than letting a lost race surface as a 500.
+/**
+ * The registry insert, with the unique index's verdict translated: the
+ * availability check races anyone creating the same slug concurrently, so a
+ * lost race has to surface as a 409 rather than a 500.
+ */
+async function insertRegistryRow(
+  system: Db,
+  input: ProjectCreateInput,
+): Promise<ProjectRow> {
   const inserted = await system
     .insert(projects)
     .values({
@@ -129,69 +201,52 @@ export async function createProject(
     });
   const row = inserted[0];
   if (!row) throw new Error("project insert returned no row");
+  return row;
+}
+
+export async function createProject(
+  ctx: AppContext,
+  actor: UserRow,
+  input: ProjectCreateInput,
+): Promise<Project> {
+  const system = ctx.router.system();
+
+  if (ctx.router.newProjectSharesSystemDatabase()) {
+    // No `provision` call: for a project resolving to the system database it
+    // makes the same comparison and returns without a statement, and calling
+    // it from inside the transaction would take a second handle.
+    const created = await system.transaction(async (tx) => {
+      await checkSlugAvailable(tx, input.slug, null, input.reclaim ?? false);
+      const row = await insertRegistryRow(tx, input);
+      // The transaction is only sound while both tiers are this one
+      // database; a route that says otherwise means rolling the whole
+      // create back beats writing project rows into the system tier.
+      if (!ctx.router.sharesSystemDatabase(routeInfoOf(row))) {
+        throw new Error("project routed out of the system database mid-create");
+      }
+      await seedProject(tx, tx, row, input, actor);
+      return row;
+    });
+    // After the commit: a subscriber that reacts by reading the project has
+    // to find it there.
+    ctx.bus.publish(created.id, {
+      entity: "project",
+      id: created.id,
+      action: "created",
+    });
+    return toProject(created);
+  }
+
+  await checkSlugAvailable(system, input.slug, null, input.reclaim ?? false);
+
+  // The check above races anyone creating the same slug concurrently; the
+  // unique index is what actually decides, so translate its verdict rather
+  // than letting a lost race surface as a 500.
+  const row = await insertRegistryRow(system, input);
 
   try {
-    // Anchored at createdAt for the same reason the ref format is: the
-    // history has to cover every instant this project could hold content.
-    await system.insert(slugHistory).values({
-      projectId: row.id,
-      slug: row.slug,
-      effectiveFrom: row.createdAt,
-    });
     const db = await ctx.router.provision(routeInfoOf(row));
-    await db
-      .insert(projectMeta)
-      .values({ projectId: row.id })
-      .onConflictDoNothing();
-    await db.insert(statuses).values(
-      CANONICAL_STATUSES.map((s, i) => ({
-        projectId: row.id,
-        name: s.name,
-        category: s.category,
-        color: s.color,
-        position: i,
-        isDefault: s.is_default ?? false,
-      })),
-    );
-    // Anchored at the registry row's own createdAt, not now(): the history
-    // then covers every instant the project could already hold content.
-    if (input.ref_prefix != null) {
-      await db.insert(refFormats).values({
-        projectId: row.id,
-        prefix: input.ref_prefix,
-        effectiveFrom: row.createdAt,
-      });
-    }
-    // A machine creating a project brings its owner in as admin alongside it
-    // (T-340). Creation is the one path that writes a membership row without
-    // going through the ceiling checks, so without this a machine holding a
-    // PAT could make itself an admin of a project its owner has no role in —
-    // the invariant broken at the moment of birth. Writing the owner's row
-    // instead of refusing the create keeps every existing caller working, and
-    // leaves the project with a human admin rather than a lone machine whose
-    // role nobody is left able to change.
-    //
-    // No guard on the actor's kind, deliberately: a machine has always been
-    // able to create projects here, and taking that away belongs to a card
-    // that can go and look at who would break.
-    await system.insert(projectMembers).values(
-      actor.kind === "machine" && actor.ownerId !== null
-        ? [
-            { projectId: row.id, userId: actor.id, role: "admin" as const },
-            {
-              projectId: row.id,
-              userId: actor.ownerId,
-              role: "admin" as const,
-            },
-          ]
-        : [{ projectId: row.id, userId: actor.id, role: "admin" as const }],
-    );
-    if (input.ref_prefix != null) {
-      await mirrorRefFormat(system, row.id, {
-        prefix: input.ref_prefix,
-        effectiveFrom: row.createdAt,
-      });
-    }
+    await seedProject(system, db, row, input, actor);
   } catch (cause) {
     // Cross-database creation cannot be one transaction; compensate by
     // removing the registry row so the failed project is unroutable.

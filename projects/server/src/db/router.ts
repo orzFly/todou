@@ -83,6 +83,25 @@ export class DbRouter {
     return template(project);
   }
 
+  /**
+   * Whether this project's rows and the system tier's can sit in one
+   * transaction. Not the same question as shared placement: a relocated
+   * project carries its own database_url, and that wins above.
+   */
+  sharesSystemDatabase(project: ProjectRouteInfo): boolean {
+    return this.resolveProjectUrl(project) === this.#system.url;
+  }
+
+  /**
+   * The same question about a project the registry has not minted yet, and
+   * so also the question "did every create in this deployment go through
+   * the transactional branch". It cannot go through resolveProjectUrl:
+   * under dedicated placement the url template reads the project's own id.
+   */
+  newProjectSharesSystemDatabase(): boolean {
+    return this.#config.database.projects.placement === "shared";
+  }
+
   async forProject(project: ProjectRouteInfo): Promise<Db> {
     return (await this.#handleForProject(project)).db;
   }

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeTestApp, type TestApp } from "./helpers.ts";
+import { countStatements, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -143,5 +143,28 @@ describe.skipIf(!PG_URL)("reference format on real postgres", () => {
     ).toEqual([]);
     // Every project-side history row reached the mirror.
     expect(config.format.history.length).toBeGreaterThanOrEqual(4);
+  });
+
+  // The literal proof that the colocated write is one transaction, and the
+  // only place it can be made: PGlite hands BEGIN/COMMIT to its client
+  // without going through drizzle's logger, so on the default run txControl
+  // stays 0 no matter what the code does. node-postgres issues them as
+  // statements, so here they are countable.
+  it("wraps the history row and its mirror in one transaction", async () => {
+    const tag = slug.slice("refs-pg-".length).toUpperCase();
+    const log = await countStatements(t, async () => {
+      const res = await api("/references/format", {
+        method: "PUT",
+        body: JSON.stringify({ prefix: `S${tag}` }),
+      });
+      expect(res.status).toBe(200);
+    });
+
+    expect(log.txControl).toBeGreaterThanOrEqual(2);
+    const writes = log.statements.filter((s) =>
+      /insert into "(ref_formats|ref_prefixes)"/.test(s.sql),
+    );
+    expect(writes).toHaveLength(2);
+    expect(new Set(writes.map((s) => s.url)).size).toBe(1);
   });
 });

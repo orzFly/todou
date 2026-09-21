@@ -38,9 +38,11 @@ export async function sweepAuthRows(
 }
 
 /**
- * One-shot boot chores. The prefix mirror is rebuilt rather than trusted:
- * it lives in a different database from the histories it copies, so a
- * crash between the two writes is repaired here and nowhere else.
+ * One-shot boot chores. The prefix mirror is rebuilt rather than trusted for
+ * the projects that live in a different database from the histories it
+ * copies: a crash between those two writes is repaired here and nowhere
+ * else. Colocated projects write both rows in one transaction and are
+ * skipped, so for them this is not a repair path at all.
  * Failure is logged, never fatal — a stale mirror only costs bare-prefix
  * resolution, and the server is still useful without it.
  */

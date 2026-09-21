@@ -121,18 +121,29 @@ export async function setReferenceFormat(
       `internal format token "${token}" overlaps autolink prefix "${clash.prefix}"`,
     );
   }
-  const inserted = await db
-    .insert(refFormats)
-    .values({ projectId: project.id, prefix: input.prefix })
-    .returning({
-      prefix: refFormats.prefix,
-      effectiveFrom: refFormats.effectiveFrom,
-    });
-  const row = inserted[0];
-  // Two databases, no shared transaction: the project's own history is
-  // authoritative and lands first. A mirror failure is reported so the
-  // admin can retry, and startup housekeeping re-copies it regardless.
-  if (row) await mirrorRefFormat(ctx.router.system(), project.id, row);
+  const insertPair = async (history: Db, mirror: Db): Promise<void> => {
+    const inserted = await history
+      .insert(refFormats)
+      .values({ projectId: project.id, prefix: input.prefix })
+      .returning({
+        prefix: refFormats.prefix,
+        effectiveFrom: refFormats.effectiveFrom,
+      });
+    const row = inserted[0];
+    if (row) await mirrorRefFormat(mirror, project.id, row);
+  };
+  if (ctx.router.sharesSystemDatabase(routeInfoOf(project))) {
+    // One database, so the mirror is just another table in it and both rows
+    // commit together. `tx` for both handles on purpose: a second handle
+    // taken inside the callback waits on the transaction's own mutex and
+    // never returns (see the warning on insertCommentInTx).
+    await db.transaction((tx) => insertPair(tx, tx));
+  } else {
+    // Two databases, no shared transaction: the project's own history is
+    // authoritative and lands first. A mirror failure is reported so the
+    // admin can retry, and startup housekeeping re-copies it regardless.
+    await insertPair(db, ctx.router.system());
+  }
   return loadConfig(db, project.id);
 }
 

@@ -117,6 +117,34 @@ describe("dedicated placement", () => {
   });
 });
 
+// Regression watchdog, not a benefit criterion: these fail on the parent
+// commit only because the methods are absent (TS2339 at typecheck, TypeError
+// at runtime). They exist because the two predicates are read as a
+// conjunction by the mirror sweep, and the asymmetry between them — a pinned
+// project can share the system database in a deployment where no create ever
+// took the transactional branch — is the whole reason that conjunction has
+// two clauses.
+describe("colocation predicates", () => {
+  it("reads the pin, not the placement, for an existing project", async () => {
+    const { router } = await open("shared");
+    expect(router.sharesSystemDatabase(project(1))).toBe(true);
+    expect(
+      router.sharesSystemDatabase(project(1, "pglite://memory/elsewhere")),
+    ).toBe(false);
+  });
+
+  it("says neither holds under dedicated placement", async () => {
+    const { router } = await open("dedicated");
+    expect(router.sharesSystemDatabase(project(1))).toBe(false);
+    expect(router.newProjectSharesSystemDatabase()).toBe(false);
+  });
+
+  it("answers for a project the registry has not minted yet", async () => {
+    const { router } = await open("shared");
+    expect(router.newProjectSharesSystemDatabase()).toBe(true);
+  });
+});
+
 // These four fail on the parent commit only because the method is absent
 // (TS2339 at typecheck, TypeError at runtime) — none of them is a red that
 // measures a cost this card removes. They pin the API contract instead, so

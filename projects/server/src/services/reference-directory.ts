@@ -39,16 +39,30 @@ const rowKey = (row: FormatRow): string =>
   `${row.effectiveFrom.getTime()}:${JSON.stringify(row.prefix)}`;
 
 /**
- * Re-copy whatever the mirror is missing, project by project. This is the
- * repair path for a mirror write that failed after its project-database
- * write committed, and the one-time backfill for histories that predate
- * the mirror. ref_formats is append-only, so insert-only is complete.
+ * Re-copy whatever the mirror is missing, for the projects that can still be
+ * missing something: those in a database of their own. A colocated project
+ * writes its history row and its mirror in one transaction, so it has no
+ * half-landed state to repair — and no backfill either, this being the only
+ * sweep that ever touched those rows. ref_formats is append-only, so
+ * insert-only is complete.
  */
 export async function syncRefPrefixMirror(ctx: AppContext): Promise<number> {
   const system = ctx.router.system();
   const rows = await system.select().from(projects);
+  const createsAreColocated = ctx.router.newProjectSharesSystemDatabase();
   let added = 0;
   for (const project of rows) {
+    // Both clauses, not just the per-project one: a deployment whose
+    // placement is dedicated never took the transactional branch in
+    // createProject, not even for a project whose url happens to resolve
+    // back to the system database — skipping that project would leave the
+    // one kind of gap nothing else repairs.
+    if (
+      createsAreColocated &&
+      ctx.router.sharesSystemDatabase(routeInfoOf(project))
+    ) {
+      continue;
+    }
     added += await syncProject(ctx, project);
   }
   return added;
