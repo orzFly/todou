@@ -1098,4 +1098,60 @@ describe("ActivityCalendar insights link", () => {
     expect(marks("selection")).toEqual([]);
     expect(marks("hover")).toEqual([]);
   });
+
+  describe("clearing a selection", () => {
+    const clear = () => screen.queryByRole("button", { name: /clear/i });
+
+    it("offers nothing to clear until something is selected", () => {
+      render(
+        <ActivityCalendar
+          {...props({ selection: null, onClear: vi.fn(), link: linkProps() })}
+        />,
+      );
+      expect(clear()).toBeNull();
+    });
+
+    it("stays away where the caller cannot drop the day it selected", () => {
+      // A day with no `onClear` behind it: a control that did nothing when
+      // pressed would be worse than the Escape-only route it replaces.
+      render(
+        <ActivityCalendar {...props({ selection: selected("2024-01-10") })} />,
+      );
+      expect(clear()).toBeNull();
+    });
+
+    it("drops the day and the charts' span together", () => {
+      const onClear = vi.fn();
+      const link = linkProps({
+        selection: {
+          start: at("2024-03-10T00:00:00Z"),
+          end: at("2024-03-13T00:00:00Z"),
+        },
+      });
+      render(
+        <ActivityCalendar
+          {...props({ selection: selected("2024-01-10"), onClear, link })}
+        />,
+      );
+      fireEvent.click(clear() as HTMLElement);
+      expect(onClear).toHaveBeenCalledExactlyOnceWith();
+      expect(link.onSelect).toHaveBeenCalledExactlyOnceWith(null);
+      expect(link.onHover).toHaveBeenCalledExactlyOnceWith(null);
+    });
+
+    it("clears a span the reader dragged out with no day picked", () => {
+      // The insights case: the charts are drawn against a range that never
+      // reached the URL, and before this the only way back was Escape on a
+      // focused cell.
+      const link = linkProps({
+        selection: {
+          start: at("2024-03-10T00:00:00Z"),
+          end: at("2024-03-13T00:00:00Z"),
+        },
+      });
+      render(<ActivityCalendar {...props({ selection: null, link })} />);
+      fireEvent.click(clear() as HTMLElement);
+      expect(link.onSelect).toHaveBeenCalledExactlyOnceWith(null);
+    });
+  });
 });

@@ -4,6 +4,7 @@ import {
   enumLookup,
 } from "@todou/shared";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { Button } from "@/components/ui/button.tsx";
 import {
   dayCoverage,
   type InsightsLink,
@@ -37,6 +38,13 @@ export interface ActivityCalendarProps {
    * beyond their own day selection.
    */
   link?: InsightsLink;
+  /**
+   * Drop the selected day, leaving the window showing everything again. The
+   * visible way back out: every other gesture on this grid sets a selection,
+   * and until this existed only Escape on a focused cell undid one — which is
+   * no route at all for a reader who picked the day with a pointer.
+   */
+  onClear?: () => void;
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -212,6 +220,7 @@ export function ActivityCalendar({
   error = null,
   onRetry,
   link,
+  onClear,
 }: ActivityCalendarProps) {
   const id = useId();
   const buttons = useRef(new Map<string, HTMLButtonElement>());
@@ -410,6 +419,13 @@ export function ActivityCalendar({
   // chart's bare instant has to be matched against the cells here.
   const hoverAt =
     link?.hover && link.hover.span === undefined ? link.hover.at : null;
+  // One control for both kinds of selection this grid can hold: the day whose
+  // cards are listed below it, and the span the insights charts are drawn
+  // against. A reader who dragged a range and then picked a day has made two
+  // of them, and would otherwise have to guess that they clear separately.
+  const clearable =
+    (selection !== null && onClear !== undefined) ||
+    (link?.selection ?? null) !== null;
 
   return (
     <section
@@ -426,6 +442,20 @@ export function ActivityCalendar({
         >
           Activity
         </h2>
+        {clearable && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              link?.onHover(null);
+              link?.onSelect(null);
+              onClear?.();
+            }}
+          >
+            Clear selection
+          </Button>
+        )}
       </div>
       {/* A refresh keeps the mounted calendar at its size: only the cold load
           may take layout, so an update never moves what the reader is aiming at. */}

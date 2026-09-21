@@ -221,6 +221,17 @@ export function InsightsPage() {
               replace: options?.replace ?? false,
             })
           }
+          // The charts' span lives in component state and the calendar clears
+          // it itself; the day is in the URL, so dropping it is a navigation.
+          onClearDay={() =>
+            void navigate({
+              to: "/projects/$slug/insights",
+              params: { slug },
+              search: activityDateSearchParams(
+                parseInsightsSearch({ ...search, activity_day: undefined }),
+              ),
+            })
+          }
         />
       )}
     </div>

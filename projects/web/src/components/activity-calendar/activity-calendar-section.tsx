@@ -53,6 +53,8 @@ export interface ActivityCalendarSectionProps {
   onDayChange: (day: string, options?: ActivityDayChangeOptions) => void;
   /** Supply to clear/notify rejected explicit days: replace with the recorded default, or clear when undefined. */
   onInvalidDay?: (replacement?: string) => void;
+  /** Drop the selected day at the reader's request. Omit where no day can be selected. */
+  onClearDay?: () => void;
   /** Reports settled base data/error/empty state for restoration, after any legal default is applied; false while fetching and on cleanup. */
   onReady?: (ready: boolean) => void;
 }
@@ -263,6 +265,7 @@ export function ActivityCalendarSection(props: ActivityCalendarSectionProps) {
         today={today}
         link={props.link}
         onDayChange={props.onDayChange}
+        onClear={props.onClearDay}
         loading={loading}
         error={response?.selection ? null : baseError}
         onRetry={retry}
