@@ -647,7 +647,7 @@ export async function getIssue(
  * before this fix. A millisecond `v` cannot order rows inside its own
  * millisecond, so for those the whole [v, v+1ms) window counts as "equal"
  * and the id tie-break decides — the single-table version of the rule in
- * timeline.ts#beyond.
+ * timeline.ts#beyondBounds.
  */
 export function timeAdvance(
   sortColumn: AnyPgColumn,

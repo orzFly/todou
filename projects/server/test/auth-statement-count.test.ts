@@ -325,8 +325,9 @@ describe("cross-project authorization statement count (dedicated-bucketed)", () 
     // Attribution, not correctness: these buckets still double with N, and
     // naming which card owns each one is what keeps a future regression
     // from being blamed on authorization. Measured per bucket at N=4 → N=8:
-    // bulk-read 4 → 8 (bulkMarkRead's own transaction per project),
-    // /activity 4 → 8 both branches, the calendar 6 → 12. The equality
+    // bulk-read 4 → 8 (bulkMarkRead's own transaction per project), the
+    // calendar 6 → 12. /activity has since been folded and holds at 2 on its
+    // own card's watch (test/activity-placements.test.ts). The equality
     // asserted below is only that the bucket count itself is stable.
     for (const name of [
       "bulk-read",

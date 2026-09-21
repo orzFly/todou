@@ -302,6 +302,11 @@ export const comments = pgTable(
   },
   (t) => [
     index("comments_issue_created_idx").on(t.issueId, t.createdAt),
+    // The activity stream's sort key, `id` included because the cursor
+    // compares on it: stopping at `created_at` leaves an incremental sort and
+    // puts the resume boundary outside the index. One ascending index serves
+    // both directions — `last=1` reads it backwards.
+    index("comments_project_created_idx").on(t.projectId, t.createdAt, t.id),
     trigramIndex("comments_body_trgm_idx", t.body),
     agentContextIndex("comments_agent_idx", t.agentContext, "agent"),
     agentContextIndex("comments_session_idx", t.agentContext, "session_id"),
@@ -358,6 +363,15 @@ export const issueEvents = pgTable(
   },
   (t) => [
     index("issue_events_issue_created_idx").on(t.issueId, t.createdAt),
+    // Paired with comments_project_created_idx; same reasoning. Not made
+    // partial on `live`: that predicate lives on `issues`, which a partial
+    // index here cannot reach, and `types=` / `exclude_*` are optional, so a
+    // partial index on them would go unused by every request omitting them.
+    index("issue_events_project_created_idx").on(
+      t.projectId,
+      t.createdAt,
+      t.id,
+    ),
     agentContextIndex("issue_events_agent_idx", t.agentContext, "agent"),
     agentContextIndex("issue_events_session_idx", t.agentContext, "session_id"),
   ],

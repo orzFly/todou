@@ -24,6 +24,7 @@ import {
   count,
   desc,
   eq,
+  getTableColumns,
   gt,
   gte,
   inArray,
@@ -32,7 +33,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import type { AnyPgColumn, PgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -332,48 +333,107 @@ function compareRaw(a: Raw, b: Raw): number {
 }
 
 /**
- * Per-table cursor predicate. `forward` means "strictly after the cursor
- * in timeline order"; backward is the mirror image.
- *
+ * A cursor as the half-open window `[lo, hi)` of timestamps it cannot order
+ * plus the (kind, id) pair that breaks ties inside it.
+ */
+export type CursorBounds = {
+  lo: SQL;
+  hi: SQL;
+  /** A JS literal when the caller has one cursor, SQL when it comes from a row. */
+  k: 0 | 1 | SQL;
+  i: number | SQL;
+};
+
+/**
  * Cursor timestamps come in two precisions: microseconds from current
  * servers, milliseconds from servers before the T-69 fix (and from any
- * PGlite-era cursor an agent still has persisted). A millisecond `t`
- * cannot order rows inside its own millisecond, so for those cursors the
- * whole [t, t+1ms) window counts as "equal timestamp" and the (kind, id)
- * tie-break decides — the same rule the old encoding applied at equal
- * timestamps, extended to the sub-millisecond digits it could not see.
+ * PGlite-era cursor an agent still has persisted). Both collapse onto one
+ * window rule because `timestamptz`'s own resolution is a microsecond:
+ * `'…00.1234565+00'::timestamptz` stores `…00.123456+00`, so
+ * `+ interval '1 microsecond'` is that value's immediate successor and
+ * `[t, t+1µs)` holds exactly the rows a µs cursor calls "equal". A
+ * millisecond `t` cannot order rows inside its own millisecond, so its
+ * window is the whole `[t, t+1ms)` — the same rule the old encoding applied
+ * at equal timestamps, extended to the digits it could not see. The
+ * single-table form of it lives in issues.ts#timeAdvance.
+ *
+ * A null cursor becomes `±infinity`, with a null (kind, id). Sentinels
+ * rather than "no predicate at all" because the VALUES-driven form needs a
+ * value in every column of every row; see `fetchActivityRows`.
  */
-function beyond(
+export function cursorBounds(
+  cursor: Cursor | null,
+  forward: boolean,
+): CursorBounds {
+  if (cursor === null) {
+    const edge = forward
+      ? sql`'-infinity'::timestamptz`
+      : sql`'infinity'::timestamptz`;
+    // Casts, not bare NULLs: an untyped null in a VALUES column leaves the
+    // column typeless and the comparisons against it fail to parse.
+    return { lo: edge, hi: edge, k: sql`null::int`, i: sql`null::bigint` };
+  }
+  const exact = /\.\d{4,}/.test(cursor.t);
+  const lo = sql`${cursor.t}::timestamptz`;
+  const hi = exact
+    ? sql`${cursor.t}::timestamptz + interval '1 microsecond'`
+    : sql`${new Date(Date.parse(cursor.t) + 1).toISOString()}::timestamptz`;
+  return { lo, hi, k: cursor.k, i: cursor.i };
+}
+
+/**
+ * Per-table cursor predicate. `forward` means "strictly after the cursor in
+ * timeline order"; backward is the mirror image.
+ *
+ * Shaped as `window AND (past-the-window OR (in-window AND tie))` rather
+ * than the older `past-the-window OR (in-window AND tie)`: the extra
+ * conjunct is redundant as logic and decisive as an access path, because it
+ * is the only part a planner can turn into an index bound. Without it a
+ * mid-stream resume rescans the project's whole history to reach the cursor.
+ *
+ * When `bounds.k` is a JS literal the kind comparison is decided here and
+ * the tie folds away, because a planner cannot prune a tie it only learns at
+ * run time — that is the price of answering a whole database in one
+ * statement, and single-cursor callers should not pay it.
+ */
+export function beyondBounds(
   createdAt: AnyPgColumn,
   id: AnyPgColumn,
   tableKind: 0 | 1,
-  cursor: Cursor,
+  bounds: CursorBounds,
   forward: boolean,
-) {
-  const exact = /\.\d{4,}/.test(cursor.t);
-  const from = sql`${cursor.t}::timestamptz`;
-  const to = exact
-    ? from
-    : sql`${new Date(Date.parse(cursor.t) + 1).toISOString()}::timestamptz`;
-  const strict = forward
-    ? exact
-      ? gt(createdAt, from)
-      : gte(createdAt, to)
-    : lt(createdAt, from);
-  const equal = exact
-    ? eq(createdAt, from)
-    : and(gte(createdAt, from), lt(createdAt, to));
-
-  const conditions: SQL[] = [strict];
-  if (tableKind === cursor.k) {
-    const cmp = forward ? gt : lt;
-    const tie = and(equal, cmp(id, cursor.i));
-    if (tie) conditions.push(tie);
-  } else {
-    const kindAfter = forward ? tableKind > cursor.k : tableKind < cursor.k;
-    if (kindAfter && equal) conditions.push(equal);
+): SQL {
+  const { lo, hi, k, i } = bounds;
+  if (typeof k === "number" && k !== tableKind) {
+    // The tie is constant, not the window: with the kinds ordered the right
+    // way every in-window row of this table qualifies, which leaves the
+    // window's own bound. Folding this into `created_at >= hi` instead would
+    // silently drop every row sharing the cursor's microsecond.
+    const kindAfter = forward ? tableKind > k : tableKind < k;
+    if (forward) return kindAfter ? gte(createdAt, lo) : gte(createdAt, hi);
+    return kindAfter ? lt(createdAt, hi) : lt(createdAt, lo);
   }
-  return or(...conditions);
+  let tie: SQL;
+  if (typeof k === "number") {
+    tie = forward ? gt(id, i) : lt(id, i);
+  } else if (tableKind === KIND_COMMENT) {
+    // Comments sort before events at an equal timestamp, so a cursor parked
+    // on an event has already delivered every comment in the window.
+    tie = forward
+      ? sql`(${k} = 0 and ${id} > ${i})`
+      : sql`(${k} = 1 or ${id} < ${i})`;
+  } else {
+    tie = forward
+      ? sql`(${k} = 0 or ${id} > ${i})`
+      : sql`(${k} = 1 and ${id} < ${i})`;
+  }
+  // A sentinel row's null (kind, id) makes `tie` null, and null never
+  // reaches the result: `created_at` is NOT NULL, so the window bound beside
+  // it is TRUE and `TRUE OR NULL` is TRUE by the truth table — which holds
+  // whichever side SQL chooses to evaluate first.
+  return forward
+    ? sql`(${createdAt} >= ${lo} and (${createdAt} >= ${hi} or (${createdAt} < ${hi} and ${tie})))`
+    : sql`(${createdAt} < ${hi} and (${createdAt} < ${lo} or (${createdAt} >= ${lo} and ${tie})))`;
 }
 
 export async function getTimeline(
@@ -437,22 +497,25 @@ export async function getTimeline(
   const total_count = (commentTotal[0]?.n ?? 0) + (eventTotal[0]?.n ?? 0);
 
   if (cursor) {
-    const c1 = beyond(
-      comments.createdAt,
-      comments.id,
-      KIND_COMMENT,
-      cursor,
-      forward,
+    const bounds = cursorBounds(cursor, forward);
+    commentConditions.push(
+      beyondBounds(
+        comments.createdAt,
+        comments.id,
+        KIND_COMMENT,
+        bounds,
+        forward,
+      ),
     );
-    const c2 = beyond(
-      issueEvents.createdAt,
-      issueEvents.id,
-      KIND_EVENT,
-      cursor,
-      forward,
+    eventConditions.push(
+      beyondBounds(
+        issueEvents.createdAt,
+        issueEvents.id,
+        KIND_EVENT,
+        bounds,
+        forward,
+      ),
     );
-    if (c1) commentConditions.push(c1);
-    if (c2) eventConditions.push(c2);
   }
 
   const fetch = query.limit + 1;
@@ -514,31 +577,74 @@ export async function getTimeline(
   return { items, prev_cursor, next_cursor, has_more: hasMore, total_count };
 }
 
-type RawWithIssue = Raw & { number: number };
+/** `slot` is the index in the caller's `entries` that produced the row. */
+type RawWithIssue = Raw & { number: number; slot: number };
+
+/** One entry's window into one project's stream. */
+export type ActivityEntry = { projectId: number; cursor: Cursor | null };
 
 /**
- * One project's activity rows in ascending timeline order: comments ×
- * events merged, each joined to its issue number, up to `fetchCount` rows
- * per table beyond `cursor` (or the newest `fetchCount` when `backward`).
- * Callers cut the page; extracting this core is what lets the
- * cross-project stream (T-93) reuse the exact single-project semantics
- * once per watched project.
+ * PostgreSQL binds at most 65535 parameters per statement and an entry
+ * spends six of them, so an unsplit VALUES list turns into an opaque bind
+ * failure somewhere past ten thousand entries. Before this shape that scale
+ * cost twenty thousand statements — slow, but it answered; trading slow for
+ * "errors out" is not an acceptable exchange.
  */
-async function fetchProjectActivityRows(opts: {
+const VALUES_CHUNK = 1000;
+
+/**
+ * `SelectionProxyHandler` stamps the subquery's alias onto columns only in
+ * its `get` trap, while `orderSelectedFields` reads the selection with
+ * `Object.entries` and walks straight past it. Spreading a subquery
+ * therefore yields columns that still name the base table and the dialect
+ * rejects the query. Property access, not spread.
+ */
+function fromSubquery<T extends Record<string, PgColumn>>(
+  sub: object,
+  columns: T,
+): T {
+  const fields = sub as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(columns).map((key) => [key, fields[key]]),
+  ) as T;
+}
+
+/**
+ * Activity rows in ascending timeline order for a batch of (project,
+ * cursor) entries that live in one database: comments × events merged, each
+ * joined to its issue number, up to `fetchCount` rows per table and per
+ * entry. Callers cut the page.
+ *
+ * Two statements answer the whole batch, whatever its size. The entries ride
+ * in as a VALUES table that a `cross join lateral` drives, one correlated
+ * `ORDER BY … LIMIT` per row of it, which is why the per-entry limit
+ * survives batching.
+ */
+export async function fetchActivityRows(opts: {
   db: Db;
-  projectId: number;
-  cursor: Cursor | null;
+  entries: ActivityEntry[];
   filters: Filters;
   visible: VisibleProjects;
   backward: boolean;
   fetchCount: number;
+  /**
+   * Test-only. Reaching the real split needs 1001 entries, which means 1001
+   * projects — a fixture PGlite cannot carry, so the boundary has to be
+   * movable for the slot-numbering invariant to be checkable at all.
+   */
+  chunk?: number;
 }): Promise<RawWithIssue[]> {
-  const { db, projectId, cursor, backward, fetchCount } = opts;
+  const { db, entries, backward, fetchCount } = opts;
+  // `sql.join([], …)` renders `(values ) as "cur"(…)`, which is a syntax
+  // error. No caller reaches it today, but this is now the only way into the
+  // tables and a reader with no project memberships arrives with an empty
+  // list.
+  if (entries.length === 0) return [];
   const forward = !backward;
   const { wantComments, wantEvents, commentConditions, eventConditions } =
     filterConditions(opts.filters, opts.visible);
-  commentConditions.push(eq(comments.projectId, projectId));
-  eventConditions.push(eq(issueEvents.projectId, projectId));
+  commentConditions.push(eq(comments.projectId, sql`"cur"."project_id"`));
+  eventConditions.push(eq(issueEvents.projectId, sql`"cur"."project_id"`));
   // A card in the trash goes quiet everywhere except about the trashing
   // itself (T-145): an agent blocked on `todou watch` learns the card is
   // gone, by number, and its cursor keeps advancing over a continuous
@@ -554,24 +660,30 @@ async function fetchProjectActivityRows(opts: {
   ] satisfies IssueEventType[]);
   const eventVisible = or(live, trashAudible);
   if (eventVisible) eventConditions.push(eventVisible);
-  if (cursor) {
-    const c1 = beyond(
+  const curBounds: CursorBounds = {
+    lo: sql`"cur"."lo"`,
+    hi: sql`"cur"."hi"`,
+    k: sql`"cur"."k"`,
+    i: sql`"cur"."i"`,
+  };
+  commentConditions.push(
+    beyondBounds(
       comments.createdAt,
       comments.id,
       KIND_COMMENT,
-      cursor,
+      curBounds,
       forward,
-    );
-    const c2 = beyond(
+    ),
+  );
+  eventConditions.push(
+    beyondBounds(
       issueEvents.createdAt,
       issueEvents.id,
       KIND_EVENT,
-      cursor,
+      curBounds,
       forward,
-    );
-    if (c1) commentConditions.push(c1);
-    if (c2) eventConditions.push(c2);
-  }
+    ),
+  );
 
   const commentOrder = backward
     ? [desc(comments.createdAt), desc(comments.id)]
@@ -580,53 +692,110 @@ async function fetchProjectActivityRows(opts: {
     ? [desc(issueEvents.createdAt), desc(issueEvents.id)]
     : [asc(issueEvents.createdAt), asc(issueEvents.id)];
 
-  const commentRows = wantComments
-    ? await db
+  const out: RawWithIssue[] = [];
+  const size = opts.chunk ?? VALUES_CHUNK;
+  for (let base = 0; base < entries.length; base += size) {
+    // Written out as raw `sql` rather than lifted into a shared helper,
+    // following the derived table in services/calendar.ts that ends
+    // `) as calendar_samples(sample)`: one reader, one place to look.
+    //
+    // `w` stays the index into the whole list. Renumbering per chunk would
+    // hand the second chunk's rows to the first chunk's entries: two watches
+    // would swap streams, one replaying and the other silently skipping —
+    // exactly the failure the slot key exists to make impossible.
+    const cur = sql`(values ${sql.join(
+      entries.slice(base, base + size).map((entry, offset) => {
+        const b = cursorBounds(entry.cursor, forward);
+        // Every cell is cast: an uncast parameter inside VALUES arrives as
+        // text and the comparisons against it never see a timestamp.
+        const k = typeof b.k === "number" ? sql`${b.k}::int` : b.k;
+        const i = typeof b.i === "number" ? sql`${b.i}::bigint` : b.i;
+        return sql`(${base + offset}::int, ${entry.projectId}::bigint, ${b.lo}, ${b.hi}, ${k}, ${i})`;
+      }),
+      sql`, `,
+    )}) as "cur"("w", "project_id", "lo", "hi", "k", "i")`;
+
+    if (wantComments) {
+      const c = db
         .select({
-          row: comments,
-          number: issues.number,
-          ts: microIso(comments.createdAt),
+          ...getTableColumns(comments),
+          // The column itself, not a wrapping `sql` expression: wrapping
+          // swaps in the noop decoder and int8 comes back as a string on
+          // node-postgres. `ts` may collide with neither table's columns nor
+          // `cur`'s, because drizzle names an aliased field bare in the
+          // outer query.
+          issueNumber: issues.number,
+          ts: microIso(comments.createdAt).as("ts"),
         })
         .from(comments)
         .innerJoin(issues, eq(comments.issueId, issues.id))
         .where(and(...commentConditions))
         .orderBy(...commentOrder)
         .limit(fetchCount)
-    : [];
-  const eventRows = wantEvents
-    ? await db
+        .as("c");
+      const rows = await db
         .select({
-          row: issueEvents,
-          number: issues.number,
-          ts: microIso(issueEvents.createdAt),
+          // Read off `cur` rather than carried through the subquery: an
+          // inner field named `w` would render bare and collide with this.
+          slot: sql<number>`"cur"."w"`.mapWith(Number),
+          row: fromSubquery(c, getTableColumns(comments)),
+          number: c.issueNumber,
+          ts: c.ts,
+        })
+        .from(cur)
+        .crossJoinLateral(c);
+      out.push(
+        ...rows.map(
+          (r) =>
+            ({
+              kind: KIND_COMMENT,
+              row: r.row,
+              ts: r.ts,
+              number: r.number,
+              slot: r.slot,
+            }) as RawWithIssue,
+        ),
+      );
+    }
+
+    if (wantEvents) {
+      const e = db
+        .select({
+          ...getTableColumns(issueEvents),
+          issueNumber: issues.number,
+          ts: microIso(issueEvents.createdAt).as("ts"),
         })
         .from(issueEvents)
         .innerJoin(issues, eq(issueEvents.issueId, issues.id))
         .where(and(...eventConditions))
         .orderBy(...eventOrder)
         .limit(fetchCount)
-    : [];
+        .as("e");
+      const rows = await db
+        .select({
+          slot: sql<number>`"cur"."w"`.mapWith(Number),
+          row: fromSubquery(e, getTableColumns(issueEvents)),
+          number: e.issueNumber,
+          ts: e.ts,
+        })
+        .from(cur)
+        .crossJoinLateral(e);
+      out.push(
+        ...rows.map(
+          (r) =>
+            ({
+              kind: KIND_EVENT,
+              row: r.row,
+              ts: r.ts,
+              number: r.number,
+              slot: r.slot,
+            }) as RawWithIssue,
+        ),
+      );
+    }
+  }
 
-  return [
-    ...commentRows.map(
-      (r) =>
-        ({
-          kind: KIND_COMMENT,
-          row: r.row,
-          ts: r.ts,
-          number: r.number,
-        }) as RawWithIssue,
-    ),
-    ...eventRows.map(
-      (r) =>
-        ({
-          kind: KIND_EVENT,
-          row: r.row,
-          ts: r.ts,
-          number: r.number,
-        }) as RawWithIssue,
-    ),
-  ].sort(compareRaw);
+  return out.sort(compareRaw);
 }
 
 /**
@@ -653,10 +822,12 @@ export async function getProjectActivity(
   const backward = query.last;
   const cursor = query.after === undefined ? null : decodeCursor(query.after);
   const visible = await visibleProjects(ctx, actor);
-  const merged = await fetchProjectActivityRows({
+  // One entry through the batched path rather than a second query shape:
+  // every single-project case in the suite then also covers the SQL the
+  // cross-project stream runs.
+  const merged = await fetchActivityRows({
     db,
-    projectId: project.id,
-    cursor,
+    entries: [{ projectId: project.id, cursor }],
     filters: query,
     visible,
     backward,
@@ -682,9 +853,13 @@ export async function getProjectActivity(
 }
 
 type WatchedProject = {
-  slug: string;
-  projectId: number;
-  db: Db;
+  /**
+   * The ref as the request spelled it — a retired slug or an id both count,
+   * and one project may be watched under two spellings at once. It keys the
+   * cursor envelope, so it is not interchangeable with the project's slug.
+   */
+  ref: string;
+  project: ProjectRow;
   /** Opaque plain cursor to drain beyond; null = from the beginning. */
   position: string | null;
 };
@@ -765,40 +940,76 @@ export async function getCrossActivity(
   // a property of the viewer, not of the requested scope.
   const visible = await visibleProjects(ctx, actor);
 
-  const watched: WatchedProject[] = [];
-  for (const [i, ref] of watchedRefs.entries()) {
-    const row = rows[i];
-    watched.push({
-      // The ref as the request spelled it, not the project's slug: it keys
-      // the cursor envelope, so rewriting it drops every watch holding an
-      // older one.
-      slug: ref,
-      projectId: row.id,
-      db: await ctx.router.forProject(routeInfoOf(row)),
-      position: null,
-    });
-  }
+  // Handles are not opened here: `perDatabase` takes each one inside the
+  // task body that reads it, and pins it for that body's lifetime. Holding
+  // one from up here is what the router's max_open bound cannot account for.
+  const watched: WatchedProject[] = watchedRefs.map((ref, i) => ({
+    ref,
+    project: rows[i] as ProjectRow,
+    position: null,
+  }));
 
-  // The newest row's position regardless of the request's filters: a
-  // bootstrap marks "everything up to here is old", and filters only
-  // decide what gets delivered, never where "here" is.
-  const tailOf = async (p: WatchedProject): Promise<string | null> => {
-    const rows = await fetchProjectActivityRows({
-      db: p.db,
-      projectId: p.projectId,
-      cursor: null,
-      filters: {},
-      visible,
-      backward: true,
-      fetchCount: 1,
-    });
-    const newest = rows.at(-1);
-    return newest ? encodeCursor(cursorOf(newest)) : null;
+  /** Rows keyed back to the entry that asked for them. */
+  const fanOut = async (
+    entries: (w: WatchedProject) => ActivityEntry,
+    filters: Filters,
+    backward: boolean,
+    fetchCount: number,
+  ): Promise<(RawWithIssue & { ref: string })[]> => {
+    const groups = await ctx.router.perDatabase(
+      watched,
+      (w) => routeInfoOf(w.project),
+      async (db, group) => {
+        // No transaction around the pair. They never shared a snapshot, so
+        // one would be new semantics, and under `shared` the group's handle
+        // is the system handle that `actorRefs` reads next — a project
+        // transaction held open across it would wait on its own snapshot.
+        const rows = await fetchActivityRows({
+          db,
+          entries: group.map(entries),
+          filters,
+          visible,
+          backward,
+          fetchCount,
+        });
+        // Slot → ref resolves in here because this is the only scope that
+        // knows which entries went into this group's VALUES list.
+        return rows.map((r) => ({
+          ...r,
+          ref: (group[r.slot] as WatchedProject).ref,
+        }));
+      },
+    );
+    return groups.flat();
   };
 
   if (query.last) {
+    // The newest row's position regardless of the request's filters: a
+    // bootstrap marks "everything up to here is old", and filters only
+    // decide what gets delivered, never where "here" is.
+    const newest = await fanOut(
+      (w) => ({ projectId: w.project.id, cursor: null }),
+      {},
+      true,
+      1,
+    );
+    // One row per table per entry comes back; the newer of the two is the
+    // bootstrap position, which is what taking the tail of an ascending pair
+    // used to mean.
+    const newestOf = new Map<string, RawWithIssue>();
+    for (const row of newest) {
+      const held = newestOf.get(row.ref);
+      if (held === undefined || compareRaw(held, row) < 0) {
+        newestOf.set(row.ref, row);
+      }
+    }
     const positions: MultiCursorPositions = {};
-    for (const p of watched) positions[p.slug] = await tailOf(p);
+    for (const p of watched) {
+      // A lateral join drops a `cur` row that matched nothing, so a project
+      // with no activity never comes back and keeps its null.
+      const row = newestOf.get(p.ref);
+      positions[p.ref] = row ? encodeCursor(cursorOf(row)) : null;
+    }
     return {
       items: [],
       next_cursor: await encodeMultiCursor(positions),
@@ -829,44 +1040,42 @@ export async function getCrossActivity(
     } else {
       const fallback = newestEnvelopePosition(envelope);
       for (const p of watched) {
-        p.position = p.slug in envelope ? (envelope[p.slug] ?? null) : fallback;
+        p.position = p.ref in envelope ? (envelope[p.ref] ?? null) : fallback;
       }
     }
   }
 
-  const all: (RawWithIssue & { slug: string })[] = [];
-  for (const p of watched) {
-    const rows = await fetchProjectActivityRows({
-      db: p.db,
-      projectId: p.projectId,
-      cursor: p.position === null ? null : decodeCursor(p.position),
-      filters: query,
-      visible,
-      backward: false,
-      fetchCount: query.limit + 1,
-    });
-    all.push(...rows.map((row) => ({ ...row, slug: p.slug })));
-  }
+  const all = await fanOut(
+    (w) => ({
+      projectId: w.project.id,
+      cursor: w.position === null ? null : decodeCursor(w.position),
+    }),
+    query,
+    false,
+    query.limit + 1,
+  );
+  // A total order, so the order the groups happen to finish in cannot reach
+  // the page: two rows tie only when timestamp, kind, id and ref all match,
+  // and the refs were deduplicated as strings before any of this.
   all.sort(
-    (a, b) =>
-      compareRaw(a, b) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0),
+    (a, b) => compareRaw(a, b) || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0),
   );
   const hasMore = all.length > query.limit;
   const page = all.slice(0, query.limit);
 
   const positions: MultiCursorPositions = {};
-  for (const p of watched) positions[p.slug] = p.position;
+  for (const p of watched) positions[p.ref] = p.position;
   // Later rows overwrite earlier ones, leaving each project's position on
   // its last *delivered* row — undelivered projects keep their incoming
   // position, so the cut point can fall anywhere without losing entries.
-  for (const row of page) positions[row.slug] = encodeCursor(cursorOf(row));
+  for (const row of page) positions[row.ref] = encodeCursor(cursorOf(row));
 
   const refs = await actorRefs(ctx, page);
   const items = redactEventPayloads(
     page.map((m) => ({
       ...toItem(m, refs, !query.include_hidden),
       issue_number: m.number,
-      project: m.slug,
+      project: m.ref,
     })),
     visible,
   );
