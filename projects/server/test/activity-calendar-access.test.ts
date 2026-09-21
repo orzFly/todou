@@ -1,6 +1,7 @@
 import type {
   ActivityCalendarQuery,
   ActivityCalendarResponse,
+  MemberRole,
 } from "@todou/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import {
@@ -723,6 +724,36 @@ describe.each(PLACEMENTS)(
         422,
         "validation_failed",
       );
+    });
+
+    it("regression watchdog: a role the catalog cannot rank is a 403, not a scope quietly dropped", async () => {
+      // The only reachable failure of the role gate in user scope: every row
+      // handed to it comes from the viewer's own membership rows, so "no
+      // role at all" cannot occur and an unrankable one is all that is left.
+      // Green before the batching change and after it — the point is that
+      // turning the throw into a filter would stop being invisible here.
+      const setRole = (role: MemberRole) =>
+        t.ctx.router
+          .system()
+          .update(projectMembers)
+          .set({ role })
+          .where(
+            and(
+              eq(projectMembers.projectId, a.id),
+              eq(projectMembers.userId, viewer.user.id),
+            ),
+          );
+      await setRole("future-role" as MemberRole);
+      try {
+        await error(
+          await get(userPath(subject.user.login), QUERY, viewer.headers),
+          403,
+          "forbidden",
+        );
+      } finally {
+        await setRole("reader");
+      }
+      await calendar(await get(userPath(subject.user.login), QUERY));
     });
 
     it("resumes project and user pages through equivalent numeric aliases", async () => {

@@ -264,6 +264,49 @@ describe.each(PLACEMENTS)("bulk mark-as-read T-100 (%s)", (placement) => {
     expect((await bulkRead({ projects: "not-an-array" })).status).toBe(422);
   });
 
+  it("sweeps a project named by a slug it has since retired", async () => {
+    const before = `bulk-old-${suffix}`;
+    const after = `bulk-new-${suffix}`;
+    const created = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug: before, name: before }),
+    });
+    expect(created.status).toBe(201);
+    const seated = await t.app.request(
+      `/api/projects/${before}/members/${bob.user.id}`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ role: "writer" }),
+      },
+    );
+    expect(seated.status).toBe(204);
+    // Same bootstrap the shared projects get in beforeAll: without a
+    // frontier minted before any activity, nothing here reads as unread.
+    await createIssue(before, "frontier bootstrap");
+    expect(
+      (
+        await t.app.request(`/api/projects/${before}/issues`, {
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(200);
+    await settle();
+    const issue = await createIssue(before, "named by a retired slug");
+    const renamed = await t.app.request(`/api/projects/${before}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ slug: after }),
+    });
+    expect(renamed.status).toBe(200);
+    await comment(after, issue, "noise");
+    expect((await stateOf(after, issue)).unread).toBe(true);
+
+    expect((await bulkRead({ projects: [before] })).status).toBe(204);
+    expect((await stateOf(after, issue)).unread).toBe(false);
+  });
+
   it("accepts an empty scope as a no-op", async () => {
     const issue = await createIssue(PA, "untouched by an empty sweep");
     await comment(PA, issue, "noise");

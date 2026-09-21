@@ -16,6 +16,7 @@ import {
 import { ConflictError } from "../../errors.ts";
 import {
   accessibleProjectRows,
+  authorizeProjects,
   type ProjectRow,
   requireCapability,
   routeInfoOf,
@@ -371,21 +372,10 @@ async function authorizedScope(
         .project,
     ];
   }
-  const projects = await accessibleProjectRows(ctx, viewer);
-  const authorized: ProjectRow[] = [];
-  for (const project of projects) {
-    authorized.push(
-      (
-        await requireCapability(
-          ctx,
-          viewer,
-          String(project.id),
-          "activity.read",
-        )
-      ).project,
-    );
-  }
-  return authorized.sort((a, b) => a.id - b.id);
+  const rows = await accessibleProjectRows(ctx, viewer);
+  return (await authorizeProjects(ctx, viewer, rows, "activity.read")).sort(
+    (a, b) => a.id - b.id,
+  );
 }
 
 async function calendar(

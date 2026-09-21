@@ -1180,6 +1180,63 @@ describe("cross-project inbox T-97", () => {
     await markRead(PA, n);
   });
 
+  it("scopes by project id and by a slug the project has retired", async () => {
+    const seat = async (slug: string) => {
+      const created = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug, name: slug }),
+      });
+      expect(created.status).toBe(201);
+      const member = await t.app.request(
+        `/api/projects/${slug}/members/${bob.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role: "writer" }),
+        },
+      );
+      expect(member.status).toBe(204);
+      return (await json(created)).id as number;
+    };
+    const byIdSlug = "inbox-by-id";
+    const retired = "inbox-retired";
+    const current = "inbox-retired-now";
+    const outside = "inbox-outside";
+    const byId = await seat(byIdSlug);
+    await seat(retired);
+    await seat(outside);
+    const renamed = await t.app.request(`/api/projects/${retired}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ slug: current }),
+    });
+    expect(renamed.status).toBe(200);
+    // Mints a frontier in each new project before any activity exists, the
+    // same bootstrap beforeAll does for PA and PB.
+    await items();
+    await settle();
+
+    const rows: [string, number][] = [];
+    for (const slug of [byIdSlug, current, outside]) {
+      const number = await createIssue(slug, `needs attention in ${slug}`);
+      expect((await comment(slug, number, bob.headers, "ping")).status).toBe(
+        201,
+      );
+      rows.push([slug, number]);
+    }
+    await settle();
+
+    // One ref off the first rung of the ladder and one off the third, in a
+    // single query.
+    const page = await items(`?projects=${byId},${retired}`);
+    expect(rowOf(page, byIdSlug, rows[0]?.[1] as number)).toBeDefined();
+    expect(rowOf(page, current, rows[1]?.[1] as number)).toBeDefined();
+    expect(rowOf(page, outside, rows[2]?.[1] as number)).toBeUndefined();
+
+    for (const [slug, number] of rows) await markRead(slug, number);
+  });
+
   describe("spec withdrawal inbox regressions (T-428)", () => {
     const PW = "inbox-withdraw";
     let ownerLogin: string;

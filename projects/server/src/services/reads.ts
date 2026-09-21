@@ -16,6 +16,7 @@ import { NotFoundError } from "../errors.ts";
 import {
   accessibleProjectRows,
   type ProjectRow,
+  requireCapabilities,
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
@@ -455,16 +456,12 @@ export async function bulkMarkRead(
   if (input.projects === undefined) {
     scope = await accessibleProjectRows(ctx, actor);
   } else {
-    scope = [];
-    for (const slug of new Set(input.projects)) {
-      const { project } = await requireCapability(
-        ctx,
-        actor,
-        slug,
-        "issue.mark_read",
-      );
-      scope.push(project);
-    }
+    scope = await requireCapabilities(
+      ctx,
+      actor,
+      [...new Set(input.projects)],
+      "issue.mark_read",
+    );
   }
 
   // Bound as a string with an explicit cast rather than a JS Date: the

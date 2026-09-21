@@ -24,7 +24,7 @@ import {
 import {
   accessibleProjectRows,
   type ProjectRow,
-  requireCapability,
+  requireCapabilities,
   routeInfoOf,
 } from "./access.ts";
 import {
@@ -706,16 +706,7 @@ export async function getInbox(
   if (query.projects === undefined) {
     scope = await accessibleProjectRows(ctx, actor);
   } else {
-    scope = [];
-    for (const slug of query.projects) {
-      const { project } = await requireCapability(
-        ctx,
-        actor,
-        slug,
-        "inbox.read",
-      );
-      scope.push(project);
-    }
+    scope = await requireCapabilities(ctx, actor, query.projects, "inbox.read");
   }
 
   const prefs = await readPrefs(ctx.router.system(), actor.id);

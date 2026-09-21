@@ -38,7 +38,15 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import { projectForRead, requireCapability, routeInfoOf } from "./access.ts";
+import {
+  accessibleProjectRows,
+  authorizeProjects,
+  type ProjectRow,
+  projectForRead,
+  requireCapabilities,
+  requireCapability,
+  routeInfoOf,
+} from "./access.ts";
 import {
   crossRefVisibleCondition,
   type VisibleProjects,
@@ -49,7 +57,6 @@ import {
   decodeTimelineCursor as decodeCursor,
   encodeTimelineCursor as encodeCursor,
 } from "./cursor.ts";
-import { listProjects } from "./projects.ts";
 import { assertIssueReadable, gateColumns, live } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -738,9 +745,20 @@ export async function getCrossActivity(
   // Absent `projects` = everything the caller can read, re-resolved on
   // every request so a long-running watch picks up projects created (or
   // shared) after it started.
-  const slugs =
-    explicit ??
-    (await listProjects(ctx, actor)).map((project) => project.slug).sort();
+  let watchedRefs: string[];
+  let rows: ProjectRow[];
+  if (explicit !== null) {
+    watchedRefs = explicit;
+    rows = await requireCapabilities(ctx, actor, explicit, "activity.read");
+  } else {
+    rows = (await accessibleProjectRows(ctx, actor)).sort((a, b) =>
+      a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0,
+    );
+    watchedRefs = rows.map((row) => row.slug);
+    // Never fails today — activity.read asks for reader and every row here
+    // carries one — but dropping it would take this path out of the catalog.
+    await authorizeProjects(ctx, actor, rows, "activity.read");
+  }
 
   // The filter set is every project the caller can read, even when this
   // request only watches a few of them: what a cross-reference may name is
@@ -748,17 +766,15 @@ export async function getCrossActivity(
   const visible = await visibleProjects(ctx, actor);
 
   const watched: WatchedProject[] = [];
-  for (const slug of slugs) {
-    const { project } = await requireCapability(
-      ctx,
-      actor,
-      slug,
-      "activity.read",
-    );
+  for (const [i, ref] of watchedRefs.entries()) {
+    const row = rows[i];
     watched.push({
-      slug,
-      projectId: project.id,
-      db: await ctx.router.forProject(routeInfoOf(project)),
+      // The ref as the request spelled it, not the project's slug: it keys
+      // the cursor envelope, so rewriting it drops every watch holding an
+      // older one.
+      slug: ref,
+      projectId: row.id,
+      db: await ctx.router.forProject(routeInfoOf(row)),
       position: null,
     });
   }
