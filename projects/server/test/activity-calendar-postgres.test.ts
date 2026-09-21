@@ -138,6 +138,19 @@ function countOn(response: ActivityCalendarResponse, date: string) {
   return response.days.find((day) => day.date === date);
 }
 
+/**
+ * An independent oracle for the UTC window `calendar()` requests by default: a
+ * UTC date begins at plain midnight and ends at the next one. The zoned cases
+ * below are chosen precisely because a fixed offset cannot express them, so
+ * they state their instants outright.
+ */
+function utcDay(date: string): { start: string; end: string } {
+  const next = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  return { start: `${date}T00:00:00.000000Z`, end: `${next}T00:00:00.000000Z` };
+}
+
 for (const placement of PLACEMENTS) {
   describe.skipIf(!PG_URL)(
     `activity calendar on real postgres (${placement})`,
@@ -363,6 +376,7 @@ for (const placement of PLACEMENTS) {
           const response = await calendar("user", day, { limit: 2, after });
           expect(countOn(response, day)).toEqual({
             date: day,
+            ...utcDay(day),
             state: "recorded",
             count: expected.length,
           });
@@ -414,6 +428,7 @@ for (const placement of PLACEMENTS) {
         expect(countOn(current, "2026-09-19")?.count).toBe(2);
         expect(countOn(current, "2026-09-20")).toEqual({
           date: "2026-09-20",
+          ...utcDay("2026-09-20"),
           state: "future",
           count: null,
         });
@@ -496,8 +511,12 @@ for (const placement of PLACEMENTS) {
         );
         expect(countOn(response, boundary.day)?.count).toBe(included.length);
         if (boundary.tz === "Pacific/Apia") {
+          // The civil date Apia skipped spans nothing: its neighbours meet at
+          // the single instant the 29th ended on.
           expect(countOn(response, "2011-12-30")).toEqual({
             date: "2011-12-30",
+            start: "2011-12-30T10:00:00.000000Z",
+            end: "2011-12-30T10:00:00.000000Z",
             state: "not_applicable",
             count: null,
           });
