@@ -20,7 +20,7 @@ import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { ReturnViewProvider } from "@/components/shared/return-context.tsx";
 import { NavBackControl } from "@/components/shared/return-link.tsx";
 import { UnsavedChangesGuard } from "@/components/shared/unsaved-guard.tsx";
-import { UserChip } from "@/components/shared/user-chip.tsx";
+import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { SpecReviewSessionProvider } from "@/components/spec/spec-review-session-provider.tsx";
 import { ThemeMenu } from "@/components/theme-menu.tsx";
 import { Button } from "@/components/ui/button";
@@ -157,7 +157,7 @@ export function AppShell({
               lets that name truncate once the box has nothing left to give,
               and `overflow-hidden` makes what is left over clip rather than
               lie on top of the box. */}
-              <div className="flex min-w-0 flex-auto items-center gap-2 overflow-hidden">
+              <div className="flex min-w-0 flex-auto shrink-[1000] items-center gap-2 overflow-hidden">
                 <Link
                   to="/projects"
                   className="flex shrink-0 items-center gap-2 font-semibold"
@@ -215,9 +215,26 @@ export function AppShell({
                   focusWidth="w-80"
                 />
               )}
-              {/* Content-sized and unshrinkable: these buttons are the one
-              thing in the row that has no smaller form to fall back to. */}
-              <div className="flex flex-none items-center gap-1">
+              {/* Content-sized, and shrinkable only because one thing in here
+              does have a smaller form: the account button's name ellipsises
+              (T-486). The rest are icons with nothing to give, and every
+              `Button` is `shrink-0`, so a deficit that reaches this cluster
+              can only come out of that name.
+
+              It reaches this cluster last. Three shrink weights order the
+              row's give-ways — the search box's 99999, the left cluster's
+              1000, and the 1 this one inherits — because flex distributes a
+              deficit across everything unfrozen at once rather than draining
+              one item before starting the next: an item at width 0 does not
+              hand the remainder on. Measured at 390px: with a 13-character
+              name the account button keeps the 132.4px and the unellipsised
+              name it had before this weight existed, and the project name
+              keeps its 41.9px; with a 32-character one the button lands on
+              374, sixteen pixels inside the viewport, instead of 583 (T-500).
+              Below the search box's weight, above the account button's: equal
+              to the search box it would take half of what T-454 gives the
+              project name first. */}
+              <div className="flex min-w-0 items-center gap-1">
                 {!wide && !hasProjectRow && slug != null && (
                   <SearchToggle slug={slug} />
                 )}
@@ -250,7 +267,17 @@ export function AppShell({
                 ) : (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm">
+                      {/* The one control in the cluster that may narrow, and
+                      the `title` is what a reader gets back when it does: the
+                      ellipsis is CSS, so the accessible name is still the
+                      whole display name, but a sighted reader has only the
+                      tooltip to recover it from (T-500). */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="min-w-0 shrink"
+                        title={displayNameOf(me)}
+                      >
                         <UserChip user={me} link={false} />
                       </Button>
                     </DropdownMenuTrigger>

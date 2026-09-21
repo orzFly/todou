@@ -94,12 +94,52 @@
   /* No strut of its own: an inline-block box otherwise reserves a whole line
      box around the avatar and grows the paragraph's line by 1.08px. */
   line-height: 0;
+
+  /* The avatar's size, as a share of the text it is drawn beside rather than a
+     length of its own. A mention inside an `# h1` is set at 28px and the
+     avatar stayed at the `size-5` UserAvatar gives every caller, so the same
+     picture was 0.71 of the text in a heading and 1.43 of it in a paragraph
+     (T-499). `UserAvatar` is shared with the comment header, the event row and
+     every member list, and none of those asked to change — so the scale lives
+     here, under the mention chip's own selector, and `USER_CHIP_NAME_INDENT`
+     and its 1.625rem stay true for the chip that still measures in rem.
+
+     `1em` is the same ratio T-495 gave the other three chips' glyphs, and it
+     is the only one a heading's line can hold. The avatar is an atomic inline,
+     so a box taller than the strut pushes the line apart — which is what
+     T-460 bought and this must not spend. Measured against a chipless row of
+     the same tag: at 1.43em, the ratio that would have kept a paragraph's 20px
+     exactly as it was, h1 grew 5.00px, h2 3.75px and h3 3.13px; at 1.25em,
+     2.05/1.28/1.41; at 1.15em, 0.64/0.22/0.53, still over T-460's 0.05. At 1em
+     every tier is 0.00. A paragraph's avatar is 14px rather than 20px as a
+     result, which is the visible half of this trade and the deliberate one.
+
+     The three ratios below are the initials' and the badge's own proportions
+     of that box — 10, 12, 6 and 4 against 20 — so the picture scales as one
+     thing. The initials take a unitless line-height because `em` in
+     `line-height` resolves against the element's own font size, and theirs is
+     half the avatar's: 2 of those is the avatar. */
+  --mention-avatar: 1em;
+}
+
+.mention-chip-body [data-mention-decoration] [data-slot="avatar"] {
+  width: var(--mention-avatar);
+  height: var(--mention-avatar);
 }
 
 .mention-chip-body [data-mention-decoration] [data-slot="avatar-fallback"] {
-  /* size-5, so the initials sit where `items-center` had them. */
-  line-height: 1.25rem;
+  /* Half the avatar for the glyphs, which is `text-[10px]` at 20px, and the
+     avatar's own height for the line they centre on. */
+  font-size: calc(var(--mention-avatar) * 0.5);
+  line-height: 2;
   text-align: center;
+}
+
+.mention-chip-body [data-mention-decoration] svg[aria-label="agent"] {
+  width: calc(var(--mention-avatar) * 0.6);
+  height: calc(var(--mention-avatar) * 0.6);
+  right: calc(var(--mention-avatar) * -0.3);
+  bottom: calc(var(--mention-avatar) * -0.2);
 }
 
 .mention-chip-body [data-mention-token] {

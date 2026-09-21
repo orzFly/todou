@@ -29,8 +29,7 @@ The timestamp is chosen from measured legal date/time fields in the loaded font.
 Then renames the author to the schema's longest legal display name and repeats,
 where the chip must give its name up instead of leaving the row and the
 timestamp must keep a width of its own. That case's required red is the chip's
-pre-fix shrink-0 box; its page-wide overflow comes from the shell header's own
-account button and is tolerated by name rather than asserted.
+pre-fix shrink-0 box.
 
 --keep  Retain isolated artifacts under .tmp/ after cleanup.
 CHROMIUM overrides /usr/bin/chromium. Uses en-US / UTC for reproducibility.
@@ -159,20 +158,15 @@ async function main() {
   // A red case says which failures it is a red *for*. Without that a case
   // passes on any geometry complaint, including one the fault it injected was
   // never supposed to cause — which is how a drill stops grading its own card.
-  // `tolerated` is the other half: a failure this page really does have, for a
-  // reason outside the case, named here so it cannot quietly become the reason
-  // the case passed or failed.
   const record = (
     name,
     result,
-    { expectRed = false, requiredRed = null, tolerated = [] } = {},
+    { expectRed = false, requiredRed = null } = {},
   ) => {
     const coverageErrors = [...result.coverageErrors];
     if (result.viewportWidth !== 390)
       coverageErrors.push("expected-390px-viewport");
-    const failures = result.failures.filter(
-      (failure) => !tolerated.includes(failure),
-    );
+    const failures = result.failures;
     const red =
       requiredRed === null
         ? failures.some((failure) =>
@@ -189,7 +183,6 @@ async function main() {
       status: pass ? "pass" : "fail",
       expectRed,
       requiredRed,
-      tolerated,
       ...result,
       coverageErrors,
     };
@@ -249,23 +242,20 @@ async function main() {
       // name instead of the timestamp. A fresh page, because the chip renders
       // from the cached issue payload the first load fetched.
       //
-      // `document-scroll-overflow` is tolerated here and only here. Measured
-      // on this page at 390px with the same name: the widest thing sticking
-      // out is the shell header's own account button, which is `shrink-0`
-      // around its chip and so cannot narrow whatever the chip does; the
-      // description header's chip is clipped and contributes nothing. Asserting
-      // the page-wide number here would grade that other surface instead.
+      // `document-scroll-overflow` used to be tolerated here, because the
+      // widest thing off a 390px viewport under this name was the shell
+      // header's account button rather than anything this file grades. T-500
+      // and T-501 took the last two of those away, so the page-wide number is
+      // now this page's to assert like any other.
       await fixture.renameAuthor(LONGEST_LEGAL_NAME);
       const renamed = await openIssue(context, fixture, true);
       try {
         // Not `expectTruncation`: the width this case takes away is the chip's,
         // and the timestamp gets a row to itself rather than a squeeze.
         const options = { expectedEdited: true };
-        const tolerated = ["document-scroll-overflow"];
         record(
           "long-name-green",
           await evaluate(renamed, probeIssueHeaderWidth, options),
-          { tolerated },
         );
         record(
           "identity-shrink-0-red",
@@ -279,14 +269,12 @@ async function main() {
           // symptom, and what this grades, is the chip leaving its own row.
           {
             expectRed: true,
-            tolerated,
             requiredRed: ["header-child-outside", "header-scroll-overflow"],
           },
         );
         record(
           "long-name-restored-green",
           await evaluate(renamed, probeIssueHeaderWidth, options),
-          { tolerated },
         );
       } finally {
         await renamed.close();
