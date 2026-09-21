@@ -147,6 +147,13 @@ function mount(
   };
 }
 
+/** The placeholder bars, which no role query can reach. */
+function skeletons(container: HTMLElement): HTMLElement[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="skeleton"]'),
+  );
+}
+
 // Fixed local wall-clock instants, formatted in the runner's locale. Expectations
 // below spell out the timezone conversion independently of the component.
 function wallTime(iso: string) {
@@ -507,6 +514,24 @@ describe("ActivityCardList selection and request states", () => {
     expect(view.queryByRole("list")).toBeNull();
     expect(view.queryByRole("button")).toBeNull();
     expect(onRetry).not.toHaveBeenCalled();
+    // The group the cards are coming to, drawn in outline. Out of the
+    // accessibility tree — it is not a list, and the status line above has
+    // already said that something is loading.
+    expect(skeletons(view.container).length).toBeGreaterThan(0);
+    for (const bar of skeletons(view.container)) {
+      expect(bar.closest("[aria-hidden='true']")).not.toBeNull();
+    }
+  });
+
+  it("drops the outline rather than the cards it already has", async () => {
+    const view = mount();
+    const link = await view.findByRole("link", { name: alpha.title });
+    expect(skeletons(view.container)).toHaveLength(0);
+    // A refresh over cards already on screen keeps them: swapping a list the
+    // reader is pointing at for bars is worse than saying nothing.
+    view.update({ loading: true });
+    expect(view.getByRole("link", { name: alpha.title })).toBe(link);
+    expect(skeletons(view.container)).toHaveLength(0);
   });
 
   it("shows initial failure and calls only the retry callback", async () => {

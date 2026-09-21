@@ -255,6 +255,13 @@ export function ActivityCalendarSection(props: ActivityCalendarSectionProps) {
     void (failedQuery ?? query).refetch();
   };
 
+  // A day was asked for and the window that decides whether it is a real one
+  // has not landed. The list stands there as a skeleton from the first paint
+  // rather than appearing under a grid the reader has already settled on,
+  // which is also the one moment the page has nothing else to put there.
+  const awaitingDay =
+    props.day !== undefined && initial.data === undefined && !baseError;
+
   return (
     <div className="min-w-0 space-y-4">
       <ActivityCalendar
@@ -270,7 +277,7 @@ export function ActivityCalendarSection(props: ActivityCalendarSectionProps) {
         error={response?.selection ? null : baseError}
         onRetry={retry}
       />
-      {(response?.selection || (validDay && !baseError)) && (
+      {(response?.selection || (validDay && !baseError) || awaitingDay) && (
         <ActivityCardList
           selection={response?.selection ?? null}
           timezone={response?.timezone ?? props.timezone}

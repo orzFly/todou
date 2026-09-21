@@ -7,6 +7,23 @@ import {
 } from "@/components/issue/issue-row.tsx";
 import { LoadMoreFooter } from "@/components/shared/load-more.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+
+/**
+ * Placeholder rows for a day whose cards are still on the wire. Heights, not
+ * guesses at a row's content: `h-10` and `h-11` are what the real header and
+ * the real row measure, so the group the reader is about to read does not
+ * move once it arrives. Widths vary because a column of identical bars reads
+ * as a rendered table rather than as something still loading.
+ */
+const SKELETON_ROWS: { id: string; width: string }[] = [
+  { id: "s1", width: "w-3/5" },
+  { id: "s2", width: "w-4/5" },
+  { id: "s3", width: "w-2/5" },
+  { id: "s4", width: "w-3/4" },
+  { id: "s5", width: "w-1/2" },
+];
 
 /** State and actions supplied by the calendar owner; this list never queries data. */
 export interface ActivityCardListProps {
@@ -82,6 +99,30 @@ export function ActivityCardList({
       )}
       {!busy && !hasError && !selection && (
         <p className="text-sm text-muted-foreground">Select a day.</p>
+      )}
+      {/* Only with nothing to keep: a refresh over cards already on screen
+          leaves them there, and swapping them for bars would take the list
+          out from under a reader who is pointing at it. `aria-hidden` because
+          the status line above already says what is happening. */}
+      {busy && !selection && (
+        <div
+          aria-hidden="true"
+          className="min-w-0 max-w-full overflow-hidden rounded-lg border"
+        >
+          <div className="flex h-10 items-center justify-between gap-2 border-b bg-muted/50 px-3.5">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-3 w-20" />
+          </div>
+          {SKELETON_ROWS.map((row) => (
+            <div
+              key={row.id}
+              className="flex h-11 items-center gap-2 border-b px-3.5 last:border-0"
+            >
+              <Skeleton className={cn("h-4", row.width)} />
+              <Skeleton className="ml-auto h-4 w-24 max-sm:hidden" />
+            </div>
+          ))}
+        </div>
       )}
       {/* The group survives a failed refresh: its cards and total are the last
           good answer, and dropping them would punish the reader for the retry. */}

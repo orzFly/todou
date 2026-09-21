@@ -1102,22 +1102,28 @@ describe("ActivityCalendar insights link", () => {
   describe("clearing a selection", () => {
     const clear = () => screen.queryByRole("button", { name: /clear/i });
 
-    it("offers nothing to clear until something is selected", () => {
+    it("stands there disabled until something is selected", () => {
+      const onClear = vi.fn();
+      const link = linkProps();
       render(
-        <ActivityCalendar
-          {...props({ selection: null, onClear: vi.fn(), link: linkProps() })}
-        />,
+        <ActivityCalendar {...props({ selection: null, onClear, link })} />,
       );
-      expect(clear()).toBeNull();
+      expect((clear() as HTMLButtonElement).disabled).toBe(true);
+      // A disabled button swallows the click, but the assertion has to be
+      // about the callbacks: a control that dropped a selection nobody made
+      // would still pass a test that only read the attribute.
+      fireEvent.click(clear() as HTMLElement);
+      expect(onClear).not.toHaveBeenCalled();
+      expect(link.onSelect).not.toHaveBeenCalled();
     });
 
-    it("stays away where the caller cannot drop the day it selected", () => {
-      // A day with no `onClear` behind it: a control that did nothing when
-      // pressed would be worse than the Escape-only route it replaces.
+    it("stays disabled where the caller cannot drop the day it selected", () => {
+      // A day with no `onClear` behind it: pressing this would do nothing,
+      // so it says so rather than looking like the way out.
       render(
         <ActivityCalendar {...props({ selection: selected("2024-01-10") })} />,
       );
-      expect(clear()).toBeNull();
+      expect((clear() as HTMLButtonElement).disabled).toBe(true);
     });
 
     it("drops the day and the charts' span together", () => {

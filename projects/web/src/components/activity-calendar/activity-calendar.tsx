@@ -3,6 +3,7 @@ import {
   type ActivitySelection,
   enumLookup,
 } from "@todou/shared";
+import { XIcon } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -43,6 +44,10 @@ export interface ActivityCalendarProps {
    * visible way back out: every other gesture on this grid sets a selection,
    * and until this existed only Escape on a focused cell undid one — which is
    * no route at all for a reader who picked the day with a pointer.
+   *
+   * Callers with no day to drop leave this off; the control is still drawn,
+   * disabled, so the route out is somewhere the reader has already seen by
+   * the time they want it.
    */
   onClear?: () => void;
 }
@@ -442,20 +447,23 @@ export function ActivityCalendar({
         >
           Activity
         </h2>
-        {clearable && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              link?.onHover(null);
-              link?.onSelect(null);
-              onClear?.();
-            }}
-          >
-            Clear selection
-          </Button>
-        )}
+        {/* Drawn whether or not there is anything to clear: a control that
+            only appears once the reader has made a selection is a control
+            they first meet while already wanting it gone. */}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={!clearable}
+          onClick={() => {
+            link?.onHover(null);
+            link?.onSelect(null);
+            onClear?.();
+          }}
+        >
+          <XIcon aria-hidden />
+          Clear selection
+        </Button>
       </div>
       {/* A refresh keeps the mounted calendar at its size: only the cold load
           may take layout, so an update never moves what the reader is aiming at. */}
