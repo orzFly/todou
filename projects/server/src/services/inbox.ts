@@ -9,7 +9,6 @@ import type {
 import { and, eq, gt, inArray, isNotNull, max, ne, or, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
-import type { ProjectRouteInfo } from "../config.ts";
 import type { Db } from "../db/driver.ts";
 import {
   comments,
@@ -655,39 +654,6 @@ export async function inboxRowState(
 }
 
 /**
- * Run `tasks`, at most `limit` of them in flight, results in input order.
- *
- * The bound is a correctness requirement, not a tuning knob. `DbRouter` keeps
- * at most `database.projects.max_open` project handles and closes the LRU one
- * past that; serially that handle is always idle, but concurrently it could be
- * a handle with queries on it, and closing it cuts them off mid-flight. At or
- * under `max_open` every handle in flight was just touched by `forProject` and
- * so is never the eviction candidate.
- *
- * One task runs exactly as sequentially as a bare `await` would, which is the
- * whole of `placement=shared` — hence no separate serial path to keep in step
- * with this one.
- */
-async function inFlight<T>(
-  limit: number,
-  tasks: (() => Promise<T>)[],
-): Promise<T[]> {
-  const out: T[] = new Array(tasks.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (let i = next++; i < tasks.length; i = next++) {
-      const task = tasks[i];
-      if (task === undefined) return;
-      out[i] = await task();
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(limit, tasks.length) }, worker),
-  );
-  return out;
-}
-
-/**
  * Cross-project attention aggregation (T-97): flat, sorted by
  * last_activity_at desc — grouping is the client's business. A project db
  * being unreachable fails the whole request; a silently missing project
@@ -714,21 +680,6 @@ export async function getInbox(
   // still gets to see references from every project its caller can read.
   const visible = await visibleProjects(ctx, actor);
 
-  // Projects that resolve to one database are one unit of work: they can be
-  // read in a single pass, and `forProject` needs opening only once for the
-  // whole group (any member resolves to the same url).
-  const groups = new Map<
-    string,
-    { route: ProjectRouteInfo; projects: ProjectRow[] }
-  >();
-  for (const project of scope) {
-    const route = routeInfoOf(project);
-    const url = ctx.router.resolveProjectUrl(route);
-    const group = groups.get(url);
-    if (group) group.projects.push(project);
-    else groups.set(url, { route, projects: [project] });
-  }
-
   // Read once here rather than per group: a project mute lives in the
   // system db, and every group needs the same answer (T-372).
   const mutedProjects = await loadMutedProjects(
@@ -737,14 +688,14 @@ export async function getInbox(
     scope.map((p) => p.id),
   );
 
-  const slices = await inFlight(
-    ctx.config.database.projects.max_open,
-    [...groups.values()].map((group) => async (): Promise<GroupSlice> => {
-      const db = await ctx.router.forProject(group.route);
-      return groupInbox(
+  const slices = await ctx.router.perDatabase(
+    scope,
+    routeInfoOf,
+    (db, group): Promise<GroupSlice> =>
+      groupInbox(
         ctx,
         db,
-        group.projects,
+        group,
         actor,
         query.limit,
         prefs.show_weak_unread,
@@ -761,8 +712,7 @@ export async function getInbox(
         prefs.show_weak_unread,
         visible,
         mutedProjects,
-      );
-    }),
+      ),
   );
 
   const items = slices.flatMap((s) => s.items);

@@ -275,52 +275,47 @@ export async function listMutes(
             ),
           );
 
-  const groups = new Map<string, ProjectRow[]>();
-  for (const project of scope) {
-    const url = ctx.router.resolveProjectUrl(routeInfoOf(project));
-    const group = groups.get(url);
-    if (group) group.push(project);
-    else groups.set(url, [project]);
-  }
-  const issueOut: MuteList["issues"] = [];
-  for (const group of groups.values()) {
-    const db = await ctx.router.forProject(routeInfoOf(group[0] as ProjectRow));
-    const rows = await db
-      .select({
-        issueId: issueMutes.issueId,
-        mode: issueMutes.mode,
-        mutedAt: issueMutes.mutedAt,
-        number: issues.number,
-        title: issues.title,
-        projectId: issues.projectId,
-      })
-      .from(issueMutes)
-      .innerJoin(issues, eq(issueMutes.issueId, issues.id))
-      .where(
-        and(
-          eq(issueMutes.userId, actor.id),
-          inArray(
-            issueMutes.projectId,
-            group.map((p) => p.id),
+  const groupRows = await ctx.router.perDatabase(
+    scope,
+    routeInfoOf,
+    async (db, group) =>
+      await db
+        .select({
+          issueId: issueMutes.issueId,
+          mode: issueMutes.mode,
+          mutedAt: issueMutes.mutedAt,
+          number: issues.number,
+          title: issues.title,
+          projectId: issues.projectId,
+        })
+        .from(issueMutes)
+        .innerJoin(issues, eq(issueMutes.issueId, issues.id))
+        .where(
+          and(
+            eq(issueMutes.userId, actor.id),
+            inArray(
+              issueMutes.projectId,
+              group.map((p) => p.id),
+            ),
+            // Trash holds no live address to show and Unmute would 404 on
+            // it (the writes require `live`): list only what the reader can
+            // still act on. The row survives the soft delete and comes back
+            // with a restore.
+            isNull(issues.deletedAt),
           ),
-          // Trash holds no live address to show and Unmute would 404 on
-          // it (the writes require `live`): list only what the reader can
-          // still act on. The row survives the soft delete and comes back
-          // with a restore.
-          isNull(issues.deletedAt),
         ),
-      );
-    for (const r of rows) {
-      const project = projectById.get(r.projectId);
-      if (!project) continue;
-      issueOut.push({
-        project: { slug: project.slug, name: project.name },
-        number: r.number,
-        title: r.title,
-        mode: r.mode,
-        muted_at: r.mutedAt.toISOString(),
-      });
-    }
+  );
+  const issueOut: MuteList["issues"] = [];
+  for (const r of groupRows.flat()) {
+    const project = projectById.get(r.projectId);
+    if (!project) continue;
+    issueOut.push({
+      project: { slug: project.slug, name: project.name },
+      number: r.number,
+      title: r.title,
+      mode: r.mode,
+      muted_at: r.mutedAt.toISOString(),
+    });
   }
 
   return {

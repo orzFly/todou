@@ -102,6 +102,52 @@ export class DbRouter {
   }
 
   /**
+   * Projects that resolve to one database are one unit of work: they can be
+   * read in a single pass, and `forProject` needs opening only once for the
+   * whole group (any member resolves to the same url).
+   *
+   * `route` is a function rather than the caller pre-resolving its rows into
+   * `ProjectRouteInfo[]`, for two reasons. `database_url` is optional on that
+   * type, so a row whose field is spelled `databaseUrl` is structurally
+   * assignable and compiles, while `resolveProjectUrl` reads `undefined` and
+   * silently sends a project that was pinned to its own database off to the
+   * template's — keeping the conversion at the call site is what keeps the
+   * row's real shape in view. And this file cannot call `routeInfoOf` itself:
+   * `access.ts` reaches back here through `bootstrap.ts`, and biome's
+   * `noImportCycles` is an error outside the web workspace.
+   *
+   * Group order is the order each group's first member appears in `projects`,
+   * and results stay one entry per group, so a caller that sorts the flattened
+   * rows on a key with ties still breaks them the same way every time.
+   *
+   * A throwing callback settles the returned promise, but the other workers
+   * are not cancelled — they run out their remaining groups unawaited. A
+   * caller that wants to skip a database it cannot open has to catch inside
+   * its own callback; there is no all-or-nothing here to lean on.
+   */
+  async perDatabase<P, R>(
+    projects: readonly P[],
+    route: (project: P) => ProjectRouteInfo,
+    run: (db: Db, group: P[]) => Promise<R>,
+  ): Promise<R[]> {
+    const groups = new Map<string, { route: ProjectRouteInfo; members: P[] }>();
+    for (const project of projects) {
+      const info = route(project);
+      const url = this.resolveProjectUrl(info);
+      const group = groups.get(url);
+      if (group) group.members.push(project);
+      else groups.set(url, { route: info, members: [project] });
+    }
+    return inFlight(
+      this.#config.database.projects.max_open,
+      [...groups.values()].map((group) => async () => {
+        const db = await this.forProject(group.route);
+        return run(db, group.members);
+      }),
+    );
+  }
+
+  /**
    * Idempotently make sure the project's target database exists and is
    * migrated (the target may already be provisioned when several projects
    * resolve to the same database). Returns the ready-to-use Db.
@@ -163,6 +209,39 @@ export class DbRouter {
     this.#projectHandles.clear();
     await this.#system.close();
   }
+}
+
+/**
+ * Run `tasks`, at most `limit` of them in flight, results in input order.
+ *
+ * The bound is a correctness requirement, not a tuning knob. `DbRouter` keeps
+ * at most `database.projects.max_open` project handles and closes the LRU one
+ * past that; serially that handle is always idle, but concurrently it could be
+ * a handle with queries on it, and closing it cuts them off mid-flight. At or
+ * under `max_open` every handle in flight was just touched by `forProject` and
+ * so is never the eviction candidate.
+ *
+ * One task runs exactly as sequentially as a bare `await` would, which is the
+ * whole of `placement=shared` — hence no separate serial path to keep in step
+ * with this one.
+ */
+async function inFlight<T>(
+  limit: number,
+  tasks: (() => Promise<T>)[],
+): Promise<T[]> {
+  const out: T[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < tasks.length; i = next++) {
+      const task = tasks[i];
+      if (task === undefined) return;
+      out[i] = await task();
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, tasks.length) }, worker),
+  );
+  return out;
 }
 
 function shouldAutoMigrate(config: Config, kind: "pglite" | "postgres") {
