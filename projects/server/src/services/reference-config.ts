@@ -13,6 +13,7 @@ import { autolinks, refFormats } from "../db/project-schema.ts";
 import { projects, slugHistory } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
+import { markPendingMirror } from "./pending-mirror.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
 /** GitHub's autolink rule: no prefix may be a prefix of another. */
@@ -141,7 +142,18 @@ export async function setReferenceFormat(
   } else {
     // Two databases, no shared transaction: the project's own history is
     // authoritative and lands first. A mirror failure is reported so the
-    // admin can retry, and startup housekeeping re-copies it regardless.
+    // admin can retry, and startup housekeeping re-copies it regardless —
+    // and since T-511 reporting without rolling back is defensible rather
+    // than merely survivable, because the window now has a name, a bound,
+    // and a drainer that checks it within the hour.
+    //
+    // Marked before the authoritative write, and outside any transaction
+    // callback: `markPendingMirror` takes the system handle, which inside an
+    // open PGlite transaction waits on that transaction's own mutex forever.
+    // The colocated branch above needs none of this — both rows commit
+    // together, so there is no window to record.
+    await markPendingMirror(ctx, project);
+    await ctx.testHooks?.beforeMirrorStep?.("history");
     await insertPair(db, ctx.router.system());
   }
   return loadConfig(db, project.id);

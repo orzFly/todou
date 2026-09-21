@@ -48,8 +48,139 @@ export async function mirrorRefFormat(
   });
 }
 
+/**
+ * Why there is no unique constraint on `ref_prefixes` to lean on instead, and
+ * no `onConflictDoNothing` in `mirrorRefFormat`: the key would have to be
+ * this truncated copy. The project's own `effective_from` has microsecond
+ * resolution and the mirror's is cut to whole milliseconds by the driver, so
+ * a key built here would permanently collapse two real switches made inside
+ * the same millisecond into one row. A duplicate row is tolerable; a missing
+ * one is not, because since T-510 the newest row is what bare-prefix
+ * resolution answers from — lose it and resolve returns 404.
+ */
 const rowKey = (row: FormatRow): string =>
   `${row.effectiveFrom.getTime()}:${JSON.stringify(row.prefix)}`;
+
+/** A history row the mirror does not have a copy of. */
+export type MirrorGap = {
+  projectId: number;
+  prefix: string | null;
+  effectiveFrom: Date;
+};
+
+/**
+ * One database's worth of the answer. Failure is per group and not per
+ * project because a batched read either reaches that database or does not.
+ */
+export type MirrorGroupOutcome = {
+  projects: ProjectRow[];
+  missing: MirrorGap[];
+  error?: unknown;
+};
+
+/**
+ * What the mirror is missing for these projects, reading only. Shared by the
+ * boot-time full re-copy and by the hourly drain of `pending_prefix_mirrors`
+ * (T-511), so that there is one definition of "missing" rather than two that
+ * can drift.
+ *
+ * A group that throws is returned as a failed outcome rather than rethrown:
+ * letting it out would reject the whole `perDatabase` and throw away the
+ * repairs every other database just computed.
+ */
+export async function mirrorPrefixGaps(
+  ctx: AppContext,
+  projects: ProjectRow[],
+): Promise<MirrorGroupOutcome[]> {
+  // Specification, not a micro-optimisation: `syncRefPrefixMirror` under the
+  // default colocated placement must cost exactly the one `select … from
+  // projects`, and drizzle compiles `inArray(col, [])` to `false` rather than
+  // refusing it — so dropping this guard would not break anything loudly, it
+  // would silently spend a second statement to learn what the caller already
+  // knows.
+  if (projects.length === 0) return [];
+  const system = ctx.router.system();
+  const ids = projects.map((project) => project.id);
+
+  const mirrored: FormatRowOf[] = [];
+  for (let at = 0; at < ids.length; at += MIRROR_CHUNK) {
+    mirrored.push(
+      ...(await system
+        .select({
+          projectId: refPrefixes.projectId,
+          prefix: refPrefixes.prefix,
+          effectiveFrom: refPrefixes.effectiveFrom,
+        })
+        .from(refPrefixes)
+        .where(
+          inArray(refPrefixes.projectId, ids.slice(at, at + MIRROR_CHUNK)),
+        )),
+    );
+  }
+  const seen = new Map<number, Set<string>>();
+  for (const row of mirrored) {
+    const held = seen.get(row.projectId) ?? new Set<string>();
+    held.add(rowKey(row));
+    seen.set(row.projectId, held);
+  }
+
+  return ctx.router.perDatabase(projects, routeInfoOf, async (db, group) => {
+    try {
+      const source = await db
+        .select({
+          projectId: refFormats.projectId,
+          prefix: refFormats.prefix,
+          effectiveFrom: refFormats.effectiveFrom,
+        })
+        .from(refFormats)
+        .where(
+          inArray(
+            refFormats.projectId,
+            group.map((project) => project.id),
+          ),
+        );
+      return {
+        projects: group,
+        missing: source.filter(
+          (row) => !seen.get(row.projectId)?.has(rowKey(row)),
+        ),
+      };
+    } catch (error) {
+      return { projects: group, missing: [], error };
+    }
+  });
+}
+
+type FormatRowOf = FormatRow & { projectId: number };
+
+/**
+ * Copy every gap these outcomes found into the mirror, and say how many rows
+ * that was.
+ */
+export async function writeMirrorGaps(
+  ctx: AppContext,
+  outcomes: readonly MirrorGroupOutcome[],
+): Promise<number> {
+  const gaps = outcomes.flatMap((outcome) => outcome.missing);
+  // drizzle throws on `values([])`, so without this guard "nothing to repair"
+  // would be a 500.
+  if (gaps.length === 0) return 0;
+  const system = ctx.router.system();
+  // Chunked because the parameter list grows with the number of gaps, and
+  // PostgreSQL refuses a statement carrying more than 65535 of them; a
+  // first-boot backfill after a long outage is exactly the case that reaches
+  // that ceiling.
+  for (let at = 0; at < gaps.length; at += MIRROR_CHUNK) {
+    await system.insert(refPrefixes).values(
+      gaps.slice(at, at + MIRROR_CHUNK).map((row) => ({
+        projectId: row.projectId,
+        prefix: row.prefix,
+        effectiveFrom: row.effectiveFrom,
+      })),
+    );
+  }
+  return gaps.length;
+}
 
 /**
  * Re-copy whatever the mirror is missing, for the projects that can still be
@@ -81,60 +212,13 @@ export async function syncRefPrefixMirror(ctx: AppContext): Promise<number> {
   // statement to learn what the filter already knows.
   if (remote.length === 0) return 0;
 
-  const mirrored = await system
-    .select({
-      projectId: refPrefixes.projectId,
-      prefix: refPrefixes.prefix,
-      effectiveFrom: refPrefixes.effectiveFrom,
-    })
-    .from(refPrefixes)
-    .where(
-      inArray(
-        refPrefixes.projectId,
-        remote.map((project) => project.id),
-      ),
-    );
-  const seen = new Map<number, Set<string>>();
-  for (const row of mirrored) {
-    const held = seen.get(row.projectId) ?? new Set<string>();
-    held.add(rowKey(row));
-    seen.set(row.projectId, held);
-  }
-
-  const gaps = (
-    await ctx.router.perDatabase(remote, routeInfoOf, async (db, group) => {
-      const source = await db
-        .select({
-          projectId: refFormats.projectId,
-          prefix: refFormats.prefix,
-          effectiveFrom: refFormats.effectiveFrom,
-        })
-        .from(refFormats)
-        .where(
-          inArray(
-            refFormats.projectId,
-            group.map((project) => project.id),
-          ),
-        );
-      return source.filter((row) => !seen.get(row.projectId)?.has(rowKey(row)));
-    })
-  ).flat();
-  if (gaps.length === 0) return 0;
-
-  // Chunked because the parameter list grows with the number of gaps, and
-  // PostgreSQL refuses a statement carrying more than 65535 of them; a
-  // first-boot backfill after a long outage is exactly the case that reaches
-  // that ceiling.
-  for (let at = 0; at < gaps.length; at += MIRROR_CHUNK) {
-    await system.insert(refPrefixes).values(
-      gaps.slice(at, at + MIRROR_CHUNK).map((row) => ({
-        projectId: row.projectId,
-        prefix: row.prefix,
-        effectiveFrom: row.effectiveFrom,
-      })),
-    );
-  }
-  return gaps.length;
+  const outcomes = await mirrorPrefixGaps(ctx, remote);
+  const added = await writeMirrorGaps(ctx, outcomes);
+  // Reported only after the repairs that did work have landed: one
+  // unreachable database must not cost every other one its sweep.
+  const failed = outcomes.find((outcome) => outcome.error !== undefined);
+  if (failed) throw failed.error;
+  return added;
 }
 
 /** Three bound parameters per mirror row, well under PostgreSQL's 65535. */

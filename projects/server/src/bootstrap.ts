@@ -43,6 +43,14 @@ export type AppContext = {
 
 export type TestHooks = DbTestHooks & {
   afterMoveStep?(step: 1 | 2 | 3 | 4 | 5 | 6): Promise<void>;
+  /**
+   * The two points in the prefix-mirror protocol (T-511) where a test needs
+   * to run something of its own *before* the next write: after the pending
+   * mark has committed but before the authoritative history row does, and
+   * before the drainer removes a mark. Fault injection does not come through
+   * here — `onQuery` already throws from the statement's call site.
+   */
+  beforeMirrorStep?(step: "history" | "unmark"): Promise<void>;
 };
 
 /**

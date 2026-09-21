@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -254,6 +255,48 @@ export const refPrefixes = pgTable(
     index("ref_prefixes_project_from_idx").on(t.projectId, t.effectiveFrom),
     index("ref_prefixes_prefix_idx").on(t.prefix),
   ],
+);
+
+// A row here means "this project's mirror above has not been checked clean
+// twice in a row yet" (T-511) — not "here is an effect waiting to be
+// replayed". There is no payload because there is nothing to replay: the
+// drainer re-derives the whole answer from ref_formats, so an over-report
+// costs one read and a stale row can never write the wrong thing.
+//
+// `generation` counts marks instead of stamping a time because the drainer's
+// delete is guarded by equality on it: PGlite's now() stops at the
+// millisecond, so two marks inside one millisecond would hand out the same
+// token and let the drainer delete a window it never checked.
+//
+// `verified_generation` exists because one clean pass is not enough. A mark
+// commits before the authoritative write does, so the drainer can claim it,
+// read a ref_formats that does not yet contain the row, and find nothing
+// missing — deleting there would drop a hole that is about to open. The
+// first clean pass only raises this column; the second one deletes.
+//
+// The cascade is load-bearing: createProject's dedicated branch compensates
+// a failure by deleting the registry row, and the mark is written before
+// that point.
+export const pendingPrefixMirrors = pgTable(
+  "pending_prefix_mirrors",
+  {
+    projectId: bigint("project_id", { mode: "number" })
+      .primaryKey()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    generation: bigint("generation", { mode: "number" }).notNull().default(1),
+    verifiedGeneration: bigint("verified_generation", { mode: "number" })
+      .notNull()
+      .default(0),
+    firstMarkedAt: timestamp("first_marked_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastError: text("last_error"),
+  },
+  (t) => [index("pending_prefix_mirrors_due_idx").on(t.nextAttemptAt)],
 );
 
 // Who held which slug, when (T-156). Same append-only shape as ref_prefixes

@@ -68,8 +68,11 @@ class ServeCommand extends ConfiguredCommand {
     const server = serve({ fetch: app.fetch, port }, (info) => {
       this.context.stdout.write(`todou server listening on :${info.port} 🥔\n`);
     });
-    const stopHousekeeping = startHousekeeping(context);
+    // Chores first: `startHousekeeping` runs its first tick immediately, and
+    // since T-511 that tick repairs the same mirror rows the boot-time
+    // re-copy does. Starting the timer first would have the two racing.
     await runStartupChores(context);
+    const stopHousekeeping = startHousekeeping(context);
 
     await new Promise<void>((resolve) => {
       const beginShutdown = () => {

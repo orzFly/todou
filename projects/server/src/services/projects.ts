@@ -32,6 +32,7 @@ import {
 } from "../errors.ts";
 import { type ProjectRow, requireCapability, routeInfoOf } from "./access.ts";
 import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
+import { markPendingMirror } from "./pending-mirror.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
 /**
@@ -246,6 +247,12 @@ export async function createProject(
 
   try {
     const db = await ctx.router.provision(routeInfoOf(row));
+    // Before the authoritative write, and only when there is a prefix to
+    // mirror at all (T-511). Inside this try on purpose: a mark that fails
+    // must still reach the compensating delete below, or the failed create
+    // leaves a registry row with no database behind it. It adds no catch of
+    // its own — a failure here is a 5xx, same as any other step.
+    if (input.ref_prefix != null) await markPendingMirror(ctx, row);
     await seedProject(system, db, row, input, actor);
   } catch (cause) {
     // Cross-database creation cannot be one transaction; compensate by
