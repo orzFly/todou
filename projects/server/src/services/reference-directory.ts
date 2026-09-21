@@ -63,58 +63,82 @@ export async function syncRefPrefixMirror(ctx: AppContext): Promise<number> {
   const system = ctx.router.system();
   const rows = await system.select().from(projects);
   const createsAreColocated = ctx.router.newProjectSharesSystemDatabase();
-  let added = 0;
-  for (const project of rows) {
-    // Both clauses, not just the per-project one: a deployment whose
-    // placement is dedicated never took the transactional branch in
-    // createProject, not even for a project whose url happens to resolve
-    // back to the system database — skipping that project would leave the
-    // one kind of gap nothing else repairs.
-    if (
-      createsAreColocated &&
-      ctx.router.sharesSystemDatabase(routeInfoOf(project))
-    ) {
-      continue;
-    }
-    added += await syncProject(ctx, project);
-  }
-  return added;
-}
+  // Both clauses, not just the per-project one: a deployment whose placement
+  // is dedicated never took the transactional branch in createProject, not
+  // even for a project whose url happens to resolve back to the system
+  // database — skipping that project would leave the one kind of gap nothing
+  // else repairs.
+  const remote = rows.filter(
+    (project) =>
+      !(
+        createsAreColocated &&
+        ctx.router.sharesSystemDatabase(routeInfoOf(project))
+      ),
+  );
+  // Before the mirror read, not after it: under the default placement every
+  // project is colocated, so this is the whole of a boot-path sweep that has
+  // nothing to repair, and a `where project_id in ()` here would spend a
+  // statement to learn what the filter already knows.
+  if (remote.length === 0) return 0;
 
-async function syncProject(
-  ctx: AppContext,
-  project: ProjectRow,
-): Promise<number> {
-  const system = ctx.router.system();
-  const db = await ctx.router.forProject(routeInfoOf(project));
-  const source = await db
-    .select({
-      prefix: refFormats.prefix,
-      effectiveFrom: refFormats.effectiveFrom,
-    })
-    .from(refFormats)
-    .where(eq(refFormats.projectId, project.id));
   const mirrored = await system
     .select({
+      projectId: refPrefixes.projectId,
       prefix: refPrefixes.prefix,
       effectiveFrom: refPrefixes.effectiveFrom,
     })
     .from(refPrefixes)
-    .where(eq(refPrefixes.projectId, project.id));
+    .where(
+      inArray(
+        refPrefixes.projectId,
+        remote.map((project) => project.id),
+      ),
+    );
+  const seen = new Map<number, Set<string>>();
+  for (const row of mirrored) {
+    const held = seen.get(row.projectId) ?? new Set<string>();
+    held.add(rowKey(row));
+    seen.set(row.projectId, held);
+  }
 
-  const seen = new Set(mirrored.map(rowKey));
-  const missing = source.filter((row) => !seen.has(rowKey(row)));
-  if (missing.length > 0) {
+  const gaps = (
+    await ctx.router.perDatabase(remote, routeInfoOf, async (db, group) => {
+      const source = await db
+        .select({
+          projectId: refFormats.projectId,
+          prefix: refFormats.prefix,
+          effectiveFrom: refFormats.effectiveFrom,
+        })
+        .from(refFormats)
+        .where(
+          inArray(
+            refFormats.projectId,
+            group.map((project) => project.id),
+          ),
+        );
+      return source.filter((row) => !seen.get(row.projectId)?.has(rowKey(row)));
+    })
+  ).flat();
+  if (gaps.length === 0) return 0;
+
+  // Chunked because the parameter list grows with the number of gaps, and
+  // PostgreSQL refuses a statement carrying more than 65535 of them; a
+  // first-boot backfill after a long outage is exactly the case that reaches
+  // that ceiling.
+  for (let at = 0; at < gaps.length; at += MIRROR_CHUNK) {
     await system.insert(refPrefixes).values(
-      missing.map((row) => ({
-        projectId: project.id,
+      gaps.slice(at, at + MIRROR_CHUNK).map((row) => ({
+        projectId: row.projectId,
         prefix: row.prefix,
         effectiveFrom: row.effectiveFrom,
       })),
     );
   }
-  return missing.length;
+  return gaps.length;
 }
+
+/** Three bound parameters per mirror row, well under PostgreSQL's 65535. */
+const MIRROR_CHUNK = 1000;
 
 /**
  * Who holds which prefix right now, one row per project: the newest mirror

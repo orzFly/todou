@@ -1,9 +1,10 @@
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { issueEvents, issues, statuses } from "../src/db/project-schema.ts";
-import { issueBlocks, projects } from "../src/db/system-schema.ts";
+import { issueBlocks, projects, refPrefixes } from "../src/db/system-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
 import { repairBlocks } from "../src/services/blocks.ts";
+import { syncRefPrefixMirror } from "../src/services/reference-directory.ts";
 import {
   countStatements,
   makeTestApp,
@@ -49,6 +50,12 @@ const PER_GROUP_READS = 3;
 const ANNOUNCE_PER_CHANGE = 3;
 /** Both drifted edges in the fixture below need the same verdict. */
 const VERDICT_BATCHES = 1;
+/**
+ * The mirror sweep's system-tier statements: the projects scan, the mirror
+ * read `where project_id in (…)`, and the merged insert — the last of which
+ * exists because every mirror fixture below is built with a gap in it.
+ */
+const SYNC_SYSTEM = 3;
 
 type Measurement = {
   log: StatementLog;
@@ -259,6 +266,125 @@ describe("repairBlocks, dedicated placement (k = N)", () => {
     // and deleted_at) becoming one.
     expect(projectBuckets(m2)[0]).toBe(PER_GROUP_READS);
     expect(projectBuckets(m4)[0]).toBe(PER_GROUP_READS);
+  });
+});
+
+/**
+ * One app, N projects each holding a prefix, `gaps` mirror rows deleted by
+ * hand, one mirror sweep measured. Same one-app-at-a-time shape as `measure`.
+ */
+async function measureMirror(
+  placement: PlacementMode,
+  n: number,
+  gaps: number,
+): Promise<Measurement> {
+  const t = await makeTestApp(placement);
+  try {
+    const cookie = await t.login();
+    const headers = { "content-type": "application/json", cookie };
+    for (let i = 0; i < n; i++) {
+      const res = await t.app.request("/api/projects", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          slug: `mir-${i}`,
+          name: `Mirror ${i}`,
+          ref_prefix: `M${i}`,
+        }),
+      });
+      expect(res.status).toBe(201);
+    }
+
+    const system = t.ctx.router.system();
+    // Punched into the system tier rather than through the API: every route
+    // that writes a history row writes its mirror row too, so a gap is only
+    // reachable by hand.
+    const mirrored = await system.select().from(refPrefixes);
+    const victims = mirrored.slice(0, gaps).map((row) => row.id);
+    if (victims.length > 0) {
+      await system.delete(refPrefixes).where(inArray(refPrefixes.id, victims));
+    }
+
+    const rows = await system.select().from(projects);
+    const k = new Set(
+      rows.map((row) => t.ctx.router.resolveProjectUrl(routeInfoOf(row))),
+    ).size;
+
+    let added = -1;
+    const log = await countStatements(t, async () => {
+      added = await syncRefPrefixMirror(t.ctx);
+    });
+    expect(added, "the fixture's gaps are what the sweep re-copied").toBe(gaps);
+    return { log, k, systemUrl: t.ctx.router.systemHandle().url };
+  } finally {
+    await t.cleanup();
+  }
+}
+
+describe("syncRefPrefixMirror, shared placement (k = 1)", () => {
+  let m4: Measurement;
+  let m8: Measurement;
+
+  beforeAll(async () => {
+    m4 = await measureMirror("shared", 4, 0);
+    m8 = await measureMirror("shared", 8, 0);
+  });
+
+  it("regression watchdog: one statement at eight projects as at four", () => {
+    // Not a claim this section can turn red: what holds the count at the lone
+    // projects scan is the colocated skip, which belongs to the write side.
+    // The obligation here is only that the empty-batch early return survives
+    // the rewrite, so that a purely shared deployment opens no handle at all.
+    expect(m4.k).toBe(1);
+    expect(m8.log.total).toBe(m4.log.total);
+    expect(m4.log.total).toBe(1);
+  });
+});
+
+describe("syncRefPrefixMirror, dedicated-bucketed placement (k = 2)", () => {
+  let m4: Measurement;
+  let m8: Measurement;
+
+  beforeAll(async () => {
+    m4 = await measureMirror("dedicated-bucketed", 4, 2);
+    m8 = await measureMirror("dedicated-bucketed", 8, 2);
+  });
+
+  it("sends the same statements for 8 projects as for 4, at two fixed gaps", () => {
+    expect(m4.k).toBe(2);
+    expect(m8.log.total).toBe(m4.log.total);
+    expect(m8.log.total).toBe(SYNC_SYSTEM + 2);
+    expect(m8.log.byUrl[m8.systemUrl]).toBe(SYNC_SYSTEM);
+    expect(m4.log.byUrl[m4.systemUrl]).toBe(SYNC_SYSTEM);
+    // One `ref_formats` read per database, whichever bucket the gaps fell in:
+    // the insert that repairs them is a system-tier statement.
+    expect(projectBuckets(m8)).toEqual([1, 1]);
+    expect(projectBuckets(m4)).toEqual([1, 1]);
+  });
+});
+
+describe("syncRefPrefixMirror, dedicated placement (k = N)", () => {
+  let m2: Measurement;
+  let m4: Measurement;
+
+  beforeAll(async () => {
+    m2 = await measureMirror("dedicated", 2, 2);
+    m4 = await measureMirror("dedicated", 4, 2);
+  });
+
+  it("keeps the system tier's share flat in N", () => {
+    // The whole-request equality is false by construction at k = N — one
+    // `ref_formats` read per project database is the irreducible half — so
+    // the system tier's share is what is asserted.
+    expect(m2.k).toBe(2);
+    expect(m4.k).toBe(4);
+    expect(m2.log.byUrl[m2.systemUrl]).toBe(SYNC_SYSTEM);
+    expect(m4.log.byUrl[m4.systemUrl]).toBe(SYNC_SYSTEM);
+  });
+
+  it("regression watchdog: every project bucket costs the same", () => {
+    expect(new Set(projectBuckets(m2)).size).toBe(1);
+    expect(new Set(projectBuckets(m4)).size).toBe(1);
   });
 });
 
