@@ -48,7 +48,10 @@ export async function ensureFrontiers(
   userId: number,
 ): Promise<Map<number, Date>> {
   if (projectIds.length === 0) return new Map();
-  const wanted = [...new Set(projectIds)];
+  // Ascending, the same order bulkMarkRead's sweep uses: both statements
+  // can hold several of one user's frontier rows mid-insert, and opposite
+  // orders deadlock on real postgres (PGlite's single connection hides it).
+  const wanted = [...new Set(projectIds)].sort((a, b) => a - b);
   const select = (ids: number[]) =>
     db
       .select({
@@ -441,11 +444,12 @@ export async function markIssueRead(
  * each issue's threshold as `coalesce(issue_reads.last_seen_at, frontier)`,
  * so any issue the caller has ever opened keeps its own older position and
  * stays unread behind a moved frontier — hence both layers, in one
- * transaction per project.
+ * transaction per database.
  *
- * Not atomic across projects: databases may differ, so each gets its own
- * transaction and the first failure aborts the rest. Retrying is safe —
- * every write is a `greatest`, so replaying it changes nothing.
+ * Not atomic across databases: no transaction spans them, so a failure can
+ * leave some databases swept and others untouched, and the error does not
+ * say which. Retrying is safe — every write is a `greatest`, so replaying
+ * it changes nothing.
  */
 export async function bulkMarkRead(
   ctx: AppContext,
@@ -467,36 +471,47 @@ export async function bulkMarkRead(
   // Bound as a string with an explicit cast rather than a JS Date: the
   // request may carry sub-millisecond precision that a Date would drop.
   // Absent, each project database dates the sweep by its own clock — they
-  // are independent servers under `placement=dedicated`.
+  // are independent servers under `placement=dedicated`. One transaction per
+  // database makes that clock one reading: a comment landing mid-sweep is
+  // read in all of a database's projects or in none of them, never in one
+  // and not the neighbour beside it.
   const at =
     input.up_to === undefined ? sql`now()` : sql`${input.up_to}::timestamptz`;
 
-  for (const project of scope) {
-    const db = await ctx.router.forProject(routeInfoOf(project));
+  await ctx.router.perDatabase(scope, routeInfoOf, async (db, group) => {
+    // Deduplicated because one project can reach `scope` twice — its id and
+    // its slug both resolve to it (T-266), as does a retired slug — and one
+    // INSERT may not name the same conflict key twice. Ascending because
+    // this transaction now holds several of the caller's frontier rows at
+    // once and `ensureFrontiers` inserts in the same order: two callers
+    // taking them in opposite orders deadlock on real postgres.
+    const ids = [...new Set(group.map((p) => p.id))].sort((a, b) => a - b);
     await db.transaction(async (tx) => {
       // project_id is not redundant: several projects may share one
-      // database (placement=shared), and marking one read must not touch
-      // its neighbours.
+      // database (placement=shared), and marking these read must not touch
+      // their neighbours.
       await tx
         .update(issueReads)
         .set({ lastSeenAt: sql`greatest(${issueReads.lastSeenAt}, ${at})` })
         .where(
           and(
-            eq(issueReads.projectId, project.id),
+            inArray(issueReads.projectId, ids),
             eq(issueReads.userId, actor.id),
           ),
         );
       await tx
         .insert(readFrontiers)
-        .values({
-          projectId: project.id,
-          userId: actor.id,
-          // A frontier born here floors at now(): seeding it from an older
-          // `up_to` would let a mark-read call *create* unread history for
-          // someone who had never opened the project, inverting the lazy
-          // bootstrap ensureFrontier promises (T-35).
-          frontierAt: sql`greatest(now(), ${at})`,
-        })
+        .values(
+          ids.map((projectId) => ({
+            projectId,
+            userId: actor.id,
+            // A frontier born here floors at now(): seeding it from an older
+            // `up_to` would let a mark-read call *create* unread history for
+            // someone who had never opened the project, inverting the lazy
+            // bootstrap ensureFrontier promises (T-35).
+            frontierAt: sql`greatest(now(), ${at})`,
+          })),
+        )
         .onConflictDoUpdate({
           target: [readFrontiers.projectId, readFrontiers.userId],
           // `at`, not `excluded.frontier_at`: the floor above applies only
@@ -508,5 +523,5 @@ export async function bulkMarkRead(
           },
         });
     });
-  }
+  });
 }

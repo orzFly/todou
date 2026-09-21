@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getProjectByRef, routeInfoOf } from "../src/services/access.ts";
 import {
   addUserWithToken,
   makeTestApp,
@@ -312,5 +314,68 @@ describe.each(PLACEMENTS)("bulk mark-as-read T-100 (%s)", (placement) => {
     await comment(PA, issue, "noise");
     expect((await bulkRead({ projects: [] })).status).toBe(204);
     expect((await stateOf(PA, issue)).unread).toBe(true);
+  });
+
+  it("regression watchdog: accepts one project named twice", async () => {
+    // `ProjectSlug` allows an all-digit ref (only `ProjectSlugInput` forbids
+    // one), and `findProjectByRef` answers that ref from the id branch — so
+    // these two strings are one project, as a retired slug beside its
+    // current one would also be. A multi-row upsert may not name the same
+    // conflict key twice, so the sweep has to deduplicate by project id.
+    //
+    // A regression watchdog, not a claim: one statement per project could
+    // not hit that conflict, so this was green before the rollup landed.
+    const issue = await createIssue(PA, "named by slug and by id");
+    await comment(PA, issue, "noise");
+    const meta = await json(
+      await t.app.request(`/api/projects/${PA}`, { headers: { cookie } }),
+    );
+    expect((await bulkRead({ projects: [PA, String(meta.id)] })).status).toBe(
+      204,
+    );
+    expect((await stateOf(PA, issue)).unread).toBe(false);
+  });
+
+  it("regression watchdog: keeps an up_to's microseconds", async () => {
+    // Green before this card too: it guards `at` staying a string with an
+    // explicit cast through the rollup, since a JS Date bound here would
+    // round the position to milliseconds and only the postgres-only suite
+    // watched that before.
+    //
+    // Its own project: this sweep parks a frontier in 2027, and `greatest`
+    // would keep it there for every later expectation of an unread card.
+    const slug = `bulk-us-${suffix}`;
+    const created = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug, name: slug }),
+    });
+    expect(created.status).toBe(201);
+    const me = await json(
+      await t.app.request("/api/me", { headers: { cookie } }),
+    );
+
+    expect(
+      (
+        await bulkRead({
+          projects: [slug],
+          up_to: "2027-04-04T10:00:00.123456Z",
+        })
+      ).status,
+    ).toBe(204);
+
+    // Read back as text: drizzle hands a timestamp column to JS as a Date,
+    // which is where the microseconds would disappear even if the database
+    // still held them.
+    const row = await getProjectByRef(t.ctx, slug);
+    const db = await t.ctx.router.forProject(routeInfoOf(row));
+    const got = await db.execute(
+      sql`select frontier_at::text as t from read_frontiers
+          where project_id = ${row.id} and user_id = ${me.id}`,
+    );
+    // biome-ignore lint/suspicious/noExplicitAny: driver-agnostic result shape
+    const rows = (got as any).rows ?? got;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].t).toMatch(/\.123456\+00$/);
   });
 });
