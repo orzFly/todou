@@ -22,7 +22,7 @@ import {
   parseRefLocator,
   resolveClaim,
 } from "@todou/shared";
-import { and, asc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -32,7 +32,7 @@ import {
   projectMeta,
   statuses,
 } from "../db/project-schema.ts";
-import { issueBlocks, projects, refPrefixes } from "../db/system-schema.ts";
+import { issueBlocks, projects } from "../db/system-schema.ts";
 import {
   BlockSelfError,
   IssueNotReferenceableError,
@@ -46,7 +46,10 @@ import {
   routeInfoOf,
 } from "./access.ts";
 import { type VisibleProjects, visibleProjects } from "./cross-references.ts";
-import { globalPrefixDirectory } from "./reference-directory.ts";
+import {
+  currentPrefixes,
+  globalPrefixDirectory,
+} from "./reference-directory.ts";
 import { type Address, currentAddressOf } from "./relocation.ts";
 import { assertIssueWritable, gateColumns, seesTrashed } from "./trash.ts";
 
@@ -804,18 +807,9 @@ async function spellingOf(system: Db, ids: Set<number>): Promise<Spelling> {
     .from(projects)
     .where(inArray(projects.id, list));
   for (const row of rows) out.set(row.id, { slug: row.slug, prefix: null });
-  const formats = await system
-    .select({
-      projectId: refPrefixes.projectId,
-      prefix: refPrefixes.prefix,
-    })
-    .from(refPrefixes)
-    .where(inArray(refPrefixes.projectId, list))
-    .orderBy(asc(refPrefixes.effectiveFrom), asc(refPrefixes.id));
-  // Ascending, so the last row for a project is the one in force.
-  for (const row of formats) {
-    const entry = out.get(row.projectId);
-    if (entry !== undefined) entry.prefix = row.prefix;
+  for (const [projectId, prefix] of await currentPrefixes(system, list)) {
+    const entry = out.get(projectId);
+    if (entry !== undefined) entry.prefix = prefix;
   }
   return out;
 }

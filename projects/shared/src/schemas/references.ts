@@ -48,6 +48,12 @@ export type ReferenceConfig = z.infer<typeof ReferenceConfig>;
 
 const PrefixInterval = { from: Timestamp, to: Timestamp.nullable() };
 
+/**
+ * `to` stays nullable although this server now sends only `to: null`, each
+ * entry being a prefix someone holds right now (T-512). A 0.5.x server a
+ * client may still be talking to during a rolling upgrade sends closed ones,
+ * and `SlugClaimEntry` spreads the same interval and genuinely closes its own.
+ */
 export const PrefixClaimEntry = z.object({
   prefix: z.string(),
   slug: ProjectSlug,

@@ -197,7 +197,9 @@ const referenceDirectoryRoute = createRoute({
     "the projects I can read",
   responses: {
     200: {
-      description: "Holding intervals, plus the globally contested ones",
+      description:
+        "Who holds which prefix now, plus the prefixes held by more than " +
+        "one project",
       content: { "application/json": { schema: ReferenceDirectory } },
     },
   },

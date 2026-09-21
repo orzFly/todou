@@ -62,9 +62,12 @@ address here to store, so it is still expanded when the text is rendered.
 
 ## What happens to existing text
 
-`todou-server refs migrate` rewrites it once, under the rules that were in
-force where and when each piece was written — the last time those rules are
-consulted. See [deploy.md](deploy.md#one-off-maintenance).
+`todou-server refs migrate` rewrote it once, under the rules that were in
+force where and when each piece was written — the last time those rules were
+consulted. The command shipped in 0.4.0 and is gone from this version; 0.5.1
+is the last release that carries it, so a deployment that never ran the pass
+has to run it there before upgrading further. See
+[deploy.md](deploy.md#storing-references-as-links-once).
 
 ## Referencing another project's issues
 
@@ -290,8 +293,9 @@ that takes an issue. Whether it came from this project or another is the
 comparison between `by_project_id` and the project being read.
 
 Events written before the two types merged carry `by_project` (a slug) or no
-project at all — the second shape is a local reference. `refs migrate` gives
-every row an id; until it runs, read the older shapes as a fallback.
+project at all — the second shape is a local reference. `refs migrate` gave
+every row an id on the deployments that ran it, and the older shapes are
+still read as a fallback.
 
 ## Web
 

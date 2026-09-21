@@ -218,9 +218,24 @@ export const issueBlocks = pgTable(
 );
 
 // Mirror of every project's ref_formats history (T-150). Resolving a bare
-// `PREFIX-N` written in project A means asking who held that prefix at that
-// instant across ALL projects — a question the per-project tables cannot
-// answer without opening every database in the deployment.
+// `PREFIX-N` written in project A means asking who holds that prefix across
+// ALL projects — a question the per-project tables cannot answer without
+// opening every database in the deployment.
+//
+// Readers want only the newest row per project (T-512), and the rest is kept
+// anyway, for three reasons that each stand on their own. `syncRefPrefixMirror`
+// repairs the mirror by diffing the WHOLE source history against the WHOLE
+// mirror on `(effective_from, prefix)`, so a trimmed table would look like a
+// gap and be refilled on every boot. The outbox's pending marks and its
+// start-up re-copy read this as the mirror of that history, and would find the
+// same phantom gaps. And the table grows by one row per administrator-made
+// format change rather than with user traffic, so there is nothing here worth
+// the irreversibility of deleting rows.
+//
+// `ref_prefixes_project_from_idx` only partly serves the newest-row-per-project
+// read: postgres can walk it for ordered project_ids and Incremental Sort each
+// group. An index on `(project_id, effective_from desc, id desc)` would fit
+// exactly, and is not worth having on a table this size.
 export const refPrefixes = pgTable(
   "ref_prefixes",
   {
@@ -228,8 +243,8 @@ export const refPrefixes = pgTable(
     projectId: bigint("project_id", { mode: "number" })
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    // NULL = "#N", and the row still matters: it closes the previous
-    // prefix's holding interval.
+    // NULL = "#N", and the row still matters: as the newest row for its
+    // project it says that project holds no prefix at all.
     prefix: text("prefix"),
     effectiveFrom: timestamp("effective_from", {
       withTimezone: true,

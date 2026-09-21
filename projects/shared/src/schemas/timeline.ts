@@ -86,8 +86,9 @@ export type MovedOutPayload = z.infer<typeof MovedOutPayload>;
  * goes stale the moment either card moves.
  *
  * `by_project` and `by_moved` are the pre-T-266 spellings. They are still
- * read so that a deployment renders correctly between the upgrade and the
- * `refs migrate` run; nothing writes them any more.
+ * read so that a deployment renders correctly whether or not it ever ran the
+ * `refs migrate` pass that 0.5.1 was the last release to carry; nothing
+ * writes them any more.
  */
 export const ReferencedPayload = z.object({
   by_project_id: Id.nullable().optional(),

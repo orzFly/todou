@@ -5,7 +5,7 @@ import type {
   ReferenceDirectory,
   SlugClaimEntry,
 } from "@todou/shared";
-import { eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext, DbContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -21,7 +21,20 @@ import {
 const OPEN = Number.POSITIVE_INFINITY;
 
 type FormatRow = { prefix: string | null; effectiveFrom: Date };
-type Hold = { prefix: string; slug: string; from: number; to: number };
+
+/**
+ * Newest mirror row first, written once and shared by every reader of the
+ * mirror. The tie-break on id is what keeps the answer from following the
+ * order the database happened to return: two switches stamped inside the
+ * same millisecond are ordinary on PGlite, whose clock stops there.
+ */
+const NEWEST_FIRST = [
+  desc(refPrefixes.effectiveFrom),
+  desc(refPrefixes.id),
+] as const;
+
+/** A prefix a project holds right now. Nothing closed is published any more. */
+type CurrentHold = { prefix: string; slug: string; from: Date };
 
 export async function mirrorRefFormat(
   db: Db,
@@ -104,39 +117,69 @@ async function syncProject(
 }
 
 /**
- * One project's history turned into holds. A NULL-prefix row holds
- * nothing; it exists to close the interval of the prefix before it.
+ * Who holds which prefix right now, one row per project: the newest mirror
+ * row, dropped when its prefix is NULL. A NULL newest row means the project
+ * gave its prefix up; it does not fall back to the last prefix held.
+ *
+ * No `effective_from <= now()`: the rows are stamped by the database and the
+ * question is asked by the application, so a row stamped ahead of this
+ * process is still the prefix in force (T-360).
+ *
+ * The slug half below keeps its whole history on purpose; see `allSlugHolds`
+ * for why the two halves differ.
+ *
+ * `distinct on` rather than the `lateral … limit 1` that `timeline.ts` uses
+ * for the same "newest row" question: Sort+Unique reads its whole input, which
+ * is waste when one key's tail is wanted and no waste at all here, where every
+ * key's head is.
  */
-function holdsOf(slug: string, history: FormatRow[]): Hold[] {
-  const sorted = [...history].sort(
-    (a, b) => a.effectiveFrom.getTime() - b.effectiveFrom.getTime(),
+async function currentHolds(ctx: DbContext): Promise<CurrentHold[]> {
+  const rows = await ctx.router
+    .system()
+    .selectDistinctOn([projects.id], {
+      slug: projects.slug,
+      prefix: refPrefixes.prefix,
+      effectiveFrom: refPrefixes.effectiveFrom,
+    })
+    .from(projects)
+    .innerJoin(refPrefixes, eq(refPrefixes.projectId, projects.id))
+    .orderBy(projects.id, ...NEWEST_FIRST);
+
+  return rows.flatMap((row) =>
+    row.prefix === null
+      ? []
+      : [{ prefix: row.prefix, slug: row.slug, from: row.effectiveFrom }],
   );
-  const holds: Hold[] = [];
-  let open: Hold | null = null;
-  for (const row of sorted) {
-    const at = row.effectiveFrom.getTime();
-    // A repeated prefix extends the current hold instead of opening a
-    // second one, which would otherwise read as this project contesting
-    // itself.
-    if (open !== null && open.prefix === row.prefix) continue;
-    if (open !== null) {
-      open.to = at;
-      open = null;
-    }
-    if (row.prefix !== null) {
-      open = { prefix: row.prefix, slug, from: at, to: OPEN };
-      holds.push(open);
-    }
-  }
-  // Two switches inside the same millisecond collapse to an empty hold
-  // once timestamps land in a JS Date; an interval that covers no instant
-  // is noise in the payload and a phantom holder in the overlap sweep.
-  return holds.filter((hold) => hold.to > hold.from);
 }
 
-/** The windows where a prefix had more than one holder, by sweep over its holds. */
-function contestedWindows(holds: Hold[]): ContestedInterval[] {
-  const byPrefix = new Map<string, Hold[]>();
+/**
+ * The prefix each of these projects holds right now, by id. Shares
+ * `NEWEST_FIRST` with the directory so that there is one answer to "which row
+ * wins" rather than one per caller; a project with no mirror row is absent
+ * from the map.
+ */
+export async function currentPrefixes(
+  system: Db,
+  ids: readonly number[],
+): Promise<Map<number, string | null>> {
+  const rows = await system
+    .selectDistinctOn([refPrefixes.projectId], {
+      projectId: refPrefixes.projectId,
+      prefix: refPrefixes.prefix,
+    })
+    .from(refPrefixes)
+    .where(inArray(refPrefixes.projectId, [...ids]))
+    .orderBy(refPrefixes.projectId, ...NEWEST_FIRST);
+  return new Map(rows.map((row) => [row.projectId, row.prefix]));
+}
+
+/**
+ * The prefixes more than one project holds right now. `from` is the second
+ * holder's own start, because every client asks whether `from <= now` and
+ * would drop a window stamped at this instant on a clock a shade behind.
+ */
+function contestedNow(holds: CurrentHold[]): ContestedInterval[] {
+  const byPrefix = new Map<string, CurrentHold[]>();
   for (const hold of holds) {
     const list = byPrefix.get(hold.prefix) ?? [];
     list.push(hold);
@@ -144,53 +187,34 @@ function contestedWindows(holds: Hold[]): ContestedInterval[] {
   }
   const out: ContestedInterval[] = [];
   for (const [prefix, list] of byPrefix) {
-    // Closing before opening at an equal timestamp is what keeps two
-    // back-to-back holds from reading as an instant of overlap.
-    const events = list
-      .flatMap((hold) => [
-        { at: hold.from, delta: 1 },
-        { at: hold.to, delta: -1 },
-      ])
-      .sort((a, b) => a.at - b.at || a.delta - b.delta);
-    let depth = 0;
-    let start: number | null = null;
-    for (const event of events) {
-      const before = depth;
-      depth += event.delta;
-      if (before < 2 && depth >= 2) start = event.at;
-      else if (before >= 2 && depth < 2 && start !== null) {
-        if (event.at > start) out.push(interval(prefix, start, event.at));
-        start = null;
-      }
-    }
-    if (start !== null) out.push(interval(prefix, start, OPEN));
+    if (list.length < 2) continue;
+    const froms = list.map((hold) => hold.from.getTime()).sort((a, b) => a - b);
+    out.push({
+      prefix,
+      from: new Date(froms[1] as number).toISOString(),
+      to: null,
+    });
   }
   return out;
 }
 
-function interval(prefix: string, from: number, to: number): ContestedInterval {
-  return {
-    prefix,
-    from: new Date(from).toISOString(),
-    to: to === OPEN ? null : new Date(to).toISOString(),
-  };
-}
-
-const entryOf = (hold: Hold): PrefixClaimEntry => ({
-  ...interval(hold.prefix, hold.from, hold.to),
+const entryOf = (hold: CurrentHold): PrefixClaimEntry => ({
+  prefix: hold.prefix,
   slug: hold.slug,
+  from: hold.from.toISOString(),
+  to: null,
 });
 
 /**
- * Every project's holds. Extraction runs against this rather than a
+ * Every project's current prefix. Extraction runs against this rather than a
  * viewer's slice: what it resolves is gated afterwards by the author check
  * and, at read time, by the viewer filter.
  */
 export async function globalPrefixDirectory(
   ctx: DbContext,
 ): Promise<PrefixDirectory> {
-  const holds = await allHolds(ctx);
-  return { entries: holds.map(entryOf), contested: contestedWindows(holds) };
+  const holds = await currentHolds(ctx);
+  return { entries: holds.map(entryOf), contested: contestedNow(holds) };
 }
 
 type SlugHold = {
@@ -237,6 +261,13 @@ const slugEntryOf = (hold: SlugHold): SlugClaimEntry => ({
   to: hold.to === OPEN ? null : new Date(hold.to).toISOString(),
 });
 
+/**
+ * Every closed slug hold as well as the open one, deliberately asymmetric
+ * with the prefix half next door: `resolveSlugAt` in
+ * `shared/src/references-grammar.ts` resolves a slug nobody holds now to
+ * whoever had it last, because people keep typing the old name from memory
+ * after a rename. Trimming this to current holders would delete that answer.
+ */
 async function allSlugHolds(ctx: DbContext): Promise<SlugHold[]> {
   const system = ctx.router.system();
   const [rows, projectRows] = await Promise.all([
@@ -285,7 +316,7 @@ export async function referenceDirectory(
   actor: UserRow,
 ): Promise<ReferenceDirectory> {
   const [holds, slugHolds, readable] = await Promise.all([
-    allHolds(ctx),
+    currentHolds(ctx),
     allSlugHolds(ctx),
     accessibleProjectRows(ctx, actor),
   ]);
@@ -293,40 +324,11 @@ export async function referenceDirectory(
   const visibleIds = new Set(readable.map((row) => row.id));
   return {
     entries: holds.filter((hold) => visible.has(hold.slug)).map(entryOf),
-    contested: contestedWindows(holds),
+    contested: contestedNow(holds),
     // No contested counterpart: a slug has one holder at a time, so a
     // viewer who can see the holder can resolve it on their own.
     slug_entries: slugHolds
       .filter((hold) => visibleIds.has(hold.projectId))
       .map(slugEntryOf),
   };
-}
-
-async function allHolds(ctx: DbContext): Promise<Hold[]> {
-  const system = ctx.router.system();
-  const [rows, projectRows] = await Promise.all([
-    system
-      .select({
-        projectId: refPrefixes.projectId,
-        prefix: refPrefixes.prefix,
-        effectiveFrom: refPrefixes.effectiveFrom,
-      })
-      .from(refPrefixes),
-    system.select({ id: projects.id, slug: projects.slug }).from(projects),
-  ]);
-
-  const slugOf = new Map(projectRows.map((row) => [row.id, row.slug]));
-  const history = new Map<number, FormatRow[]>();
-  for (const row of rows) {
-    const list = history.get(row.projectId) ?? [];
-    list.push(row);
-    history.set(row.projectId, list);
-  }
-
-  const holds: Hold[] = [];
-  for (const [projectId, list] of history) {
-    const slug = slugOf.get(projectId);
-    if (slug !== undefined) holds.push(...holdsOf(slug, list));
-  }
-  return holds;
 }

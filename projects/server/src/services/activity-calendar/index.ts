@@ -3,16 +3,11 @@ import type {
   ActivityCalendarResponse,
   ActivityCard,
 } from "@todou/shared";
-import { and, asc, eq, inArray, type SQL, sql } from "drizzle-orm";
+import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { UserRow } from "../../auth/pat.ts";
 import type { AppContext } from "../../bootstrap.ts";
 import type { Db } from "../../db/driver.ts";
-import {
-  issueMoves,
-  projects,
-  refPrefixes,
-  users,
-} from "../../db/system-schema.ts";
+import { issueMoves, projects, users } from "../../db/system-schema.ts";
 import { ConflictError } from "../../errors.ts";
 import {
   accessibleProjectRows,
@@ -22,6 +17,7 @@ import {
   routeInfoOf,
 } from "../access.ts";
 import { localDateBoundarySql, rowsFrom } from "../calendar.ts";
+import { currentPrefixes } from "../reference-directory.ts";
 import { microIso } from "../timeline.ts";
 import { resolveVisibleUser } from "../users.ts";
 import { type ActivityBucketPlan, buildActivityBuckets } from "./buckets.ts";
@@ -453,18 +449,10 @@ async function calendar(
       bornAt,
       day: query.day,
     });
-    const prefixes = new Map<number, string | null>();
-    if (ids.length > 0) {
-      const rows = await system
-        .select({
-          projectId: refPrefixes.projectId,
-          prefix: refPrefixes.prefix,
-        })
-        .from(refPrefixes)
-        .where(inArray(refPrefixes.projectId, ids))
-        .orderBy(asc(refPrefixes.effectiveFrom), asc(refPrefixes.id));
-      for (const row of rows) prefixes.set(row.projectId, row.prefix);
-    }
+    const prefixes =
+      ids.length > 0
+        ? await currentPrefixes(system, ids)
+        : new Map<number, string | null>();
     const counts = new Map<string, number>();
     const cards: Candidate[] = [];
     // Settle every group before surfacing the first failure. `perDatabase`

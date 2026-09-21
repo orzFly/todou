@@ -12,7 +12,6 @@ import {
   runStartupChores,
   startHousekeeping,
 } from "./services/housekeeping.ts";
-import { isMigrationStopped, migrateRefs } from "./services/refs-migrate.ts";
 import {
   copyMissing,
   enumerateBlobKeys,
@@ -249,60 +248,6 @@ class StorageGcCommand extends ConfiguredCommand {
   }
 }
 
-class RefsMigrateCommand extends ConfiguredCommand {
-  static paths = [["refs", "migrate"]];
-
-  static usage = Command.Usage({
-    description: "Rewrite stored references as id-anchored links, once",
-    details:
-      "Walks every project's issue bodies, comments and spec files, reads " +
-      "each one under the rules that were in force where and when it was " +
-      "written, and stores the reference it finds as an explicit link onto " +
-      "the target's permanent address. Reference events get the same " +
-      "treatment: one type, and the referring project named by id. Each " +
-      "rewritten body or comment records a revision holding the original " +
-      "text; spec versions are their own history and record none. " +
-      "Idempotent, so a real run after a --dry-run is safe. Run it once, " +
-      "by hand, after the deploy that ships the resolve pass.",
-  });
-
-  dryRun = Option.Boolean("--dry-run", false, {
-    description: "Report what would be rewritten and change nothing",
-  });
-
-  project = Option.String("--project", {
-    description: "Limit the walk to one project slug",
-  });
-
-  async execute(): Promise<number | undefined> {
-    const config = this.loadConfig();
-    const router = await DbRouter.open(config);
-    try {
-      const report = await migrateRefs(
-        { router },
-        {
-          dryRun: this.dryRun,
-          ...(this.project === undefined ? {} : { slug: this.project }),
-          log: (line) => this.context.stdout.write(`${line}\n`),
-        },
-      );
-      this.context.stdout.write(
-        `${this.dryRun ? "[dry-run] would write" : "wrote"} ` +
-          `${report.links} link(s) into ${report.changed} of ` +
-          `${report.segments} segment(s) across ${report.issues} card(s) in ` +
-          `${report.projects} project(s); ${report.events} event(s) merged, ` +
-          `${report.unresolved} candidate(s) left verbatim\n`,
-      );
-      return 0;
-    } catch (error) {
-      if (!isMigrationStopped(error)) throw error;
-      return 1;
-    } finally {
-      await router.close();
-    }
-  }
-}
-
 class AttachmentsRelabelCommand extends ConfiguredCommand {
   static paths = [["attachments", "relabel"]];
 
@@ -318,7 +263,7 @@ class AttachmentsRelabelCommand extends ConfiguredCommand {
       "is character-for-character the old filename, along with the last " +
       "segment of the destination and of a link text that is itself the " +
       "attachment's URL; captions the author wrote themselves are left " +
-      "alone. Run it after `refs migrate` when both are pending. " +
+      "alone. " +
       "Rewritten bodies and comments record a revision holding the original " +
       "text. Idempotent: a second run finds nothing, so a real run after a " +
       "--dry-run is safe.",
@@ -530,7 +475,6 @@ cli.register(ServeCommand);
 cli.register(MigrateCommand);
 cli.register(StorageMigrateCommand);
 cli.register(StorageGcCommand);
-cli.register(RefsMigrateCommand);
 cli.register(AttachmentsRelabelCommand);
 cli.register(UserListCommand);
 cli.register(UserBindSubjectCommand);

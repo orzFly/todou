@@ -1825,5 +1825,25 @@ describe.each(PLACEMENTS)(
       await exhaust(personPath(bob), [], legacyDay);
       await exhaust(personPath(alice), [legacy.card], legacyDay);
     }, 120_000);
+
+    // After the `issue_prefix: null` assertions above, which say P has none.
+    it("regression watchdog: names a card under the prefix in force now, not the first one taken", async () => {
+      // Green before this card too: it makes the direction the prefix mirror
+      // is read in falsifiable, which two rows for one project is the only
+      // way to do. `ref_formats.effective_from` is the database's own now(),
+      // so the fake Date this suite installs cannot collapse the two rows
+      // onto one instant — and if it could, the id would still decide.
+      for (const prefix of ["C1", "C2"]) {
+        await request(`/projects/${P.slug}/references/format`, admin, "PUT", {
+          prefix,
+        });
+      }
+      const page = await calendar(`/projects/${P.id}/insights/activity`);
+      const named = page.selection?.items ?? [];
+      expect(named.length).toBeGreaterThan(0);
+      expect(new Set(named.map((item) => item.project.issue_prefix))).toEqual(
+        new Set(["C2"]),
+      );
+    });
   },
 );
