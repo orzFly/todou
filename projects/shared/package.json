@@ -1,6 +1,6 @@
 {
   "name": "@todou/shared",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "todou shared schemas, types, and API client",
   "private": true,
   "license": "BSD-3-Clause",
