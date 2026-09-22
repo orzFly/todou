@@ -1,0 +1,13 @@
+todou v0.6.0
+
+You can @ someone now, and they get notified — the mention reaches their
+Mentions inbox tab even when the card is otherwise quiet. A card can say
+it waits for another one in any project, and the wait clears when the
+blocker is closed. A card or a whole project can be muted. Projects have
+a burn chart and an activity calendar, and every person has a page
+listing their cards and projects.
+
+Breaking: todou-server refs migrate is gone, so a deployment that never
+ran that pass has to run it on 0.5.1 first — from here a bare token in
+stored text is read under whoever holds that prefix now. Every migration
+is additive. Move the server and the CLI together.
