@@ -4,6 +4,7 @@ import type { Db } from "../db/driver.ts";
 import { sessions, tokens } from "../db/system-schema.ts";
 import { repairBlocks } from "./blocks.ts";
 import { sweepMoves } from "./move/execute.ts";
+import { drainPendingMirrors } from "./pending-mirror.ts";
 import { syncRefPrefixMirror } from "./reference-directory.ts";
 
 /** Hourly is plenty: dead rows are inert (auth re-checks expiry/revocation
@@ -38,11 +39,21 @@ export async function sweepAuthRows(
 }
 
 /**
- * One-shot boot chores. The prefix mirror is rebuilt rather than trusted:
- * it lives in a different database from the histories it copies, so a
- * crash between the two writes is repaired here and nowhere else.
+ * One-shot boot chores. The prefix mirror is rebuilt rather than trusted for
+ * the projects that live in a different database from the histories it
+ * copies: a crash between those two writes is repaired here and nowhere
+ * else. Colocated projects write both rows in one transaction and are
+ * skipped, so for them this is not a repair path at all.
  * Failure is logged, never fatal — a stale mirror only costs bare-prefix
  * resolution, and the server is still useful without it.
+ *
+ * Kept unconditional even though the hourly tick now reconciles marked
+ * projects within the hour (T-511). The two cover different things: a mark
+ * commits before the write it guards, so the hourly pass never misses a hole
+ * this process opened — but it knows nothing about a database edited by
+ * hand, a restore from backup, or a placement changed across a restart. This
+ * pass is what covers those three, and it costs a constant handful of
+ * statements once per process.
  */
 export async function runStartupChores(ctx: AppContext): Promise<void> {
   try {
@@ -71,6 +82,22 @@ async function recoverMoves(ctx: AppContext): Promise<void> {
 }
 
 /**
+ * Close the prefix-mirror holes the write paths marked (T-511). Only the
+ * marked projects are visited, which is what keeps this hourly and bounded
+ * where the boot-time full re-copy could not be.
+ */
+async function reconcileMarkedMirrors(ctx: AppContext): Promise<void> {
+  try {
+    const { repaired } = await drainPendingMirrors(ctx);
+    if (repaired > 0) {
+      console.log(`housekeeping: reconciled ${repaired} project mirror(s)`);
+    }
+  } catch (err) {
+    console.error("housekeeping: prefix mirror reconcile failed", err);
+  }
+}
+
+/**
  * Recompute every block verdict and send the clearings that never landed
  * (T-377).
  *
@@ -93,6 +120,27 @@ async function repairBlockEdges(ctx: AppContext): Promise<void> {
 }
 
 /**
+ * Everything one periodic tick does. Exported so a test can run a whole tick
+ * against a real context instead of asserting on a timer.
+ */
+export async function runHousekeepingTick(ctx: AppContext): Promise<void> {
+  await recoverMoves(ctx);
+  await reconcileMarkedMirrors(ctx);
+  await repairBlockEdges(ctx);
+  try {
+    const swept = await sweepAuthRows(ctx.router.system());
+    if (swept.sessions > 0 || swept.tokens > 0) {
+      console.log(
+        `housekeeping: purged ${swept.sessions} session(s), ${swept.tokens} token(s)`,
+      );
+    }
+  } catch (err) {
+    // Sweep failures must never take the server down; the next tick retries.
+    console.error("housekeeping sweep failed", err);
+  }
+}
+
+/**
  * Run the auth sweep now and then on an interval. Returns a stop function —
  * the serve shutdown path must call it (see T-56's graceful-shutdown hook).
  * The timer is unref'd so a missed stop can never hold the process open.
@@ -101,23 +149,8 @@ export function startHousekeeping(
   ctx: AppContext,
   intervalMs: number = SWEEP_INTERVAL_MS,
 ): () => void {
-  const db = ctx.router.system();
-  const run = async () => {
-    await recoverMoves(ctx);
-    await repairBlockEdges(ctx);
-    try {
-      const swept = await sweepAuthRows(db);
-      if (swept.sessions > 0 || swept.tokens > 0) {
-        console.log(
-          `housekeeping: purged ${swept.sessions} session(s), ${swept.tokens} token(s)`,
-        );
-      }
-    } catch (err) {
-      // Sweep failures must never take the server down; the next tick retries.
-      console.error("housekeeping sweep failed", err);
-    }
-  };
-  void run();
+  const run = () => void runHousekeepingTick(ctx);
+  run();
   const timer = setInterval(run, intervalMs);
   timer.unref();
   return () => clearInterval(timer);

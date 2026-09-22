@@ -642,36 +642,58 @@ export async function getIssue(
 }
 
 /**
- * Cursor predicate for the date sorts. `v` comes in two precisions:
- * microsecond text from current servers, milliseconds from cursors minted
- * before this fix. A millisecond `v` cannot order rows inside its own
- * millisecond, so for those the whole [v, v+1ms) window counts as "equal"
- * and the id tie-break decides — the single-table version of the rule in
- * timeline.ts#beyond.
+ * The half-open window `[from, hi)` one list cursor calls "equal", and the
+ * id it ties on. `v` comes in two precisions: microsecond text from current
+ * servers, milliseconds from cursors minted before the T-69 fix. A
+ * millisecond `v` cannot order rows inside its own millisecond, so its
+ * window is the whole `[v, v+1ms)` and the id tie-break decides; a
+ * microsecond `v` spans a single `timestamptz` tick. `hi` is the exclusive
+ * upper bound either way, the same end convention as
+ * timeline.ts#cursorBounds.
+ *
+ * Both bounds are already-cast SQL rather than bare strings: `updated_at` is
+ * a date-mode column, so drizzle would call `.toISOString()` on a bound
+ * value, and routing through a `Date` would truncate the microseconds
+ * test/issue-list-cursor.test.ts exists to protect.
+ */
+export function listCursorBounds(cur: ListCursor): {
+  from: SQL;
+  hi: SQL;
+  id: number;
+} {
+  const v = String(cur.v);
+  if (Number.isNaN(Date.parse(v))) {
+    throw new ValidationFailedError("malformed cursor");
+  }
+  const exact = /\.\d{4,}/.test(v);
+  return {
+    from: sql`${v}::timestamptz`,
+    hi: exact
+      ? sql`${v}::timestamptz + interval '1 microsecond'`
+      : sql`${new Date(Date.parse(v) + 1).toISOString()}::timestamptz`,
+    id: cur.i,
+  };
+}
+
+/**
+ * Cursor predicate for the date sorts — the single-table version of the rule
+ * in timeline.ts#beyondBounds.
+ *
+ * Branchless on the cursor's precision on purpose: user-issues.ts drives the
+ * same predicate off a VALUES table where one row's cursor may be a
+ * microsecond one and the next row's a legacy millisecond one, and a shared
+ * SQL predicate cannot branch per row. Every precision difference is
+ * absorbed into `hi` instead, which each row computes for itself.
  */
 export function timeAdvance(
   sortColumn: AnyPgColumn,
   cur: ListCursor,
   ascending: boolean,
 ): SQL | undefined {
-  const v = String(cur.v);
-  if (Number.isNaN(Date.parse(v))) {
-    throw new ValidationFailedError("malformed cursor");
-  }
-  const exact = /\.\d{4,}/.test(v);
-  const from = sql`${v}::timestamptz`;
-  const to = exact
-    ? from
-    : sql`${new Date(Date.parse(v) + 1).toISOString()}::timestamptz`;
-  const strict = ascending
-    ? exact
-      ? gt(sortColumn, from)
-      : gte(sortColumn, to)
-    : lt(sortColumn, from);
-  const equal = exact
-    ? eq(sortColumn, from)
-    : and(gte(sortColumn, from), lt(sortColumn, to));
-  const tie = and(equal, (ascending ? gt : lt)(issues.id, cur.i));
+  const { from, hi, id } = listCursorBounds(cur);
+  const strict = ascending ? gte(sortColumn, hi) : lt(sortColumn, from);
+  const equal = and(gte(sortColumn, from), lt(sortColumn, hi));
+  const tie = and(equal, (ascending ? gt : lt)(issues.id, id));
   return or(strict, tie);
 }
 

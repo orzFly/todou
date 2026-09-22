@@ -723,6 +723,11 @@ describe("issue block edges T-377", () => {
     expect(afterClearing).toEqual([]);
   });
 
+  // The next two run on the default placement, where every project shares the
+  // system database — so they are also the guard that `repairBlocks` does NOT
+  // skip colocated projects the way the mirror sweep does. What it repairs is
+  // state that has to converge, not a pair of writes that colocation turned
+  // into one transaction, and the sweeps only earn a skip in the second case.
   it("repairs a drifted verdict and sends the clearing nobody was told about", async () => {
     expect((await setClearLine(PA, "Shipped")).status).toBe(200);
     const blocked = await createIssue(PA, "repair target");
@@ -991,5 +996,25 @@ describe("issue block edges T-377", () => {
       );
     expect(rows).toEqual([]);
     expect((await issue(PB, b)).blocked_by).toEqual([]);
+  });
+
+  // Last in the file on purpose: it switches PA's prefix, and the cases above
+  // spell refs as `BK-<n>` and feed `BK-<n>` back in.
+  it("regression watchdog: spells a ref with the prefix in force now, not the first one the project took", async () => {
+    // Green before this card too. It exists so that reading the mirror newest
+    // row first instead of oldest row last stays falsifiable: PA took `BK` at
+    // creation, so it has two mirror rows and the two readings disagree.
+    const put = await t.app.request(`/api/projects/${PA}/references/format`, {
+      method: "PUT",
+      headers: headers(),
+      body: JSON.stringify({ prefix: "B2" }),
+    });
+    expect(put.status).toBe(200);
+
+    const blocked = await createIssue(PA, "spelled by the current prefix");
+    const blocker = await createIssue(PA, "the current prefix's blocker");
+    const res = await block(PA, blocked, "blocked-by", `#${blocker}`);
+    expect(res.status).toBe(200);
+    expect((await json(res)).blocked_by[0].ref).toBe(`B2-${blocker}`);
   });
 });

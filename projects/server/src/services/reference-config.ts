@@ -13,6 +13,7 @@ import { autolinks, refFormats } from "../db/project-schema.ts";
 import { projects, slugHistory } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
+import { markPendingMirror } from "./pending-mirror.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
 /** GitHub's autolink rule: no prefix may be a prefix of another. */
@@ -121,18 +122,40 @@ export async function setReferenceFormat(
       `internal format token "${token}" overlaps autolink prefix "${clash.prefix}"`,
     );
   }
-  const inserted = await db
-    .insert(refFormats)
-    .values({ projectId: project.id, prefix: input.prefix })
-    .returning({
-      prefix: refFormats.prefix,
-      effectiveFrom: refFormats.effectiveFrom,
-    });
-  const row = inserted[0];
-  // Two databases, no shared transaction: the project's own history is
-  // authoritative and lands first. A mirror failure is reported so the
-  // admin can retry, and startup housekeeping re-copies it regardless.
-  if (row) await mirrorRefFormat(ctx.router.system(), project.id, row);
+  const insertPair = async (history: Db, mirror: Db): Promise<void> => {
+    const inserted = await history
+      .insert(refFormats)
+      .values({ projectId: project.id, prefix: input.prefix })
+      .returning({
+        prefix: refFormats.prefix,
+        effectiveFrom: refFormats.effectiveFrom,
+      });
+    const row = inserted[0];
+    if (row) await mirrorRefFormat(mirror, project.id, row);
+  };
+  if (ctx.router.sharesSystemDatabase(routeInfoOf(project))) {
+    // One database, so the mirror is just another table in it and both rows
+    // commit together. `tx` for both handles on purpose: a second handle
+    // taken inside the callback waits on the transaction's own mutex and
+    // never returns (see the warning on insertCommentInTx).
+    await db.transaction((tx) => insertPair(tx, tx));
+  } else {
+    // Two databases, no shared transaction: the project's own history is
+    // authoritative and lands first. A mirror failure is reported so the
+    // admin can retry, and startup housekeeping re-copies it regardless —
+    // and since T-511 reporting without rolling back is defensible rather
+    // than merely survivable, because the window now has a name, a bound,
+    // and a drainer that checks it within the hour.
+    //
+    // Marked before the authoritative write, and outside any transaction
+    // callback: `markPendingMirror` takes the system handle, which inside an
+    // open PGlite transaction waits on that transaction's own mutex forever.
+    // The colocated branch above needs none of this — both rows commit
+    // together, so there is no window to record.
+    await markPendingMirror(ctx, project);
+    await ctx.testHooks?.beforeMirrorStep?.("history");
+    await insertPair(db, ctx.router.system());
+  }
   return loadConfig(db, project.id);
 }
 

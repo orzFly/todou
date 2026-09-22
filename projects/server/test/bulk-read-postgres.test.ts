@@ -1,3 +1,4 @@
+import { PROJECT_NOT_FOUND } from "@todou/shared";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
@@ -186,6 +187,95 @@ describe.skipIf(!PG_URL)("bulk mark-as-read on real postgres", () => {
       204,
     );
     expect(await stateOf(issue)).toEqual({ unread: false, count: 0 });
+  });
+
+  it("resolves a plain member's refs through every rung against real postgres", async () => {
+    // The batched ref lookup and the batched role read only ever run on
+    // PGlite otherwise: the calendar's postgres suite views as an instance
+    // admin, which skips the membership query entirely.
+    const before = `${slug}-old`;
+    const after = `${slug}-new`;
+    const foreign = `${slug}-foreign`;
+    for (const name of [before, foreign]) {
+      const created = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug: name, name }),
+      });
+      expect(created.status).toBe(201);
+    }
+    const seated = await t.app.request(
+      `/api/projects/${before}/members/${bob.user.id}`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ role: "writer" }),
+      },
+    );
+    expect(seated.status).toBe(204);
+    const fetched = await t.app.request(`/api/projects/${before}`, {
+      headers: { cookie },
+    });
+    expect(fetched.status).toBe(200);
+    const projectId = (await json(fetched)).id as number;
+    const renamed = await t.app.request(`/api/projects/${before}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ slug: after }),
+    });
+    expect(renamed.status).toBe(200);
+
+    // Mint bob's read frontier before the card exists. It is created lazily on
+    // his first read, so a card planted first is dated before his epoch and
+    // arrives already read — the warm-up test/inbox-placements.test.ts spells
+    // out for the same reason.
+    const warmed = await t.app.request("/api/me/inbox", {
+      headers: bob.headers,
+    });
+    expect(warmed.status).toBe(200);
+
+    const issue = await t.app.request(`/api/projects/${after}/issues`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ title: "swept through three rungs" }),
+    });
+    expect(issue.status).toBe(201);
+    const number = (await json(issue)).number as number;
+    const posted = await t.app.request(
+      `/api/projects/${after}/issues/${number}/comments`,
+      {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ body: "from someone else" }),
+      },
+    );
+    expect(posted.status).toBe(201);
+
+    const unreadFor = async (who: Record<string, string>) => {
+      const page = await json(
+        await t.app.request(`/api/projects/${after}/issues?numbers=${number}`, {
+          headers: who,
+        }),
+      );
+      expect(page.items).toHaveLength(1);
+      return page.items[0].unread as boolean;
+    };
+    expect(await unreadFor(bob.headers)).toBe(true);
+
+    const asBob = (body: unknown) =>
+      t.app.request("/api/me/read", {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify(body),
+      });
+    expect(
+      (await asBob({ projects: [after, String(projectId), before] })).status,
+    ).toBe(204);
+    expect(await unreadFor(bob.headers)).toBe(false);
+
+    const refused = await asBob({ projects: [after, foreign] });
+    expect(refused.status).toBe(404);
+    expect((await json(refused)).error.message).toBe(PROJECT_NOT_FOUND);
   });
 
   it("clears a default sweep dated by the project database's own clock", async () => {

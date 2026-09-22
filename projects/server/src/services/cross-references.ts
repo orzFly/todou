@@ -31,8 +31,9 @@ import {
  * The two project spellings are exclusive rather than alternatives. Falling
  * back to the slug for a row that HAS an id would keep the T-156 limitation
  * alive — a slug that changed hands makes its old holder's events visible to
- * the new one. Judged on the id, that cannot happen. `refs migrate` gives
- * every row an id, after which the slug arm is dead weight to be retired.
+ * the new one. Judged on the id, that cannot happen. The `refs migrate` pass
+ * gave every row an id on the deployments that ran it; the slug arm stays
+ * for the ones that did not, 0.5.1 having been the last release to carry it.
  */
 export function crossRefVisibleCondition(
   visibleSlugs: string[],

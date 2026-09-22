@@ -2,7 +2,12 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { refPrefixes } from "../src/db/system-schema.ts";
 import { syncRefPrefixMirror } from "../src/services/reference-directory.ts";
-import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
+import {
+  addUserWithToken,
+  countStatements,
+  makeTestApp,
+  type TestApp,
+} from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -84,22 +89,29 @@ describe("reference prefix directory T-150", () => {
     ]);
   });
 
-  it("closes a hold on handover and reopens the next one", async () => {
+  it("hands the prefix over instead of holding both", async () => {
+    const [before] = holdsOf(await directory(), "AA");
     await settle();
     expect(await putFormat(PA, "BB")).toMatchObject({ status: 200 });
     const page = await directory();
-    const [aa] = holdsOf(page, "AA");
+    expect(holdsOf(page, "AA")).toEqual([]);
+    expect(holdsOf(page, "BB")).toEqual([
+      { prefix: "BB", slug: PA, from: expect.any(String), to: null },
+    ]);
+    // The new hold starts at the switch, not at the project's creation: the
+    // old shape proved that by matching the closed hold's end, and nothing
+    // else here would notice a `from` copied off the first row.
     const [bb] = holdsOf(page, "BB");
-    expect(aa.to).toBe(bb.from);
-    expect(bb.to).toBeNull();
+    expect(Date.parse(bb.from)).toBeGreaterThan(Date.parse(before.from));
   });
 
   it("releases a prefix entirely when the format goes back to #", async () => {
     await settle();
     expect(await putFormat(PA, null)).toMatchObject({ status: 200 });
     const page = await directory();
-    const [bb] = holdsOf(page, "BB");
-    expect(bb.to).not.toBeNull();
+    // A newest row of NULL means the project holds nothing, rather than
+    // falling back to the last prefix it did hold.
+    expect(holdsOf(page, "BB")).toEqual([]);
     expect(holdsOf(page, "#")).toEqual([]);
   });
 
@@ -122,24 +134,34 @@ describe("reference prefix directory T-150", () => {
   });
 
   it("trims entries to the viewer's projects but keeps every contested window", async () => {
+    // PA gave its prefix up two cases ago, so the viewer's slice would be
+    // empty and every assertion over it vacuously true. Give it one back.
+    await settle();
+    expect(await putFormat(PA, "A2")).toMatchObject({ status: 200 });
+
     const mine = await directory(bob.headers);
-    expect(mine.entries.every((e: Entry) => e.slug === PA)).toBe(true);
+    // The whole array rather than a predicate over it: bob reads PA alone, so
+    // this also says PB's and PC's XX entries were trimmed away.
+    expect(mine.entries).toEqual([
+      { prefix: "A2", slug: PA, from: expect.any(String), to: null },
+    ]);
     expect(
       mine.contested.some((c: { prefix: string }) => c.prefix === "XX"),
     ).toBe(true);
   });
 
-  it("re-copies missing mirror rows and stays idempotent", async () => {
-    const system = t.ctx.router.system();
-    const before = await system.select().from(refPrefixes);
-    const victim = before.find((row) => row.prefix === "XX");
-    if (!victim) throw new Error("expected a mirrored XX row");
-    await system.delete(refPrefixes).where(eq(refPrefixes.id, victim.id));
-
-    expect(await syncRefPrefixMirror(t.ctx)).toBe(1);
-    expect(await syncRefPrefixMirror(t.ctx)).toBe(0);
-    const after = await system.select().from(refPrefixes);
-    expect(after).toHaveLength(before.length);
+  it("leaves a colocated mirror alone — the write path cannot leave a gap", async () => {
+    const log = await countStatements(t, async () => {
+      // Regression watchdog: green on the parent commit too, where there was
+      // simply nothing to repair.
+      expect(await syncRefPrefixMirror(t.ctx)).toBe(0);
+    });
+    // This one is the card's criterion: the sweep used to spend 1 + 2N
+    // statements to find that out. The repair case that needs a real gap
+    // lives in ref-mirror-placements.test.ts, which can afford to keep the
+    // gap: it does not share an app with the directory cases below.
+    expect(log.total).toBe(1);
+    expect(Object.keys(log.byUrl)).toEqual([t.ctx.router.systemHandle().url]);
   });
 
   // A prefix chosen at creation (T-148) has to reach the directory by the
@@ -220,5 +242,76 @@ describe("reference prefix directory T-150", () => {
       }),
     });
     expect(ok.status).toBe(201);
+  });
+
+  /** A project of this case's own, so the rows it plants contest nothing. */
+  const newProject = async (slug: string): Promise<{ id: number }> => {
+    const res = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug, name: `Directory ${slug}` }),
+    });
+    expect(res.status).toBe(201);
+    return json(res);
+  };
+
+  it("breaks a same-instant tie by the mirror's own row order", async () => {
+    // Regression watchdog: green before this card too. Its job is to turn a
+    // tie-break that used to ride on whatever order the database returned
+    // into a written-down contract. A past instant keeps the two rows from
+    // losing to prefixes the cases above took at test-run time.
+    const project = await newProject("dir-t");
+    const effectiveFrom = new Date("2024-01-02T03:04:05.000Z");
+    for (const prefix of ["T1", "T2"]) {
+      await t.ctx.router
+        .system()
+        .insert(refPrefixes)
+        .values({ projectId: project.id, prefix, effectiveFrom });
+    }
+
+    const page = await directory();
+    expect(page.entries.filter((e: Entry) => e.slug === "dir-t")).toEqual([
+      { prefix: "T2", slug: "dir-t", from: expect.any(String), to: null },
+    ]);
+  });
+
+  it("keeps the directory the same size as a project's history grows", async () => {
+    const project = await newProject("dir-g");
+    const sizes = async (): Promise<{ entries: number; bytes: number }> => {
+      const page = await directory();
+      return {
+        entries: page.entries.filter((e: Entry) => e.slug === "dir-g").length,
+        // Equal-length prefixes and a 24-character ISO timestamp are what
+        // make a byte count comparable at all; no other project is written
+        // to between the two reads, so their share is constant.
+        bytes: JSON.stringify(page).length,
+      };
+    };
+    const takeFour = async (from: number) => {
+      for (let i = from; i < from + 4; i++) {
+        await settle();
+        expect(await putFormat("dir-g", `G${i}`)).toMatchObject({
+          status: 200,
+        });
+      }
+    };
+
+    await takeFour(1);
+    const first = await sizes();
+    await takeFour(5);
+    const second = await sizes();
+
+    expect(second.entries).toBe(first.entries);
+    expect(second.bytes).toBe(first.bytes);
+
+    // The history itself is untouched: the directory stops reading all of it,
+    // nothing trims it. A project created without a prefix inserts no row of
+    // its own, so eight switches are eight rows.
+    const rows = await t.ctx.router
+      .system()
+      .select({ id: refPrefixes.id })
+      .from(refPrefixes)
+      .where(eq(refPrefixes.projectId, project.id));
+    expect(rows).toHaveLength(8);
   });
 });

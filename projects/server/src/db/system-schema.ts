@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -218,9 +219,24 @@ export const issueBlocks = pgTable(
 );
 
 // Mirror of every project's ref_formats history (T-150). Resolving a bare
-// `PREFIX-N` written in project A means asking who held that prefix at that
-// instant across ALL projects — a question the per-project tables cannot
-// answer without opening every database in the deployment.
+// `PREFIX-N` written in project A means asking who holds that prefix across
+// ALL projects — a question the per-project tables cannot answer without
+// opening every database in the deployment.
+//
+// Readers want only the newest row per project (T-512), and the rest is kept
+// anyway, for three reasons that each stand on their own. `syncRefPrefixMirror`
+// repairs the mirror by diffing the WHOLE source history against the WHOLE
+// mirror on `(effective_from, prefix)`, so a trimmed table would look like a
+// gap and be refilled on every boot. The outbox's pending marks and its
+// start-up re-copy read this as the mirror of that history, and would find the
+// same phantom gaps. And the table grows by one row per administrator-made
+// format change rather than with user traffic, so there is nothing here worth
+// the irreversibility of deleting rows.
+//
+// `ref_prefixes_project_from_idx` only partly serves the newest-row-per-project
+// read: postgres can walk it for ordered project_ids and Incremental Sort each
+// group. An index on `(project_id, effective_from desc, id desc)` would fit
+// exactly, and is not worth having on a table this size.
 export const refPrefixes = pgTable(
   "ref_prefixes",
   {
@@ -228,8 +244,8 @@ export const refPrefixes = pgTable(
     projectId: bigint("project_id", { mode: "number" })
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    // NULL = "#N", and the row still matters: it closes the previous
-    // prefix's holding interval.
+    // NULL = "#N", and the row still matters: as the newest row for its
+    // project it says that project holds no prefix at all.
     prefix: text("prefix"),
     effectiveFrom: timestamp("effective_from", {
       withTimezone: true,
@@ -239,6 +255,48 @@ export const refPrefixes = pgTable(
     index("ref_prefixes_project_from_idx").on(t.projectId, t.effectiveFrom),
     index("ref_prefixes_prefix_idx").on(t.prefix),
   ],
+);
+
+// A row here means "this project's mirror above has not been checked clean
+// twice in a row yet" (T-511) — not "here is an effect waiting to be
+// replayed". There is no payload because there is nothing to replay: the
+// drainer re-derives the whole answer from ref_formats, so an over-report
+// costs one read and a stale row can never write the wrong thing.
+//
+// `generation` counts marks instead of stamping a time because the drainer's
+// delete is guarded by equality on it: PGlite's now() stops at the
+// millisecond, so two marks inside one millisecond would hand out the same
+// token and let the drainer delete a window it never checked.
+//
+// `verified_generation` exists because one clean pass is not enough. A mark
+// commits before the authoritative write does, so the drainer can claim it,
+// read a ref_formats that does not yet contain the row, and find nothing
+// missing — deleting there would drop a hole that is about to open. The
+// first clean pass only raises this column; the second one deletes.
+//
+// The cascade is load-bearing: createProject's dedicated branch compensates
+// a failure by deleting the registry row, and the mark is written before
+// that point.
+export const pendingPrefixMirrors = pgTable(
+  "pending_prefix_mirrors",
+  {
+    projectId: bigint("project_id", { mode: "number" })
+      .primaryKey()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    generation: bigint("generation", { mode: "number" }).notNull().default(1),
+    verifiedGeneration: bigint("verified_generation", { mode: "number" })
+      .notNull()
+      .default(0),
+    firstMarkedAt: timestamp("first_marked_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastError: text("last_error"),
+  },
+  (t) => [index("pending_prefix_mirrors_due_idx").on(t.nextAttemptAt)],
 );
 
 // Who held which slug, when (T-156). Same append-only shape as ref_prefixes

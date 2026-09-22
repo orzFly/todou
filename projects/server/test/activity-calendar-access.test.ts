@@ -1,6 +1,7 @@
 import type {
   ActivityCalendarQuery,
   ActivityCalendarResponse,
+  MemberRole,
 } from "@todou/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import {
@@ -16,6 +17,7 @@ import type { UserRow } from "../src/auth/pat.ts";
 import type { Db } from "../src/db/driver.ts";
 import { issueEvents, issues, statuses } from "../src/db/project-schema.ts";
 import { projectMembers, projects, users } from "../src/db/system-schema.ts";
+import { routeInfoOf } from "../src/services/access.ts";
 import {
   getProjectActivityCalendar,
   getUserActivityCalendar,
@@ -263,6 +265,12 @@ describe.each(PLACEMENTS)(
     // Mutate only after the real snapshot transaction has committed. In shared
     // placement the system and project DB are the same PGlite connection;
     // mutating inside the callback would deadlock instead of testing a recheck.
+    //
+    // The id reaching `mutate` is the group representative's, not each
+    // project's: one group is opened once, under the route of its first
+    // member, and `authorizedScope` sorts by id so that is always a here.
+    // Reordering that sort, or changing how `perDatabase` picks a
+    // representative, retires every `projectId === a.id` guard below at once.
     function afterSnapshot(mutate: (projectId: number) => Promise<void>) {
       const original = t.ctx.router.forProject.bind(t.ctx.router);
       return vi
@@ -725,6 +733,36 @@ describe.each(PLACEMENTS)(
       );
     });
 
+    it("regression watchdog: a role the catalog cannot rank is a 403, not a scope quietly dropped", async () => {
+      // The only reachable failure of the role gate in user scope: every row
+      // handed to it comes from the viewer's own membership rows, so "no
+      // role at all" cannot occur and an unrankable one is all that is left.
+      // Green before the batching change and after it — the point is that
+      // turning the throw into a filter would stop being invisible here.
+      const setRole = (role: MemberRole) =>
+        t.ctx.router
+          .system()
+          .update(projectMembers)
+          .set({ role })
+          .where(
+            and(
+              eq(projectMembers.projectId, a.id),
+              eq(projectMembers.userId, viewer.user.id),
+            ),
+          );
+      await setRole("future-role" as MemberRole);
+      try {
+        await error(
+          await get(userPath(subject.user.login), QUERY, viewer.headers),
+          403,
+          "forbidden",
+        );
+      } finally {
+        await setRole("reader");
+      }
+      await calendar(await get(userPath(subject.user.login), QUERY));
+    });
+
     it("resumes project and user pages through equivalent numeric aliases", async () => {
       for (const [firstPath, secondPath, firstRow, secondRow] of [
         [
@@ -791,16 +829,31 @@ describe.each(PLACEMENTS)(
     });
 
     it("returns restart409 after scope revocation between pages and never reopens the revoked project", async () => {
-      const first = await calendar(
-        await get(userPath(subject.user.id), { ...QUERY, limit: "1" }),
-      );
-      expectSelection(first, 2, [["calendar-access-b", 1, "Subject in B"]]);
-      expect(first.selection?.has_more).toBe(true);
-      const after = first.selection?.next_cursor;
-      if (!after) throw new Error("expected continuation cursor");
-      await removeSeat(b, viewer);
-      const opened = vi.spyOn(t.ctx.router, "forProject");
+      // Which projects were read is only visible on the set handed to
+      // `perDatabase`: `forProject` sees one route per group, so under
+      // `shared` b's id could never appear there whatever the service did.
+      const seen: number[][] = [];
+      const original = t.ctx.router.perDatabase.bind(t.ctx.router);
+      const grouped = vi
+        .spyOn(t.ctx.router, "perDatabase")
+        .mockImplementation(((rows, route, run) => {
+          seen.push((rows as readonly ProjectRow[]).map((row) => row.id));
+          return original(rows as never, route as never, run as never);
+        }) as typeof t.ctx.router.perDatabase);
       try {
+        const first = await calendar(
+          await get(userPath(subject.user.id), { ...QUERY, limit: "1" }),
+        );
+        expectSelection(first, 2, [["calendar-access-b", 1, "Subject in B"]]);
+        expect(first.selection?.has_more).toBe(true);
+        const after = first.selection?.next_cursor;
+        if (!after) throw new Error("expected continuation cursor");
+        // The page before the revocation is the positive control: it proves
+        // this probe can see b at all.
+        expect(new Set(seen.flat())).toEqual(new Set([a.id, b.id]));
+        await removeSeat(b, viewer);
+        seen.length = 0;
+
         const body = await error(
           await get(userPath(subject.user.id), { ...QUERY, limit: "1", after }),
           409,
@@ -810,16 +863,14 @@ describe.each(PLACEMENTS)(
           reason: "activity_changed",
           restart: true,
         });
-        expect(opened.mock.calls.map(([project]) => project.id)).not.toContain(
-          b.id,
-        );
+        expect(new Set(seen.flat())).toEqual(new Set([a.id]));
         const restarted = await calendar(await get(userPath(subject.user.id)));
         expectSelection(restarted, 1, [
           ["calendar-access-a", 1, "Subject in A"],
         ]);
         expectComplete(restarted);
       } finally {
-        opened.mockRestore();
+        grouped.mockRestore();
         await addSeat(b, viewer);
       }
     });
@@ -946,10 +997,13 @@ describe.each(PLACEMENTS)(
       const failure = new Error("calendar fixture snapshot failed");
       const original = t.ctx.router.forProject.bind(t.ctx.router);
       let failedTransactions = 0;
+      // Keyed on the database, not on b: one group is opened once, under its
+      // representative's route, and under `shared` that representative is a.
+      const bUrl = t.ctx.router.resolveProjectUrl(routeInfoOf(b));
       vi.spyOn(t.ctx.router, "forProject").mockImplementation(
         async (project) => {
           const db = await original(project);
-          if (project.id !== b.id) return db;
+          if (t.ctx.router.resolveProjectUrl(project) !== bUrl) return db;
           return new Proxy(db, {
             get(target, key) {
               if (key === "transaction") {

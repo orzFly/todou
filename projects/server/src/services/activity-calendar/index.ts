@@ -3,24 +3,21 @@ import type {
   ActivityCalendarResponse,
   ActivityCard,
 } from "@todou/shared";
-import { and, asc, eq, inArray, type SQL, sql } from "drizzle-orm";
+import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { UserRow } from "../../auth/pat.ts";
 import type { AppContext } from "../../bootstrap.ts";
 import type { Db } from "../../db/driver.ts";
-import {
-  issueMoves,
-  projects,
-  refPrefixes,
-  users,
-} from "../../db/system-schema.ts";
+import { issueMoves, projects, users } from "../../db/system-schema.ts";
 import { ConflictError } from "../../errors.ts";
 import {
   accessibleProjectRows,
+  authorizeProjects,
   type ProjectRow,
   requireCapability,
   routeInfoOf,
 } from "../access.ts";
 import { localDateBoundarySql, rowsFrom } from "../calendar.ts";
+import { currentPrefixes } from "../reference-directory.ts";
 import { microIso } from "../timeline.ts";
 import { resolveVisibleUser } from "../users.ts";
 import { type ActivityBucketPlan, buildActivityBuckets } from "./buckets.ts";
@@ -46,6 +43,7 @@ type Scope = { type: "project" | "user"; id: number };
 type Candidate = ActivityCard & { project_id: number };
 type MoveHead = {
   issue_id: number;
+  project_id: number;
   number: number;
   event_id: number;
   token: string | null;
@@ -66,26 +64,36 @@ function changed(): ConflictError {
   });
 }
 
-const latestMoves = (projectId: number) => sql`
+const idList = (ids: readonly number[]) =>
+  sql.join(
+    ids.map((id) => sql`${id}`),
+    sql`, `,
+  );
+
+const latestMoves = (projectIds: readonly number[]) => sql`
   select distinct on (issue_id) issue_id, id, payload
-  from issue_events where project_id = ${projectId} and type = 'moved_in'
+  from issue_events where project_id in (${idList(projectIds)}) and type = 'moved_in'
   order by issue_id, id desc`;
 
 /** Only move identities, read once before system prefetch and again in snapshot. */
-async function moveHeads(db: Db, projectId: number): Promise<MoveHead[]> {
+async function moveHeads(
+  db: Db,
+  projectIds: readonly number[],
+): Promise<MoveHead[]> {
   return rowsFrom(
     await db.execute(sql`
-    with latest_moves as (${latestMoves(projectId)})
-    select i.id as issue_id, i.number, m.id as event_id,
+    with latest_moves as (${latestMoves(projectIds)})
+    select i.id as issue_id, i.project_id, i.number, m.id as event_id,
       m.payload ->> 'move_token' as token,
       not (m.payload ? 'activity_imported_max_ids') as legacy
     from issues i join latest_moves m on m.issue_id = i.id
-    where i.project_id = ${projectId}
+    where i.project_id in (${idList(projectIds)})
       and ${activityLiveCandidatePredicate({ deletedAt: sql`i.deleted_at`, movedAt: sql`i.moved_at` })}
     order by i.id
   `),
   ).map((row) => ({
     issue_id: Number(row.issue_id),
+    project_id: Number(row.project_id),
     number: Number(row.number),
     event_id: Number(row.event_id),
     token: typeof row.token === "string" ? row.token : null,
@@ -95,7 +103,7 @@ async function moveHeads(db: Db, projectId: number): Promise<MoveHead[]> {
 
 async function legacyMoves(
   ctx: AppContext,
-  projectId: number,
+  projectIds: readonly number[],
   heads: MoveHead[],
 ): Promise<LegacyMove[]> {
   const tokens = heads
@@ -116,7 +124,7 @@ async function legacyMoves(
     .from(issueMoves)
     .where(
       and(
-        eq(issueMoves.toProjectId, projectId),
+        inArray(issueMoves.toProjectId, [...projectIds]),
         inArray(issueMoves.moveToken, tokens),
         eq(issueMoves.state, "done"),
       ),
@@ -126,14 +134,14 @@ async function legacyMoves(
 
 /** One definition feeds both SQL projections inside the same read snapshot. */
 function cardDayRelation(input: {
-  projectId: number;
+  projectIds: readonly number[];
   actorId?: number;
   bornAt: string;
   cutoff: string;
   plan: ActivityBucketPlan;
   moves: LegacyMove[];
 }): SQL {
-  const { projectId, actorId, bornAt, cutoff, plan, moves } = input;
+  const { projectIds, actorId, bornAt, cutoff, plan, moves } = input;
   const membership = (
     source: ActivityEvidenceSource,
     id: SQL,
@@ -182,23 +190,32 @@ function cardDayRelation(input: {
       number: sql`i.number`,
     },
   );
+  // The id list repeats a predicate the join already implies transitively. It
+  // is here to hand `revisions_subject_idx (project_id, subject_type,
+  // subject_id, id)` a constant leading column: measured on PGlite 17 over 48k
+  // revision rows with `enable_seqscan = off`, the join condition alone drops
+  // project_id out of the Index Cond (cost 4715, 33ms) while the list keeps it
+  // (cost 1694, 8.3ms). At default settings on a small table the two shapes
+  // tie, which is why no test asserts the plan.
+  const revisionsInGroup = sql`r.project_id = i.project_id
+        and r.project_id in (${idList(projectIds)})`;
   return sql`
-    with latest_moves as (${latestMoves(projectId)}),
+    with latest_moves as (${latestMoves(projectIds)}),
     legacy_moves as (
       select * from jsonb_to_recordset(${JSON.stringify(moves)}::jsonb)
       as lm(token text, project_id bigint, number bigint, state text, finished_at timestamptz)
     ), live_candidates as (
-      select i.id, i.created_at, m.id as move_id, m.payload as move_payload,
+      select i.id, i.project_id, i.created_at, m.id as move_id, m.payload as move_payload,
         lm.finished_at as legacy_finished_at
       from issues i left join latest_moves m on m.issue_id = i.id
       left join legacy_moves lm on ${verifiedLegacy}
-      where i.project_id = ${projectId}
+      where i.project_id in (${idList(projectIds)})
         and ${activityLiveCandidatePredicate({ deletedAt: sql`i.deleted_at`, movedAt: sql`i.moved_at` })}
     ), event_candidates as (
-      select i.id as issue_id, e.created_at as occurred_at, e.type,
+      select i.id as issue_id, i.project_id, e.created_at as occurred_at, e.type,
         ${activityEventPredicate({ type: sql`e.type`, payload: sql`e.payload` })} as included,
         ${activityMalformedEventPredicate({ type: sql`e.type`, payload: sql`e.payload` })} as malformed
-      from live_candidates i join issue_events e on e.issue_id = i.id and e.project_id = ${projectId}
+      from live_candidates i join issue_events e on e.issue_id = i.id and e.project_id = i.project_id
       where ${activityActorPredicate(sql`e.actor_id`, actorId)}
         and ${membership("events", sql`e.id`, sql`e.created_at`)}
         and e.created_at >= ${localDateBoundarySql(sql`${plan.fromDate}`, plan.timezone, { earliest: true })}
@@ -208,23 +225,26 @@ function cardDayRelation(input: {
       select issue_id, occurred_at from event_candidates where included
       union all
       select ${comment.issueId}, ${comment.occurredAt}
-      from live_candidates i join comments c on c.issue_id = i.id and c.project_id = ${projectId}
+      from live_candidates i join comments c on c.issue_id = i.id and c.project_id = i.project_id
       where ${activityActorPredicate(comment.actorId, actorId)}
         and ${membership("comments", sql`c.id`, sql`c.created_at`)}
       union all
       select ${bodyRevision.issueId}, ${bodyRevision.occurredAt}
       from revisions r
       join live_candidates i on r.subject_id = i.id
-      where r.project_id = ${projectId} and r.subject_type = 'issue_body'
+      where ${revisionsInGroup}
+        and r.subject_type = 'issue_body'
         and ${bodyRevision.predicate}
         and ${activityActorPredicate(bodyRevision.actorId, actorId)}
         and ${membership("revisions", sql`r.id`, sql`r.created_at`)}
       union all
       select ${commentRevision.issueId}, ${commentRevision.occurredAt}
       from revisions r
-      join comments c on c.id = r.subject_id and c.project_id = ${projectId}
+      join comments c on c.id = r.subject_id
       join live_candidates i on c.issue_id = i.id
-      where r.project_id = ${projectId} and r.subject_type = 'comment'
+      where c.project_id = i.project_id
+        and ${revisionsInGroup}
+        and r.subject_type = 'comment'
         and ${commentRevision.predicate}
         and ${activityActorPredicate(commentRevision.actorId, actorId)}
         and ${membership("revisions", sql`r.id`, sql`r.created_at`)}
@@ -239,10 +259,11 @@ function cardDayRelation(input: {
     )`;
 }
 
-async function projectSnapshot(
+async function groupSnapshot(
   ctx: AppContext,
-  project: ProjectRow,
-  prefix: string | null,
+  db: Db,
+  group: ProjectRow[],
+  prefixes: Map<number, string | null>,
   input: {
     actorId?: number;
     bornAt: string;
@@ -254,19 +275,18 @@ async function projectSnapshot(
   counts: Array<{ date: string; count: number }>;
   cards: Candidate[];
 }> {
-  // Resolve and consume sequentially: opening all project handles up front can
-  // let the router's LRU evict one before its query starts.
-  const db = await ctx.router.forProject(routeInfoOf(project));
+  const ids = group.map((project) => project.id);
+  const byId = new Map(group.map((project) => [project.id, project]));
   for (let attempt = 0; attempt < 2; attempt++) {
-    const heads = await moveHeads(db, project.id);
-    const moves = await legacyMoves(ctx, project.id, heads);
+    const heads = await moveHeads(db, ids);
+    const moves = await legacyMoves(ctx, ids, heads);
     const result = await db.transaction(
       async (tx) => {
-        const current = await moveHeads(tx, project.id);
+        const current = await moveHeads(tx, ids);
         if (JSON.stringify(current) !== JSON.stringify(heads)) return null;
         const relation = cardDayRelation({
           ...input,
-          projectId: project.id,
+          projectIds: ids,
           moves,
         });
         // The event candidate scan supplies both activity and grouped malformed
@@ -275,11 +295,11 @@ async function projectSnapshot(
           await tx.execute(sql`${relation}, annual_counts as (
             select date, count(*) as count from activity_card_days group by date
           )
-          select 'day' as kind, date as key, count from annual_counts
+          select 'day' as kind, date as key, null::bigint as project_id, count from annual_counts
           union all
-          select 'malformed' as kind, type as key, count(*) as count
-          from event_candidates where malformed group by type
-          order by kind, key
+          select 'malformed' as kind, type as key, project_id, count(*) as count
+          from event_candidates where malformed group by project_id, type
+          order by kind, project_id, key
       `),
         );
         const counts = aggregateRows
@@ -287,13 +307,20 @@ async function projectSnapshot(
           .map((row) => ({ date: String(row.key), count: Number(row.count) }));
         const diagnostics = aggregateRows
           .filter((row) => row.kind === "malformed")
-          .map((row) => ({ type: String(row.key), count: Number(row.count) }));
+          .map((row) => ({
+            project_id: Number(row.project_id),
+            type: String(row.key),
+            count: Number(row.count),
+          }));
         if (
           counts.some(
             (row) => !Number.isSafeInteger(row.count) || row.count < 0,
           )
         )
           throw new Error("activity count exceeds the response range");
+        // A new column goes on the end of this projection, never into its
+        // prefix: test/activity-calendar-postgres.test.ts matches the leading
+        // text to hang its snapshot barrier on the selection statement.
         const selected =
           input.day === undefined
             ? []
@@ -302,20 +329,25 @@ async function projectSnapshot(
         select d.issue_id, i.number, i.title,
           to_char(d.last_active_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as last_active_at,
           json_build_object('id', s.id, 'name', s.name, 'category', s.category,
-            'color', s.color, 'position', s.position, 'is_default', s.is_default) as status
-        from activity_card_days d join issues i on i.id = d.issue_id and i.project_id = ${project.id}
-        join statuses s on s.id = i.status_id and s.project_id = ${project.id}
+            'color', s.color, 'position', s.position, 'is_default', s.is_default) as status,
+          i.project_id
+        from activity_card_days d join issues i on i.id = d.issue_id
+        join statuses s on s.id = i.status_id and s.project_id = i.project_id
         where d.date = ${input.day}
       `),
               );
-        const cards = selected.map(
-          (row): Candidate => ({
-            project_id: project.id,
+        const cards = selected.map((row): Candidate => {
+          const projectId = Number(row.project_id);
+          const project = byId.get(projectId);
+          if (project === undefined)
+            throw new Error("activity card left its group");
+          return {
+            project_id: projectId,
             project: {
-              id: project.id,
+              id: projectId,
               slug: project.slug,
               name: project.name,
-              issue_prefix: prefix,
+              issue_prefix: prefixes.get(projectId) ?? null,
             },
             issue_id: Number(row.issue_id),
             number: Number(row.number),
@@ -323,18 +355,22 @@ async function projectSnapshot(
             status: row.status as ActivityCard["status"],
             last_active_at: String(row.last_active_at),
             url: `/projects/${encodeURIComponent(project.slug)}/issues/${Number(row.number)}`,
-          }),
-        );
+          };
+        });
         return { counts, cards, diagnostics };
       },
       { isolationLevel: "repeatable read", accessMode: "read only" },
     );
     if (result !== null) {
-      if (result.diagnostics.length > 0) {
-        console.warn("activity calendar: malformed event payloads", {
-          project_id: project.id,
-          events: result.diagnostics,
-        });
+      for (const id of ids) {
+        const events = result.diagnostics.filter(
+          (row) => row.project_id === id,
+        );
+        if (events.length > 0)
+          console.warn("activity calendar: malformed event payloads", {
+            project_id: id,
+            events: events.map(({ type, count }) => ({ type, count })),
+          });
       }
       const missing = heads.filter(
         (head) =>
@@ -342,18 +378,19 @@ async function projectSnapshot(
           !moves.some(
             (move) =>
               move.token === head.token &&
+              move.project_id === head.project_id &&
               move.number === head.number &&
               move.finished_at !== null,
           ),
       );
-      if (missing.length > 0)
-        console.warn(
-          "activity calendar: unavailable legacy revision boundaries",
-          {
-            project_id: project.id,
-            count: missing.length,
-          },
-        );
+      for (const id of ids) {
+        const count = missing.filter((head) => head.project_id === id).length;
+        if (count > 0)
+          console.warn(
+            "activity calendar: unavailable legacy revision boundaries",
+            { project_id: id, count },
+          );
+      }
       return result;
     }
   }
@@ -371,21 +408,10 @@ async function authorizedScope(
         .project,
     ];
   }
-  const projects = await accessibleProjectRows(ctx, viewer);
-  const authorized: ProjectRow[] = [];
-  for (const project of projects) {
-    authorized.push(
-      (
-        await requireCapability(
-          ctx,
-          viewer,
-          String(project.id),
-          "activity.read",
-        )
-      ).project,
-    );
-  }
-  return authorized.sort((a, b) => a.id - b.id);
+  const rows = await accessibleProjectRows(ctx, viewer);
+  return (await authorizeProjects(ctx, viewer, rows, "activity.read")).sort(
+    (a, b) => a.id - b.id,
+  );
 }
 
 async function calendar(
@@ -423,33 +449,41 @@ async function calendar(
       bornAt,
       day: query.day,
     });
-    const prefixes = new Map<number, string | null>();
-    if (ids.length > 0) {
-      const rows = await system
-        .select({
-          projectId: refPrefixes.projectId,
-          prefix: refPrefixes.prefix,
-        })
-        .from(refPrefixes)
-        .where(inArray(refPrefixes.projectId, ids))
-        .orderBy(asc(refPrefixes.effectiveFrom), asc(refPrefixes.id));
-      for (const row of rows) prefixes.set(row.projectId, row.prefix);
-    }
+    const prefixes =
+      ids.length > 0
+        ? await currentPrefixes(system, ids)
+        : new Map<number, string | null>();
     const counts = new Map<string, number>();
     const cards: Candidate[] = [];
-    for (const project of readable) {
-      const result = await projectSnapshot(
-        ctx,
-        project,
-        prefixes.get(project.id) ?? null,
-        {
-          actorId: scope.type === "user" ? scope.id : undefined,
-          bornAt,
-          cutoff,
-          plan,
-          day: query.day,
-        },
-      );
+    // Settle every group before surfacing the first failure. `perDatabase`
+    // does not cancel its siblings, so letting one rejection out early leaves
+    // the others' repeatable-read transactions running past the response —
+    // and on inline PGlite, closing a handle under an open transaction wedges
+    // the event loop instead of raising.
+    const settled = await ctx.router.perDatabase(
+      readable,
+      routeInfoOf,
+      async (db, group) => {
+        try {
+          return {
+            ok: true as const,
+            value: await groupSnapshot(ctx, db, group, prefixes, {
+              actorId: scope.type === "user" ? scope.id : undefined,
+              bornAt,
+              cutoff,
+              plan,
+              day: query.day,
+            }),
+          };
+        } catch (cause) {
+          return { ok: false as const, cause };
+        }
+      },
+    );
+    const failed = settled.find((group) => !group.ok);
+    if (failed !== undefined && !failed.ok) throw failed.cause;
+    const results = settled.flatMap((group) => (group.ok ? [group.value] : []));
+    for (const result of results) {
       for (const row of result.counts)
         counts.set(row.date, (counts.get(row.date) ?? 0) + row.count);
       cards.push(...result.cards);

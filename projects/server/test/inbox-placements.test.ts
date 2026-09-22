@@ -92,9 +92,9 @@ describe("dedicated: every project is its own group", () => {
   let f: Fixture;
 
   beforeAll(async () => {
-    // max_open below the group count on purpose: `inFlight` then runs the
-    // four groups in two waves, which is the bounded path rather than a bare
-    // Promise.all over everything.
+    // max_open below the group count on purpose: `perDatabase` then runs the
+    // four groups in two waves against its bound, which is the path that
+    // matters rather than a bare Promise.all over everything.
     f = await setUp("dedicated", SLUGS, 2);
   });
   afterAll(async () => {

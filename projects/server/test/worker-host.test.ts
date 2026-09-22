@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeTestApp, type TestApp } from "./helpers.ts";
+import { countStatements, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -13,6 +13,7 @@ const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 describe("worker-hosted pglite", () => {
   let t: TestApp;
   let cookie: string;
+  let workerizedId = 0;
   const headers = () => ({ "content-type": "application/json", cookie });
 
   beforeAll(async () => {
@@ -31,6 +32,7 @@ describe("worker-hosted pglite", () => {
       body: JSON.stringify({ slug: "workerized", name: "Workerized" }),
     });
     expect(created.status).toBe(201);
+    workerizedId = ((await json(created)) as { id: number }).id;
 
     // Transactional path: issue numbering + opened event.
     const issue = await json(
@@ -118,5 +120,23 @@ describe("worker-hosted pglite", () => {
       `worker host: 40 issue creations across 2 project dbs in ${elapsed.toFixed(0)}ms`,
     );
     expect(elapsed).toBeGreaterThan(0);
+  });
+
+  it("taps statements on a worker-hosted project database", async () => {
+    // The tap is installed on the drizzle side while WorkerPgliteClient only
+    // swaps out the client, so this guards the day someone gives the worker
+    // path a drizzle instance of its own.
+    const projectUrl = t.ctx.router.resolveProjectUrl({
+      id: workerizedId,
+      slug: "workerized",
+      database_url: null,
+    });
+    const log = await countStatements(t, async () => {
+      await t.app.request("/api/projects/workerized/issues/1/timeline", {
+        headers: { cookie },
+      });
+    });
+    expect(log.byUrl[projectUrl]).toBeGreaterThan(0);
+    expect(projectUrl).not.toBe(t.ctx.config.database.system);
   });
 });

@@ -938,7 +938,8 @@ export async function recordCrossReferences(
  * before ids were written, and local rows from before the two event types
  * merged, which name no project at all. Every edit replays the whole set, so
  * a key that failed to match an old row would add a duplicate on each save.
- * The `refs migrate` command retires the older two shapes.
+ * The `refs migrate` pass retired the older two shapes on the deployments
+ * that ran it, and 0.5.1 was the last release to carry it.
  */
 async function insertReferenceEvents(
   db: Db,

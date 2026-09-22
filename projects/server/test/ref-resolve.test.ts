@@ -49,6 +49,8 @@ describe.each(PLACEMENTS)(
     const C = `refres-c-${placement}`;
     const D = `refres-d-${placement}`;
     const E = `refres-e-${placement}`;
+    /** Held `HO`, then switched to `H2`: a handover rather than a release. */
+    const F = `refres-f-${placement}`;
     const ids = new Map<string, number>();
 
     /** The card that moved A → B, at both of its addresses. */
@@ -59,6 +61,8 @@ describe.each(PLACEMENTS)(
     /** A card native to B, and the card `destOnly` writes its comments on. */
     let native = { id: 0, number: 0 };
     let host = { id: 0, number: 0 };
+    /** A card in F, reachable under F's current prefix and no earlier one. */
+    let handed = { id: 0, number: 0 };
 
     const req = (path: string, who: Who, init?: RequestInit) =>
       t.app.request(`/api${path}`, {
@@ -187,7 +191,7 @@ describe.each(PLACEMENTS)(
       t = await makeTestApp(placement);
       cookie = await t.login();
       admin = { cookie };
-      for (const slug of [A, B, C, D, E]) await createProject(slug);
+      for (const slug of [A, B, C, D, E, F]) await createProject(slug);
 
       await putFormat(A, "CH");
       await putFormat(B, "BB");
@@ -200,6 +204,11 @@ describe.each(PLACEMENTS)(
       await putFormat(D, "CT");
       await settle();
       await putFormat(E, "CT");
+      // A prefix handed over rather than given back: the old one has no
+      // holder afterwards, the new one has this project.
+      await putFormat(F, "HO");
+      await settle();
+      await putFormat(F, "H2");
 
       const source = await addUserWithToken(
         t.ctx,
@@ -211,6 +220,9 @@ describe.each(PLACEMENTS)(
       const dest = await addUserWithToken(t.ctx, `refres-dest-${placement}`);
       destOnly = dest.headers;
       await addMember(B, dest.user.id, "writer");
+      // Without this the F tokens would 404 for being unreadable, which is a
+      // different refusal from the one they are here to pin.
+      await addMember(F, dest.user.id, "reader");
 
       outsider = (await addUserWithToken(t.ctx, `refres-out-${placement}`))
         .headers;
@@ -220,6 +232,7 @@ describe.each(PLACEMENTS)(
       stayed = await createIssue(A, "stayed put");
       native = await createIssue(B, "born here");
       host = await createIssue(B, "the card the comments go on");
+      handed = await createIssue(F, "named by the prefix F holds now");
       await fakeMove();
     });
 
@@ -325,6 +338,12 @@ describe.each(PLACEMENTS)(
         { ref: () => "CT-1", resolves: false },
         { ref: () => "ZZ-1", resolves: false },
         { ref: () => "BB-9999", resolves: false },
+        // Regression watchdog, both rows: green before this card too, since a
+        // handed-over prefix already had its hold closed. They guard the
+        // direction the mirror is read in — reading it oldest-row-first swaps
+        // the two answers and reddens them together.
+        { ref: () => `HO-${handed.number}`, resolves: false },
+        { ref: () => `H2-${handed.number}`, resolves: true },
       ];
       for (const row of tokens) {
         const token = row.ref();

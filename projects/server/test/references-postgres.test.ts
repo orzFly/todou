@@ -1,5 +1,7 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeTestApp, type TestApp } from "./helpers.ts";
+import { refPrefixes } from "../src/db/system-schema.ts";
+import { countStatements, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -10,16 +12,16 @@ const json = (res: Response): Promise<any> => res.json() as Promise<any>;
  * directory is built from. Every other suite driving those endpoints meets
  * PGlite only, so the SQL, the indexes and the timestamp round-trip here are
  * the server's rather than the WASM bundle's — that difference, not
- * timestamp precision, is what this gate buys. The one comparison where
- * microsecond precision lands on both sides is the T-266 rewrite's, and
- * refs-migrate.test.ts covers it. Runs only when TODOU_TEST_POSTGRES_URL
- * points at a live server (see issue-list-postgres.test.ts).
+ * timestamp precision, is what this gate buys. Runs only when
+ * TODOU_TEST_POSTGRES_URL points at a live server (see
+ * issue-list-postgres.test.ts).
  */
 const PG_URL = process.env.TODOU_TEST_POSTGRES_URL;
 
 describe.skipIf(!PG_URL)("reference format on real postgres", () => {
   let t: TestApp;
   let cookie: string;
+  let projectId: number;
   const slug = `refs-pg-${Date.now().toString(36)}`;
 
   const api = (path: string, init?: RequestInit) =>
@@ -41,6 +43,7 @@ describe.skipIf(!PG_URL)("reference format on real postgres", () => {
       body: JSON.stringify({ slug, name: "Reference format (postgres)" }),
     });
     expect(res.status).toBe(201);
+    projectId = ((await json(res)) as { id: number }).id;
   });
 
   afterAll(async () => {
@@ -106,19 +109,33 @@ describe.skipIf(!PG_URL)("reference format on real postgres", () => {
     const tag = slug.slice("refs-pg-".length).toUpperCase();
     const prefixes = [`P${tag}`, `Q${tag}`, `R${tag}`];
 
-    // Four switches as fast as the API allows, with none of the settle()
-    // spacing the PGlite suites use: the mirror must carry every row and
-    // the holds derived from them stay a single ordered chain. What keeps
-    // that reachable is that a round trip costs milliseconds — two switches
-    // inside one millisecond would collapse a hold to an empty interval and
-    // holdsOf (reference-directory.ts) would drop it.
-    for (const prefix of [...prefixes, null]) {
+    // Five switches as fast as the API allows, with none of the settle()
+    // spacing the PGlite suites use, and ending on a prefix rather than on a
+    // release. What this proves is the mirror's completeness plus "one
+    // project, one entry"; the tie-break between two rows stamped at the same
+    // instant is proved deterministically in reference-directory.test.ts
+    // instead, because a real postgres stamps microseconds and these round
+    // trips take milliseconds, so a tie practically never happens here.
+    const mirrored = async (): Promise<number> =>
+      (
+        await t.ctx.router
+          .system()
+          .select({ id: refPrefixes.id })
+          .from(refPrefixes)
+          .where(eq(refPrefixes.projectId, projectId))
+      ).length;
+    // A difference rather than an absolute count: the case above already
+    // wrote two rows for this project.
+    const before = await mirrored();
+    for (const prefix of [...prefixes, null, prefixes[0] as string]) {
       const res = await api("/references/format", {
         method: "PUT",
         body: JSON.stringify({ prefix }),
       });
       expect(res.status).toBe(200);
     }
+    expect((await mirrored()) - before).toBe(5);
+
     const config = await json(await api("/references/config"));
     const directory = await json(
       await t.app.request("/api/me/reference-directory", {
@@ -126,22 +143,44 @@ describe.skipIf(!PG_URL)("reference format on real postgres", () => {
       }),
     );
 
-    const held = (prefix: string) =>
-      directory.entries.filter(
-        (e: { prefix: string; slug: string }) =>
-          e.slug === slug && e.prefix === prefix,
-      );
-    for (const prefix of prefixes) {
-      expect(held(prefix)).toHaveLength(1);
-      // The last switch released everything, so no hold stays open.
-      expect(held(prefix)[0].to).not.toBeNull();
-    }
+    // Six history rows, one entry: a project cannot contest itself because
+    // `distinct on (project_id)` returns it one row. That used to be a JS
+    // guard that could genuinely break; it is now structural, so this half is
+    // a regression net that cannot go red under the current implementation.
+    expect(
+      directory.entries.filter((e: { slug: string }) => e.slug === slug),
+    ).toEqual([
+      { prefix: prefixes[0], slug, from: expect.any(String), to: null },
+    ]);
     expect(
       directory.contested.filter((c: { prefix: string }) =>
         prefixes.includes(c.prefix),
       ),
     ).toEqual([]);
     // Every project-side history row reached the mirror.
-    expect(config.format.history.length).toBeGreaterThanOrEqual(4);
+    expect(config.format.history.length).toBeGreaterThanOrEqual(5);
+  });
+
+  // The literal proof that the colocated write is one transaction, and the
+  // only place it can be made: PGlite hands BEGIN/COMMIT to its client
+  // without going through drizzle's logger, so on the default run txControl
+  // stays 0 no matter what the code does. node-postgres issues them as
+  // statements, so here they are countable.
+  it("wraps the history row and its mirror in one transaction", async () => {
+    const tag = slug.slice("refs-pg-".length).toUpperCase();
+    const log = await countStatements(t, async () => {
+      const res = await api("/references/format", {
+        method: "PUT",
+        body: JSON.stringify({ prefix: `S${tag}` }),
+      });
+      expect(res.status).toBe(200);
+    });
+
+    expect(log.txControl).toBeGreaterThanOrEqual(2);
+    const writes = log.statements.filter((s) =>
+      /insert into "(ref_formats|ref_prefixes)"/.test(s.sql),
+    );
+    expect(writes).toHaveLength(2);
+    expect(new Set(writes.map((s) => s.url)).size).toBe(1);
   });
 });

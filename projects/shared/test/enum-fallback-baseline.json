@@ -270,10 +270,6 @@
       "guarded": true
     },
     {
-      "id": "projects/server/src/services/refs-migrate.ts :: switch segment.subject.kind #1",
-      "guarded": false
-    },
-    {
       "id": "projects/server/src/services/search.ts :: mapping WEIGHT #1",
       "guarded": true
     },
@@ -746,7 +742,6 @@
     "projects/server/src/services/members.ts :: read ROLE_RANK[effect.role] #3",
     "projects/server/src/services/members.ts :: read ROLE_RANK[machine.role] #1",
     "projects/server/src/services/members.ts :: read ROLE_RANK[role] #1",
-    "projects/server/src/services/refs-migrate.ts :: switch segment.subject.kind #1",
     "projects/server/src/services/search.ts :: switch filter.key #1",
     "projects/server/src/services/users.ts :: read ROLE_RANK[a.role] #1",
     "projects/server/src/services/users.ts :: read ROLE_RANK[b.role] #1",

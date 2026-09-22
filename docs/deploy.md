@@ -268,7 +268,11 @@ host; rerun it on yours):
   grows linearly with the number of busy projects.
 - Each worker adds a thread and V8 isolate on top of the WASM heap the
   PGlite instance needs in either mode — budget roughly one thread per
-  open handle, bounded by `max_open`.
+  open handle. `max_open` bounds the idle cache, not the peak: a handle
+  that a cross-project request is reading is never closed, because
+  closing it would cut off a transaction, so a burst of concurrent
+  requests holds a few extra handles open until the next open reclaims
+  them.
 - If a worker crashes, in-flight queries on that database fail (they are
   never retried automatically) and a fresh worker reopens the data
   directory, recovering committed data; other projects never notice.
@@ -287,10 +291,15 @@ idle_timeout_ms = 10000
 connection_timeout_ms = 0   # 0 = wait forever
 ```
 
-Under `dedicated` placement each open project database is a separate pool,
-so the theoretical connection ceiling is `database.projects.max_open ×
-pool.max` (plus one pool for the system database). Work backwards from the
-PostgreSQL server's `max_connections` when raising either knob.
+Under `dedicated` placement each open project database is a separate pool.
+`database.projects.max_open` bounds the idle handle cache, and every
+cross-project request in flight can hold up to `max_open` handles that the
+cache will not close while they are being read, so the theoretical
+connection ceiling is `database.projects.max_open × (1 + C) × pool.max`
+(plus one pool for the system database), where C is the number of
+cross-project requests allowed to run at once. Work backwards from the
+PostgreSQL server's `max_connections`: either lower `max_open` or
+`pool.max`, or cap C at the reverse proxy.
 
 ## The unit
 
@@ -856,39 +865,45 @@ then. It is now resolved when it is submitted and stored as an explicit link
 onto the target's permanent address (see
 [external-trackers.md](external-trackers.md#how-a-reference-is-stored)).
 
-Existing text still holds tokens. One walk converts it, reading each piece
-under the rules that were in force where and when it was written — the last
-time those rules are consulted anywhere:
+Text written before that change still holds tokens, and one walk converted
+it: `todou-server refs migrate`, which read each piece under the rules that
+were in force where and when it was written. **That command shipped in 0.4.0
+and is gone from this version; 0.5.1 is the last release that carries it.**
+The machinery behind it went with it — the server no longer reads any
+project's prefix as of a past instant.
+
+**If this deployment never ran the pass, do not upgrade straight to this
+version.** Upgrade to 0.5.1 first, run the pass there, then upgrade the rest
+of the way:
 
 ```sh
-todou-server refs migrate --dry-run    # report what would be rewritten
+todou-server refs migrate --dry-run    # on 0.5.1: report what would be rewritten
 todou-server refs migrate              # rewrite it
 todou-server refs migrate --dry-run    # confirm: nothing left to do
 ```
 
-**Run it by hand, once, after deploying the build that ships it** — not from
-the deploy script. It is idempotent, so a real run after a `--dry-run` is
-safe, and `--project <slug>` limits the walk to one project.
+Run it by hand rather than from the deploy script. It is idempotent, so a
+real run after a `--dry-run` is safe, and `--project <slug>` limits the walk
+to one project. It refuses to start while any project's slug is all digits,
+naming them: an all-digit path segment is read as a project id, so such a
+slug would make `/projects/12/` mean two things. Rename them first. New
+projects cannot take one. If `todou-server attachments relabel` is also
+pending, run that one on 0.5.1 too, after this one (see below).
 
-What it does:
+What it rewrote: bodies, comments and every version of every spec document,
+plus the reference events, whose `cross_referenced` type became `referenced`
+and whose rows gained the id of the project that wrote them. A rewritten body
+or comment records a revision holding the original text, and nothing outside
+the spans holding a reference changed. The dry run ended with the spellings
+it could not resolve — a target that never existed, or one that is gone.
+Those stay verbatim, which is the intended answer, but the list is worth
+reading once before the real run.
 
-- **Bodies, comments and every version of every spec document.** A rewritten
-  body or comment records a revision holding the original text; a spec version
-  is its own history and records none. Neither is marked as edited.
-- **Reference events.** `cross_referenced` becomes `referenced`, and each row
-  gets the id of the project that wrote it. A row naming a slug nobody can
-  place keeps the shape it had, and the renderers keep their fallback for it.
-- **Nothing else.** Only the spans holding a reference change; everything
-  outside them is byte for byte what it was, code fences included.
-
-It refuses to start while any project's slug is all digits, naming them: an
-all-digit path segment is read as a project id, so such a slug would make
-`/projects/12/` mean two things. Rename them first. New projects cannot take
-one.
-
-The dry run ends with the spellings it could not resolve — a target that
-never existed, or one that is gone. Those stay verbatim, which is the
-intended answer, but the list is worth reading once before the real run.
+Skipping the pass costs correctness rather than breaking the server. Stored
+text keeps its bare tokens, and from this version on a bare token is read
+under whoever holds that prefix **now** rather than under whoever held it
+when the text was written, so a reference can end up pointing at a different
+project. Nothing repairs that afterwards.
 
 ### Relabelling attachment links after the filename migration
 
@@ -910,12 +925,12 @@ todou-server attachments relabel --dry-run    # must now report nothing
 The old name moves in the two places a reader sees it: link text that is
 character-for-character the old filename, and the last segment of a URL —
 the destination's, and the text's own when the text is nothing but the
-attachment's URL, which is the shape `refs migrate` leaves behind for an
+attachment's URL, which is the shape `refs migrate` left behind for an
 address that was pasted bare. Captions someone wrote themselves are left
 alone. `--project <slug>` limits the walk, and each rewritten body or
 comment records a revision holding the original text.
 
-Run it after `refs migrate` when both are pending. Either order gives the
-same text — the two passes touch different parts of a link — but the bare
-addresses `refs migrate` wraps are only worth relabelling once they are
-links.
+If `refs migrate` is also pending, both belong on 0.5.1 (see above), and this
+one goes second. Either order gives the same text — the two passes touch
+different parts of a link — but the bare addresses `refs migrate` wrapped are
+only worth relabelling once they are links.

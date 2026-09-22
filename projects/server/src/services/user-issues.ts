@@ -10,7 +10,17 @@ import {
   MalformedMultiCursorError,
   UnsupportedCursorVersionError,
 } from "@todou/shared";
-import { and, desc, eq, isNotNull, or, type SQL } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  isNotNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { issueAssignees, issues, statuses } from "../db/project-schema.ts";
@@ -22,8 +32,8 @@ import {
 } from "./access.ts";
 import { visibleProjects } from "./cross-references.ts";
 import { decodeListCursor, encodeListCursor } from "./cursor.ts";
-import { bundleIssues, timeAdvance, toIssue } from "./issues.ts";
-import { loadMuteContext } from "./mutes.ts";
+import { bundleIssues, listCursorBounds, toIssue } from "./issues.ts";
+import { loadIssueMutes, loadMutedProjects } from "./mutes.ts";
 import { toProjectBrief } from "./projects.ts";
 import { unreadIssueState } from "./reads.ts";
 import { microIso } from "./timeline.ts";
@@ -104,104 +114,189 @@ export async function listUserIssues(
     incoming = envelope;
   }
 
-  const candidates: Candidate[] = [];
+  const projectById = new Map(scope.map((p) => [p.id, p]));
+
+  // Decoded before any query runs, so a malformed cursor is a 422 rather
+  // than a failed statement. Keyed by id because the VALUES rows below are
+  // built from ids.
+  const boundsById = new Map<number, ReturnType<typeof listCursorBounds>>();
   for (const project of scope) {
     const position = incoming[project.slug] ?? null;
-    const conditions: SQL[] = [eq(issues.projectId, project.id), live];
-
-    // One left join answers all three `role` values, with no id list
-    // pre-fetched into JavaScript. `issue_assignees` holds at most one row
-    // per (issue, user), so the join cannot duplicate a card.
-    const assigned = isNotNull(issueAssignees.userId);
-    const involved =
-      query.role === "author"
-        ? eq(issues.authorId, subject.id)
-        : query.role === "assignee"
-          ? assigned
-          : or(eq(issues.authorId, subject.id), assigned);
-    if (involved) conditions.push(involved);
-
-    if (query.state !== "all") {
-      conditions.push(eq(statuses.category, query.state));
-    }
-    if (position !== null) {
-      const advance = timeAdvance(
-        issues.updatedAt,
-        decodeListCursor(position, false),
-        false,
-      );
-      if (advance) conditions.push(advance);
-    }
-
-    // Opened here rather than up front: DbRouter closes the least-recently
-    // used handle past `database.projects.max_open`, so collecting every
-    // project's handle before querying can cut a query off mid-flight once
-    // the readable set outgrows that limit.
-    const db = await ctx.router.forProject(routeInfoOf(project));
-    const rows = await db
-      .select({ row: issues, ts: microIso(issues.updatedAt) })
-      .from(issues)
-      .innerJoin(statuses, eq(statuses.id, issues.statusId))
-      .leftJoin(
-        issueAssignees,
-        and(
-          eq(issueAssignees.issueId, issues.id),
-          eq(issueAssignees.userId, subject.id),
-        ),
-      )
-      .where(and(...conditions))
-      .orderBy(desc(issues.updatedAt), desc(issues.id))
-      .limit(query.limit + 1);
-
-    for (const r of rows) candidates.push({ project, row: r.row, ts: r.ts });
+    if (position === null) continue;
+    boundsById.set(
+      project.id,
+      listCursorBounds(decodeListCursor(position, false)),
+    );
   }
+
+  // One left join answers all three `role` values, with no id list
+  // pre-fetched into JavaScript. `issue_assignees` holds at most one row
+  // per (issue, user), so the join cannot duplicate a card.
+  const assigned = isNotNull(issueAssignees.userId);
+  const involved =
+    query.role === "author"
+      ? eq(issues.authorId, subject.id)
+      : query.role === "assignee"
+        ? assigned
+        : or(eq(issues.authorId, subject.id), assigned);
+  const stateCond =
+    query.state === "all" ? undefined : eq(statuses.category, query.state);
+
+  const candidates = (
+    await ctx.router.perDatabase(scope, routeInfoOf, async (db, group) => {
+      // Written out here rather than lifted into a shared helper, following
+      // the derived table in services/calendar.ts that ends
+      // `) as calendar_samples(sample)`. Three VALUES tables now drive
+      // queries in this repo — this one, `"cur"` in timeline.ts and
+      // calendar's — and their column sets have nothing in common; merging
+      // them buys a parameter list nobody can read.
+      const valueRows = group.map((p) => {
+        const b = boundsById.get(p.id);
+        // Every cell is cast: an uncast parameter arrives inside VALUES as
+        // text, and comparing a timestamptz column against it errors out
+        // rather than falling back to some coercion. `project_id` is bigint
+        // to match the column it is compared to.
+        return b === undefined
+          ? sql`(${p.id}::bigint, null::timestamptz, null::timestamptz, null::bigint)`
+          : sql`(${p.id}::bigint, ${b.from}, ${b.hi}, ${b.id}::bigint)`;
+      });
+      // The alias and its column names are literal template text: rendered
+      // as parameters they would go out as `as $1($2)` and the statement
+      // would not parse.
+      const scopeSource = sql`(values ${sql.join(valueRows, sql`, `)}) as scope(project_id, after_from, after_hi, after_id)`;
+      const ref = {
+        projectId: sql`scope.project_id`,
+        from: sql`scope.after_from`,
+        hi: sql`scope.after_hi`,
+        id: sql`scope.after_id`,
+      };
+      const position = or(
+        sql`scope.after_from is null`,
+        lt(issues.updatedAt, ref.from),
+        and(
+          gte(issues.updatedAt, ref.from),
+          lt(issues.updatedAt, ref.hi),
+          lt(issues.id, ref.id),
+        ),
+      );
+      const hit = db
+        .select({
+          ...getTableColumns(issues),
+          ts: microIso(issues.updatedAt).as("ts"),
+        })
+        .from(issues)
+        .innerJoin(statuses, eq(statuses.id, issues.statusId))
+        .leftJoin(
+          issueAssignees,
+          and(
+            eq(issueAssignees.issueId, issues.id),
+            eq(issueAssignees.userId, subject.id),
+          ),
+        )
+        .where(
+          and(
+            eq(issues.projectId, ref.projectId),
+            live,
+            involved,
+            stateCond,
+            position,
+          ),
+        )
+        .orderBy(desc(issues.updatedAt), desc(issues.id))
+        .limit(query.limit + 1)
+        .as("hit");
+      const rows = await db.select().from(scopeSource).crossJoinLateral(hit);
+      return rows.map(({ hit: { ts, ...row } }) => {
+        const project = projectById.get(row.projectId);
+        if (project === undefined) throw new Error("candidate outside scope");
+        return { project, row, ts } satisfies Candidate;
+      });
+    })
+  ).flat();
 
   candidates.sort(compare);
   const has_more = candidates.length > query.limit;
   const page = candidates.slice(0, query.limit);
 
   const byProject = new Map<number, Candidate[]>();
+  // Grouped over the projects that actually delivered a row, not over
+  // `scope`: `unreadIssueState` mints a read frontier for every project it
+  // is handed (T-151), and widening that would start calling projects
+  // "looked at" that this page never showed anything from.
+  const delivered: ProjectRow[] = [];
   for (const candidate of page) {
-    const slice = byProject.get(candidate.project.id) ?? [];
-    slice.push(candidate);
-    byProject.set(candidate.project.id, slice);
-  }
-
-  const enriched = new Map<string, UserIssueItem>();
-  for (const slice of byProject.values()) {
-    const project = slice[0]?.project;
-    if (project === undefined) continue;
-    const rows = slice.map((c) => c.row);
-    const ids = rows.map((r) => r.id);
-    const db = await ctx.router.forProject(routeInfoOf(project));
-    const bundles = await bundleIssues(ctx, db, [project.id], rows, viewer);
-    const mutes = await loadMuteContext(
-      ctx.router.system(),
-      db,
-      viewer.id,
-      [project.id],
-      ids,
-    );
-    const { unread, counts, silenced } = await unreadIssueState(
-      db,
-      [project.id],
-      viewer.id,
-      ids,
-      visible,
-      mutes,
-      new Map(ids.map((id) => [id, project.id])),
-    );
-    for (const bundle of bundles) {
-      const { body: _body, ...listItem } = toIssue(bundle);
-      enriched.set(`${project.id}/${bundle.row.id}`, {
-        ...listItem,
-        unread: unread.has(bundle.row.id),
-        unread_comments: counts.get(bundle.row.id) ?? 0,
-        muted: silenced.get(bundle.row.id) ?? null,
-        project: toProjectBrief(project),
-      });
+    const slice = byProject.get(candidate.project.id);
+    if (slice) slice.push(candidate);
+    else {
+      byProject.set(candidate.project.id, [candidate]);
+      delivered.push(candidate.project);
     }
   }
+
+  // Read once here rather than per group: a project mute lives in the
+  // system db, and every group needs the same answer (T-372).
+  const mutedProjects = await loadMutedProjects(
+    ctx.router.system(),
+    viewer.id,
+    delivered.map((p) => p.id),
+  );
+
+  const enriched = new Map(
+    (
+      await ctx.router.perDatabase(
+        delivered,
+        routeInfoOf,
+        // No transaction around this body. Under shared placement `db` is
+        // the system handle, and the body goes back to the system database
+        // through `bundleIssues`; on inline PGlite's single connection that
+        // is a wait on one's own snapshot. Everything here is a read, so
+        // there is nothing a transaction would buy.
+        async (db, group) => {
+          const groupProjectIds = group.map((p) => p.id);
+          const rows = group.flatMap((p) =>
+            (byProject.get(p.id) ?? []).map((c) => c.row),
+          );
+          const ids = rows.map((r) => r.id);
+          const bundles = await bundleIssues(
+            ctx,
+            db,
+            groupProjectIds,
+            rows,
+            viewer,
+          );
+          const mutes = await loadIssueMutes(db, viewer.id, ids, mutedProjects);
+          const { unread, counts, silenced } = await unreadIssueState(
+            db,
+            groupProjectIds,
+            viewer.id,
+            ids,
+            visible,
+            mutes,
+            new Map(rows.map((r) => [r.id, r.projectId])),
+          );
+          const items: [string, UserIssueItem][] = [];
+          for (const bundle of bundles) {
+            const project = projectById.get(bundle.row.projectId);
+            if (project === undefined) {
+              throw new Error("bundled row outside scope");
+            }
+            const { body: _body, ...listItem } = toIssue(bundle);
+            items.push([
+              `${project.id}/${bundle.row.id}`,
+              {
+                ...listItem,
+                unread: unread.has(bundle.row.id),
+                unread_comments: counts.get(bundle.row.id) ?? 0,
+                muted: silenced.get(bundle.row.id) ?? null,
+                project: toProjectBrief(project),
+              },
+            ]);
+          }
+          return items;
+        },
+      )
+    ).flat(),
+  );
 
   // Each project's position moves to its last *delivered* row; one that
   // delivered nothing keeps the position it came in with, so its rows are

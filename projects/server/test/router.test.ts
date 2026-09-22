@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureBuiltinUser } from "../src/bootstrap.ts";
 import { statuses } from "../src/db/project-schema.ts";
 import type { DbRouter } from "../src/db/router.ts";
@@ -40,6 +40,16 @@ async function insertStatus(router: DbRouter, projectId: number) {
 async function statusCount(router: DbRouter, projectId: number) {
   const db = await router.forProject(project(projectId));
   return (await db.select().from(statuses)).length;
+}
+
+const routeOf = (p: ReturnType<typeof project>) => p;
+
+function gate() {
+  let open!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open };
 }
 
 describe("system tier", () => {
@@ -104,5 +114,181 @@ describe("dedicated placement", () => {
     expect(router.openHandleCount()).toBe(1);
     // Project 1 was evicted; reopening reads persisted data back.
     expect(await statusCount(router, 1)).toBe(1);
+  });
+});
+
+// Regression watchdog, not a benefit criterion: these fail on the parent
+// commit only because the methods are absent (TS2339 at typecheck, TypeError
+// at runtime). They exist because the two predicates are read as a
+// conjunction by the mirror sweep, and the asymmetry between them — a pinned
+// project can share the system database in a deployment where no create ever
+// took the transactional branch — is the whole reason that conjunction has
+// two clauses.
+describe("colocation predicates", () => {
+  it("reads the pin, not the placement, for an existing project", async () => {
+    const { router } = await open("shared");
+    expect(router.sharesSystemDatabase(project(1))).toBe(true);
+    expect(
+      router.sharesSystemDatabase(project(1, "pglite://memory/elsewhere")),
+    ).toBe(false);
+  });
+
+  it("says neither holds under dedicated placement", async () => {
+    const { router } = await open("dedicated");
+    expect(router.sharesSystemDatabase(project(1))).toBe(false);
+    expect(router.newProjectSharesSystemDatabase()).toBe(false);
+  });
+
+  it("answers for a project the registry has not minted yet", async () => {
+    const { router } = await open("shared");
+    expect(router.newProjectSharesSystemDatabase()).toBe(true);
+  });
+});
+
+// These four fail on the parent commit only because the method is absent
+// (TS2339 at typecheck, TypeError at runtime) — none of them is a red that
+// measures a cost this card removes. They pin the API contract instead, so
+// the ten sections building on `perDatabase` inherit a checked shape.
+describe("perDatabase", () => {
+  it("groups by resolved url, in first-appearance order", async () => {
+    const { router } = await open("dedicated-bucketed");
+    const groups = await router.perDatabase(
+      [project(1), project(2), project(3)],
+      routeOf,
+      async (_db, group) => group.map((p) => p.id),
+    );
+    expect(groups).toEqual([[1, 3], [2]]);
+    // Cross-check the hard-coded buckets against the router itself, so the
+    // case still states the contract ("group by RESOLVED url") and not just
+    // today's `${project.id % 2}` template.
+    const urls = [1, 2, 3].map((id) => router.resolveProjectUrl(project(id)));
+    expect(urls[0]).toBe(urls[2]);
+    expect(urls[0]).not.toBe(urls[1]);
+  });
+
+  it("opens a group's handle inside its task, not up front", async () => {
+    const dir = testTmpDir("todou-per-database-");
+    const { router } = await open("dedicated", {
+      maxOpen: 1,
+      urlTemplate: `pglite://${dir}/p\${project.id}`,
+    });
+    for (const id of [1, 2, 3]) await insertStatus(router, id);
+
+    // File-backed on purpose: `#evictIfNeeded` puts `pglite://memory` handles
+    // straight back, so an in-memory fixture cannot tell "opened lazily" from
+    // "opened all three up front". With max_open=1, opening up front would
+    // close the first two handles before their queries run.
+    const names = await router.perDatabase(
+      [project(1), project(2), project(3)],
+      routeOf,
+      async (db) => (await db.select().from(statuses)).map((s) => s.name),
+    );
+    expect(names).toEqual([["s-1"], ["s-2"], ["s-3"]]);
+  });
+
+  it("keeps at most max_open groups in flight, through public forProject", async () => {
+    const { router } = await open("dedicated", { maxOpen: 2 });
+    // Borrow the grouping without really opening four project databases: one
+    // openDb+migrate("project") costs ~1.9s here, and the gate below needs
+    // both callbacks to arrive in the same microtask batch, which a cold open
+    // would break. Spying on `forProject` also pins the contract that
+    // perDatabase goes through the public method: a body reaching for the
+    // private `#handleForProject` would leave this spy uncalled.
+    const forProject = vi
+      .spyOn(router, "forProject")
+      .mockImplementation(async () => router.system());
+    let entered = 0;
+    let live = 0;
+    let peak = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    // Only ever redeemed if the implementation is serial, in which case the
+    // second callback never arrives to release the gate.
+    const escapeHatch = setTimeout(release, 1000);
+    escapeHatch.unref?.();
+    await router.perDatabase(
+      [project(1), project(2), project(3), project(4)],
+      routeOf,
+      async (db) => {
+        live++;
+        entered++;
+        peak = Math.max(peak, live);
+        if (entered === 2) release();
+        await gate;
+        await db.select().from(users);
+        live--;
+        return 1;
+      },
+    );
+    clearTimeout(escapeHatch);
+    expect(peak).toBe(2);
+    expect(forProject).toHaveBeenCalledTimes(4);
+  });
+
+  it("folds a shared placement into one group and takes nothing empty", async () => {
+    const { router } = await open("shared");
+    expect(
+      await router.perDatabase(
+        [project(1), project(2)],
+        routeOf,
+        async (_db, group) => group.length,
+      ),
+    ).toEqual([2]);
+    expect(router.openHandleCount()).toBe(0);
+    expect(await router.perDatabase([], routeOf, async () => 1)).toEqual([]);
+  });
+});
+
+// File-backed on purpose: `#evictIfNeeded` never evicts a `pglite://memory`
+// handle, so the whole eviction path — and with it everything a pin has to
+// survive — is unreachable from the in-memory templates every other fixture
+// in the suite uses.
+describe("handles in flight", () => {
+  it("keeps the handle a task body is reading", async () => {
+    const dir = testTmpDir("todou-router-pin-");
+    const { router } = await open("dedicated", {
+      maxOpen: 1,
+      urlTemplate: `pglite://${dir}/p\${project.id}`,
+    });
+    await insertStatus(router, 1);
+    await insertStatus(router, 2);
+    const inTx = gate();
+    const intruder = gate();
+    const task = router.perDatabase([project(1)], routeOf, (db) =>
+      db.transaction(async (tx) => {
+        await tx.select().from(statuses);
+        inTx.open();
+        await intruder.wait;
+        return (await tx.select().from(statuses)).length;
+      }),
+    );
+    await inTx.wait;
+    // Another request, arriving mid-transaction.
+    await router.forProject(project(2));
+    // Assert BEFORE letting the transaction continue: a statement issued on a
+    // closed PGlite inside an open transaction wedges the event loop (no
+    // rejection, timers stop, the 20s testTimeout never fires either), so a
+    // failure here has to leave the body parked at the gate.
+    expect(router.openHandleCount()).toBe(2);
+    intruder.open();
+    expect(await task).toEqual([1]);
+  });
+
+  it("releases the pin when the task body throws", async () => {
+    const dir = testTmpDir("todou-router-pin-throw-");
+    const { router } = await open("dedicated", {
+      maxOpen: 1,
+      urlTemplate: `pglite://${dir}/p\${project.id}`,
+    });
+    await insertStatus(router, 1);
+    await expect(
+      router.perDatabase([project(1)], routeOf, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    await router.forProject(project(2));
+    expect(router.openHandleCount()).toBe(1);
   });
 });

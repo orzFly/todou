@@ -5,7 +5,7 @@ import {
   PROJECT_NOT_FOUND,
   roleRankOf,
 } from "@todou/shared";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { projectMembers, projects, slugHistory } from "../db/system-schema.ts";
@@ -37,38 +37,60 @@ const ID_REF = /^\d{1,15}$/;
  * way may hold an all-digit slug — new ones cannot, and the migration checks
  * that none are left.
  */
+export async function findProjectsByRefs(
+  ctx: AppContext,
+  refs: readonly string[],
+): Promise<Map<string, ProjectLookup>> {
+  const wanted = [...new Set(refs)];
+  const found = new Map<string, ProjectLookup>();
+  if (wanted.length === 0) return found;
+  const system = ctx.router.system();
+  const ids = wanted.filter((ref) => ID_REF.test(ref)).map(Number);
+  const current = await system
+    .select()
+    .from(projects)
+    .where(or(inArray(projects.id, ids), inArray(projects.slug, wanted)));
+  const byId = new Map(current.map((row) => [row.id, row]));
+  const bySlug = new Map(current.map((row) => [row.slug, row]));
+  const pending: string[] = [];
+  for (const ref of wanted) {
+    const idRow = ID_REF.test(ref) ? byId.get(Number(ref)) : undefined;
+    // Reached by id, so the canonical spelling for a human is still the slug:
+    // same treatment as a retired one, header included.
+    if (idRow) {
+      found.set(ref, { project: idRow, viaAlias: true });
+      continue;
+    }
+    const slugRow = bySlug.get(ref);
+    if (slugRow) {
+      found.set(ref, { project: slugRow, viaAlias: false });
+      continue;
+    }
+    pending.push(ref);
+  }
+  if (pending.length === 0) return found;
+  const historic = await system
+    .select({ slug: slugHistory.slug, project: projects })
+    .from(slugHistory)
+    .innerJoin(projects, eq(projects.id, slugHistory.projectId))
+    .where(inArray(slugHistory.slug, pending))
+    .orderBy(desc(slugHistory.effectiveFrom), desc(slugHistory.id));
+  for (const row of historic) {
+    // First row per slug is the most recent holder, which after a reclaim is
+    // the project that gave the slug up — whoever took it is current and
+    // answered above.
+    if (found.has(row.slug)) continue;
+    found.set(row.slug, { project: row.project, viaAlias: true });
+  }
+  return found;
+}
+
+/** One ref through {@link findProjectsByRefs}. */
 export async function findProjectByRef(
   ctx: AppContext,
   ref: string,
 ): Promise<ProjectLookup | null> {
-  const system = ctx.router.system();
-  if (ID_REF.test(ref)) {
-    const byId = await system
-      .select()
-      .from(projects)
-      .where(eq(projects.id, Number(ref)));
-    const row = byId[0];
-    // Reached by id, so the canonical spelling for a human is still the slug:
-    // same treatment as a retired one, header included.
-    if (row) return { project: row, viaAlias: true };
-  }
-  const rows = await system
-    .select()
-    .from(projects)
-    .where(eq(projects.slug, ref));
-  const row = rows[0];
-  if (row) return { project: row, viaAlias: false };
-  // The most recent holder, which after a reclaim is the project that gave
-  // the slug up — whoever took it is current and answered above.
-  const historic = await system
-    .select({ project: projects })
-    .from(slugHistory)
-    .innerJoin(projects, eq(projects.id, slugHistory.projectId))
-    .where(eq(slugHistory.slug, ref))
-    .orderBy(desc(slugHistory.effectiveFrom), desc(slugHistory.id))
-    .limit(1);
-  const former = historic[0]?.project;
-  return former === undefined ? null : { project: former, viaAlias: true };
+  return (await findProjectsByRefs(ctx, [ref])).get(ref) ?? null;
 }
 
 export async function getProjectByRef(
@@ -80,23 +102,63 @@ export async function getProjectByRef(
   return found.project;
 }
 
+export async function rolesByProject(
+  ctx: AppContext,
+  user: UserRow,
+  projectIds: readonly number[],
+): Promise<Map<number, MemberRole | null>> {
+  // Pre-filled so a caller reads `.get(id) ?? null` without having to tell
+  // "no membership row" apart from "not asked about".
+  const roles = new Map<number, MemberRole | null>(
+    projectIds.map((id) => [id, null]),
+  );
+  if (roles.size === 0) return roles;
+  if (user.isInstanceAdmin) {
+    for (const id of roles.keys()) roles.set(id, "admin");
+    return roles;
+  }
+  const rows = await ctx.router
+    .system()
+    .select({ projectId: projectMembers.projectId, role: projectMembers.role })
+    .from(projectMembers)
+    .where(
+      and(
+        eq(projectMembers.userId, user.id),
+        inArray(projectMembers.projectId, [...roles.keys()]),
+      ),
+    );
+  for (const row of rows) roles.set(row.projectId, row.role);
+  return roles;
+}
+
 export async function projectRoleOf(
   ctx: AppContext,
   project: ProjectRow,
   user: UserRow,
 ): Promise<MemberRole | null> {
-  if (user.isInstanceAdmin) return "admin";
-  const rows = await ctx.router
-    .system()
-    .select({ role: projectMembers.role })
-    .from(projectMembers)
-    .where(
-      and(
-        eq(projectMembers.projectId, project.id),
-        eq(projectMembers.userId, user.id),
-      ),
-    );
-  return rows[0]?.role ?? null;
+  return (
+    (await rolesByProject(ctx, user, [project.id])).get(project.id) ?? null
+  );
+}
+
+function enforceMinRole(
+  role: MemberRole | null,
+  minRole: MemberRole,
+  cap?: CapabilityId,
+): MemberRole {
+  if (role === null) throw new NotFoundError(PROJECT_NOT_FOUND);
+  const rank = roleRankOf(role);
+  const minRank = roleRankOf(minRole);
+  if (minRank === undefined) {
+    throw new TypeError(`Unknown minimum project role: ${minRole}`);
+  }
+  if (rank === undefined || rank < minRank) {
+    // Naming the capability turns the 403 into the one line of the catalog
+    // to go read, rather than a role the reader must then hunt for.
+    const detail = cap === undefined ? "" : ` (${cap})`;
+    throw new ForbiddenError(`requires ${minRole} role${detail}`);
+  }
+  return role;
 }
 
 /**
@@ -117,19 +179,7 @@ export async function requireProject(
 ): Promise<{ project: ProjectRow; role: MemberRole }> {
   const project = await getProjectByRef(ctx, slug);
   const role = await projectRoleOf(ctx, project, user);
-  if (role === null) throw new NotFoundError(PROJECT_NOT_FOUND);
-  const rank = roleRankOf(role);
-  const minRank = roleRankOf(minRole);
-  if (minRank === undefined) {
-    throw new TypeError(`Unknown minimum project role: ${minRole}`);
-  }
-  if (rank === undefined || rank < minRank) {
-    // Naming the capability turns the 403 into the one line of the catalog
-    // to go read, rather than a role the reader must then hunt for.
-    const detail = cap === undefined ? "" : ` (${cap})`;
-    throw new ForbiddenError(`requires ${minRole} role${detail}`);
-  }
-  return { project, role };
+  return { project, role: enforceMinRole(role, minRole, cap) };
 }
 
 /**
@@ -182,6 +232,50 @@ export async function accessibleProjectRows(
   const ids = memberships.map((m) => m.projectId);
   if (ids.length === 0) return [];
   return system.select().from(projects).where(inArray(projects.id, ids));
+}
+
+export async function authorizeProjects(
+  ctx: AppContext,
+  user: UserRow,
+  rows: readonly ProjectRow[],
+  cap: CapabilityId,
+): Promise<ProjectRow[]> {
+  const roles = await rolesByProject(
+    ctx,
+    user,
+    rows.map((row) => row.id),
+  );
+  const minRole = minRoleOf(cap);
+  for (const row of rows) {
+    enforceMinRole(roles.get(row.id) ?? null, minRole, cap);
+  }
+  return [...rows];
+}
+
+export async function requireCapabilities(
+  ctx: AppContext,
+  user: UserRow,
+  refs: readonly string[],
+  cap: CapabilityId,
+): Promise<ProjectRow[]> {
+  const found = await findProjectsByRefs(ctx, refs);
+  const roles = await rolesByProject(
+    ctx,
+    user,
+    [...found.values()].map((lookup) => lookup.project.id),
+  );
+  const minRole = minRoleOf(cap);
+  const out: ProjectRow[] = [];
+  for (const ref of refs) {
+    // One pass, because the failure a caller sees has to be the first one in
+    // their own ordering: resolving every ref up front would turn a 403 on
+    // ref #1 into a 404 raised by ref #2.
+    const lookup = found.get(ref);
+    if (lookup === undefined) throw new NotFoundError(PROJECT_NOT_FOUND);
+    enforceMinRole(roles.get(lookup.project.id) ?? null, minRole, cap);
+    out.push(lookup.project);
+  }
+  return out;
 }
 
 export function routeInfoOf(project: ProjectRow) {

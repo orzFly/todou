@@ -403,5 +403,55 @@ describe.each(["shared", "dedicated"] as const)(
         true,
       );
     });
+
+    it("keeps one watch per ref when two refs name one project", async () => {
+      const res = await t.app.request(`/api/projects/${pa}`, {
+        headers: { cookie },
+      });
+      expect(res.status).toBe(200);
+      const paId = String((await json(res)).id as number);
+
+      const page = await json(await cross({ projects: `${paId},${pa}` }));
+      const positions = await decodeMultiCursor(page.next_cursor);
+      expect(Object.keys(positions ?? {}).sort()).toEqual([paId, pa].sort());
+      const byRef = new Map<string, number>();
+      for (const item of itemsOf(page)) {
+        byRef.set(item.project, (byRef.get(item.project) ?? 0) + 1);
+      }
+      expect([...byRef.keys()].sort()).toEqual([paId, pa].sort());
+      expect(byRef.get(paId)).toBe(byRef.get(pa));
+      const ofRef = (ref: string) =>
+        itemsOf(page)
+          .filter((item) => item.project === ref)
+          .map((item) => `${item.type}/${item.id}`)
+          .sort();
+      expect(ofRef(paId)).toEqual(ofRef(pa));
+      expect(ofRef(pa).length).toBeGreaterThan(0);
+    });
+
+    it("watches a project named by a slug it has retired, under that spelling", async () => {
+      const retired = `xe-${suffix}`;
+      const current = `xe2-${suffix}`;
+      await createProject(retired);
+      await addMember(retired, bob.user.id);
+      const renamed = await t.app.request(`/api/projects/${retired}`, {
+        method: "PATCH",
+        headers: admin(),
+        body: JSON.stringify({ slug: current }),
+      });
+      expect(renamed.status).toBe(200);
+      const issue = await createIssue(current, "renamed while watched");
+      await comment(current, issue, "still reachable");
+
+      const res = await cross({ projects: retired });
+      expect(res.status).toBe(200);
+      const page = await json(res);
+      const positions = await decodeMultiCursor(page.next_cursor);
+      expect(Object.keys(positions ?? {})).toEqual([retired]);
+      expect(itemsOf(page).map((item) => item.project)).toEqual(
+        itemsOf(page).map(() => retired),
+      );
+      expect(itemsOf(page).length).toBeGreaterThan(0);
+    });
   },
 );

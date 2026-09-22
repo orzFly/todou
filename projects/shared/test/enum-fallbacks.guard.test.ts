@@ -108,8 +108,6 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Same-version server role invariant: roles combine MemberSetInput parsed at routes/projects.ts with project_members rows written by this server. DB reads are not parsed; mixed-version DB writers/manual corruption are outside this exception.",
   "projects/server/src/services/members.ts :: read ROLE_RANK[role] #1":
     "Same-version server role invariant: roles combine MemberSetInput parsed at routes/projects.ts with project_members rows written by this server. DB reads are not parsed; mixed-version DB writers/manual corruption are outside this exception.",
-  "projects/server/src/services/refs-migrate.ts :: switch segment.subject.kind #1":
-    "Same-version local Segment producer: collection constructs issue_body/comment/spec_file subjects before applyWrite dispatches segment.subject.kind.",
   "projects/server/src/services/search.ts :: switch filter.key #1":
     "Parsed search query: parseSearchQuery resolves filter.key only after Object.hasOwn(SEARCH_QUALIFIER_KEYS, typed); server planQualifiers gets the resulting closed qualifier set.",
   "projects/server/src/services/users.ts :: read ROLE_RANK[a.role] #1":
@@ -367,12 +365,15 @@ describe("repository enum fallback source guard", () => {
     ]);
   });
 
-  it("preserves the measured 5db8c5c sites and 87 provenance declarations", () => {
+  it("preserves the measured 5db8c5c sites and 86 provenance declarations", () => {
     // The previously quoted 85 was not the current baseline. Freeze identities,
     // not the final total: new audited sites may be added without hiding losses.
+    // One site fewer than the census recorded because T-512 deleted
+    // refs-migrate.ts outright, not because the census missed it. The
+    // revision stays at the commit the census was measured on.
     expect(baseline.revision).toBe("5db8c5c");
-    expect(baseline.sites).toHaveLength(177);
-    expect(baseline.declared).toHaveLength(87);
+    expect(baseline.sites).toHaveLength(176);
+    expect(baseline.declared).toHaveLength(86);
     const sites = new Map(scanSources(sources).map((site) => [site.id, site]));
     expect(
       baseline.sites.map(({ id }) => {

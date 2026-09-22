@@ -32,6 +32,7 @@ import {
 } from "../errors.ts";
 import { type ProjectRow, requireCapability, routeInfoOf } from "./access.ts";
 import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
+import { markPendingMirror } from "./pending-mirror.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
 /**
@@ -103,18 +104,90 @@ async function checkSlugAvailable(
   }
 }
 
-export async function createProject(
-  ctx: AppContext,
-  actor: UserRow,
+/**
+ * Everything a new project owns beyond its registry row, split by tier: the
+ * system database holds the slug history and the memberships, the project's
+ * own database the rest. Taking both handles as parameters is what lets a
+ * colocated create pass the same transaction twice.
+ */
+async function seedProject(
+  system: Db,
+  db: Db,
+  row: ProjectRow,
   input: ProjectCreateInput,
-): Promise<Project> {
-  const system = ctx.router.system();
+  actor: UserRow,
+): Promise<void> {
+  // Anchored at createdAt for the same reason the ref format is: the
+  // history has to cover every instant this project could hold content.
+  await system.insert(slugHistory).values({
+    projectId: row.id,
+    slug: row.slug,
+    effectiveFrom: row.createdAt,
+  });
+  await db
+    .insert(projectMeta)
+    .values({ projectId: row.id })
+    .onConflictDoNothing();
+  await db.insert(statuses).values(
+    CANONICAL_STATUSES.map((s, i) => ({
+      projectId: row.id,
+      name: s.name,
+      category: s.category,
+      color: s.color,
+      position: i,
+      isDefault: s.is_default ?? false,
+    })),
+  );
+  // Anchored at the registry row's own createdAt, not now(): the history
+  // then covers every instant the project could already hold content.
+  if (input.ref_prefix != null) {
+    await db.insert(refFormats).values({
+      projectId: row.id,
+      prefix: input.ref_prefix,
+      effectiveFrom: row.createdAt,
+    });
+  }
+  // A machine creating a project brings its owner in as admin alongside it
+  // (T-340). Creation is the one path that writes a membership row without
+  // going through the ceiling checks, so without this a machine holding a
+  // PAT could make itself an admin of a project its owner has no role in —
+  // the invariant broken at the moment of birth. Writing the owner's row
+  // instead of refusing the create keeps every existing caller working, and
+  // leaves the project with a human admin rather than a lone machine whose
+  // role nobody is left able to change.
+  //
+  // No guard on the actor's kind, deliberately: a machine has always been
+  // able to create projects here, and taking that away belongs to a card
+  // that can go and look at who would break.
+  await system.insert(projectMembers).values(
+    actor.kind === "machine" && actor.ownerId !== null
+      ? [
+          { projectId: row.id, userId: actor.id, role: "admin" as const },
+          {
+            projectId: row.id,
+            userId: actor.ownerId,
+            role: "admin" as const,
+          },
+        ]
+      : [{ projectId: row.id, userId: actor.id, role: "admin" as const }],
+  );
+  if (input.ref_prefix != null) {
+    await mirrorRefFormat(system, row.id, {
+      prefix: input.ref_prefix,
+      effectiveFrom: row.createdAt,
+    });
+  }
+}
 
-  await checkSlugAvailable(system, input.slug, null, input.reclaim ?? false);
-
-  // The check above races anyone creating the same slug concurrently; the
-  // unique index is what actually decides, so translate its verdict rather
-  // than letting a lost race surface as a 500.
+/**
+ * The registry insert, with the unique index's verdict translated: the
+ * availability check races anyone creating the same slug concurrently, so a
+ * lost race has to surface as a 409 rather than a 500.
+ */
+async function insertRegistryRow(
+  system: Db,
+  input: ProjectCreateInput,
+): Promise<ProjectRow> {
   const inserted = await system
     .insert(projects)
     .values({
@@ -129,69 +202,58 @@ export async function createProject(
     });
   const row = inserted[0];
   if (!row) throw new Error("project insert returned no row");
+  return row;
+}
+
+export async function createProject(
+  ctx: AppContext,
+  actor: UserRow,
+  input: ProjectCreateInput,
+): Promise<Project> {
+  const system = ctx.router.system();
+
+  if (ctx.router.newProjectSharesSystemDatabase()) {
+    // No `provision` call: for a project resolving to the system database it
+    // makes the same comparison and returns without a statement, and calling
+    // it from inside the transaction would take a second handle.
+    const created = await system.transaction(async (tx) => {
+      await checkSlugAvailable(tx, input.slug, null, input.reclaim ?? false);
+      const row = await insertRegistryRow(tx, input);
+      // The transaction is only sound while both tiers are this one
+      // database; a route that says otherwise means rolling the whole
+      // create back beats writing project rows into the system tier.
+      if (!ctx.router.sharesSystemDatabase(routeInfoOf(row))) {
+        throw new Error("project routed out of the system database mid-create");
+      }
+      await seedProject(tx, tx, row, input, actor);
+      return row;
+    });
+    // After the commit: a subscriber that reacts by reading the project has
+    // to find it there.
+    ctx.bus.publish(created.id, {
+      entity: "project",
+      id: created.id,
+      action: "created",
+    });
+    return toProject(created);
+  }
+
+  await checkSlugAvailable(system, input.slug, null, input.reclaim ?? false);
+
+  // The check above races anyone creating the same slug concurrently; the
+  // unique index is what actually decides, so translate its verdict rather
+  // than letting a lost race surface as a 500.
+  const row = await insertRegistryRow(system, input);
 
   try {
-    // Anchored at createdAt for the same reason the ref format is: the
-    // history has to cover every instant this project could hold content.
-    await system.insert(slugHistory).values({
-      projectId: row.id,
-      slug: row.slug,
-      effectiveFrom: row.createdAt,
-    });
     const db = await ctx.router.provision(routeInfoOf(row));
-    await db
-      .insert(projectMeta)
-      .values({ projectId: row.id })
-      .onConflictDoNothing();
-    await db.insert(statuses).values(
-      CANONICAL_STATUSES.map((s, i) => ({
-        projectId: row.id,
-        name: s.name,
-        category: s.category,
-        color: s.color,
-        position: i,
-        isDefault: s.is_default ?? false,
-      })),
-    );
-    // Anchored at the registry row's own createdAt, not now(): the history
-    // then covers every instant the project could already hold content.
-    if (input.ref_prefix != null) {
-      await db.insert(refFormats).values({
-        projectId: row.id,
-        prefix: input.ref_prefix,
-        effectiveFrom: row.createdAt,
-      });
-    }
-    // A machine creating a project brings its owner in as admin alongside it
-    // (T-340). Creation is the one path that writes a membership row without
-    // going through the ceiling checks, so without this a machine holding a
-    // PAT could make itself an admin of a project its owner has no role in —
-    // the invariant broken at the moment of birth. Writing the owner's row
-    // instead of refusing the create keeps every existing caller working, and
-    // leaves the project with a human admin rather than a lone machine whose
-    // role nobody is left able to change.
-    //
-    // No guard on the actor's kind, deliberately: a machine has always been
-    // able to create projects here, and taking that away belongs to a card
-    // that can go and look at who would break.
-    await system.insert(projectMembers).values(
-      actor.kind === "machine" && actor.ownerId !== null
-        ? [
-            { projectId: row.id, userId: actor.id, role: "admin" as const },
-            {
-              projectId: row.id,
-              userId: actor.ownerId,
-              role: "admin" as const,
-            },
-          ]
-        : [{ projectId: row.id, userId: actor.id, role: "admin" as const }],
-    );
-    if (input.ref_prefix != null) {
-      await mirrorRefFormat(system, row.id, {
-        prefix: input.ref_prefix,
-        effectiveFrom: row.createdAt,
-      });
-    }
+    // Before the authoritative write, and only when there is a prefix to
+    // mirror at all (T-511). Inside this try on purpose: a mark that fails
+    // must still reach the compensating delete below, or the failed create
+    // leaves a registry row with no database behind it. It adds no catch of
+    // its own — a failure here is a 5xx, same as any other step.
+    if (input.ref_prefix != null) await markPendingMirror(ctx, row);
+    await seedProject(system, db, row, input, actor);
   } catch (cause) {
     // Cross-database creation cannot be one transaction; compensate by
     // removing the registry row so the failed project is unroutable.
@@ -277,9 +339,15 @@ export async function listProjects(
  * qualified form wins — so a rename into a slug some project already
  * autolinks would silently kill that rule. The mirror check lives in
  * reference-config.ts, which refuses the autolink when the slug exists
- * first. Rules live in each project's own database, so this opens them all;
- * a database that will not open is logged and skipped, because the check is
- * a guard rail rather than a security boundary.
+ * first. Rules live in each project's own database, and failing to read one
+ * costs different amounts: a query that errors forfeits only that database's
+ * verdict, while a database that will not open at all forfeits the whole
+ * pass. Either way the worst case is one autolink rule going quietly
+ * inactive until the shadowing slug is renamed away again, which is why the
+ * check is allowed to give up — it is a guard rail, not a security boundary.
+ * It asks every project in the registry rather than the ones the caller can
+ * see, because an autolink in a project they cannot read is shadowed just
+ * the same.
  */
 async function assertNoAutolinkShadow(
   ctx: AppContext,
@@ -287,26 +355,56 @@ async function assertNoAutolinkShadow(
 ): Promise<void> {
   const prefix = `${newSlug}#`;
   const rows = await ctx.router.system().select().from(projects);
-  for (const row of rows) {
-    let hits: { id: number }[];
-    try {
-      const db = await ctx.router.forProject(routeInfoOf(row));
-      hits = await db
-        .select({ id: autolinks.id })
-        .from(autolinks)
-        .where(
-          and(eq(autolinks.projectId, row.id), eq(autolinks.prefix, prefix)),
+  const verdicts = await ctx.router
+    .perDatabase(rows, routeInfoOf, async (db, group) => {
+      try {
+        const hits = await db
+          .select({ id: autolinks.id })
+          .from(autolinks)
+          .where(
+            and(
+              eq(autolinks.prefix, prefix),
+              // Narrowing to the group's own projects is not redundant with
+              // asking their database: `deleteProject` leaves autolinks
+              // behind, and an orphan row must not block somebody else's
+              // rename. It is also what keeps the index in play —
+              // `autolinks_project_prefix_idx` leads on project_id.
+              inArray(
+                autolinks.projectId,
+                group.map((row) => row.id),
+              ),
+            ),
+          )
+          .limit(1);
+        return hits.length > 0;
+      } catch (cause) {
+        // With the default configuration a postgres project database that
+        // cannot be reached does not fail in `openDb` — the pool is lazy —
+        // so this is where it surfaces. Not unconditional: `auto_migrate` on
+        // (router.ts `shouldAutoMigrate`) makes it throw before the callback
+        // runs, and then the outer catch is what sees it.
+        console.error(
+          `autolink shadow check skipped for ${group.map((row) => row.slug).join(", ")}`,
+          cause,
         );
-    } catch (cause) {
-      console.error(`autolink shadow check skipped for ${row.slug}`, cause);
-      continue;
-    }
-    if (hits.length > 0) {
-      throw new ValidationFailedError(
-        `slug "${newSlug}" would shadow the autolink prefix "${prefix}" ` +
-          "configured in this deployment — remove that autolink first",
+        return false;
+      }
+    })
+    .catch((cause: unknown) => {
+      console.error(
+        "autolink shadow check skipped: a project database would not open",
+        cause,
       );
-    }
+      return [];
+    });
+  // Outside both catches. Thrown from the callback it would be swallowed by
+  // the one above; thrown inside the `.catch` chain it would be reported as
+  // an unopenable database. Either way a real shadow would answer 200.
+  if (verdicts.some(Boolean)) {
+    throw new ValidationFailedError(
+      `slug "${newSlug}" would shadow the autolink prefix "${prefix}" ` +
+        "configured in this deployment — remove that autolink first",
+    );
   }
 }
 

@@ -1010,8 +1010,9 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     const source = await createIssue(A, "named the old way", "body");
     const inB = await createIssue(B, "points at A by slug alone", "body");
     // Every cross_referenced event written before T-231 looks like this: the
-    // slug and nothing else. `refs migrate` is what gives them an id; a move
-    // must not, because it would be guessing which project held that slug.
+    // slug and nothing else. The `refs migrate` pass was what gave them an
+    // id; a move must not, because it would be guessing which project held
+    // that slug.
     const dbB = await dbOf(idB, B);
     await dbB.insert(issueEvents).values({
       projectId: idB,
