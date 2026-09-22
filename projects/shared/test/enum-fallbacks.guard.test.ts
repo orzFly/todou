@@ -58,6 +58,8 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Same-version internal discriminator: migrate/openDatabase callers in index.ts and db/router.ts supply literal system or project DbTier.",
   "projects/server/src/db/driver.ts :: read MIGRATIONS[tier] #2":
     "Same-version internal discriminator: migrate/openDatabase callers in index.ts and db/router.ts supply literal system or project DbTier.",
+  "projects/server/src/db/driver.ts :: read MIGRATIONS[tier] #3":
+    "Same-version internal discriminator: buildMemoryTemplate iterates the openDb tiers option, and db/router.ts builds every such array from literal system or project DbTier.",
   "projects/server/src/db/pglite-worker.ts :: switch msg.op #1":
     "Same-version worker protocol: db/worker-client.ts constructs op using seven local literals; no independent server/client version boundary. An invalid internal op would leave its promise pending.",
   "projects/server/src/http/content-type.ts :: read KEPT_TYPES[base] #1":

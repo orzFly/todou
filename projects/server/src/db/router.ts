@@ -1,6 +1,12 @@
 import type { Logger } from "drizzle-orm/logger";
 import type { Config, ProjectRouteInfo } from "../config.ts";
-import { type Db, type DbHandle, openDb } from "./driver.ts";
+import {
+  type Db,
+  type DbHandle,
+  type DbTier,
+  dbKindOf,
+  openDb,
+} from "./driver.ts";
 
 export type DbTestHooks = {
   onQuery?(sql: string, params: unknown[], url: string): void;
@@ -49,17 +55,22 @@ export class DbRouter {
   }
 
   static async open(config: Config, hooks?: DbTestHooks): Promise<DbRouter> {
-    const system = await openDb(config.database.system, {
+    const url = config.database.system;
+    // One list, decided before the open, because the driver needs it too:
+    // an in-memory PGlite boots from a template pre-migrated to exactly
+    // these tiers. Shared placement keeps project-tier tables in the system
+    // database, so there the list is both of them.
+    const tiers: DbTier[] = !shouldAutoMigrate(config, dbKindOf(url))
+      ? []
+      : config.database.projects.placement === "shared"
+        ? ["system", "project"]
+        : ["system"];
+    const system = await openDb(url, {
       pool: config.database.pool,
-      logger: queryLogger(config.database.system, hooks),
+      logger: queryLogger(url, hooks),
+      tiers,
     });
-    if (shouldAutoMigrate(config, system.kind)) {
-      await system.migrate("system");
-      // Shared placement keeps project-tier tables in the system database.
-      if (config.database.projects.placement === "shared") {
-        await system.migrate("project");
-      }
-    }
+    for (const tier of tiers) await system.migrate(tier);
     return new DbRouter(config, system, hooks);
   }
 
@@ -132,15 +143,16 @@ export class DbRouter {
   }
 
   async #openProject(url: string): Promise<DbHandle> {
+    const willMigrate =
+      shouldAutoMigrate(this.#config, dbKindOf(url)) &&
+      !this.#migrated.has(url);
     const handle = await openDb(url, {
       workerHost: this.#config.database.projects.workers,
       pool: this.#config.database.pool,
       logger: queryLogger(url, this.#hooks),
+      tiers: willMigrate ? ["project"] : [],
     });
-    if (
-      shouldAutoMigrate(this.#config, handle.kind) &&
-      !this.#migrated.has(url)
-    ) {
+    if (willMigrate) {
       await handle.migrate("project");
       this.#migrated.add(url);
     }

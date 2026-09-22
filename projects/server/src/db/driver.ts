@@ -60,9 +60,23 @@ export type PoolOptions = {
   connection_timeout_ms: number;
 };
 
+export type OpenDbOptions = {
+  workerHost?: boolean;
+  pool?: PoolOptions;
+  logger?: Logger;
+  /**
+   * The tiers the caller is about to migrate this database to. Read only for
+   * in-memory PGlite, where it selects a pre-migrated template instead of a
+   * fresh initdb; the caller's own `migrate` calls then cost ~8ms and stay
+   * the authority on what ran. Leave it out when the caller will not migrate
+   * at all, which is what `auto_migrate = false` asks for.
+   */
+  tiers?: DbTier[];
+};
+
 export async function openDb(
   url: string,
-  opts?: { workerHost?: boolean; pool?: PoolOptions; logger?: Logger },
+  opts?: OpenDbOptions,
 ): Promise<DbHandle> {
   const kind = dbKindOf(url);
   if (kind === "pglite") {
@@ -81,7 +95,7 @@ export async function openDb(
           isMemory ? undefined : target,
         ) as unknown as PGlite)
       : isMemory
-        ? new PGlite({ extensions: PGLITE_EXTENSIONS })
+        ? await memoryClient(opts?.tiers ?? [])
         : new PGlite(target, { extensions: PGLITE_EXTENSIONS });
     const db = drizzlePglite(client, { logger: opts?.logger });
     return {
@@ -106,4 +120,65 @@ export async function openDb(
     migrate: (tier) => migrateNodePg(db, MIGRATIONS[tier]),
     close: () => pool.end(),
   };
+}
+
+type MemoryTemplate = {
+  dump: Awaited<ReturnType<PGlite["dumpDataDir"]>>;
+  /** The instance the dump was taken from, until somebody claims it. */
+  seed: PGlite | null;
+};
+
+/**
+ * Pre-migrated in-memory databases, keyed by the tiers they carry.
+ *
+ * `new PGlite()` on a memory URL runs a full initdb inside the WASM build on
+ * its first query — measured at ~1.8s, and the second instance in a process
+ * costs the same as the first, because only the WASM module compile is
+ * cached. Restoring a dump of an already-migrated instance costs ~0.4s and
+ * brings the migrations with it. Only tests open memory URLs (a deployment
+ * names a data directory, see docs/deploy.md), and there one test file stands
+ * up three of these per test case.
+ *
+ * Whoever builds a template is handed the seed instance itself, so the first
+ * database of a tier set pays the ~0.1s dump and nothing else on top of the
+ * initdb it already owed; every later one pays ~0.4s instead of ~1.8s.
+ *
+ * Migrating the seed deliberately bypasses the caller's `logger`: routed
+ * through it, the migration DDL would reach the query tap of whichever test
+ * happened to run first in a fork and of no other, which would make a
+ * statement count depend on test order.
+ */
+const memoryTemplates = new Map<string, Promise<MemoryTemplate>>();
+
+async function buildMemoryTemplate(tiers: DbTier[]): Promise<MemoryTemplate> {
+  const seed = new PGlite({ extensions: PGLITE_EXTENSIONS });
+  const db = drizzlePglite(seed);
+  for (const tier of tiers) await migratePglite(db, MIGRATIONS[tier]);
+  // Uncompressed: gzip trades ~1.5s of dump and ~0.5s of every restore for
+  // 36 MiB of resident size per template, and time is the whole point here.
+  return { dump: await seed.dumpDataDir("none"), seed };
+}
+
+async function memoryClient(tiers: DbTier[]): Promise<PGlite> {
+  if (tiers.length === 0) return new PGlite({ extensions: PGLITE_EXTENSIONS });
+  const key = tiers.join("+");
+  let building = memoryTemplates.get(key);
+  if (!building) {
+    building = buildMemoryTemplate(tiers);
+    // A rejected build must not stay cached: one failing migration would
+    // otherwise become every later open in the process failing, with the
+    // original stack attached to a call that did nothing wrong.
+    building.catch(() => memoryTemplates.delete(key));
+    memoryTemplates.set(key, building);
+  }
+  const template = await building;
+  if (template.seed) {
+    const seed = template.seed;
+    template.seed = null;
+    return seed;
+  }
+  return new PGlite({
+    loadDataDir: template.dump,
+    extensions: PGLITE_EXTENSIONS,
+  });
 }
