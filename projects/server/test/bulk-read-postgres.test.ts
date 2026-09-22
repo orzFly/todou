@@ -225,6 +225,15 @@ describe.skipIf(!PG_URL)("bulk mark-as-read on real postgres", () => {
     });
     expect(renamed.status).toBe(200);
 
+    // Mint bob's read frontier before the card exists. It is created lazily on
+    // his first read, so a card planted first is dated before his epoch and
+    // arrives already read — the warm-up test/inbox-placements.test.ts spells
+    // out for the same reason.
+    const warmed = await t.app.request("/api/me/inbox", {
+      headers: bob.headers,
+    });
+    expect(warmed.status).toBe(200);
+
     const issue = await t.app.request(`/api/projects/${after}/issues`, {
       method: "POST",
       headers: headers(),
