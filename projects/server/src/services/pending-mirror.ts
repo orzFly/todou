@@ -247,10 +247,10 @@ export async function drainPendingMirrors(
         ),
       );
     for (const claim of failing) {
-      if (claim.attempts + 1 > NOISY_AFTER_ATTEMPTS) {
+      if (claim.attempts > NOISY_AFTER_ATTEMPTS) {
         console.warn(
           `housekeeping: project ${claim.projectId} mirror still unreconciled ` +
-            `after ${claim.attempts + 1} attempts: ` +
+            `after ${claim.attempts} attempts: ` +
             `${errorByProject.get(claim.projectId)}`,
         );
       }

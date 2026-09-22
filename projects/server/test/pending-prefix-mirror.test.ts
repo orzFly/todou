@@ -280,10 +280,11 @@ describe("drainPendingMirrors", () => {
     expect(broken.verifiedGeneration).toBe(0);
 
     expect((await drainPendingMirrors(t.ctx, now)).claimed).toBe(0);
+    // Exactly two, not "some": at now + 10min both marks are due — pd-1 off a
+    // five-minute backoff and pd-2 off CONFIRM_AFTER_MS — so a looser bound
+    // would still pass if only one of them came back.
     const later = new Date(now.getTime() + 10 * 60 * 1000);
-    expect((await drainPendingMirrors(t.ctx, later)).claimed).toBeGreaterThan(
-      0,
-    );
+    expect((await drainPendingMirrors(t.ctx, later)).claimed).toBe(2);
   });
 });
 

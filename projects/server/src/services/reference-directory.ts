@@ -55,7 +55,7 @@ export async function mirrorRefFormat(
  * resolution and the mirror's is cut to whole milliseconds by the driver, so
  * a key built here would permanently collapse two real switches made inside
  * the same millisecond into one row. A duplicate row is tolerable; a missing
- * one is not, because since T-510 the newest row is what bare-prefix
+ * one is not, because since T-512 the newest row is what bare-prefix
  * resolution answers from — lose it and resolve returns 404.
  */
 const rowKey = (row: FormatRow): string =>
@@ -92,12 +92,13 @@ export async function mirrorPrefixGaps(
   ctx: AppContext,
   projects: ProjectRow[],
 ): Promise<MirrorGroupOutcome[]> {
-  // Specification, not a micro-optimisation: `syncRefPrefixMirror` under the
-  // default colocated placement must cost exactly the one `select … from
-  // projects`, and drizzle compiles `inArray(col, [])` to `false` rather than
-  // refusing it — so dropping this guard would not break anything loudly, it
-  // would silently spend a second statement to learn what the caller already
-  // knows.
+  // Belt to the chunk loop's braces: the loop below already iterates zero
+  // times on an empty id list, so this return is what states the contract
+  // rather than what enforces it — `syncRefPrefixMirror` under the default
+  // colocated placement must cost exactly the one `select … from projects`.
+  // What would actually spend a statement here is someone replacing that loop
+  // with a plain `inArray(col, ids)`, which drizzle compiles to `false` rather
+  // than refusing.
   if (projects.length === 0) return [];
   const system = ctx.router.system();
   const ids = projects.map((project) => project.id);
