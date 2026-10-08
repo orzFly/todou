@@ -16,7 +16,7 @@ import {
   SquareCheckIcon,
   SquareIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { questionsQuery } from "@/api/questions.ts";
@@ -28,8 +28,10 @@ import type { Target } from "@/components/timeline/comment-item.tsx";
 import { useTimelineAnswer } from "@/components/timeline/timeline-answers.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
+import { revealBlock } from "@/lib/scroll-insets.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 type Draft = { selected: Set<number>; other: string; declined: boolean };
@@ -50,13 +52,24 @@ const resolved = (d: Draft): boolean =>
  * does — read together at the wrong moment they pair the new card's keys
  * with empty answers, and a sealed target would deliver that to the old
  * card accurately.
+ *
+ * `force` (T-517) sends each still-unresolved question as a decline — the
+ * answer hiding the comment would give it. Only genuinely unanswered
+ * questions take that branch: a resolved draft never holds a selection
+ * beside its decline (`toggleDecline` clears one), and one holding nothing
+ * but whitespace in "other" is unresolved, so its stray text is dropped
+ * rather than sent.
  */
 const answersOf = (
   drafts: Record<string, Draft>,
   component: QuestionsComponent,
+  force = false,
 ): QuestionAnswerInput[] =>
   component.questions.map((q) => {
     const d = drafts[q.key] ?? emptyDraft();
+    if (force && !resolved(d)) {
+      return { key: q.key, selected: [], declined: true };
+    }
     return {
       key: q.key,
       selected: [...d.selected].sort((a, b) => a - b),
@@ -328,9 +341,34 @@ function AnswerForm({
   const complete = component.questions.every((q) =>
     resolved(drafts[q.key] ?? emptyDraft()),
   );
+  const blocked = !complete || submit.isPending;
+  const [forcing, setForcing] = useState(false);
+  const openCount = component.questions.filter(
+    (q) => !resolved(drafts[q.key] ?? emptyDraft()),
+  ).length;
+
+  // The gated submit's one remaining job: point at the first question this
+  // reader has not answered. A native `disabled` button cannot take even
+  // that — the browser drops the click before any handler runs — so the
+  // button carries aria-disabled and the handler is what refuses. The
+  // lookup stays inside this card's own element: auto-keys (`q1`) repeat
+  // across comments, and a document-wide query would land on whichever
+  // question card rendered first.
+  const root = useRef<HTMLDivElement>(null);
+  const firstOpen = () => {
+    const q = component.questions.find(
+      (x) => !resolved(drafts[x.key] ?? emptyDraft()),
+    );
+    const row =
+      q && root.current?.querySelector(`[data-question-key="${q.key}"]`);
+    if (row) revealBlock(row as HTMLElement);
+  };
 
   return (
-    <div className="mt-1 space-y-4 rounded-md border border-amber-500/60 bg-amber-500/5 p-3">
+    <div
+      ref={root}
+      className="mt-1 space-y-4 rounded-md border border-amber-500/60 bg-amber-500/5 p-3"
+    >
       <div className="flex">
         <Badge
           variant="outline"
@@ -357,13 +395,29 @@ function AnswerForm({
           }}
         />
       ))}
+      {/*
+        The gated button must stay pressable to point at the first unanswered
+        question (T-517), so it carries aria-disabled rather than the native
+        attribute — a disabled control swallows the click before any handler
+        could run. The force button beside it declines those questions.
+      */}
       <div className="flex justify-end">
+        {!complete && !submit.isPending && (
+          <Button variant="ghost" size="sm" onClick={() => setForcing(true)}>
+            Submit without answering…
+          </Button>
+        )}
         <Button
           size="sm"
-          disabled={!complete || submit.isPending}
-          onClick={() =>
-            submit.mutate({ ...target, answers: answersOf(drafts, component) })
-          }
+          aria-disabled={blocked}
+          className="aria-disabled:opacity-50"
+          onClick={() => {
+            if (blocked) {
+              firstOpen();
+              return;
+            }
+            submit.mutate({ ...target, answers: answersOf(drafts, component) });
+          }}
         >
           {submit.isPending
             ? "Submitting…"
@@ -372,6 +426,23 @@ function AnswerForm({
               : "Answer every question to submit"}
         </Button>
       </div>
+      <ConfirmDialog
+        open={forcing}
+        onOpenChange={setForcing}
+        title="Submit with unanswered questions?"
+        description={`This will decline to answer the ${openCount} unanswered question${openCount === 1 ? "" : "s"} for you — the same thing hiding this comment does. Answers cannot be changed afterwards.`}
+        confirmLabel="Submit anyway"
+        cancelLabel="Keep answering"
+        destructive
+        pending={submit.isPending}
+        onConfirm={() => {
+          setForcing(false);
+          submit.mutate({
+            ...target,
+            answers: answersOf(drafts, component, true),
+          });
+        }}
+      />
     </div>
   );
 }

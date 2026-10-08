@@ -1,4 +1,9 @@
-import { act, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  type RenderResult,
+  waitFor,
+} from "@testing-library/react";
 import type { QuestionsComponent } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
@@ -200,6 +205,7 @@ function deferredFetch(comp: QuestionsComponent = component) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   // A range left standing would trip the next test's click guard.
   window.getSelection()?.removeAllRanges();
 });
@@ -215,23 +221,34 @@ const optionButton = (
   label: string,
 ) => view.getByText(label).closest("button") as HTMLButtonElement;
 
+/**
+ * The gated submit, found by its label. Since T-517 it carries aria-disabled
+ * rather than the native attribute — a disabled control cannot take the
+ * click that points at the first unanswered question. A role query, not a
+ * structural index: the force button sits in the same row while the gate
+ * holds, so positions move with it.
+ */
+const submitButton = (view: RenderResult) =>
+  view.getByRole("button", {
+    name: /^(Submit answers|Answer every question to submit|Submitting…)$/,
+  });
+
 describe("QuestionsCard (unanswered)", () => {
   it("gates submit until every question is resolved", async () => {
     stubFetch();
     const view = renderCard();
     await view.findByText("awaiting answer");
 
-    const submit = () =>
-      view.container.querySelector<HTMLButtonElement>(
-        ".flex.justify-end > button",
-      ) as HTMLButtonElement;
-    expect(submit().disabled).toBe(true);
+    expect(submitButton(view).getAttribute("aria-disabled")).toBe("true");
 
     fireEvent.click(optionButton(view, "New entity"));
-    expect(submit().disabled).toBe(true); // second question still open
+    // The second question is still open, so the gate holds.
+    expect(submitButton(view).getAttribute("aria-disabled")).toBe("true");
 
     fireEvent.click(optionButton(view, "dev"));
-    await waitFor(() => expect(submit().disabled).toBe(false));
+    await waitFor(() =>
+      expect(submitButton(view).getAttribute("aria-disabled")).toBe("false"),
+    );
   });
 
   it("keeps single-select single and decline exclusive", async () => {
@@ -266,10 +283,7 @@ describe("QuestionsCard (unanswered)", () => {
     const view = renderCard();
     await view.findByText("awaiting answer");
 
-    const submit = () =>
-      view.container.querySelector<HTMLButtonElement>(
-        ".flex.justify-end > button",
-      ) as HTMLButtonElement;
+    const submit = submitButton(view);
 
     // Both questions resolved, so the gate opens…
     fireEvent.click(optionButton(view, "New entity"));
@@ -277,14 +291,18 @@ describe("QuestionsCard (unanswered)", () => {
     expect(optionButton(view, "New entity").getAttribute("aria-pressed")).toBe(
       "true",
     );
-    await waitFor(() => expect(submit().disabled).toBe(false));
+    await waitFor(() =>
+      expect(submit.getAttribute("aria-disabled")).toBe("false"),
+    );
 
     // …and clearing the single-select pick closes it again (T-181).
     fireEvent.click(optionButton(view, "New entity"));
     expect(optionButton(view, "New entity").getAttribute("aria-pressed")).toBe(
       "false",
     );
-    await waitFor(() => expect(submit().disabled).toBe(true));
+    await waitFor(() =>
+      expect(submit.getAttribute("aria-disabled")).toBe("true"),
+    );
 
     // Multi-select deselect keeps working.
     fireEvent.click(optionButton(view, "dev"));
@@ -499,18 +517,91 @@ describe("QuestionsCard (unanswered)", () => {
     // as an answer the moment it holds text (`resolved()`), so touching it
     // would finish the form and this test would be asserting nothing.
     fireEvent.click(optionButton(view, "New entity"));
-    const submit = view.container.querySelector<HTMLButtonElement>(
-      ".flex.justify-end > button",
-    ) as HTMLButtonElement;
-    // The premise, stated: the button is disabled here, and a disabled button
-    // cannot intercept a keystroke — so the callback has to carry the
-    // condition itself.
-    expect(submit.disabled).toBe(true);
+    // The premise, stated: the gate holds here (aria-disabled since T-517,
+    // because the button stays pressable to point at the unanswered
+    // question), so the callback has to carry the condition itself.
+    expect(submitButton(view).getAttribute("aria-disabled")).toBe("true");
 
     cmPressKey(view.container, "Enter", { ctrlKey: true });
 
     await act(async () => {});
     expect(posts).toEqual([]);
+  });
+});
+
+describe("QuestionsCard gated submit (T-517)", () => {
+  it("reveals the first unanswered question when the gated submit is pressed", async () => {
+    const posts = stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    // q2 answered, q1 not: the jump must land on q1 — the first unanswered
+    // question, not merely the first on the card.
+    fireEvent.click(optionButton(view, "dev"));
+    const reveals: string[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+    ) {
+      reveals.push(this.getAttribute("data-question-key") ?? this.id);
+    });
+
+    fireEvent.click(submitButton(view));
+
+    expect(reveals).toEqual(["schema"]);
+    // The flash lands on the same row the reveal scrolled to.
+    expect(
+      view.container
+        .querySelector('[data-question-key="schema"]')
+        ?.classList.contains("anchor-flash"),
+    ).toBe(true);
+    // Pointing is not submitting.
+    expect(posts).toEqual([]);
+  });
+
+  it("force-submits through the confirm, declining only the unanswered", async () => {
+    const posts = stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    // q2 answered with a real pick, q1 left open.
+    fireEvent.click(optionButton(view, "dev"));
+    fireEvent.click(
+      view.getByRole("button", { name: "Submit without answering…" }),
+    );
+
+    expect(
+      await view.findByText(
+        /This will decline to answer the 1 unanswered question for you/,
+      ),
+    ).toBeTruthy();
+    fireEvent.click(view.getByRole("button", { name: "Submit anyway" }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toEqual({
+      answers: [
+        { key: "schema", selected: [], declined: true },
+        { key: "scope", selected: [0], declined: false },
+      ],
+    });
+  });
+
+  it("cancel of the force confirm submits nothing", async () => {
+    const posts = stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(
+      view.getByRole("button", { name: "Submit without answering…" }),
+    );
+    fireEvent.click(view.getByRole("button", { name: "Keep answering" }));
+
+    await act(async () => {});
+    expect(posts).toEqual([]);
+    // The gate still holds and the force button remains.
+    expect(submitButton(view).getAttribute("aria-disabled")).toBe("true");
+    expect(
+      view.getByRole("button", { name: "Submit without answering…" }),
+    ).toBeTruthy();
   });
 });
 
