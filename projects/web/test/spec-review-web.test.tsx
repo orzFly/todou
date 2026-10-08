@@ -399,6 +399,129 @@ describe("useSpecReviewDrafts", () => {
     expect(hook.result.current.drafts).toHaveLength(0);
     expect(localStorage.getItem("todou-spec-review:p:31")).toBeNull();
   });
+  it("keeps the healthy drafts when one stored entry no longer parses", () => {
+    localStorage.setItem(
+      "todou-spec-review:p:32",
+      JSON.stringify([
+        {
+          id: "d-legacy",
+          anchor: {
+            path: "old.md",
+            version: 1,
+            // Writes from before anchors could be file-level (T-61) used 0
+            // as "no line"; positive() rejects it today.
+            line_start: 0,
+            line_end: 0,
+          },
+          quote: "",
+          body: "legacy zero lines",
+        },
+        {
+          id: "d-good",
+          anchor: {
+            path: "design.md",
+            version: 1,
+            line_start: 3,
+            line_end: 3,
+            col_start: null,
+            col_end: null,
+          },
+          quote: "…",
+          body: "healthy draft",
+        },
+      ]),
+    );
+
+    const hook = renderHook(() => useSpecReviewDrafts("p", 32));
+    expect(hook.result.current.drafts).toHaveLength(1);
+    expect(hook.result.current.drafts[0]?.body).toBe("healthy draft");
+
+    // Staging the next comment must not bury the surviving draft under the
+    // unparsed one: the write goes out from what read() returned.
+    act(() => {
+      hook.result.current.add({
+        anchor: {
+          path: "design.md",
+          version: 1,
+          line_start: 9,
+          line_end: 9,
+          col_start: null,
+          col_end: null,
+        },
+        quote: "…",
+        body: "staged after the corruption",
+      });
+    });
+    const stored = JSON.parse(
+      localStorage.getItem("todou-spec-review:p:32") ?? "[]",
+    );
+    expect(stored.map((d: { body: string }) => d.body)).toEqual([
+      "healthy draft",
+      "staged after the corruption",
+    ]);
+  });
+
+  it("sees a draft another tab staged while this page was open", () => {
+    const hook = renderHook(() => useSpecReviewDrafts("p", 33));
+    expect(hook.result.current.drafts).toHaveLength(0);
+
+    // Another tab writes the bucket and the browser fires `storage` in this
+    // one. The module cache must not keep serving the empty array it read at
+    // mount — that is how a stage from this tab would overwrite the other
+    // tab's draft wholesale.
+    localStorage.setItem(
+      "todou-spec-review:p:33",
+      JSON.stringify([
+        {
+          id: "d-other-tab",
+          anchor: {
+            path: "design.md",
+            version: 1,
+            line_start: 3,
+            line_end: 3,
+            col_start: null,
+            col_end: null,
+          },
+          quote: "…",
+          body: "from the other tab",
+        },
+      ]),
+    );
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "todou-spec-review:p:33",
+          storageArea: localStorage,
+        }),
+      );
+    });
+
+    expect(hook.result.current.drafts).toHaveLength(1);
+    expect(hook.result.current.drafts[0]?.body).toBe("from the other tab");
+
+    // And a stage from this tab merges with — not replaces — the other tab's.
+    act(() => {
+      hook.result.current.add({
+        anchor: {
+          path: "design.md",
+          version: 1,
+          line_start: 9,
+          line_end: 9,
+          col_start: null,
+          col_end: null,
+        },
+        quote: "…",
+        body: "from this tab",
+      });
+    });
+    const stored = JSON.parse(
+      localStorage.getItem("todou-spec-review:p:33") ?? "[]",
+    );
+    expect(stored.map((d: { body: string }) => d.body).sort()).toEqual([
+      "from the other tab",
+      "from this tab",
+    ]);
+  });
 });
 
 describe("SpecCommentAnchorCard", () => {
