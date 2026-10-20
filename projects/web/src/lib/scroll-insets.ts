@@ -156,16 +156,26 @@ export function useScrollInsets({
       // The shell header covers every route; making each page declare it again
       // would only give them a way to disagree.
       const shell = document.querySelector<HTMLElement>("header");
+      // A caret inside a sticky overlay always sits within that overlay's own
+      // inset, and Chrome's caret reveal honours scroll-padding: it scrolled
+      // the page on every typed character, the overlay riding along, so the
+      // caret was never "revealed" (T-519). Nothing inside an overlay can be
+      // hidden behind it, so the one holding focus stops counting.
+      const focused = document.activeElement;
+      const extent = (el: HTMLElement) =>
+        focused !== null && el.contains(focused)
+          ? 0
+          : el.getBoundingClientRect().height;
       let topInset = BREATHING_ROOM;
       let bottomInset = 0;
       for (const el of [shell, ...sources.current.top.map((r) => r.current)]) {
         if (el === null) continue;
-        topInset += el.getBoundingClientRect().height;
+        topInset += extent(el);
         watch(el);
       }
       for (const el of sources.current.bottom.map((r) => r.current)) {
         if (el === null) continue;
-        bottomInset += el.getBoundingClientRect().height;
+        bottomInset += extent(el);
         watch(el);
       }
       root.style.scrollPaddingTop = `${topInset}px`;
@@ -179,8 +189,12 @@ export function useScrollInsets({
     remeasure.current = measure;
     measure();
     window.addEventListener("resize", measure);
+    document.addEventListener("focusin", measure);
+    document.addEventListener("focusout", measure);
     return () => {
       window.removeEventListener("resize", measure);
+      document.removeEventListener("focusin", measure);
+      document.removeEventListener("focusout", measure);
       observer?.disconnect();
       root.style.removeProperty("scroll-padding-top");
       root.style.removeProperty("scroll-padding-bottom");
