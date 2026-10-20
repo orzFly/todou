@@ -1,6 +1,6 @@
 import { useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
-import { revealBlock } from "@/lib/scroll-insets.ts";
+import { holdRevealed, revealBlock } from "@/lib/scroll-insets.ts";
 import {
   anchorElementId,
   parseTimelineAnchor,
@@ -34,7 +34,8 @@ type AnchorRequest = {
 
 /**
  * Drive `#comment-<id>` / `#event-<id>` anchors (T-38): once the target is
- * rendered, reveal it and flash a highlight; while it isn't, expand the
+ * rendered, reveal it, flash a highlight, and hold it there while the rest of
+ * the card loads (T-520); while it isn't, expand the
  * folded middle (T-30) one chunk at a time from the gap's head side until
  * the target's chunk is in. The anchor → element contract (anchorElementId)
  * stays as it was.
@@ -63,10 +64,14 @@ export function useTimelineAnchor(
   const target = parseTimelineAnchor(hash ?? "");
   const doneFor = useRef<string | null>(null);
   const stall = useRef<{ key: string; remaining: number } | null>(null);
+  const releaseHold = useRef<() => void>(() => {});
+
+  useEffect(() => () => releaseHold.current(), []);
 
   // Every render re-checks after pages, hidden runs, and hash changes.
   useEffect(() => {
     if (!target) {
+      releaseHold.current();
       doneFor.current = null;
       stall.current = null;
       return;
@@ -74,12 +79,17 @@ export function useTimelineAnchor(
     const elementId = anchorElementId(target);
     const key = `${elementId}:${request?.id ?? "direct"}`;
     if (doneFor.current === key) return;
+    // A new target: the old one is no longer where the reader is headed.
+    releaseHold.current();
     if (request && (!gap.ready || gap.isExpanding)) return;
     const el = document.getElementById(elementId);
     if (el) {
       doneFor.current = key;
       // Reveal uses the existing floating-bar/composer scroll insets.
       revealBlock(el);
+      // The whole card, not the timeline: the issue body and the attachment
+      // list above it load late too, and push the target down just as far.
+      releaseHold.current = holdRevealed(el, document.body);
       request?.onComplete();
       return;
     }

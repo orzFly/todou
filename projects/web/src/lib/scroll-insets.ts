@@ -116,6 +116,42 @@ export function revealBlock(
   if (highlight) flash(el);
 }
 
+/**
+ * Reveal `el` again every time `container` resizes, until the reader's first
+ * input. Returns the release, for when the landing stops mattering first.
+ *
+ * A landing is made against the page as it stands, and the page keeps
+ * arriving after it: images, diffs, attachment lists, each pushing the target
+ * away from where it was put (T-188, T-520). After the first input,
+ * re-revealing would fight the reader. There is no settle timeout: late
+ * content lands with unbounded gaps, and a timer that fires inside one
+ * re-opens the race.
+ */
+export function holdRevealed(
+  el: HTMLElement,
+  container: Element,
+  mode: RevealMode = "auto",
+): () => void {
+  if (typeof ResizeObserver === "undefined") return () => {}; // happy-dom
+  const observer = new ResizeObserver(() => {
+    revealBlock(el, { mode, flash: false });
+  });
+  observer.observe(container);
+  const controller = new AbortController();
+  const release = () => {
+    observer.disconnect();
+    controller.abort();
+  };
+  for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+    window.addEventListener(type, release, {
+      capture: true,
+      passive: true,
+      signal: controller.signal,
+    });
+  }
+  return release;
+}
+
 export type ScrollInsetSources = {
   /** Overlays pinned to the viewport's top edge, beneath the shell header. */
   top?: ReadonlyArray<RefObject<HTMLElement | null>>;
