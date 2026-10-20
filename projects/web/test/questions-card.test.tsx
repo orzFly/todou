@@ -230,7 +230,7 @@ const optionButton = (
  */
 const submitButton = (view: RenderResult) =>
   view.getByRole("button", {
-    name: /^(Submit answers|Answer every question to submit|Submitting…)$/,
+    name: /^(Submit answers|Answer all to submit|Submitting…)$/,
   });
 
 describe("QuestionsCard (unanswered)", () => {
@@ -483,13 +483,7 @@ describe("QuestionsCard (unanswered)", () => {
     // form the editor belongs to, not the box it sits in.
     cmSetValue(view.container, "and keep it strict", 1);
     await waitFor(() =>
-      expect(
-        (
-          view.container.querySelector(
-            ".flex.justify-end > button",
-          ) as HTMLButtonElement
-        ).disabled,
-      ).toBe(false),
+      expect(submitButton(view).getAttribute("aria-disabled")).toBe("false"),
     );
 
     cmPressKey(view.container, "Enter", { ctrlKey: true }, 1);
@@ -565,9 +559,7 @@ describe("QuestionsCard gated submit (T-517)", () => {
 
     // q2 answered with a real pick, q1 left open.
     fireEvent.click(optionButton(view, "dev"));
-    fireEvent.click(
-      view.getByRole("button", { name: "Submit without answering…" }),
-    );
+    fireEvent.click(view.getByRole("button", { name: "Skip unanswered…" }));
 
     expect(
       await view.findByText(
@@ -590,18 +582,14 @@ describe("QuestionsCard gated submit (T-517)", () => {
     const view = renderCard();
     await view.findByText("awaiting answer");
 
-    fireEvent.click(
-      view.getByRole("button", { name: "Submit without answering…" }),
-    );
+    fireEvent.click(view.getByRole("button", { name: "Skip unanswered…" }));
     fireEvent.click(view.getByRole("button", { name: "Keep answering" }));
 
     await act(async () => {});
     expect(posts).toEqual([]);
     // The gate still holds and the force button remains.
     expect(submitButton(view).getAttribute("aria-disabled")).toBe("true");
-    expect(
-      view.getByRole("button", { name: "Submit without answering…" }),
-    ).toBeTruthy();
+    expect(view.getByRole("button", { name: "Skip unanswered…" })).toBeTruthy();
   });
 });
 

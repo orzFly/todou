@@ -367,7 +367,7 @@ function AnswerForm({
   return (
     <div
       ref={root}
-      className="mt-1 space-y-4 rounded-md border border-amber-500/60 bg-amber-500/5 p-3"
+      className="@container mt-1 space-y-4 rounded-md border border-amber-500/60 bg-amber-500/5 p-3"
     >
       <div className="flex">
         <Badge
@@ -399,18 +399,28 @@ function AnswerForm({
         The gated button must stay pressable to point at the first unanswered
         question (T-517), so it carries aria-disabled rather than the native
         attribute — a disabled control swallows the click before any handler
-        could run. The force button beside it declines those questions.
+        could run. The force button next to it declines those questions.
+
+        Below @sm the pair cannot share a row (T-521): both are nowrap and
+        shrink-0, so the row overflowed and pushed the force button off the
+        card's left edge. Narrow cards stack them full-width, primary on top,
+        in the order the confirm dialog's own footer uses.
       */}
-      <div className="flex justify-end">
+      <div className="flex flex-col-reverse gap-1.5 @sm:flex-row @sm:justify-end @sm:gap-2">
         {!complete && !submit.isPending && (
-          <Button variant="ghost" size="sm" onClick={() => setForcing(true)}>
-            Submit without answering…
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 w-full @sm:h-7 @sm:w-auto"
+            onClick={() => setForcing(true)}
+          >
+            Skip unanswered…
           </Button>
         )}
         <Button
           size="sm"
           aria-disabled={blocked}
-          className="aria-disabled:opacity-50"
+          className="h-9 w-full aria-disabled:opacity-50 @sm:h-7 @sm:w-auto"
           onClick={() => {
             if (blocked) {
               firstOpen();
@@ -423,7 +433,7 @@ function AnswerForm({
             ? "Submitting…"
             : complete
               ? "Submit answers"
-              : "Answer every question to submit"}
+              : "Answer all to submit"}
         </Button>
       </div>
       <ConfirmDialog
