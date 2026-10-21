@@ -1168,6 +1168,20 @@ diffs-container {
     max-width: 100%;
   }
 
+  /* A diagram shrinks to the column, but never below 75% of its natural
+     width — past that its labels stop being readable, so it scrolls instead
+     (T-523). Never enlarged. `!important` beats the width attribute and the
+     inline max-width mermaid writes onto its own <svg>. */
+  .mermaid-diagram > svg {
+    display: block;
+    width: min(
+      var(--diagram-width),
+      max(100%, calc(var(--diagram-width) * 0.75))
+    ) !important;
+    max-width: none !important;
+    height: auto;
+  }
+
   /* Timeline permalink target (T-38): a short flash that fades out. */
   .anchor-flash {
     animation: anchor-flash 2s ease-out both;
