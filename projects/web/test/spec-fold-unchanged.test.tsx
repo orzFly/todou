@@ -1,6 +1,7 @@
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import type { SpecCommentItem } from "@todou/shared";
 import type { Element } from "hast";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
   AnnotatedMarkdown,
@@ -62,6 +63,7 @@ const rewritten = (n: number) => `段落 ${n} 的改写说明。`;
 
 const V1 = doc();
 const V2 = doc({ 5: rewritten(5), 15: rewritten(15), 25: rewritten(25) });
+const V2_CHANGES = changedLineRanges(V1, V2);
 
 const placeholders = (container: HTMLElement) =>
   [...container.querySelectorAll("button.spec-fold")].map(
@@ -105,6 +107,67 @@ function comment(
     current_line_start: null,
     current_line_end: null,
   };
+}
+
+function draftOn(line: number): DisplayedAnnotation {
+  return {
+    key: "d1",
+    kind: "draft",
+    draft: {
+      id: "d1",
+      anchor: {
+        path: "design.md",
+        version: 2,
+        line_start: line,
+        line_end: line,
+        col_start: null,
+        col_end: null,
+      },
+      quote: "",
+      body: "staged",
+    },
+    start: line,
+    end: line,
+  };
+}
+
+/**
+ * V1 → V2 folded, with the annotations held in state the way spec-view holds
+ * its drafts: `rerender` would step outside the router renderWithProviders
+ * mounts, and with it the query client.
+ */
+async function renderStaging() {
+  let setAnnotations: (next: DisplayedAnnotation[]) => void = () => {};
+  function Staging() {
+    const [annotations, set] = useState<DisplayedAnnotation[]>([]);
+    setAnnotations = set;
+    return (
+      <AnnotatedMarkdown
+        slug="p"
+        issueNumber={1}
+        body={V2}
+        baselineBody={V1}
+        annotations={annotations}
+        changedRanges={V2_CHANGES}
+        foldUnchanged
+        onStage={() => {}}
+        onEditDraft={() => {}}
+        onRemoveDraft={() => {}}
+        onResolve={() => {}}
+      />
+    );
+  }
+  const view = renderWithProviders(<Staging />);
+  const container = await waitFor(() => {
+    const el = view.getByTestId("annotated-markdown");
+    if (el.querySelector("[data-loc]") === null) {
+      throw new Error("not rendered yet");
+    }
+    return el;
+  });
+  const stage = (next: DisplayedAnnotation[]) =>
+    act(() => setAnnotations(next));
+  return { container, stage };
 }
 
 describe("folding the unchanged blocks of a comparison (T-222)", () => {
@@ -318,6 +381,56 @@ describe("folding the unchanged blocks of a comparison (T-222)", () => {
       expect(container.querySelectorAll("button.spec-fold")).toHaveLength(4),
     );
     expect(view.getAllByLabelText(/1 comment/)).toHaveLength(1);
+  });
+
+  it("keeps an opened fold open when a draft is staged inside it (T-524)", async () => {
+    const { container, stage } = await renderStaging();
+    const second = container.querySelectorAll("button.spec-fold")[1];
+    if (second === undefined) throw new Error("no placeholder");
+    fireEvent.click(second);
+    await waitFor(() =>
+      expect(placeholders(container)).toEqual([
+        "2 unchanged blocks",
+        "7 unchanged blocks",
+        "3 unchanged blocks",
+      ]),
+    );
+
+    // Paragraph 10 sits in the middle of the run just opened: the draft keeps
+    // it, which splits the run into two shorter ones.
+    await stage([draftOn(19)]);
+    await waitFor(() =>
+      expect(container.querySelector(".spec-annotated")).not.toBeNull(),
+    );
+    expect(placeholders(container)).toEqual([
+      "2 unchanged blocks",
+      "7 unchanged blocks",
+      "3 unchanged blocks",
+    ]);
+
+    // Discarding it joins the two runs again, and what was opened stays so.
+    await stage([]);
+    await waitFor(() =>
+      expect(container.querySelector(".spec-annotated")).toBeNull(),
+    );
+    expect(placeholders(container)).toEqual([
+      "2 unchanged blocks",
+      "7 unchanged blocks",
+      "3 unchanged blocks",
+    ]);
+  });
+
+  it("still folds both halves of a run nobody opened when a draft splits it", async () => {
+    const { container } = await renderFold(V1, V2, {
+      annotations: [draftOn(19)],
+    });
+    expect(placeholders(container)).toEqual([
+      "2 unchanged blocks",
+      "3 unchanged blocks",
+      "3 unchanged blocks",
+      "7 unchanged blocks",
+      "3 unchanged blocks",
+    ]);
   });
 
   it("renders every block when folding is off", async () => {

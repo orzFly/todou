@@ -308,6 +308,37 @@ describe("rehypeFoldUnchanged", () => {
     expect(shape(tree)).toEqual(["p", "p", "p", "p", "p", "p", "p", "p"]);
   });
 
+  it("keeps the halves of an opened fold open when an annotation splits it (T-524)", () => {
+    const tree: Root = {
+      type: "root",
+      children: Array.from({ length: 12 }, (_, i) => paragraph(i + 1)),
+    };
+    // Unannotated, paragraph 6's change folds 3–7 and 15–21; the reader
+    // opened the second, and a draft then lands on paragraph 9 inside it.
+    rehypeFoldUnchanged({
+      changedRanges: [{ start: 11, end: 11 }],
+      annotationRanges: [{ start: 17, end: 17 }],
+      expanded: new Set(["15-21"]),
+      keepHeading: true,
+    })(tree);
+    expect(placeholders(tree)).toEqual([["3-7", "3 unchanged blocks"]]);
+  });
+
+  it("keeps a rejoined fold open when the reader had opened half of it", () => {
+    const tree: Root = {
+      type: "root",
+      children: Array.from({ length: 12 }, (_, i) => paragraph(i + 1)),
+    };
+    // 19–21 was one half while a draft sat on paragraph 9; it is gone now.
+    rehypeFoldUnchanged({
+      changedRanges: [{ start: 11, end: 11 }],
+      annotationRanges: [],
+      expanded: new Set(["19-21"]),
+      keepHeading: true,
+    })(tree);
+    expect(placeholders(tree)).toEqual([["3-7", "3 unchanged blocks"]]);
+  });
+
   it("keeps a block an annotation is anchored in", () => {
     const tree: Root = {
       type: "root",

@@ -68,7 +68,8 @@ export function planFolds(blocks: FoldBlock[], options: PlanOptions): Fold[] {
 /**
  * Stable identity for a fold across re-renders. Source lines rather than block
  * indices, so the placeholders the reader opened stay open while an annotation
- * elsewhere adds or removes a block.
+ * elsewhere adds or removes a block. One inside an opened fold changes the key
+ * itself; `isExpanded` answers for that.
  */
 export function foldKey(fold: Fold, blocks: FoldBlock[]): string {
   let start: number | undefined;
@@ -82,6 +83,36 @@ export function foldKey(fold: Fold, blocks: FoldBlock[]): string {
   return start === undefined || end === undefined
     ? `i${fold.from}-${fold.to}`
     : `${start}-${end}`;
+}
+
+/** The source lines a line-based fold key spans; null for an index key. */
+function keyLines(key: string): LineRange | null {
+  const match = /^(\d+)-(\d+)$/.exec(key);
+  return match === null
+    ? null
+    : { start: Number(match[1]), end: Number(match[2]) };
+}
+
+/**
+ * Whether the reader opened any of a fold's blocks. A draft staged inside an
+ * opened fold keeps its block, which splits the run under two keys nobody
+ * clicked, and discarding the draft joins the halves back under a third
+ * (T-524). Annotations only ever split or join runs, so asking per block keeps
+ * everything the reader opened in view through both.
+ */
+function isExpanded(
+  fold: Fold,
+  blocks: FoldBlock[],
+  expanded: ReadonlySet<string>,
+): boolean {
+  if (expanded.has(foldKey(fold, blocks))) return true;
+  const opened = [...expanded].flatMap((key) => keyLines(key) ?? []);
+  for (let i = fold.from; i <= fold.to; i++) {
+    const lines = blocks[i]?.lines;
+    if (lines === null || lines === undefined) continue;
+    if (opened.some((range) => rangesIntersect(range, lines))) return true;
+  }
+  return false;
 }
 
 export type FoldOptions = {
@@ -208,7 +239,7 @@ export function rehypeFoldUnchanged(options: FoldOptions) {
     const folds = planFolds(blocks, {
       minRun: 2,
       keepHeading: options.keepHeading,
-    }).filter((fold) => !options.expanded.has(foldKey(fold, blocks)));
+    }).filter((fold) => !isExpanded(fold, blocks, options.expanded));
 
     // Back to front: an earlier splice would move every later block index.
     for (const fold of folds.reverse()) {
