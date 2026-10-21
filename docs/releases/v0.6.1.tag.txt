@@ -1,0 +1,10 @@
+todou v0.6.1
+
+A Codex conversation can follow the tracker: --follow=codex delivers
+comments, spec reviews and answers into it, from the App or a plain
+codex TUI alike. Mermaid fences draw as diagrams, and a question card
+points at the first unanswered question and can skip the rest. Spec
+review drafts no longer vanish across tabs or after an upgrade.
+
+No migration, no configuration change, API untouched — either CLI pairs
+with either server.
