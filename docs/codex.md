@@ -1,46 +1,58 @@
 # Codex
 
 todou identifies Codex writes with `CODEX_THREAD_ID` and uses the `codex`
-credential profile, falling back to `harness`. The CLI can also deliver tracker
-activity to an existing Codex App Server conversation with `--follow=codex`.
-No plugin installation or replacement Codex launcher is required.
-
-## Connect the App to the Codex host
-
-Use the App's supported [SSH remote connection](https://learn.chatgpt.com/docs/remote-connections)
-and open a conversation on that host. Install todou and configure its login and
-project on the same host and under the same OS account as Codex:
+credential profile, falling back to `harness`. `--follow=codex` delivers
+tracker activity into the Codex conversation the watch was started from. No
+plugin installation or replacement Codex launcher is required.
 
 ```sh
 todou login https://todou.example --profile codex
 todou agent can-i-follow
 ```
 
-Run the second command from the Codex conversation so it inherits the thread id.
-The advice checks local channel availability; the watch verifies the connection
-and thread before delivering anything. Start at least one conversation turn
-before attaching a watch, so Codex has created its saved conversation.
+Run the second command from the Codex conversation so it inherits the thread
+id. It names the channel this conversation has, or says there is none.
 
-`--follow=codex` connects to the App's **existing** service. A standalone `codex`
-terminal session does not become an App conversation through this option, and
-starting a separate `codex app-server` would target a different service.
+## Two channels
+
+`--follow=codex` reaches the thread one of two ways, and picks the first that
+works:
+
+1. **The App Server's control socket**, at
+   `$CODEX_HOME/app-server-control/app-server-control.sock` (default
+   `~/.codex`; an absolute `TODOU_CODEX_SOCKET` selects another). It exists
+   when a Codex app-server daemon runs on this host: the App connected over
+   [SSH](https://learn.chatgpt.com/docs/remote-connections), or `codex app-server
+   daemon start`, after which a `codex` TUI started on the same host attaches
+   to that daemon instead of running its own server. Each batch arrives as
+   `todou_watch` tool output. A batch that arrives while a turn is running is
+   added to that turn; on an idle thread it starts one.
+2. **`codex queue`**, run from `TODOU_CODEX_BIN` or the first `codex` on
+   PATH. This reaches a plain `codex` TUI too, which has no socket anyone else
+   can dial: the command files the message in Codex's state database, and every
+   Codex server checks that database every ten seconds. A batch that arrives
+   while a turn is running waits for that turn to end, then starts the next one.
+
+The socket is tried first because it can reach a running turn. When it refuses
+the thread — a daemon that started after the TUI holding the conversation does
+not hold it — the watch says so on stderr and uses `codex queue`.
 
 ## Follow tracker activity
-
-Run one of these on the remote host in a supervised terminal/process that stays
-alive while the agent works:
 
 ```sh
 todou issue watch T-16 --follow=codex
 todou watch -p todou --follow=codex
 ```
 
-The process must inherit `CODEX_THREAD_ID` from the intended conversation. If
-starting from a separate terminal or supervisor, explicitly supply that
-conversation's id; todou never guesses from the newest transcript. Use the same
-`CODEX_HOME` as the App's remote service (default `~/.codex`). The default socket
-is `$CODEX_HOME/app-server-control/app-server-control.sock`; an explicit absolute
-`TODOU_CODEX_SOCKET` can select another local control socket.
+Start the watch from the conversation, with `exec_command`, and leave it
+running when the call returns: Codex keeps a command it started running after
+the turn ends, and stops it only on `/stop`, when the session ends, or once
+more than 64 are running. From a separate terminal or supervisor, set
+`CODEX_THREAD_ID` to the conversation's id and `CODEX_HOME` to the one Codex
+uses; todou never guesses from the newest transcript.
+
+Start at least one turn before attaching a watch, so Codex has saved the
+conversation that `codex queue` looks up.
 
 The watch batches activity for 60 seconds by default; `--debounce 0` delivers
 immediately. It carries comments, spec reviews, and question activity through
@@ -48,48 +60,50 @@ the existing project/issue watch filters, including exclusion of the current
 session's own writes. Keep separate watches from overlapping if duplicate
 notifications would be distracting.
 
-Each batch arrives as `todou_watch` tool output in the same thread. Codex queues
-it into an active turn or starts a turn when idle. The connected App receives
-the thread's usual tool output, assistant messages, and progress events. The
-watch never answers approval or input requests and never changes the thread's
-model, sandbox, or approval policy; respond in the App when prompted. The App
-controls the visual presentation of those events.
+A background command's output alone does not wake Codex, and neither does its
+exit. That is why `--follow=stdout` is no substitute here: where neither
+channel exists, use `--poll`, read its output, and resume from the printed
+cursor.
 
-A background command's stdout alone does not wake Codex. If you cannot keep a
-supervised watch running, use `--poll`, read its output, and resume from the
-printed cursor. `--follow=stdout` remains available for consumers that read a
-stream themselves. `todou agent opt-out-uds` applies to the separate UDS messaging
-transport; Codex delivery always requires explicit `--follow=codex`.
+## Sandboxes
+
+Under Codex's `workspace-write` sandbox, network access is off unless the
+configuration turns it on, and `CODEX_HOME` is outside the writable roots. The
+first stops every todou command, not only watches; the second stops `codex
+queue` from filing a message. A watch that cannot deliver stops and says so.
 
 ## Disconnects and recovery
 
-The watch binds to one thread and stops on connection loss or that thread's
-close/archive notification. It does not reconnect to another conversation.
-An unavailable socket, unloaded thread, or incompatible server fails the open
-instead of launching another Codex process.
+The watch binds to one thread and does not move to another conversation.
+Over the socket it stops on connection loss or on that thread's close/archive
+notification; through `codex queue` it stops on the first message the command
+does not confirm.
 
-A successful RPC response confirms that Codex admitted the batch, not that the
-agent finished acting on it. On missing confirmation, the watch stops and prints
-unconfirmed events with their `since`/`cursor` range to stdout. Keep that output
-in the supervisor's log. Delivery may already have occurred before a disconnect
-or timeout: inspect the chat before replaying, rather than automatically
+Confirmation means Codex admitted the batch — a turn started or steered, or a
+message stored — not that the agent has acted on it. On missing confirmation,
+the watch stops and prints the unconfirmed events with their `since`/`cursor`
+range to stdout. Delivery may already have occurred before a disconnect or
+timeout: inspect the chat before replaying, rather than automatically
 restarting from the older `since` value. After processing the printed events,
 resume with `--since <cursor>`. Normal shutdown prints the latest cursor too.
 SIGINT, SIGTERM, and SIGHUP flush pending output; SIGKILL or machine failure
 cannot. A new watch without `--since` starts at the current position, so retain
 the previous cursor when continuity matters.
 
+The watch never answers approval or input requests and never changes the
+thread's model, sandbox, or approval policy; respond in Codex when prompted.
+
 ## Compatibility and verification
 
-The local WebSocket control socket and
-[App Server protocol](https://learn.chatgpt.com/docs/app-server) were verified
-with Codex CLI/App Server **0.154.0**. They are experimental interfaces; older
-or future versions may need adjustments. The adapter requires `thread/read`,
-`thread/resume`, and `turn/start` with `toolOutput`.
+Both channels were verified against Codex CLI **0.154.0**. The control socket
+speaks the [App Server protocol](https://learn.chatgpt.com/docs/app-server),
+whose `turn/start` with `toolOutput` this needs; `codex queue` is a CLI
+command of the same release. Both are young interfaces that later versions may
+change.
 
-Tests cover same-thread delivery, active/idle states, rejection, disconnect,
-missing acknowledgements, lifecycle notifications, and leaving approvals to
-the App. A separate smoke check with the real server and a local mock model
-verified idle turns, active-turn delivery, and notifications received by a
-second subscribed client. This verifies protocol delivery; it does not replace
-checking rendering in the particular App version used over SSH.
+`node scripts/codex-follow-smoke.mjs` runs a real `codex app-server` against a
+scripted stand-in for the model and a local todou server, and checks what the
+model is sent: a comment reaching an idle thread through `codex queue`, a
+comment posted mid-turn landing in that turn through the socket, and each
+batch's `since:` continuing the previous `cursor:`. `--mutate queue` and
+`--mutate steer` break one input each, and the run must then fail.

@@ -17,6 +17,7 @@ export type FollowSituation =
   | "pi-tool"
   | "pi-no-tool"
   | "codex"
+  | "codex-queue"
   | "codex-no-peer"
   | "claude-code-no-peer"
   | "omp-no-peer"
@@ -130,6 +131,18 @@ const PI_TOOL = [
   TOOL_CARRIES,
 ];
 
+/**
+ * How a Codex agent keeps `--follow=codex` running, said once for both of its
+ * channels. `exec_command` and not a supervisor: Codex keeps a command it
+ * started running after the turn ends, and kills it only on `/stop`, at
+ * shutdown, or past 64 of them — while neither its output nor its exit wakes
+ * the model, which is why the stop has to be spelled out.
+ */
+const CODEX_START = [
+  "Start `todou issue watch <ref> --follow=codex` or `todou watch --follow=codex` with `exec_command`, and leave it running when the call returns: a command started that way outlives the turn. If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.",
+  "After its opening lines it prints nothing while it delivers. If it stops — a delivery it could not confirm, or `/stop` — nothing wakes you: its output, read with `write_stdin`, holds what it did not deliver and the `cursor:` to restart from.",
+];
+
 const PI_POLL =
   "Use `todou issue watch` or `todou watch` with `--poll` to check once, then resume from the printed cursor. pi's bash tool cannot monitor a background stream while you work.";
 /** The same question, with omp's own way of keeping the command running. */
@@ -194,17 +207,23 @@ export function followAdvice(input: {
   });
 
   if (harness === "codex") {
-    if (input.codex) {
+    if (input.codex?.socket !== undefined) {
       return advice("codex", [
-        "running under Codex, with an explicit thread id and a local App Server control socket. `--follow=codex` verifies that this same thread is loaded before delivering anything.",
-        "Use `todou issue watch <ref> --follow=codex` or `todou watch -p <project> --follow=codex` in a supervised process on the Codex host. It delivers tool output to the existing App conversation, queues into an active turn, and starts a turn when idle. It never launches another Codex instance or answers approvals; respond in the connected App.",
-        "A running command's stdout alone does not wake Codex. Keep the watch alive with a supervisor; if that is unavailable, use `--poll` and resume from the printed cursor. On disconnection, inspect unconfirmed delivery before replaying it.",
+        "running under Codex, and this thread's App Server control socket is on this host, so `--follow=codex` delivers each batch into this conversation: into the running turn, or as a new turn when it is idle.",
+        ...CODEX_START,
+        CLOSING,
+      ]);
+    }
+    if (input.codex?.bin !== undefined) {
+      return advice("codex-queue", [
+        "running under Codex without an App Server control socket, so `--follow=codex` hands each batch to `codex queue`: it starts a new turn when this conversation is idle, and otherwise waits for the running turn to end.",
+        ...CODEX_START,
         CLOSING,
       ]);
     }
     return advice("codex-no-peer", [
-      "running under Codex, but no local App Server control socket is available for this thread. `--follow=codex` cannot attach to a standalone CLI conversation.",
-      "Use `--poll` and resume from the printed cursor, or `--follow=stdout` only with a supervisor that reads its output. A background stdout stream does not itself wake the App.",
+      "running under Codex, but neither an App Server control socket nor a `codex` executable on PATH is available, so nothing can deliver into this conversation.",
+      "A background command's output does not wake Codex, so `--follow=stdout` cannot help here: use poll mode. Either watch, run without `--follow`, blocks, returns one batch and exits; re-open it from the cursor it printed. `--poll` checks once without blocking.",
       CLOSING,
     ]);
   }

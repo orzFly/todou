@@ -1,6 +1,6 @@
 import { Option } from "clipanion";
 import type { Clock } from "./clock.ts";
-import { type CodexTarget, openCodexPush } from "./codex-push.ts";
+import { type CodexTarget, openCodex, type QueueRunner } from "./codex-push.ts";
 import { CliError } from "./errors.ts";
 import type { makePainter } from "./format.ts";
 import { detectPermissionMode } from "./harness/claude-code.ts";
@@ -83,7 +83,7 @@ export function followOption(): string | boolean | undefined {
   return Option.String("--follow", {
     tolerateBoolean: true,
     description:
-      "Stay resident: =stdout (default), =uds (agent messaging), or =codex (existing App Server thread); conflicts with --poll",
+      "Stay resident: =stdout (default), =uds (agent messaging), or =codex (this Codex thread); conflicts with --poll",
   });
 }
 
@@ -147,8 +147,8 @@ export function followTransport(opts: {
   }
   if (transport === "codex" && !opts.codex) {
     throw new CliError(
-      "no Codex thread and local control socket available",
-      "--follow=codex requires CODEX_THREAD_ID and the existing App Server's Unix socket on the same host; use --follow=stdout or --poll otherwise",
+      "no Codex thread with a way to deliver into it",
+      "--follow=codex requires CODEX_THREAD_ID plus either the App Server's control socket on this host or a `codex` executable on PATH (or TODOU_CODEX_BIN) for `codex queue`; use --poll otherwise",
     );
   }
   return transport;
@@ -298,6 +298,8 @@ export async function openFollow<T>(opts: {
   note: (line: string) => void;
   /** Test seam; production leaves it unset and a real socket is dialled. */
   open?: typeof openPeerPush;
+  /** Test seam; production runs the real `codex queue`. */
+  runCodexQueue?: QueueRunner;
 }): Promise<Follow<T>> {
   const stop = opts.transport === "codex" ? new AbortController() : undefined;
   const signal = stop
@@ -323,20 +325,22 @@ export async function openFollow<T>(opts: {
   let opened: PeerPush<T> | null = null;
   if (opts.transport === "codex") {
     if (!opts.messaging.codex) throw new CliError("missing Codex target");
-    // Fail before collecting anything when the App cannot be reached. A
-    // connection error must never start a hidden fallback Codex process.
-    opened = await openCodexPush<T>({
+    // Fail before collecting anything when neither channel opens: a watch
+    // that cannot deliver must not look like one that is delivering.
+    const codex = await openCodex<T>({
       target: opts.messaging.codex,
       signal,
       note: opts.note,
+      run: opts.runCodexQueue,
       render: (items, since, cursor) =>
         [
           `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,
           opts.render(items, since, cursor),
         ].join("\n"),
     });
+    opened = codex.push;
     opts.note(
-      `--follow=codex following ${opts.following} in thread ${opts.messaging.codex.threadId}`,
+      `--follow=codex following ${opts.following} in thread ${opts.messaging.codex.threadId} via ${codex.via === "socket" ? "the App Server socket" : "codex queue"}`,
     );
   }
   if (opts.transport === "uds") {

@@ -981,13 +981,13 @@ export class IssueWatchCommand extends ProjectCommand {
       including a fatal error — flushes the unconfirmed entries and the
       position first, so a restart resumes from that \`--since\`.
 
-      \`--follow=codex\` instead delivers tool output into the existing App
-      Server thread identified by \`CODEX_THREAD_ID\`, using its local Unix
-      control socket on the same host. It queues into an active turn or starts
-      a turn when idle; approvals remain in the App. Keep the watch running
-      under a supervisor. Failed or uncertain delivery stops and prints the
+      \`--follow=codex\` instead delivers into the Codex thread named by
+      \`CODEX_THREAD_ID\`: over the App Server's control socket when a daemon
+      on this host holds the thread, which steers a running turn or starts
+      one, and otherwise through \`codex queue\`, which starts a turn once
+      the thread is idle. Failed or uncertain delivery stops and prints the
       unconfirmed events and cursor; inspect the chat before replaying. It
-      never retries an uncertain push or launches another Codex instance.
+      never retries an uncertain push.
 
       A card that moves mid-watch is not followed, with or without
       \`--follow\`: a single-issue cursor is a row position in the project
