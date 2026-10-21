@@ -226,6 +226,14 @@ export class WatchCommand extends ProjectCommand {
       fails to write is re-sent with the next batch, and every exit path —
       including a fatal error — flushes the unconfirmed entries and the
       position first, so a restart resumes from that \`--since\`.
+
+      \`--follow=codex\` instead delivers tool output into the existing App
+      Server thread identified by \`CODEX_THREAD_ID\`, using its local Unix
+      control socket on the same host. It queues into an active turn or starts
+      a turn when idle; approvals remain in the App. Keep the watch running
+      under a supervisor. Failed or uncertain delivery stops and prints the
+      unconfirmed events and cursor; inspect the chat before replaying. It
+      never retries an uncertain push or launches another Codex instance.
     `,
     examples: [
       [
@@ -326,7 +334,7 @@ export class WatchCommand extends ProjectCommand {
     // Read once and carried: the refusal below and the dial further down have
     // to be talking about the same endpoint, and resolving it twice makes a
     // disagreement between them representable.
-    const messaging =
+    const messaging: HarnessMessaging =
       this.watchLifetime?.owner ??
       harnessMessaging(this.context.env, this.context.processTree);
     const transport = followTransport({
@@ -334,6 +342,7 @@ export class WatchCommand extends ProjectCommand {
       poll: this.poll,
       printCursor: this.printCursor,
       socket: messaging.socket,
+      codex: messaging.codex,
     });
     checkPrintCursor(this.printCursor, { poll: this.poll, json: this.json });
     const slugs = this.resolveSlugs();
@@ -549,7 +558,7 @@ export class WatchCommand extends ProjectCommand {
           wait: follow.wait,
           afterItems: clearCardsAfterBatch(cards, follow.afterItems),
           shouldStop: follow.shouldStop,
-          signal: this.watchLifetime?.signal,
+          signal: follow.signal,
           onStop: follow.stopped,
           onQuiet: (cursor, totalMs) => {
             follow.seen(cursor);
@@ -709,7 +718,7 @@ export class WatchCommand extends ProjectCommand {
         wait: follow.wait,
         afterItems: clearCardsAfterBatch(cards, follow.afterItems),
         shouldStop: follow.shouldStop,
-        signal: this.watchLifetime?.signal,
+        signal: follow.signal,
         onStop: follow.stopped,
         onQuiet: (cursor, totalMs) => {
           follow.seen(cursor);

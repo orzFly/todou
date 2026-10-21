@@ -28,7 +28,10 @@ import {
   relativeTime,
   table,
 } from "../format.ts";
-import { harnessMessaging } from "../harness/messaging.ts";
+import {
+  type HarnessMessaging,
+  harnessMessaging,
+} from "../harness/messaging.ts";
 import {
   parseChoice,
   parsePositiveInt,
@@ -978,6 +981,14 @@ export class IssueWatchCommand extends ProjectCommand {
       including a fatal error — flushes the unconfirmed entries and the
       position first, so a restart resumes from that \`--since\`.
 
+      \`--follow=codex\` instead delivers tool output into the existing App
+      Server thread identified by \`CODEX_THREAD_ID\`, using its local Unix
+      control socket on the same host. It queues into an active turn or starts
+      a turn when idle; approvals remain in the App. Keep the watch running
+      under a supervisor. Failed or uncertain delivery stops and prints the
+      unconfirmed events and cursor; inspect the chat before replaying. It
+      never retries an uncertain push or launches another Codex instance.
+
       A card that moves mid-watch is not followed, with or without
       \`--follow\`: a single-issue cursor is a row position in the project
       the card has left, so the watch hands back the new ref and a cursor to
@@ -1071,7 +1082,7 @@ export class IssueWatchCommand extends ProjectCommand {
     //
     // Read once and carried down to `openFollow`: the refusal here and the
     // dial there have to be talking about the same endpoint.
-    const messaging =
+    const messaging: HarnessMessaging =
       this.watchLifetime?.owner ??
       harnessMessaging(this.context.env, this.context.processTree);
     const transport = followTransport({
@@ -1079,6 +1090,7 @@ export class IssueWatchCommand extends ProjectCommand {
       poll: this.poll,
       printCursor: this.printCursor,
       socket: messaging.socket,
+      codex: messaging.codex,
     });
     checkPrintCursor(this.printCursor, { poll: this.poll, json: this.json });
     const { project, number } = await this.resolveIssueRef(client, this.number);
@@ -1264,7 +1276,7 @@ export class IssueWatchCommand extends ProjectCommand {
           wait: follow.wait,
           afterItems: clearCardsAfterBatch(cards, follow.afterItems),
           shouldStop: follow.shouldStop,
-          signal: this.watchLifetime?.signal,
+          signal: follow.signal,
           onStop: follow.stopped,
           onQuiet: (cursor, totalMs) => {
             follow.seen(cursor);

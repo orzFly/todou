@@ -35,8 +35,8 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
   static usage = Command.Usage({
     description: "Report which watch follow mode this environment supports",
     details:
-      "Detects the agent harness and whether a Claude Code session exported " +
-      "a push socket, then says which of `--follow=uds`, `--follow=stdout` " +
+      "Detects the agent harness and its local push channel, then says " +
+      "which of `--follow=codex`, `--follow=uds`, `--follow=stdout` " +
       "and poll mode to use on `todou watch` and `todou issue watch`. It " +
       "talks to no server and resolves no project, so it answers in every " +
       "state a session can start in.\n\n" +
@@ -60,6 +60,7 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
       const advice = followAdvice({
         harness: detectHarnessId(env, tree),
         socket: messaging.socket,
+        codex: messaging.codex,
         tools: messaging.tools ?? [],
         optedOut: optedOut(loadCliConfig(env)),
       });

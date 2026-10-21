@@ -18,10 +18,12 @@
     "clipanion": "4.0.0-rc.4",
     "smol-toml": "^1.7.1",
     "string-width": "^8.2.2",
+    "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

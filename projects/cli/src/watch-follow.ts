@@ -1,5 +1,6 @@
 import { Option } from "clipanion";
 import type { Clock } from "./clock.ts";
+import { type CodexTarget, openCodexPush } from "./codex-push.ts";
 import { CliError } from "./errors.ts";
 import type { makePainter } from "./format.ts";
 import { detectPermissionMode } from "./harness/claude-code.ts";
@@ -8,7 +9,7 @@ import { openPeerPush, type PeerPush } from "./peer-push.ts";
 import { describeError } from "./watch-loop.ts";
 
 /** Which channel a standing watch delivers each batch over. */
-export type Transport = "stdout" | "uds";
+export type Transport = "stdout" | "uds" | "codex";
 
 /**
  * The batching window a standing watch defaults to. The receiving side
@@ -82,7 +83,7 @@ export function followOption(): string | boolean | undefined {
   return Option.String("--follow", {
     tolerateBoolean: true,
     description:
-      "Stay resident and deliver every batch: =stdout (the default) or =uds to push into the agent session running this (conflicts with --poll)",
+      "Stay resident: =stdout (default), =uds (agent messaging), or =codex (existing App Server thread); conflicts with --poll",
   });
 }
 
@@ -107,6 +108,7 @@ export function followTransport(opts: {
   /** Omitted by a command that has no `--print-cursor` to conflict with. */
   printCursor?: boolean;
   socket: string | undefined;
+  codex?: CodexTarget;
 }): Transport | null {
   const { raw } = opts;
   if (raw === undefined || raw === false) return null;
@@ -115,10 +117,12 @@ export function followTransport(opts: {
     transport = "stdout";
   } else if (raw === "uds" || raw === "claude-code-messaging") {
     transport = "uds";
+  } else if (raw === "codex") {
+    transport = "codex";
   } else {
     throw new CliError(
       `unknown --follow transport "${raw}"`,
-      "valid transports: stdout (the default), uds (alias claude-code-messaging)",
+      "valid transports: stdout (the default), uds (alias claude-code-messaging), codex",
     );
   }
   if (opts.poll) {
@@ -139,6 +143,12 @@ export function followTransport(opts: {
       "--follow=uds pushes into the session that started this command; " +
         "`todou agent can-i-follow` says whether this one can, and what to " +
         "do instead — `--follow=stdout` works anywhere",
+    );
+  }
+  if (transport === "codex" && !opts.codex) {
+    throw new CliError(
+      "no Codex thread and local control socket available",
+      "--follow=codex requires CODEX_THREAD_ID and the existing App Server's Unix socket on the same host; use --follow=stdout or --poll otherwise",
     );
   }
   return transport;
@@ -165,6 +175,7 @@ export function cursorLines(
 
 /** The standing-mode plumbing a watch branch hands to `runWatchLoop`. */
 export type Follow<T> = {
+  signal?: AbortSignal;
   afterItems?: (
     items: T[],
     cursor: string | undefined,
@@ -288,11 +299,18 @@ export async function openFollow<T>(opts: {
   /** Test seam; production leaves it unset and a real socket is dialled. */
   open?: typeof openPeerPush;
 }): Promise<Follow<T>> {
+  const stop = opts.transport === "codex" ? new AbortController() : undefined;
+  const signal = stop
+    ? opts.signal
+      ? AbortSignal.any([stop.signal, opts.signal])
+      : stop.signal
+    : opts.signal;
   /** Newest position the loop has reported, for the exit flush. */
   let seenCursor = opts.baseline;
   /** Where the next batch's range starts: the last delivered cursor. */
   let rangeStart = opts.baseline;
   const oneShot: Follow<T> = {
+    signal,
     wait: opts.wait,
     since: () => undefined,
     silent: false,
@@ -303,6 +321,24 @@ export async function openFollow<T>(opts: {
   if (opts.transport === null) return oneShot;
 
   let opened: PeerPush<T> | null = null;
+  if (opts.transport === "codex") {
+    if (!opts.messaging.codex) throw new CliError("missing Codex target");
+    // Fail before collecting anything when the App cannot be reached. A
+    // connection error must never start a hidden fallback Codex process.
+    opened = await openCodexPush<T>({
+      target: opts.messaging.codex,
+      signal,
+      note: opts.note,
+      render: (items, since, cursor) =>
+        [
+          `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,
+          opts.render(items, since, cursor),
+        ].join("\n"),
+    });
+    opts.note(
+      `--follow=codex following ${opts.following} in thread ${opts.messaging.codex.threadId}`,
+    );
+  }
   if (opts.transport === "uds") {
     const open = opts.open ?? openPeerPush;
     // Extension receivers read the body as-is, so they take no envelope and have
@@ -359,7 +395,9 @@ export async function openFollow<T>(opts: {
   let stoppedItems: T[] = [];
   let stoppedCursor: string | undefined;
   let finished = false;
-  return {
+  let stoppedBy: NodeJS.Signals | undefined;
+  const result: Follow<T> = {
+    signal,
     since: () => rangeStart,
     silent: push !== null,
     seen: (cursor) => {
@@ -398,6 +436,7 @@ export async function openFollow<T>(opts: {
     finish: () => {
       if (finished) return;
       finished = true;
+      for (const signal of signals) process.off(signal, onSignal);
       if (push === null) return;
       const held = push.unconfirmed();
       // The one moment uds mode writes to stdout. Whatever ended the
@@ -414,13 +453,14 @@ export async function openFollow<T>(opts: {
       const why = push.rejected;
       if (why !== null) {
         opts.note(
-          `--follow=uds stopped: push ${why.status} ` +
-            `(${REJECTION_HINT[why.status] ?? "the receiving session did not take it"})` +
+          `--follow=${opts.transport} stopped: push ${why.status} ` +
+            `(${opts.transport === "codex" ? "the existing Codex session did not confirm delivery" : (REJECTION_HINT[why.status] ?? "the receiving session did not take it")})` +
             `${why.reason === undefined ? "" : ` — ${why.reason}`}`,
         );
         // Its own line rather than a third clause on the one above, which
         // already carries our hint and the receipt's verbatim reason.
-        if (SESSION_LEVEL_REFUSALS.has(why.status)) opts.note(ESCALATION);
+        if (opts.transport === "uds" && SESSION_LEVEL_REFUSALS.has(why.status))
+          opts.note(ESCALATION);
       }
       // Unlike the note above this one is not conditional on the watch
       // stopping badly: a watch that ran twelve hours and exited cleanly is
@@ -436,6 +476,23 @@ export async function openFollow<T>(opts: {
         );
       }
       push.close();
+      if (stoppedBy) {
+        const interruptedBy = stoppedBy;
+        process.stdout.write("", () =>
+          process.kill(process.pid, interruptedBy),
+        );
+      }
     },
   };
+  // A supervised Codex watch is often stopped by a signal. Flush its pending
+  // batch and cursor before re-raising. Let the loop hand over a batch still
+  // inside its debounce window before finish flushes and closes the channel.
+  const signals: NodeJS.Signals[] =
+    opts.transport === "codex" ? ["SIGINT", "SIGTERM", "SIGHUP"] : [];
+  const onSignal = (signal: NodeJS.Signals) => {
+    stoppedBy ??= signal;
+    stop?.abort();
+  };
+  for (const signal of signals) process.on(signal, onSignal);
+  return result;
 }

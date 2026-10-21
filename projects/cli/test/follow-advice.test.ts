@@ -37,6 +37,37 @@ const CLOSING =
   "Whichever mode you use, the watch carries spec and question activity too: a review verdict and a question answer each arrive on it as their own line, so you do not need a separate `spec wait` or `question wait` running beside it.";
 
 describe("followAdvice", () => {
+  it("offers Codex only with an explicit local target", () => {
+    const codex = {
+      socket: "/run/codex/control.sock",
+      threadId: "thread-test",
+    };
+    expect(
+      followAdvice({
+        harness: "codex",
+        codex,
+        socket: undefined,
+        optedOut: false,
+      }).situation,
+    ).toBe("codex");
+    // The existing opt-out is specific to --follow=uds.
+    expect(
+      followAdvice({
+        harness: "codex",
+        codex,
+        socket: undefined,
+        optedOut: true,
+      }).situation,
+    ).toBe("codex");
+    const missing = followAdvice({
+      harness: "codex",
+      socket: SOCKET,
+      optedOut: false,
+    });
+    expect(missing.situation).toBe("codex-no-peer");
+    expect(missing.paragraphs.join("\n")).toContain("--poll");
+  });
+
   it("offers uds under Claude Code with a socket", () => {
     expect(
       followAdvice({
@@ -181,12 +212,16 @@ describe("followAdvice", () => {
 
   it("says what it does not know about another harness, by name", () => {
     expect(
-      followAdvice({ harness: "codex", socket: undefined, optedOut: false }),
+      followAdvice({
+        harness: "hermes-agent",
+        socket: undefined,
+        optedOut: false,
+      }),
     ).toEqual({
       situation: "known-harness",
-      harness: "codex",
+      harness: "hermes-agent",
       paragraphs: [
-        "running under Codex, but whether it can monitor a background command's stdout is not something todou knows.",
+        "running under Hermes, but whether it can monitor a background command's stdout is not something todou knows.",
         ...UNKNOWN_HARNESS,
         CLOSING,
       ],

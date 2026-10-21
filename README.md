@@ -193,7 +193,8 @@ any endpoint the CLI doesn't wrap yet. See
 [docs/claude-code.md](docs/claude-code.md) for the Claude Code integration
 and [docs/omp.md](docs/omp.md) for omp, whose session identification and
 activity pushes come from an extension `todou integration install omp`
-writes.
+writes. [docs/codex.md](docs/codex.md) covers Codex, including activity
+delivery into an existing App conversation on an SSH host.
 
 #### Standalone builds
 

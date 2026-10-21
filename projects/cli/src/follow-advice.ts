@@ -1,4 +1,5 @@
 import type { HarnessId } from "@todou/shared";
+import type { CodexTarget } from "./codex-push.ts";
 import { HARNESS_LABELS } from "./harness/index.ts";
 
 /**
@@ -15,6 +16,8 @@ export type FollowSituation =
   | "omp-tool"
   | "pi-tool"
   | "pi-no-tool"
+  | "codex"
+  | "codex-no-peer"
   | "claude-code-no-peer"
   | "omp-no-peer"
   | "known-harness"
@@ -174,6 +177,7 @@ function udsParagraphs(harness: "claude-code" | "omp"): string[] {
 export function followAdvice(input: {
   harness: HarnessId | null;
   socket: string | undefined;
+  codex?: CodexTarget;
   /**
    * The tool names the extension published, if any. An extension that
    * has not been restarted after an update publishes the old list, and the
@@ -188,6 +192,22 @@ export function followAdvice(input: {
     harness,
     paragraphs,
   });
+
+  if (harness === "codex") {
+    if (input.codex) {
+      return advice("codex", [
+        "running under Codex, with an explicit thread id and a local App Server control socket. `--follow=codex` verifies that this same thread is loaded before delivering anything.",
+        "Use `todou issue watch <ref> --follow=codex` or `todou watch -p <project> --follow=codex` in a supervised process on the Codex host. It delivers tool output to the existing App conversation, queues into an active turn, and starts a turn when idle. It never launches another Codex instance or answers approvals; respond in the connected App.",
+        "A running command's stdout alone does not wake Codex. Keep the watch alive with a supervisor; if that is unavailable, use `--poll` and resume from the printed cursor. On disconnection, inspect unconfirmed delivery before replaying it.",
+        CLOSING,
+      ]);
+    }
+    return advice("codex-no-peer", [
+      "running under Codex, but no local App Server control socket is available for this thread. `--follow=codex` cannot attach to a standalone CLI conversation.",
+      "Use `--poll` and resume from the printed cursor, or `--follow=stdout` only with a supervisor that reads its output. A background stdout stream does not itself wake the App.",
+      CLOSING,
+    ]);
+  }
 
   if (harness === "claude-code") {
     if (!socket) {

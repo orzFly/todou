@@ -20,7 +20,8 @@ const NO_TREE: Partial<ProcessTreeIo> = {
 const CC = "/run/cc-socks/4242.sock";
 const OMP = "/run/omp-socks/7331.sock";
 
-const read = (env: Record<string, string>) => harnessMessaging(env, NO_TREE);
+const read = (env: Record<string, string>) =>
+  harnessMessaging({ HOME: "/nonexistent-todou-home", ...env }, NO_TREE);
 
 describe("harnessMessaging", () => {
   it("reads Claude Code's pair under Claude Code, named as its receiver", () => {
@@ -73,7 +74,7 @@ describe("harnessMessaging", () => {
   });
 
   it("gives a channel-less harness no endpoint, inherited or not", () => {
-    // Codex publishes nothing to push into, and the socket it inherited from
+    // A standalone Codex has no App Server socket, and the one inherited from
     // the Claude Code that started it addresses that session, not this agent.
     expect(
       read({ CODEX_THREAD_ID: "t1", CLAUDE_CODE_MESSAGING_SOCKET: CC }),
@@ -298,7 +299,8 @@ describe("harnessMessaging under omp, with nothing in the environment", () => {
 });
 
 describe("harnessMessaging reads the extension's tools (T-357)", () => {
-  const read = (env: Record<string, string>) => harnessMessaging(env, NO_TREE);
+  const read = (env: Record<string, string>) =>
+    harnessMessaging({ HOME: "/nonexistent-todou-home", ...env }, NO_TREE);
 
   it("takes them from the variable the bash tool carries", () => {
     expect(
@@ -485,7 +487,10 @@ describe("native messaging ownership", () => {
     "%s requires positive ancestry even for a live explicit manifest",
     (peer) => {
       const { env, record } = environment(peer);
-      expect(harnessMessaging(env, NO_TREE).token).toBe(record.token);
+      expect(
+        harnessMessaging({ HOME: "/nonexistent-todou-home", ...env }, NO_TREE)
+          .token,
+      ).toBe(record.token);
       expect(nativeWatchOwner(env, NO_TREE)).toBeUndefined();
       const unrelated = procTree([
         { pid: 424240, ppid: 424241, env },

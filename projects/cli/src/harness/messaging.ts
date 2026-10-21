@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { type CodexTarget, codexTarget } from "../codex-push.ts";
 import type { Env } from "../config.ts";
 import { detectHarnessId } from "./index.ts";
 import { ompHostAncestor, ompStateAttempt } from "./omp.ts";
@@ -19,6 +20,7 @@ import {
  * and `followAdvice` offers stdout or polling instead.
  */
 export type HarnessMessaging = {
+  codex?: CodexTarget;
   socket?: string;
   token?: string;
   /** Which side is receiving, deciding whether a push wraps an envelope. */
@@ -139,6 +141,10 @@ export function harnessMessaging(
       return nativeMessaging("omp", env, io);
     case "pi":
       return nativeMessaging("pi", env, io);
+    case "codex": {
+      const target = codexTarget(env);
+      return target ? { codex: target } : {};
+    }
     case "claude-code":
     case null:
       return {
@@ -147,7 +153,7 @@ export function harnessMessaging(
         peer: "claude-code",
       };
     default:
-      // codex and hermes publish nothing to push into, and
+      // Other harnesses publish nothing to push into, and
       // the claude-code socket some of them inherit is not theirs to use.
       return {};
   }
