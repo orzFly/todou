@@ -24,6 +24,7 @@ import type {
   UserIssueItem,
   UserIssuesPage,
 } from "@todou/shared";
+import { MePrefs } from "@todou/shared";
 import {
   createElement,
   type ReactNode,
@@ -33,10 +34,12 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boardColumnQuery } from "../src/api/board.ts";
 import {
+  issueCountsQuery,
   issueGroupQuery,
   issueSearchSchema,
   issuesQuery,
 } from "../src/api/issues.ts";
+import { prefsQuery } from "../src/api/prefs.ts";
 import { api, meQuery, statusesQuery } from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
@@ -797,6 +800,48 @@ describe("a page that lands too late", () => {
     // still walking the chain from somewhere off-page.
     expect(rowIds(view.container)).toEqual([]);
     expect(cursorsOf(server)).toEqual(["c1"]);
+  });
+});
+
+// ————— a row drawn before the page registered —————
+
+describe("a row drawn on the page's first render (T-522)", () => {
+  it("still hands the card the list it was opened from", async () => {
+    const closedSearch = { category: "closed" } as const;
+    const closed = page([item(901, "closed one", done)], null);
+    flatServer({ closed });
+    // A warm cache, as on any return to a list read before: the counts and
+    // the rows are both there for the first render, so the rows are drawn
+    // before the page has registered itself — and are memoised, so nothing
+    // that answers identically draws them again. The row's own reads (the ref
+    // prefix, the placement pref) are warm too: one arriving late would draw
+    // the row a second time and hide the first render's answer.
+    const client = listClient();
+    client.setQueryData(issueCountsQuery("alpha", closedSearch).queryKey, {
+      ...COUNTS,
+      closed: 1,
+    });
+    client.setQueryData(issuesQuery("alpha", closedSearch).queryKey, closed);
+    client.setQueryData(referenceConfigQuery("alpha").queryKey, {
+      format: { prefix: "T", history: [] },
+      autolinks: [],
+    });
+    client.setQueryData(prefsQuery.queryKey, MePrefs.parse({}));
+    const view = mountList({ path: "/projects/alpha?category=closed", client });
+    await settle(150);
+
+    const link = view.container.querySelector<HTMLAnchorElement>(
+      'a[href="/projects/alpha/issues/901"]',
+    );
+    expect(link).not.toBeNull();
+    fireEvent.click(link as HTMLAnchorElement);
+    await waitFor(() => expect(view.getByText("a card")).toBeTruthy());
+
+    expect(entryOf(view.router).origin?.target).toEqual({
+      kind: "list",
+      slug: "alpha",
+      search: closedSearch,
+    });
   });
 });
 

@@ -262,15 +262,21 @@ export function useReturnOrigin(): ReturnView | undefined {
 }
 
 /**
- * The `state` for a link into a detail page, or `undefined` where there is no
- * origin to carry — an absent `state` is what keeps a card opened from
- * nowhere free of one.
+ * The `state` for a link into a detail page, or `undefined` outside the
+ * provider. Where there is no origin to carry it hands over an empty entry,
+ * which is what keeps a card opened from nowhere free of one.
  *
  * A function rather than a value, for two reasons. The router resolves it
  * when it builds the navigation, so the origin is read at the click rather
  * than at the render that drew the link — a list scrolled since then hands
  * over where the reader actually is. And its identity is stable, so drawing a
  * hundred rows does not hand a hundred links a hundred new props.
+ *
+ * Whether there is an origin at all is decided at the click too, never at
+ * render (T-522). A collection page registers in an effect, after its first
+ * render — and a list arriving with a warm cache draws its rows in that first
+ * render, memoised, so a row that answered "no origin" then kept answering it
+ * until something unrelated happened to draw it again.
  *
  * It must stay free of side effects: the router also builds a location to
  * resolve every link's `href`, so this runs on renders, on preloads and on
@@ -285,14 +291,7 @@ export function useReturnLinkState(): ReturnLinkState | undefined {
     const origin = value?.collection.current?.read() ?? value?.inherited;
     return { todouReturn: origin === undefined ? {} : { origin } };
   });
-  // Decided at render, because whether an origin exists at all does not
-  // change under the reader's feet: a collection page has one for as long as
-  // it is mounted, and a detail entry's inherited origin is fixed when the
-  // entry is created.
-  const has =
-    context !== null &&
-    (context.collection.current !== null || context.inherited !== undefined);
-  return has ? updater.current : undefined;
+  return context === null ? undefined : updater.current;
 }
 
 /** The `state` that hands a collection page its own view back to restore. */
