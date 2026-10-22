@@ -6,7 +6,7 @@ import {
 import { useParams } from "@tanstack/react-router";
 import { formatRef, type Issue, type Member, type Status } from "@todou/shared";
 import { CheckIcon, PencilIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   issueQuery,
@@ -118,6 +118,8 @@ export function IssueDetailPage() {
   const rowRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   useScrollInsets({ top: [rowRef], bottom: [composerRef] });
+  const [end, setEnd] = useState<HTMLDivElement | null>(null);
+  const atEnd = useInView(end);
   // Which of the three homes the back control takes (T-461). The header's nav
   // keeps it below `sm`; from there it travels with the heading, inside the
   // column until the viewport leaves a gutter to hang it in.
@@ -219,6 +221,15 @@ export function IssueDetailPage() {
                 pendingComments={composer.pending.filter((p) => !p.failed)}
                 viewer={viewer}
               />
+              {/* Out of flow, so it adds no gap, yet it sits where the dock's
+                  own slot begins. Above the dock rather than inside or below
+                  it, because the dock's height changes with what it shows: a
+                  mark below that change moves with it, and the taller box
+                  swapped in would push the mark off screen and swap itself
+                  back out. */}
+              {!trashed && (
+                <div ref={setEnd} aria-hidden className="absolute" />
+              )}
               {/* Floats at the viewport bottom while the timeline scrolls by,
               and settles into flow at the end of the page (GitHub-style). */}
               {!trashed && (
@@ -226,11 +237,12 @@ export function IssueDetailPage() {
                   ref={composerRef}
                   // A folded composer (T-532) is one line on a wide screen and
                   // only a floating button on a phone, whose strip lets the
-                  // page show and take touches around it.
+                  // page show and take touches around it. Its bottom keeps
+                  // clear of where a phone's edge swipes start.
                   className={cn(
                     "sticky bottom-0 z-10 border-t bg-background pt-3 pb-4",
-                    "has-[[data-collapsed]]:py-2",
-                    "max-sm:has-[[data-collapsed]]:pointer-events-none max-sm:has-[[data-collapsed]]:border-transparent max-sm:has-[[data-collapsed]]:bg-transparent max-sm:has-[[data-collapsed]]:pt-0 max-sm:has-[[data-collapsed]]:pb-4",
+                    "has-[[data-collapsed]]:py-2 max-sm:has-[[data-collapsed]]:pb-4",
+                    "max-sm:has-[[data-composer-opener]]:pointer-events-none max-sm:has-[[data-composer-opener]]:border-transparent max-sm:has-[[data-composer-opener]]:bg-transparent max-sm:has-[[data-composer-opener]]:pt-0",
                   )}
                 >
                   <Composer
@@ -249,6 +261,7 @@ export function IssueDetailPage() {
                     onSendWithCommands={composer.sendWithCommands}
                     failed={composer.pending.filter((p) => p.failed)}
                     onRetry={composer.retry}
+                    atEnd={atEnd}
                   />
                 </div>
               )}
@@ -267,6 +280,23 @@ export function IssueDetailPage() {
       />
     </div>
   );
+}
+
+/** Whether any of `el` is on screen. Engines without the observer say no. */
+function useInView(el: Element | null): boolean {
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    if (el === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) =>
+      setInView(entry.isIntersecting),
+    );
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      setInView(false);
+    };
+  }, [el]);
+  return inView;
 }
 
 /**

@@ -180,6 +180,7 @@ function mount(
     ) => Promise<unknown>;
     /** What the composer's timeline drain finds, seeded (T-307). */
     timeline?: TimelineItem[];
+    atEnd?: boolean;
   } = {},
 ) {
   const client = new QueryClient({
@@ -202,7 +203,7 @@ function mount(
   const onSend = handlers.onSend ?? vi.fn();
   const onSendWithCommands =
     handlers.onSendWithCommands ?? vi.fn(async () => undefined);
-  const tree = (issueNumber: number) => (
+  const tree = (issueNumber: number, atEnd = handlers.atEnd) => (
     <QueryClientProvider client={client}>
       <Composer
         // Exactly what issue-detail.tsx passes: the card number, so the
@@ -214,6 +215,7 @@ function mount(
         onSendWithCommands={onSendWithCommands}
         failed={[]}
         onRetry={vi.fn()}
+        atEnd={atEnd}
       />
     </QueryClientProvider>
   );
@@ -697,6 +699,18 @@ describe("Composer folding", () => {
     expect(folded(view)).toBe(true);
     expect(opener(view)).not.toBeNull();
     expect(maybeSubmit(view)).toBeNull();
+  });
+
+  it("shows the folded box instead of the opener at the page end (T-538)", () => {
+    const hidden = (view: { container: HTMLElement }) =>
+      view.container.querySelector('[class*="sr-only"]') !== null;
+    const view = mount({ atEnd: true });
+    expect(folded(view)).toBe(true);
+    expect(opener(view)).toBeNull();
+    expect(hidden(view)).toBe(false);
+    view.rerender(view.tree(7, false));
+    expect(opener(view)).not.toBeNull();
+    expect(hidden(view)).toBe(true);
   });
 
   it("unfolds on entry and folds again once focus leaves an empty box", async () => {

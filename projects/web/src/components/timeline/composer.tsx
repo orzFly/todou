@@ -51,6 +51,7 @@ import {
   summarizeCommands,
 } from "@/lib/slash-commands.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
+import { cn } from "@/lib/utils";
 
 export type PendingComment = {
   key: number;
@@ -360,6 +361,7 @@ export function Composer({
   onSendWithCommands,
   failed,
   onRetry,
+  atEnd = false,
 }: {
   slug: string;
   issueNumber: number;
@@ -371,6 +373,11 @@ export function Composer({
   ) => Promise<unknown>;
   failed: PendingComment[];
   onRetry: (key: number) => void;
+  /**
+   * The page is scrolled to where the dock sits in flow. A folded phone
+   * composer is a box there rather than a button (T-538): it covers nothing.
+   */
+  atEnd?: boolean;
 }) {
   const editor = useRef<MarkdownEditorHandle>(null);
   const [uploading, setUploading] = useState(false);
@@ -466,6 +473,7 @@ export function Composer({
   // about it — and the next card drops it along with the draft it came from,
   // because `issue-detail.tsx` keys this component by card number (T-317).
   const expanded = engaged || !empty || broken.length > 0;
+  const opener = !expanded && !atEnd;
   const label = submitLabel({
     uploading,
     running,
@@ -612,12 +620,14 @@ export function Composer({
           }
           // Sticky at the viewport bottom: an auto-growing draft must not
           // swallow the page, especially on small/mobile viewports. Folded on
-          // a phone it leaves only the button below; `sr-only` rather than
+          // a phone away from the page end it leaves only the button below; `sr-only` rather than
           // unmounted, because that button has to focus it inside the tap
           // for iOS to raise the keyboard.
-          className={
-            expanded ? "max-h-[40dvh] min-h-16" : "max-h-[40dvh] max-sm:sr-only"
-          }
+          className={cn(
+            "max-h-[40dvh]",
+            expanded && "min-h-16",
+            opener && "max-sm:sr-only",
+          )}
           extensions={extensions}
           onChange={setDraft}
           onPaste={staging.onPaste}
@@ -627,7 +637,7 @@ export function Composer({
         />
         {/* Centred, not in a corner: the bottom corners are where a phone's
             edge swipes start. */}
-        {!expanded && (
+        {opener && (
           <div className="flex justify-center sm:hidden">
             <Button
               type="button"
