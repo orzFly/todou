@@ -113,7 +113,7 @@ export function WatcherStack({
   if (groups.length === 0) return null;
   const shown = groups.slice(0, max);
   const hidden = groups.length - shown.length;
-  const dims = SIZES[size];
+  const dims = SIZES[size] ?? SIZES[20];
   const box = cn("inline-flex shrink-0 items-center", className);
   const content = (
     <>
