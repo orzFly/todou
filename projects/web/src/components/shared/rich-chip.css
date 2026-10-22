@@ -3,10 +3,9 @@
   display: inline;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  /* See comment-reference.css: a leading of its own drops the truncating
-     title 2.59px below the prose, because `vertical-align: bottom` only puts
-     an overflow box's text on the baseline when the box is as tall as the
-     line box it sits in. */
+  /* The body's own leading, for anything inside that forms a box of its own:
+     an atomic inline sits by its line box, and one a leading apart from the
+     strut's lands off the prose's baseline (T-460 measured 2.59px). */
   line-height: inherit;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -31,44 +30,9 @@
   -webkit-user-select: none;
 }
 
-.ref-chip-body .ref-chip-title {
-  display: inline-block;
-  max-width: calc(100% - var(--ref-chip-inset) + var(--ref-chip-gutter, 0px));
-  /* Inline overflow boxes otherwise use their bottom border as a baseline. */
-  vertical-align: bottom;
-}
-
-/*
- * What the chip's own box costs the title. `100%` is the paragraph's width,
- * and a title that wraps onto a line of its own starts after the border and
- * padding this fragment repeats — so without the inset it ends that far past
- * the text column: measured 6px at 390px, where the flex chip this replaced
- * capped itself with `max-w-full` and ended at 0.
- *
- * The numbers are RICH_CHIP_SKIN's own `border` and `px-[0.3em]`, doubled for
- * two sides. rich-link-copy.test.tsx holds the two together, so moving the
- * padding in one place fails there rather than quietly reopening the 6px.
- */
-.ref-chip-body {
-  --ref-chip-inset: 0px;
-}
-
-.ref-chip-body.border {
-  --ref-chip-inset: calc(0.6em + 2px);
-}
-
-/* The reader's cap, restated at this rule's specificity: the utility that
-   carries it loses to the `max-width` above on its own. */
-.ref-chip-body .ref-chip-title.max-w-\[24em\] {
-  max-width: min(
-    24em,
-    calc(100% - var(--ref-chip-inset) + var(--ref-chip-gutter, 0px))
-  );
-}
-
-/* useRefChipFlow reserves a closing edge at the actual line container only
-   when a fragment overflows. Titles already pay for their box above; credit
-   that container gutter so this protection never charges them twice. */
+/* The title is plain inline text and breaks wherever the prose does (T-541):
+   no box of its own, so no baseline of its own to lose and no width to cap.
+   A fragment's cloned closing edge past the column is useRefChipFlow's. */
 
 /* A mention's copyable identity is the current `@login` and nothing else; the
    avatar carries the reader's initials as real text. */

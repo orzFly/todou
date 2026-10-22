@@ -27,7 +27,6 @@ import {
   RICH_CHIP_LABEL,
   RICH_CHIP_SKIN,
   RICH_CHIP_STRUCTURE,
-  RICH_CHIP_TITLE_CAP,
 } from "../src/components/shared/rich-chip.ts";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -115,17 +114,21 @@ const linkIn = (root: ParentNode) =>
     return el as HTMLAnchorElement;
   });
 
+// An attachment's label is still a `truncate` box; a reference's title is not.
 const titleSpan = (link: Element) =>
-  link.hasAttribute("data-comment-link")
-    ? (link.querySelector("[data-comment-title]") ?? undefined)
-    : [...link.children].find((child) => child.classList.contains("truncate"));
+  (link.hasAttribute("data-comment-link")
+    ? link.querySelector("[data-comment-title]")
+    : (link.querySelector("[data-ref-title]") ??
+      [...link.children].find((child) =>
+        child.classList.contains("truncate"),
+      ))) ?? undefined;
 
 describe("reference title cap (T-371)", () => {
   it("caps the title span and still offers the whole title on hover", async () => {
     const link = await linkIn(inBody().container);
     const span = titleSpan(link);
 
-    expect(span?.getAttribute("class")).toContain(RICH_CHIP_TITLE_CAP);
+    expect(span?.hasAttribute("data-ref-title-cap")).toBe(true);
     expect(span?.textContent).toBe(LONG);
     expect(link.getAttribute("title")).toBe(`T-7 ${LONG} (Todo)`);
   });
@@ -134,20 +137,16 @@ describe("reference title cap (T-371)", () => {
     const link = await linkIn(inBody({ truncate_ref_title: false }).container);
     const span = titleSpan(link);
 
-    expect(span?.getAttribute("class")).not.toContain(RICH_CHIP_TITLE_CAP);
-    // Still the chip's own title box, which the sheet holds to the line's
-    // width: "off" means no cap of its own, not that a narrow viewport stops
-    // cutting it.
+    expect(span?.hasAttribute("data-ref-title-cap")).toBe(false);
     expect(span?.getAttribute("class")).toContain("ref-chip-title");
+    expect(span?.textContent).toBe(LONG);
     expect(link.getAttribute("title")).toBe(`T-7 ${LONG} (Todo)`);
   });
 
   it("caps independently of the border", async () => {
     const link = await linkIn(inBody({ boxed_ref_links: false }).container);
 
-    expect(titleSpan(link)?.getAttribute("class")).toContain(
-      RICH_CHIP_TITLE_CAP,
-    );
+    expect(titleSpan(link)?.hasAttribute("data-ref-title-cap")).toBe(true);
     for (const skin of RICH_CHIP_SKIN.split(" ")) {
       expect(link.className.split(" ")).not.toContain(skin);
     }
@@ -182,7 +181,7 @@ describe("reference title cap (T-371)", () => {
       const link = await linkIn(view.container);
       expect(link.getAttribute("data-comment-link")).toBe("42");
       expect(titleSpan(link)?.textContent).toBe(LONG);
-      expect(titleSpan(link)?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(
+      expect(titleSpan(link)?.hasAttribute("data-ref-title-cap")).toBe(
         truncate_ref_title,
       );
       const token = link.querySelector("[data-comment-ref]");
@@ -204,7 +203,7 @@ describe("reference title cap (T-371)", () => {
       }
       for (const fixed of [token, by]) {
         expect(fixed?.classList.contains("truncate")).toBe(false);
-        expect(fixed?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(false);
+        expect(fixed?.hasAttribute("data-ref-title-cap")).toBe(false);
       }
       expect(link.textContent).toBe(`T-7 ${LONG} · #comment-42 by Alice`);
       expect(link.getAttribute("title")).toBe(`T-7 ${LONG} (Todo)`);
@@ -235,7 +234,6 @@ describe("the chip stops at the body (T-371)", () => {
     ...RICH_CHIP_STRUCTURE.split(" "),
     ...RICH_CHIP_SKIN.split(" "),
     ...RICH_CHIP_LABEL.split(" "),
-    RICH_CHIP_TITLE_CAP,
   ];
 
   for (const prefs of [
@@ -258,6 +256,7 @@ describe("the chip stops at the body (T-371)", () => {
         for (const chip of CHIP_CLASSES) {
           expect(classes).not.toContain(chip);
         }
+        expect(el.hasAttribute("data-ref-title-cap")).toBe(false);
       }
       // The title rides as a bare text node, exactly as before T-371.
       expect(titleSpan(link)).toBeUndefined();

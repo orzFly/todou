@@ -238,14 +238,18 @@ describe("comment reference renderer structure", () => {
     const author = "An author whose complete display name must remain readable";
     const view = render(<CommentReference {...props} author={author} />);
     expect(
-      view.container.querySelector("[data-comment-title]")?.className,
-    ).toContain("max-w-[24em]");
+      view.container
+        .querySelector("[data-comment-title]")
+        ?.hasAttribute("data-ref-title-cap"),
+    ).toBe(true);
     view.rerender(
       <CommentReference {...props} capTitle={false} author={author} />,
     );
     expect(
-      view.container.querySelector("[data-comment-title]")?.className,
-    ).not.toContain("max-w-[24em]");
+      view.container
+        .querySelector("[data-comment-title]")
+        ?.hasAttribute("data-ref-title-cap"),
+    ).toBe(false);
     expect(
       view.container.querySelector("[data-comment-author]")?.textContent,
     ).toBe(` by ${author}`);
@@ -415,15 +419,11 @@ describe("parent container measurement and resize", () => {
           </a>
         </div>,
       );
-      // 240 of content, less the chip's own 12px box, less its 9px end edge.
-      // Charging the 3px opening edge instead reads 225, so asymmetric padding
-      // distinguishes the direction as well as detecting a missing reservation.
-      expect(
-        container.querySelector<HTMLElement>("[data-comment-title]")?.style
-          .maxWidth,
-      ).toBe("min(24em, 219px)");
-      // fixed '/' + '-29' + '#comment-209' = 112px, so 53.5px a segment, less
-      // the 12px tail glyph each keeps.
+      // 240 of content, less the chip's own 12px box, less its 9px end edge:
+      // 219. Fixed '/' + '-29' + '#comment-209' = 112px, so 53.5px a segment,
+      // less the 12px tail glyph each keeps. Charging the 3px opening edge
+      // instead reads 225 and 44.5, so asymmetric padding distinguishes the
+      // direction as well as detecting a missing reservation.
       for (const head of container.querySelectorAll<HTMLElement>(
         ".comment-reference-head",
       )) {

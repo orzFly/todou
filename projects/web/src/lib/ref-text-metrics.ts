@@ -31,31 +31,41 @@ export function textWidth(element: Element, start = 0, end = Infinity): number {
   return width;
 }
 
-function segmentMeasurer(element: Element, text: string) {
+/**
+ * Text advance in an element's own computed font, or `null` where there is no
+ * canvas (happy-dom). Canvas creates neither a DOM text copy nor a second
+ * selectable identity.
+ */
+export function canvasMeasurer(
+  element: Element,
+): ((text: string) => number) | null {
   const style = getComputedStyle(element);
+  const context = document.createElement("canvas").getContext("2d");
+  if (!context) return null;
+  context.font = style.font;
+  context.fontKerning = style.fontKerning as CanvasFontKerning;
+  context.fontStretch = style.fontStretch as CanvasFontStretch;
+  context.fontVariantCaps = style.fontVariantCaps as CanvasFontVariantCaps;
+  context.textRendering = style.textRendering as CanvasTextRendering;
+  context.letterSpacing =
+    style.letterSpacing === "normal" ? "0px" : style.letterSpacing;
+  context.wordSpacing =
+    style.wordSpacing === "normal" ? "0px" : style.wordSpacing;
+  return (text) => context.measureText(text).width;
+}
+
+function segmentMeasurer(element: Element, text: string) {
   // A clipped DOM Range can report both the full text and an extra visual
   // ellipsis fragment. Measuring the original substrings on canvas avoids
   // counting that decoration and keeps 1/3 tail changes independent of layout.
-  // Canvas creates neither a DOM text copy nor a second selectable identity.
-  const context = document.createElement("canvas").getContext("2d");
-  if (context) {
-    context.font = style.font;
-    context.fontKerning = style.fontKerning as CanvasFontKerning;
-    context.fontStretch = style.fontStretch as CanvasFontStretch;
-    context.fontVariantCaps = style.fontVariantCaps as CanvasFontVariantCaps;
-    context.textRendering = style.textRendering as CanvasTextRendering;
-    context.letterSpacing =
-      style.letterSpacing === "normal" ? "0px" : style.letterSpacing;
-    context.wordSpacing =
-      style.wordSpacing === "normal" ? "0px" : style.wordSpacing;
-  }
+  const canvas = canvasMeasurer(element);
   return {
     width(start = 0, end = text.length) {
-      return context
-        ? context.measureText(text.slice(start, end)).width
+      return canvas
+        ? canvas(text.slice(start, end))
         : textWidth(element, start, end);
     },
-    ellipsis: context?.measureText("…").width ?? pixels(style.fontSize),
+    ellipsis: canvas?.("…") ?? pixels(getComputedStyle(element).fontSize),
   };
 }
 

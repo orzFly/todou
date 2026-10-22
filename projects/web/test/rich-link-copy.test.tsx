@@ -359,20 +359,13 @@ describe("the sheet says which parts are selectable (T-427)", () => {
     expect(rules).not.toMatch(/display:\s*(inline-)?flex/);
   });
 
-  // The title's max-width gives back exactly what the border adds, and the
-  // two live in different files. Change the skin's padding on its own and
-  // this is what says so, instead of 6px of overhang at 390px.
-  it("gives the title back what the skin's own box costs it", () => {
-    expect(RICH_CHIP_SKIN).toContain("px-[0.3em]");
-    expect(RICH_CHIP_SKIN.split(" ")).toContain("border");
-    declares(
-      ".ref-chip-body.border",
-      "--ref-chip-inset",
-      "calc\\(0.6em \\+ 2px\\)",
-    );
-    declares(".ref-chip-body", "--ref-chip-inset", "0px");
-    expect(blocks.get(".ref-chip-body .ref-chip-title")).toContain(
-      "100% - var(--ref-chip-inset) + var(--ref-chip-gutter, 0px)",
+  // A box cannot break, and a title that could not break moved whole onto
+  // the next line and was cut there (T-541). Whatever the sheet says about
+  // the title, it must not make one.
+  it("leaves the title inline text that breaks with the prose", () => {
+    const title = blocks.get(".ref-chip-body .ref-chip-title") ?? "";
+    expect(title).not.toMatch(
+      /(^|[;{\s])(display|overflow(-x|-y)?|white-space|max-width|text-overflow):/,
     );
   });
 

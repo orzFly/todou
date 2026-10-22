@@ -44,11 +44,11 @@ export const RICH_CHIP_SKIN =
 export const REF_CHIP_ICON = "ref-chip-icon inline size-[1em]";
 
 /**
- * `overflow: hidden` degrades an inline box's baseline to its bottom edge,
- * which rich-chip.css answers with `vertical-align: bottom` — so the title
- * has to stay a child of the chip rather than the chip itself.
+ * Plain inline text, not a box: a box cannot break, so it leaves its ref's
+ * line whole wherever it does not fit the rest of it (T-541). RefTitle does
+ * any shortening in the text instead.
  */
-export const REF_CHIP_LABEL = "ref-chip-title truncate";
+export const REF_CHIP_LABEL = "ref-chip-title";
 
 /**
  * `items-baseline` is what puts the attachment title's baseline on the
@@ -96,9 +96,10 @@ export const RICH_CHIP_LABEL = "min-w-0 flex-initial truncate";
 
 /**
  * About 24 CJK characters or 48 Latin ones at the body's 14px — vscode's
- * 200px cap, widened for a language whose glyphs are twice as wide.
+ * 200px cap, widened for a language whose glyphs are twice as wide. Counted
+ * in text advance, wherever the title's lines happen to break.
  */
-export const RICH_CHIP_TITLE_CAP = "max-w-[24em]";
+export const REF_TITLE_CAP_EM = 24;
 
 /** A mention's chip: the current `@login` is the only copyable part. */
 export const MENTION_CHIP_STRUCTURE = "mention-chip-body";

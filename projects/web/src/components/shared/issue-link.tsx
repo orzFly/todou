@@ -27,13 +27,13 @@ import { CommentReference } from "@/components/shared/comment-reference.tsx";
 import { useCanHoverPreview } from "@/components/shared/hover-preview.ts";
 import { IssueHoverCard } from "@/components/shared/issue-hover-card.tsx";
 import { MentionLink } from "@/components/shared/mention-link.tsx";
+import { RefTitle } from "@/components/shared/ref-title.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import {
   REF_CHIP_ICON,
   REF_CHIP_LABEL,
   REF_CHIP_STRUCTURE,
   RICH_CHIP_SKIN,
-  RICH_CHIP_TITLE_CAP,
 } from "@/components/shared/rich-chip.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
@@ -231,9 +231,12 @@ export function IssueLink({
       pieces.push({
         key: "title",
         node: (
-          <span className={cn(REF_CHIP_LABEL, capTitle && RICH_CHIP_TITLE_CAP)}>
-            {item.title}
-          </span>
+          <RefTitle
+            title={item.title}
+            cap={capTitle}
+            className={REF_CHIP_LABEL}
+            data-ref-title
+          />
         ),
       });
     }

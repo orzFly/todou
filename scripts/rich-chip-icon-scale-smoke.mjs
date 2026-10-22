@@ -158,7 +158,7 @@ async function seedFixture(serverPort) {
   await call("POST", "/projects", { slug, name: "Rich chip icon scale" });
   await call("PUT", `/projects/${slug}/references/format`, { prefix: "T" });
   // The bordered chip is the shape the report was filed against, and the
-  // border is also what `--ref-chip-inset` and the flow guard key off.
+  // border is also what the flow guard keys off.
   await call("PATCH", "/me/prefs", {
     boxed_ref_links: true,
     truncate_ref_title: true,

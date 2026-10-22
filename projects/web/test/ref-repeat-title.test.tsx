@@ -109,7 +109,7 @@ const titlesOfSeven = (root: ParentNode): string[] =>
   [...root.querySelectorAll("a[data-issue-link='7']")].map((a) => {
     const label = a.hasAttribute("data-comment-link")
       ? a.querySelector("[data-comment-title]")
-      : [...a.children].find((c) => c.classList.contains("truncate"));
+      : a.querySelector("[data-ref-title]");
     return label?.textContent ?? "";
   });
 

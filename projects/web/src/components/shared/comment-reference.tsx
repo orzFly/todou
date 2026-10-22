@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { RefTitle } from "@/components/shared/ref-title.tsx";
 import {
   allocateCommentRef,
   splitCommentIssueRef,
@@ -29,7 +30,6 @@ type SegmentLayout = {
 type Layout = {
   segments: SegmentLayout[];
   wrap: boolean;
-  available: number;
 };
 
 function contentContainer(element: HTMLElement): HTMLElement | null {
@@ -130,7 +130,6 @@ export function CommentReference({
       if (fixed === 0 && metrics.every(({ full }) => full === 0)) return;
       const allocation = allocateCommentRef(available, fixed, metrics);
       const next: Layout = {
-        available,
         wrap: allocation.wrap,
         segments: metrics.map((metric, index) => {
           const width = allocation.widths[index];
@@ -214,24 +213,15 @@ export function CommentReference({
   });
   const comment = <span data-ref-part="fixed">{suffix}</span>;
   const titleNode =
-    shownTitle === null ? null : (
-      <span
+    shownTitle === null ? null : inBody ? (
+      <RefTitle
+        title={shownTitle}
+        cap={capTitle}
+        className="comment-reference-title"
         data-comment-title
-        className={
-          inBody
-            ? `comment-reference-title truncate${capTitle ? " max-w-[24em]" : ""}`
-            : "font-medium text-foreground"
-        }
-        style={
-          active
-            ? {
-                maxWidth: capTitle
-                  ? `min(24em, ${active.available}px)`
-                  : active.available,
-              }
-            : undefined
-        }
-      >
+      />
+    ) : (
+      <span data-comment-title className="font-medium text-foreground">
         {shownTitle}
       </span>
     );

@@ -26,7 +26,6 @@ import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
   REF_CHIP_LABEL,
   REF_CHIP_STRUCTURE,
-  RICH_CHIP_TITLE_CAP,
 } from "../src/components/shared/rich-chip.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -202,7 +201,7 @@ const richLinks = (root: ParentNode, count: number) =>
 function expectTitle(link: HTMLAnchorElement, shown: boolean, capped: boolean) {
   const comment = link.hasAttribute("data-comment-link");
   const title = link.querySelector(
-    comment ? "[data-comment-title]" : ".truncate",
+    comment ? "[data-comment-title]" : "[data-ref-title]",
   );
   if (!shown) {
     expect(title).toBeNull();
@@ -217,7 +216,7 @@ function expectTitle(link: HTMLAnchorElement, shown: boolean, capped: boolean) {
       expect(title?.classList.contains(name)).toBe(true);
     }
   }
-  expect(title?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(capped);
+  expect(title?.hasAttribute("data-ref-title-cap")).toBe(capped);
 }
 
 function expectComment(
@@ -271,15 +270,10 @@ function expectComment(
       expect(element.getAttribute("aria-hidden")).not.toBe("true");
       expect(getComputedStyle(element).display).not.toBe("none");
       expect(getComputedStyle(element).visibility).not.toBe("hidden");
-      for (const name of [
-        "hidden",
-        "invisible",
-        "sr-only",
-        "truncate",
-        RICH_CHIP_TITLE_CAP,
-      ]) {
+      for (const name of ["hidden", "invisible", "sr-only", "truncate"]) {
         expect(element.classList.contains(name)).toBe(false);
       }
+      expect(element.hasAttribute("data-ref-title-cap")).toBe(false);
     }
   }
   expect(link.querySelectorAll("[data-comment-author]")).toHaveLength(1);
@@ -288,7 +282,7 @@ function expectComment(
   expect(identity?.contains(by)).toBe(false);
   expect(by?.textContent).toBe(` by ${name}`);
   expect(by?.classList.contains("truncate")).toBe(false);
-  expect(by?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(false);
+  expect(by?.hasAttribute("data-ref-title-cap")).toBe(false);
   expect(by?.querySelector("[data-ref-part]")).toBeNull();
   const suffix = `#comment-${id}`;
   const issueRef = token.slice(0, -suffix.length);
@@ -480,7 +474,7 @@ describe.each(sources)("%s comment display through MarkdownView", (source) => {
           expect(slots.map((slot) => slot.textContent)).toEqual(["T-7"]);
           expect(
             slots[0]?.querySelector(
-              "[data-ref-decoration], [data-ref-note], .truncate",
+              "[data-ref-decoration], [data-ref-note], [data-ref-title]",
             ),
           ).toBeNull();
           expect([...link.children].map((child) => child.textContent)).toEqual([
