@@ -1252,13 +1252,18 @@ diffs-container {
   .markdown-body .spec-ins-block {
     border-left: 3px solid
       color-mix(in oklab, var(--diff-addition) 60%, transparent);
-    padding-left: 0.5rem;
     border-radius: var(--radius-sm);
     background-color: color-mix(
       in oklab,
       var(--diff-addition) 12%,
       transparent
     );
+  }
+  /* A wholly-new list keeps its own indent (T-531): its markers hang in that
+     padding, and the rule above outranks `.markdown-body ol`, so a 0.5rem
+     there pulls every number back onto the bar. */
+  .markdown-body .spec-ins-block:not(ul, ol) {
+    padding-left: 0.5rem;
   }
   .markdown-body .spec-annotated.spec-ins-block {
     border-left-color: color-mix(
