@@ -231,9 +231,6 @@ importers:
       string-width:
         specifier: ^8.2.2
         version: 8.2.2
-      ws:
-        specifier: ^8.21.3
-        version: 8.21.3
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -241,15 +238,15 @@ importers:
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
-      '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.2.0)(happy-dom@20.11.2)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
 
   projects/server:
     dependencies:
