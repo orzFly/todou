@@ -382,11 +382,11 @@ export function IssueRowMeta({
           />
         }
       />
-      <span className="flex-1" />
-      <span className="flex items-center gap-1">
-        {issue.assignees.map((user) => (
-          <UserChip key={user.id} user={user} compact />
-        ))}
+      {/* The icon leads the avatars: the group is pushed to the right edge,
+          so anything after the last avatar moves every avatar left (T-536).
+          `ml-auto` rather than a spacer keeps the group on that edge when it
+          wraps to its own line on a phone, as on a board card. */}
+      <span className="ml-auto flex items-center gap-1">
         {onToggleAssignee && (
           <AssigneePicker
             members={members ?? []}
@@ -396,11 +396,14 @@ export function IssueRowMeta({
               <MetaEditButton
                 label="Edit assignees"
                 icon={<UserPlusIcon className="size-3.5" />}
-                className="ml-1"
+                className={cn(issue.assignees.length > 0 && "mr-1")}
               />
             }
           />
         )}
+        {issue.assignees.map((user) => (
+          <UserChip key={user.id} user={user} compact />
+        ))}
       </span>
     </>
   );

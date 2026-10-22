@@ -282,3 +282,48 @@ describe("list row assignee picker (T-533)", () => {
     expect(view.getByRole("button", { name: "Edit labels" })).toBeTruthy();
   });
 });
+
+/**
+ * Both assignee groups are pushed to the right edge, so whatever follows the
+ * last avatar moves every avatar inward by its own width. The geometry itself
+ * is measured in a real browser on T-536; this pins the order that decides it.
+ */
+describe("the assignee icon leads the avatars (T-536)", () => {
+  const assigned = { ...issue, assignees: [MEMBERS[1].user] };
+
+  const expectLeads = (button: HTMLElement) => {
+    const group = button.parentElement;
+    expect(group?.childElementCount).toBe(2);
+    expect(group?.firstElementChild).toBe(button);
+  };
+
+  it("on a list row", async () => {
+    const view = renderWithProviders(
+      <ul>
+        <IssueRow
+          slug="p"
+          issue={assigned}
+          meta={
+            <IssueRowMeta
+              issue={assigned}
+              statuses={[status]}
+              allLabels={LABELS}
+              members={MEMBERS}
+              onStatus={() => {}}
+              onToggleLabel={() => {}}
+              onToggleAssignee={() => {}}
+            />
+          }
+        />
+      </ul>,
+    );
+    expectLeads(await view.findByRole("button", { name: "Edit assignees" }));
+  });
+
+  it("on a board card", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent slug="p" issue={assigned} edit={edit(true)} />,
+    );
+    expectLeads(await view.findByRole("button", { name: "Edit assignees" }));
+  });
+});

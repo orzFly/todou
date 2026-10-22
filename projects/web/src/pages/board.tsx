@@ -501,10 +501,12 @@ export function BoardCardContent({
               issue.assignees.length > 0 && "pr-1.5",
             )}
           >
+            {/* Ahead of the avatars, so the hidden icon's room does not
+                push them in from the edge (T-536). */}
+            {editable && <CardAssigneeEdit issue={issue} edit={editable} />}
             {issue.assignees.map((user) => (
               <UserChip key={user.id} user={user} compact />
             ))}
-            {editable && <CardAssigneeEdit issue={issue} edit={editable} />}
           </span>
         </div>
       )}
