@@ -1,6 +1,7 @@
 import {
   DownloadIcon,
   FileCode2Icon,
+  FileDiffIcon,
   FileTextIcon,
   Maximize2Icon,
   MaximizeIcon,
@@ -8,23 +9,25 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import { PatchView } from "@/components/shared/patch-view.tsx";
 import { CodeBlock } from "@/components/shared/pierre.tsx";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { documentKind } from "@/lib/attachment-preview.ts";
 import { cn } from "@/lib/utils";
 
-export type DocumentRender = "markdown" | "code";
+export type DocumentRender = "markdown" | "patch" | "code";
 
 export function documentRenderKind(filename: string): DocumentRender {
-  return /\.(md|markdown)$/i.test(filename) ? "markdown" : "code";
+  return documentKind({ filename });
 }
 
 /**
  * One text document, rendered the way its filename asks: markdown through
- * our own MarkdownView, everything else through pierre CodeBlock. Markdown
- * is always rendered in embedded mode — a document that references other
- * documents shows them as links, which is what breaks the cycle when a
- * document (transitively) embeds itself.
+ * our own MarkdownView, a patch as its per-file diffs, everything else
+ * through pierre CodeBlock. Markdown is always rendered in embedded mode — a
+ * document that references other documents shows them as links, which is
+ * what breaks the cycle when a document (transitively) embeds itself.
  */
 export function DocumentView({
   filename,
@@ -32,21 +35,35 @@ export function DocumentView({
   render = documentRenderKind(filename),
   slug,
   issueNumber,
+  clipped = false,
 }: {
   filename: string;
   text: string;
-  /** Override the filename-based markdown/code choice. */
+  /** Override the filename-based choice. */
   render?: DocumentRender;
   /** Markdown context (issue refs, attachment refs); omit outside a project. */
   slug?: string;
   issueNumber?: number;
   /** The document's creation time (T-80 time cutoff for issue refs). */
+  /** Shown inside a height-capped box with its overflow hidden. */
+  clipped?: boolean;
 }) {
   if (render === "markdown") {
     return (
       <MarkdownView slug={slug} issueNumber={issueNumber} embedded>
         {text}
       </MarkdownView>
+    );
+  }
+  if (render === "patch") {
+    return (
+      <PatchView
+        filename={filename}
+        text={text}
+        lineNumbers
+        invalidNote
+        clipped={clipped}
+      />
     );
   }
   return <CodeBlock filename={filename} contents={text} lineNumbers />;
@@ -108,7 +125,12 @@ export function DocumentCard({
   }, []);
 
   const resolvedRender = render ?? documentRenderKind(filename);
-  const Icon = resolvedRender === "markdown" ? FileTextIcon : FileCode2Icon;
+  const Icon =
+    resolvedRender === "markdown"
+      ? FileTextIcon
+      : resolvedRender === "patch"
+        ? FileDiffIcon
+        : FileCode2Icon;
 
   return (
     <section
@@ -161,6 +183,7 @@ export function DocumentCard({
             render={resolvedRender}
             slug={slug}
             issueNumber={issueNumber}
+            clipped
           />
         </div>
         {overflowing && (

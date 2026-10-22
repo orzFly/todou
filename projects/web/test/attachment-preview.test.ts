@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  documentKind,
   isArchiveFile,
   isAudioFile,
   isHtmlDocument,
   isMarkdownDocument,
+  isPatchDocument,
   isPreviewableImage,
   isTextDocument,
   isVideoFile,
@@ -95,6 +97,29 @@ describe("isMarkdownDocument", () => {
     expect(isMarkdownDocument(attachment("notes.txt", "text/plain"))).toBe(
       false,
     );
+  });
+});
+
+describe("isPatchDocument / documentKind (T-528)", () => {
+  it("trusts the declared diff types, whatever the name", () => {
+    expect(isPatchDocument(attachment("fix", "text/x-patch"))).toBe(true);
+    expect(isPatchDocument(attachment("fix.txt", "text/x-diff"))).toBe(true);
+  });
+
+  it("falls back to .patch/.diff only for generic types (CLI uploads)", () => {
+    expect(
+      isPatchDocument(attachment("fix.patch", "application/octet-stream")),
+    ).toBe(true);
+    expect(isPatchDocument(attachment("FIX.DIFF", ""))).toBe(true);
+    // A declared type outranks the name, as it does for every other kind.
+    expect(isPatchDocument(attachment("fix.patch", "text/plain"))).toBe(false);
+    expect(isPatchDocument(attachment("diff.txt", ""))).toBe(false);
+  });
+
+  it("picks one render per attachment, markdown first", () => {
+    expect(documentKind(attachment("fix.patch", ""))).toBe("patch");
+    expect(documentKind(attachment("notes", "text/markdown"))).toBe("markdown");
+    expect(documentKind(attachment("run.log", "text/plain"))).toBe("code");
   });
 });
 

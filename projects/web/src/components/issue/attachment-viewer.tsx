@@ -15,6 +15,7 @@ import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
+  documentKind,
   formatSize,
   opensInBrowserTab,
   type PreviewTarget,
@@ -63,6 +64,7 @@ function TextPane({
     <DocumentView
       filename={target.filename}
       text={text.data}
+      render={documentKind(target)}
       slug={slug}
       issueNumber={issueNumber}
     />

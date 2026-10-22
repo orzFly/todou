@@ -1,9 +1,15 @@
-import type { CodeViewProps, MultiFileDiffProps } from "@pierre/diffs/react";
+import type { CodeViewItem, ParsedPatch } from "@pierre/diffs";
+import type {
+  CodeViewHandle,
+  CodeViewProps,
+  MultiFileDiffProps,
+} from "@pierre/diffs/react";
 import {
   Component,
   type ComponentType,
   lazy,
   type ReactNode,
+  type Ref,
   Suspense,
   useCallback,
   useMemo,
@@ -18,7 +24,9 @@ import { syntaxThemeOf, type ThemePref, useThemePref } from "@/lib/theme.ts";
 // of the app must only use type imports.
 const LazyCodeView = lazy(() =>
   import("@pierre/diffs/react").then((m) => ({
-    default: m.CodeView as ComponentType<CodeViewProps>,
+    default: m.CodeView as ComponentType<
+      CodeViewProps & { ref?: Ref<CodeViewHandle<undefined>> }
+    >,
   })),
 );
 
@@ -27,6 +35,23 @@ export const LazyMultiFileDiff = lazy(() =>
     default: m.MultiFileDiff as ComponentType<MultiFileDiffProps<undefined>>,
   })),
 );
+
+/**
+ * A unified diff split into commits and their files, or null when the text is
+ * not one. Strict on purpose (T-528): pierre's lenient mode skips a hunk whose
+ * counts do not add up and carries on, so the reader would be shown a patch
+ * with a change silently missing. Text before the first file — a commit
+ * message — is no reason to refuse; a patch with no file in it is.
+ */
+export async function parsePatch(text: string): Promise<ParsedPatch[] | null> {
+  const { parsePatchFiles } = await import("@pierre/diffs");
+  try {
+    const patches = parsePatchFiles(text, undefined, true);
+    return patches.some((patch) => patch.files.length > 0) ? patches : null;
+  } catch {
+    return null;
+  }
+}
 
 export const PIERRE_THEME = {
   dark: "pierre-dark",
@@ -66,7 +91,7 @@ export function useSyntaxTheme(): SyntaxTheme {
 }
 
 /** The shape every code surface falls back to: the code, unhighlighted. */
-function PlainCodeFallback({ contents }: { contents: string }) {
+export function PlainCodeFallback({ contents }: { contents: string }) {
   return (
     <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[0.85em] leading-[1.45]">
       <code>{contents}</code>
@@ -145,6 +170,24 @@ const FENCE_DIFF_OPTIONS = new Map<
   SyntaxTheme,
   MultiFileDiffProps<undefined>["options"]
 >();
+const PATCH_OPTIONS = new Map<SyntaxTheme, CodeViewProps["options"]>();
+
+function patchOptions(theme: SyntaxTheme): CodeViewProps["options"] {
+  const cached = PATCH_OPTIONS.get(theme);
+  if (cached) return cached;
+  // The spec source diff's look, plus pierre's file header: a patch is a list
+  // of files, and the header is the only place each one is named.
+  const options = {
+    theme,
+    themeType: PIERRE_THEME_TYPE,
+    diffStyle: "unified",
+    overflow: "wrap",
+    preferredHighlighter: PIERRE_HIGHLIGHTER,
+    onPostRender: handlePostRender,
+  } as const;
+  PATCH_OPTIONS.set(theme, options);
+  return options;
+}
 
 function snippetOptions(theme: SyntaxTheme): CodeViewProps["options"] {
   const cached = SNIPPET_OPTIONS.get(theme);
@@ -439,4 +482,99 @@ export function CodeDiffBlock({
     return <CodeBlock filename={filename} contents={after} />;
   }
   return <FenceDiff filename={filename} before={before} after={after} />;
+}
+
+/** The CodeView item id of a patch's `index`-th file, counted across commits. */
+export function patchFileId(index: number): string {
+  return `file-${index}`;
+}
+
+/** What a commit's preamble is called in its header: its subject, if any. */
+function preambleName(preamble: string): string {
+  const subject = /^Subject:[ \t]*(.+)$/m.exec(preamble)?.[1]?.trim();
+  return subject === undefined || subject === "" ? "commit message" : subject;
+}
+
+/**
+ * A parsed patch in one virtualized CodeView: per commit, the text that came
+ * before its files (message, author, `--stat`) as written, then one diff per
+ * file.
+ *
+ * `className` must cap the height. CodeView virtualizes against its own box,
+ * so an uncapped one grows to the whole patch and lays every line out: a
+ * 1 MB, 116-file patch froze the tab for 15 s in one task that way, against
+ * under 0.3 s capped (T-528).
+ *
+ * A highlighter failure takes the whole patch back to its plain text rather
+ * than one file: the grammar that failed is likely shared by its neighbours.
+ */
+export function PatchFiles({
+  patches,
+  text,
+  className,
+  viewRef,
+}: {
+  patches: ParsedPatch[];
+  /** The patch as written, for the plain-text fallback. */
+  text: string;
+  className: string;
+  /** For scrolling to a file by `patchFileId`. */
+  viewRef?: Ref<CodeViewHandle<undefined>>;
+}) {
+  const syntaxTheme = useSyntaxTheme();
+  const options = useMemo(() => patchOptions(syntaxTheme), [syntaxTheme]);
+  const items = useMemo(() => {
+    let position = 0;
+    return patches.flatMap((patch, commit): CodeViewItem[] => {
+      const preamble = patch.patchMetadata?.trimEnd() ?? "";
+      const files = patch.files.map(
+        (fileDiff): CodeViewItem => ({
+          id: patchFileId(position++),
+          type: "diff",
+          fileDiff,
+        }),
+      );
+      if (preamble.trim() === "") return files;
+      return [
+        {
+          id: `commit-${commit}`,
+          type: "file",
+          file: {
+            name: preambleName(preamble),
+            contents: preamble,
+            lang: "text",
+          },
+        },
+        ...files,
+      ];
+    });
+  }, [patches]);
+  const [degraded, setDegraded] = useState(false);
+  const warned = useRef(false);
+  const containerRef = useCallback((node: HTMLDivElement | null) => {
+    if (node === null) return;
+    DEGRADE_HANDLERS.set(node, () => {
+      if (!warned.current) {
+        warned.current = true;
+        console.warn(
+          "syntax highlighting failed for a patch; showing plain text",
+        );
+      }
+      setDegraded(true);
+    });
+  }, []);
+  if (degraded) return <PlainCodeFallback contents={text} />;
+  return (
+    <CodeViewBoundary contents={text}>
+      <Suspense fallback={<PlainCodeFallback contents={text} />}>
+        <LazyCodeView
+          ref={viewRef}
+          items={items}
+          options={options}
+          className={className}
+          containerRef={containerRef}
+        />
+      </Suspense>
+    </CodeViewBoundary>
+  );
 }

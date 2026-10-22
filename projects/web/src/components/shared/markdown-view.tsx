@@ -13,6 +13,7 @@ import {
 } from "@/components/issue/attachment-markdown.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
 import { MermaidBlock } from "@/components/shared/mermaid-block.tsx";
+import { PatchView } from "@/components/shared/patch-view.tsx";
 import {
   CodeBlock,
   CodeDiffBlock,
@@ -117,12 +118,16 @@ function MarkdownPre({
   const filename = fenceFilename(fence.tag);
   const baseline = loc === null ? undefined : fenceBaselines?.get(loc.start);
   // A changed diagram stays a source diff: there is no per-line red and green
-  // to draw on a picture.
+  // to draw on a picture. A changed patch likewise — a diff of a diff is
+  // only readable as its text.
+  const tag = fence.tag?.toLowerCase();
   const block =
     baseline !== undefined ? (
       <CodeDiffBlock filename={filename} before={baseline} after={fence.text} />
-    ) : fence.tag?.toLowerCase() === "mermaid" ? (
+    ) : tag === "mermaid" ? (
       <MermaidBlock filename={filename} source={fence.text} />
+    ) : tag === "diff" || tag === "patch" ? (
+      <PatchView filename={filename} text={fence.text} />
     ) : (
       <CodeBlock filename={filename} contents={fence.text} />
     );

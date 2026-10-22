@@ -7,8 +7,8 @@ import { AttachmentRichLink } from "@/components/issue/attachment-list.tsx";
 import { DocumentCard } from "@/components/shared/document-card.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import {
+  documentKind,
   formatSize,
-  isMarkdownDocument,
   isTextDocument,
   TEXT_PREVIEW_MAX_BYTES,
 } from "@/lib/attachment-preview.ts";
@@ -94,7 +94,7 @@ function LoadedEmbed({
     <DocumentCard
       filename={attachment.filename}
       text={text.data}
-      render={isMarkdownDocument(attachment) ? "markdown" : "code"}
+      render={documentKind(attachment)}
       slug={slug}
       issueNumber={issueNumber}
       className={className}

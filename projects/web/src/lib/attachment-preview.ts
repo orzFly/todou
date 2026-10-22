@@ -98,6 +98,35 @@ export function isMarkdownDocument(attachment: {
   );
 }
 
+// What browsers on Linux declare for .patch and .diff, from shared-mime-info.
+const PATCH_TYPES = new Set(["text/x-patch", "text/x-diff"]);
+
+const PATCH_EXTENSION = /\.(patch|diff)$/i;
+
+/**
+ * A unified diff gets the per-file diff view (T-528). Declared type first,
+ * filename only when the type is generic, so a `.patch` someone uploaded as
+ * text/plain keeps the plain text view it asked for.
+ */
+export function isPatchDocument(attachment: {
+  filename: string;
+  content_type?: string;
+}): boolean {
+  const type = attachment.content_type ?? "";
+  if (PATCH_TYPES.has(type)) return true;
+  return hasGenericType(type) && PATCH_EXTENSION.test(attachment.filename);
+}
+
+/** How a text document's body renders once it has loaded. */
+export function documentKind(attachment: {
+  filename: string;
+  content_type?: string;
+}): "markdown" | "patch" | "code" {
+  if (isMarkdownDocument(attachment)) return "markdown";
+  if (isPatchDocument(attachment)) return "patch";
+  return "code";
+}
+
 /** HTML gets the sandboxed reader (T-58) instead of a source view. */
 export function isHtmlDocument(attachment: {
   filename: string;

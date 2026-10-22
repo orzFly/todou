@@ -14,6 +14,7 @@ import { formatBytes, table } from "../format.ts";
 const MIME_BY_EXTENSION: Record<string, string> = {
   ".avif": "image/avif",
   ".csv": "text/csv",
+  ".diff": "text/x-diff",
   ".gif": "image/gif",
   ".htm": "text/html",
   ".html": "text/html",
@@ -23,6 +24,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".log": "text/plain",
   ".md": "text/markdown",
   ".mp4": "video/mp4",
+  ".patch": "text/x-patch",
   ".pdf": "application/pdf",
   ".png": "image/png",
   ".svg": "image/svg+xml",
