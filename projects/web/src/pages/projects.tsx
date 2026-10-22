@@ -10,12 +10,13 @@ import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { inboxQuery, unreadCounts } from "@/api/inbox.ts";
-import { api, projectsQuery } from "@/api/queries.ts";
+import { api, projectsQuery, watchersQuery } from "@/api/queries.ts";
 import { useProjectOrder } from "@/api/useProjectOrder.ts";
 import {
   ProjectCard,
   ProjectCardGrid,
 } from "@/components/shared/project-card.tsx";
+import { ProjectWatchersButton } from "@/components/shared/project-watchers.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -34,6 +35,7 @@ import { useProjectRefs } from "@/lib/use-project-refs.ts";
 export function ProjectsPage() {
   const projects = useSuspenseQuery(projectsQuery);
   const inbox = useQuery(inboxQuery);
+  const watchers = useQuery(watchersQuery);
   const counts = unreadCounts(inbox.data);
   // Same frecency order as the navbar switcher (T-76).
   const ordered = useProjectOrder(projects.data);
@@ -53,6 +55,7 @@ export function ProjectsPage() {
         <ProjectCardGrid>
           {ordered.map(({ project, neverVisited }) => {
             const count = counts[project.slug] ?? 0;
+            const watching = watchers.data?.projects[project.slug];
             return (
               <ProjectCard
                 key={project.id}
@@ -63,6 +66,14 @@ export function ProjectsPage() {
                   icon_url: project.icon_url,
                 }}
                 muted={neverVisited}
+                badge={
+                  watching ? (
+                    <ProjectWatchersButton
+                      projectName={project.name}
+                      watchers={watching}
+                    />
+                  ) : undefined
+                }
                 action={
                   count > 0 ? (
                     <>

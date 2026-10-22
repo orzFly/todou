@@ -173,6 +173,9 @@ export class QuestionWaitCommand extends ProjectCommand {
   interval = Option.String("--interval", {
     description: "Seconds between server polls (default 2)",
   });
+  invisible = Option.Boolean("--invisible", false, {
+    description: "Do not show this watch to others as a live watcher",
+  });
   poll = Option.Boolean("--poll", false, {
     description: "Check once and exit instead of blocking",
   });
@@ -235,6 +238,8 @@ export class QuestionWaitCommand extends ProjectCommand {
           issue: number,
           intervalSec,
           clock: this.clock,
+          declare: this.invisible ? undefined : { kind: "question_wait" },
+          context: () => this.liveAgentContext(),
         });
     try {
       return await runWatchLoop<AnswerResult>({

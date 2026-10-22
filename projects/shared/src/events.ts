@@ -35,6 +35,12 @@ export const ChangeEntity = z.enum([
   "attachment",
   "spec",
   "metadata",
+  /**
+   * Live agent watchers of a project or card changed (T-540). `id` is the
+   * project id; `issue_number` is set when only that card's watchers moved.
+   * Only reaches connections that opened with `presence=1`.
+   */
+  "watchers",
 ]);
 export type ChangeEntity = z.infer<typeof ChangeEntity>;
 

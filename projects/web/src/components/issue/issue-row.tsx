@@ -5,8 +5,9 @@ import {
   type Label,
   type Member,
   type Status,
+  type Watcher,
 } from "@todou/shared";
-import { CheckIcon, TagIcon, UserPlusIcon } from "lucide-react";
+import { CheckIcon, EyeIcon, TagIcon, UserPlusIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
@@ -24,6 +25,7 @@ import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
+import { groupWatchers } from "@/components/shared/watcher-stack.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -334,6 +336,7 @@ export function IssueRowMeta({
   onToggleLabel,
   onCreateLabel,
   onToggleAssignee,
+  watchers,
 }: {
   issue: IssueListItem;
   statuses: Status[];
@@ -345,7 +348,10 @@ export function IssueRowMeta({
   onStatus: (status: Status) => void;
   onToggleLabel: (label: Label) => void;
   onCreateLabel?: (name: string) => Promise<Label>;
+  /** This card's card-level watchers (T-540); the inbox and user page pass none. */
+  watchers?: readonly Watcher[];
 }) {
+  const hasAvatars = issue.assignees.length > 0 || (watchers?.length ?? 0) > 0;
   return (
     <>
       <DropdownMenu>
@@ -396,15 +402,59 @@ export function IssueRowMeta({
               <MetaEditButton
                 label="Edit assignees"
                 icon={<UserPlusIcon className="size-3.5" />}
-                className={cn(issue.assignees.length > 0 && "mr-1")}
+                className={cn(hasAvatars && "mr-1")}
               />
             }
           />
         )}
-        {issue.assignees.map((user) => (
-          <UserChip key={user.id} user={user} compact />
-        ))}
+        <AssigneesAndWatchers issue={issue} watchers={watchers} />
       </span>
+    </>
+  );
+}
+
+/**
+ * The avatars of a row's assignee group (T-540). A watching assignee gets
+ * the live dot on the avatar it already has; watchers nobody assigned follow
+ * behind an eye that stays visible, because the edit icon ahead of the
+ * assignees is hover-only on the board and cannot separate the two groups.
+ */
+export function AssigneesAndWatchers({
+  issue,
+  watchers = [],
+}: {
+  issue: Pick<IssueListItem, "assignees">;
+  watchers?: readonly Watcher[];
+}) {
+  const watching = new Set(watchers.map((watcher) => watcher.user.id));
+  const assigned = new Set(issue.assignees.map((user) => user.id));
+  const others = groupWatchers(watchers).filter(
+    (group) => !assigned.has(group.user.id),
+  );
+  return (
+    <>
+      {issue.assignees.map((user) => (
+        <UserChip
+          key={user.id}
+          user={user}
+          compact
+          live={watching.has(user.id)}
+        />
+      ))}
+      {others.length > 0 && (
+        <>
+          <EyeIcon
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground",
+              issue.assignees.length > 0 && "ml-1",
+            )}
+          />
+          {others.map((group) => (
+            <UserChip key={group.user.id} user={group.user} compact live />
+          ))}
+        </>
+      )}
     </>
   );
 }

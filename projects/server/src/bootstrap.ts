@@ -5,6 +5,7 @@ import type { Db } from "./db/driver.ts";
 import { DbRouter, type DbTestHooks } from "./db/router.ts";
 import { users } from "./db/system-schema.ts";
 import { EventBus } from "./events/bus.ts";
+import { WatcherRegistry } from "./events/watchers.ts";
 import { FsStorage } from "./storage/fs.ts";
 import { S3Storage } from "./storage/s3.ts";
 import type { StorageBackend } from "./storage/types.ts";
@@ -18,6 +19,8 @@ export type AppContext = {
   config: Config;
   router: DbRouter;
   bus: EventBus;
+  /** Live agent watchers declared on the change feed (T-540). */
+  watchers: WatcherRegistry;
   storage: StorageBackend;
   /** Loaded once at startup; null unless http.cli_dist_dir is set. */
   cliDist: CliDist | null;
@@ -68,15 +71,20 @@ export async function bootstrap(
   if (config.auth.mode === "single") {
     await ensureBuiltinUser(router.system());
   }
+  const bus = new EventBus();
+  const watchers = new WatcherRegistry(bus);
+  const shutdown = new AbortController();
+  shutdown.signal.addEventListener("abort", () => watchers.dispose());
   return {
     config,
     router,
-    bus: new EventBus(),
+    bus,
+    watchers,
     storage: await makeStorage(config),
     cliDist: config.http.cli_dist_dir
       ? await loadCliDist(config.http.cli_dist_dir)
       : null,
-    shutdown: new AbortController(),
+    shutdown,
     testHooks,
   };
 }

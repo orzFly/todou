@@ -17,6 +17,7 @@ import type {
   Label,
   Member,
   Status,
+  Watcher,
 } from "@todou/shared";
 import { ArrowLeftIcon, Trash2Icon } from "lucide-react";
 import {
@@ -52,6 +53,7 @@ import {
   api,
   labelsQuery,
   membersQuery,
+  projectWatchersQuery,
   statusesQuery,
   useCanIfLoaded,
   useIsProjectAdmin,
@@ -81,6 +83,7 @@ import {
   LoadMoreFailure,
   LoadMoreFooter,
 } from "@/components/shared/load-more.tsx";
+import { ProjectWatchersChip } from "@/components/shared/project-watchers.tsx";
 import {
   useCancelReturnRestore,
   useRegisterReturnArea,
@@ -323,27 +326,33 @@ export function ProjectIssueListPage({
             would hide a project-wide action inside a row of view controls
             (T-100). The group headers pin below it either way — the sticky
             offset is measured, not hard-coded. */}
-        <MarkAllReadButton
-          slug={slug}
-          scopeName="this project"
-          className="ml-auto"
-        />
-        <ProjectMuteButton slug={slug} />
-        {/* Admin-only, because only they see the whole project's trash. An
-            author with deleted cards of their own reaches the same view by
-            URL or through `todou issue list --deleted`. */}
-        {isAdmin && (
-          <Button variant="ghost" size="sm" asChild>
-            <Link
-              to="/projects/$slug"
-              params={{ slug }}
-              search={{ deleted: true }}
-            >
-              <Trash2Icon />
-              Trash
-            </Link>
-          </Button>
-        )}
+        {/* One full-width group, project watchers at its left end (T-540).
+            Below `sm` the actions have about 35px to spare at 390px, so the
+            chip takes a line of its own above them. */}
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <ProjectWatchersChip slug={slug} className="max-sm:basis-full" />
+          <MarkAllReadButton
+            slug={slug}
+            scopeName="this project"
+            className="ml-auto"
+          />
+          <ProjectMuteButton slug={slug} />
+          {/* Admin-only, because only they see the whole project's trash. An
+              author with deleted cards of their own reaches the same view by
+              URL or through `todou issue list --deleted`. */}
+          {isAdmin && (
+            <Button variant="ghost" size="sm" asChild>
+              <Link
+                to="/projects/$slug"
+                params={{ slug }}
+                search={{ deleted: true }}
+              >
+                <Trash2Icon />
+                Trash
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
       {countsFailure}
       {/* Nothing underneath suspends any more, and this boundary stays as the
@@ -1083,6 +1092,8 @@ export function ProjectIssueRows({
   const assigneesMutate = assigneesMutation.mutate;
   // Already loaded by the page for the filter bar, so this never waits.
   const members = useQuery(membersQuery(slug)).data ?? NO_MEMBERS;
+  // One read for the whole project, not one per row; every group shares it.
+  const watchers = useQuery(projectWatchersQuery(slug)).data?.issues;
   // The server refuses assignees from a reporter outright (see new-issue).
   const canTriage = useCanIfLoaded(slug, "issue.triage");
 
@@ -1140,6 +1151,7 @@ export function ProjectIssueRows({
       statuses={statuses}
       allLabels={allLabels}
       members={members}
+      watchers={watchers?.[String(issue.number)]}
       onStatus={onStatus}
       onToggleLabel={onToggleLabel}
       onCreateLabel={onCreateLabel === undefined ? undefined : create}
@@ -1165,12 +1177,14 @@ const ProjectIssueRow = memo(function ProjectIssueRow({
   onToggleLabel,
   onCreateLabel,
   onToggleAssignee,
+  watchers,
 }: {
   slug: string;
   issue: IssueListItem;
   statuses: Status[];
   allLabels: Label[];
   members: Member[];
+  watchers?: Watcher[];
   onStatus: (issue: IssueListItem, status: Status) => void;
   onToggleLabel: (issue: IssueListItem, label: Label) => void;
   onCreateLabel?: (name: string) => Promise<Label>;
@@ -1186,6 +1200,7 @@ const ProjectIssueRow = memo(function ProjectIssueRow({
           statuses={statuses}
           allLabels={allLabels}
           members={members}
+          watchers={watchers}
           onStatus={(status) => onStatus(issue, status)}
           onToggleLabel={(label) => onToggleLabel(issue, label)}
           onCreateLabel={onCreateLabel}

@@ -345,6 +345,7 @@ function serve(
           }
           if (rest === "statuses") return json([status]);
           if (rest === "labels") return json([]);
+          if (rest === "watchers") return json({ project: [], issues: {} });
           if (rest === "members") {
             return json([{ user, role: "writer", created_at: timestamp(0) }]);
           }

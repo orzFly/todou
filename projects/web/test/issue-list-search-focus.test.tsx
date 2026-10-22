@@ -32,6 +32,7 @@ import {
   ProjectIssueListPage,
 } from "../src/pages/issue-list.tsx";
 import { testQueryClient } from "./render.tsx";
+import { BOT, CLAUDE, watcher } from "./watcher-fixtures.ts";
 
 /**
  * The first ancestor painted out of existence, or null. Copied from
@@ -603,5 +604,34 @@ describe("a failed counts read (T-381)", () => {
     expect(view.container.querySelectorAll("section[aria-label]")).toHaveLength(
       2,
     );
+  });
+});
+
+describe("the list's watchers (T-540)", () => {
+  const chip = () =>
+    screen.queryByRole("button", { name: /^Watching: / }) as HTMLElement | null;
+
+  it("puts project watchers in the toolbar with the project actions, and card watchers on their row", async () => {
+    const view = mountList(gatedServer());
+    view.client.setQueryData(["watchers", "alpha"], {
+      project: [watcher(CLAUDE, { scope: "project" })],
+      issues: { "21": [watcher(BOT)] },
+    });
+    await waitFor(() => expect(chip()).not.toBeNull());
+    expect(chip()?.getAttribute("aria-label")).toBe("Watching: Claude Agent");
+    // The same group as the project actions, ahead of them.
+    const group = chip()?.closest(".w-full");
+    const trash = screen.getByRole("link", { name: /Trash/ });
+    expect(group?.contains(trash)).toBe(true);
+    // Only card 21 carries a watcher.
+    const row = await screen.findByLabelText("Bot One · watching");
+    expect(row.closest("li")?.textContent).toContain("the focus ring");
+    expect(screen.getAllByLabelText(/· watching$/)).toHaveLength(1);
+  });
+
+  it("renders no chip without project watchers", async () => {
+    mountList(gatedServer());
+    await screen.findByText("cursor semantics");
+    expect(chip()).toBeNull();
   });
 });

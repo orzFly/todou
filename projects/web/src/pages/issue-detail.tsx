@@ -1,5 +1,6 @@
 import {
   useMutation,
+  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
@@ -19,6 +20,7 @@ import {
   labelsQuery,
   membersQuery,
   meQuery,
+  projectWatchersQuery,
   statusesQuery,
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
@@ -107,6 +109,10 @@ export function IssueDetailPage() {
   const statuses = useSuspenseQuery(statusesQuery(slug));
   const labels = useSuspenseQuery(labelsQuery(slug));
   const members = useSuspenseQuery(membersQuery(slug));
+  // Not suspending: presence is decoration and must never hold the page.
+  const watchers = useQuery(projectWatchersQuery(slug)).data?.issues[
+    String(issueNumber)
+  ];
 
   const composer = useCommentComposer(slug, issueNumber, me.data);
   // Wraps TitleBlock rather than living inside it, so the trigger for the
@@ -262,6 +268,7 @@ export function IssueDetailPage() {
                     failed={composer.pending.filter((p) => p.failed)}
                     onRetry={composer.retry}
                     atEnd={atEnd}
+                    watchers={watchers}
                   />
                 </div>
               )}

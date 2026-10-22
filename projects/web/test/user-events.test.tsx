@@ -411,6 +411,22 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     // A preference toggled elsewhere during the outage has no other way in:
     // its `me` event went down with the connection (T-275).
     expect(keys).toContainEqual(["me-prefs"]);
+    // Agents that came or went during the gap (T-540).
+    expect(keys).toContainEqual(["watchers"]);
+  });
+
+  it("takes a watchers event to the watchers prefix alone (T-540)", () => {
+    expect(
+      invalidationsFor(
+        {
+          entity: "watchers",
+          id: 7,
+          action: "updated",
+          issue_number: 540,
+        },
+        "todou",
+      ),
+    ).toEqual([{ key: ["watchers"], scope: "refetch" }]);
   });
 });
 
@@ -953,7 +969,7 @@ describe("useUserEvents", () => {
     // Opting in is what makes the server judge each event (T-273). Metadata
     // is subscribed for every namespace because one account holds one stream
     // and the leader cannot know which card a sibling tab is on (T-282).
-    expect(source?.url).toBe("/api/events?inbox=1&metadata=*");
+    expect(source?.url).toBe("/api/events?inbox=1&metadata=*&presence=1");
 
     source?.emit("change", {
       entity: "timeline",
@@ -965,6 +981,28 @@ describe("useUserEvents", () => {
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["timeline", "todou", 3] }),
     );
+  });
+
+  it("marks the overview and every project's watchers stale on a watchers event (T-540)", async () => {
+    const { queryClient } = setup();
+    queryClient.setQueryData(["watchers"], { projects: {} });
+    queryClient.setQueryData(["watchers", "todou"], {
+      project: [],
+      issues: {},
+    });
+    MockEventSource.instances[0]?.emit("change", {
+      entity: "watchers",
+      id: 7,
+      action: "updated",
+      issue_number: 540,
+      project: "todou",
+    });
+    await waitFor(() => {
+      expect(queryClient.getQueryState(["watchers"])?.isInvalidated).toBe(true);
+      expect(
+        queryClient.getQueryState(["watchers", "todou"])?.isInvalidated,
+      ).toBe(true);
+    });
   });
 
   it("routes each event to its own project's keys (T-122)", async () => {
@@ -1536,7 +1574,7 @@ describe("useUserEvents", () => {
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] }),
     );
-    expect(spy).toHaveBeenCalledTimes(25);
+    expect(spy).toHaveBeenCalledTimes(26);
     expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toEqual(
       reconnectInvalidations(),
     );
@@ -1979,7 +2017,7 @@ describe("useUserEvents tab sharing (T-276)", () => {
     expect(MockEventSource.instances).toHaveLength(1);
     // Still opted in, so the server still judges each event per receiver.
     expect(MockEventSource.instances[0]?.url).toBe(
-      "/api/events?inbox=1&metadata=*",
+      "/api/events?inbox=1&metadata=*&presence=1",
     );
   });
 

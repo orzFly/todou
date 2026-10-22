@@ -1,4 +1,11 @@
-import type { ChangeStream, TodouClient } from "@todou/shared";
+import {
+  AGENT_CONTEXT_HEADER,
+  type AgentContext,
+  type ChangeStream,
+  type TodouClient,
+  TodouError,
+  type WatcherKind,
+} from "@todou/shared";
 import type { Clock } from "./clock.ts";
 import { isTransientError } from "./watch-loop.ts";
 
@@ -57,9 +64,36 @@ export async function openChangeNudges(opts: {
   clock: Clock;
   /** Test seam for reconnect jitter. */
   random?: () => number;
+  /**
+   * List this connection as a live watcher of what it follows (T-540).
+   * Absent for `--invisible`: the feed is the same, nobody sees it.
+   */
+  declare?: { kind: WatcherKind };
+  /**
+   * The agent context to open each stream with, asked afresh on every
+   * (re)connect so a rotated harness session is reported as the new one.
+   */
+  context?: () => AgentContext | null;
 }): Promise<ChangeNudges> {
   const { client, projects, clock } = opts;
   const random = opts.random ?? Math.random;
+  let declare = opts.declare;
+  /** The session the open stream reported; compared on every wait. */
+  let openedSession: string | undefined;
+
+  const declaration = (): Record<string, string> => {
+    if (declare === undefined) return {};
+    const scopes =
+      projects === null
+        ? ["all"]
+        : [...projects].map((slug) =>
+            opts.issue === undefined
+              ? `project:${slug}`
+              : `issue:${slug}/${opts.issue}`,
+          );
+    if (scopes.length === 0) return {};
+    return { watch: scopes.join(","), watch_kind: declare.kind };
+  };
 
   let stream: ChangeStream | null = null;
   let latched = false;
@@ -93,9 +127,15 @@ export async function openChangeNudges(opts: {
     wake?.();
   };
 
-  const tryConnect = async () => {
+  const tryConnect = async (): Promise<void> => {
+    const context = opts.context?.() ?? null;
     try {
       const opened = await client.openChangeStream({
+        query: declaration(),
+        headers:
+          context === null
+            ? undefined
+            : { [AGENT_CONTEXT_HEADER]: JSON.stringify(context) },
         onAlive,
         onEvent: (event) => {
           if (projects !== null && !projects.has(event.project)) return;
@@ -114,6 +154,7 @@ export async function openChangeNudges(opts: {
         return;
       }
       stream = opened;
+      openedSession = context?.session_id;
       lastAlive = clock.now();
       void opened.closed.then(() => {
         if (stream !== opened) return; // already replaced or closed by us
@@ -124,6 +165,17 @@ export async function openChangeNudges(opts: {
         nudge();
       });
     } catch (error) {
+      // A server that cannot parse the declaration costs us the listing,
+      // never the watch: a 400 would otherwise read as permanent below.
+      if (
+        declare !== undefined &&
+        error instanceof TodouError &&
+        error.status === 400 &&
+        error.code === "invalid_watch"
+      ) {
+        declare = undefined;
+        return tryConnect();
+      }
       // Permanent by REST's own yardstick (404 on a server predating
       // T-122, 401/403, a 2xx that is not a stream) — retrying it would
       // only burn requests for the rest of a twelve-hour watch.
@@ -143,6 +195,18 @@ export async function openChangeNudges(opts: {
       if (latched) {
         latched = false;
         return;
+      }
+      // The harness moved to a new session under us: reopen now, so the
+      // old session's listing lingers out and the new one appears (T-540).
+      if (
+        stream !== null &&
+        opts.context !== undefined &&
+        opts.context()?.session_id !== openedSession
+      ) {
+        const old = stream;
+        stream = null;
+        old.close();
+        retryAt = 0;
       }
       if (
         stream === null &&

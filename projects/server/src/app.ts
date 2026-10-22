@@ -41,6 +41,7 @@ import { sseRoutes } from "./routes/sse.ts";
 import { statusRoutes } from "./routes/statuses.ts";
 import { userRoutes } from "./routes/users.ts";
 import { versionRoutes } from "./routes/version.ts";
+import { watcherRoutes } from "./routes/watchers.ts";
 
 /**
  * Zod validation failures become uniform 422 error bodies. The message is
@@ -193,6 +194,8 @@ export function createApp(ctx: AppContext) {
   // Mounted at the root: sseRoutes carries both the user-level /events feed
   // and the per-project /projects/{slug}/events view (T-122).
   api.route("/", sseRoutes());
+  // Both /watchers and /projects/{slug}/watchers (T-540).
+  api.route("/", watcherRoutes());
 
   app.route("/", api);
   if (ctx.config.http.static_dir) {

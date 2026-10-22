@@ -1,4 +1,5 @@
 import type {
+  AgentContext,
   SpecInfo,
   SpecReviewStatus,
   TimelineItem,
@@ -185,6 +186,10 @@ export async function waitForSpecReview(args: {
   expectedVersion?: number;
   /** This session's identity, re-read per drain by the self-filter below. */
   session: SessionSource;
+  /** `--invisible`: wait without being listed as a live watcher (T-540). */
+  invisible: boolean;
+  /** The agent context each feed (re)connect reports. */
+  context: () => AgentContext | null;
   debounceSec: number;
   timeoutSec: number;
   intervalSec: number;
@@ -297,6 +302,8 @@ export async function waitForSpecReview(args: {
     issue: number,
     intervalSec: args.intervalSec,
     clock: args.clock,
+    declare: args.invisible ? undefined : { kind: "spec_wait" },
+    context: args.context,
   });
 
   let woke: TimelineItem[] = [];

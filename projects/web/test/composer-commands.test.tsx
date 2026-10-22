@@ -14,6 +14,7 @@ import type {
   Status,
   TimelineComment,
   TimelineItem,
+  Watcher,
 } from "@todou/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -39,6 +40,7 @@ import {
 } from "../src/components/timeline/composer.tsx";
 import { cmFocus, cmGetValue, cmSetValue, cmView } from "./cm.ts";
 import { testQueryClient } from "./render.tsx";
+import { BOT, CLAUDE, watcher } from "./watcher-fixtures.ts";
 
 describe("submitLabel", () => {
   const base = {
@@ -181,6 +183,7 @@ function mount(
     /** What the composer's timeline drain finds, seeded (T-307). */
     timeline?: TimelineItem[];
     atEnd?: boolean;
+    watchers?: Watcher[];
   } = {},
 ) {
   const client = new QueryClient({
@@ -216,6 +219,7 @@ function mount(
         failed={[]}
         onRetry={vi.fn()}
         atEnd={atEnd}
+        watchers={handlers.watchers}
       />
     </QueryClientProvider>
   );
@@ -872,5 +876,44 @@ describe("a failed comment across a card change", () => {
     createComment.mockClear();
     act(() => hook.result.current.retry(0));
     expect(createComment).not.toHaveBeenCalled();
+  });
+});
+
+/** T-540: the line above the box, and the phone opener that carries it. */
+describe("Composer watchers", () => {
+  const line = (view: { container: HTMLElement }) =>
+    view.container.querySelector("[data-composer-watchers]");
+
+  it("shows the line in the folded state, and labels the opener", () => {
+    const view = mount({ watchers: [watcher(CLAUDE), watcher(CLAUDE)] });
+    expect(folded(view)).toBe(true);
+    expect(line(view)?.textContent).toContain(
+      "Claude Agent (2 sessions) is watching this card",
+    );
+    expect(opener(view)?.getAttribute("aria-label")).toBe(
+      "Comment — watched by Claude Agent (2 sessions)",
+    );
+  });
+
+  it("keeps the line once the box unfolds", async () => {
+    const view = mount({ watchers: [watcher(CLAUDE), watcher(BOT)] });
+    cmFocus(view.container);
+    await waitFor(() => expect(folded(view)).toBe(false));
+    expect(line(view)?.textContent).toContain(
+      "Claude Agent and Bot One are watching this card",
+    );
+  });
+
+  it("shows the line at the page end, where there is no opener", () => {
+    const view = mount({ atEnd: true, watchers: [watcher(BOT)] });
+    expect(opener(view)).toBeNull();
+    expect(line(view)?.textContent).toContain("Bot One is watching this card");
+  });
+
+  it("renders no line, and the plain opener, without watchers", () => {
+    const view = mount();
+    expect(line(view)).toBeNull();
+    expect(opener(view)?.hasAttribute("aria-label")).toBe(false);
+    expect(opener(view)?.textContent).toBe(" Comment");
   });
 });

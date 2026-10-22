@@ -482,3 +482,30 @@ describe("issue watch --follow argument handling (T-254)", () => {
     );
   });
 });
+
+describe("issue watch: listed as a live watcher (T-540)", () => {
+  const run = async (extra: string[]) => {
+    const { fetchImpl, calls } = timelineRoutes([quiet, quiet, quiet]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--since", "c0", "--timeout", "4", ...extra],
+      { fetchImpl, env: loggedInEnv("todou"), clock: virtualClock() },
+    );
+    expect(result.exitCode).toBe(3);
+    const feed = calls
+      .map((call) => new URL(call.url, "http://stub.test"))
+      .find((url) => url.pathname === "/api/events");
+    expect(feed).toBeDefined();
+    return {
+      watch: feed?.searchParams.get("watch") ?? null,
+      kind: feed?.searchParams.get("watch_kind") ?? null,
+    };
+  };
+
+  it("declares the card", async () => {
+    expect(await run([])).toEqual({ watch: "issue:todou/3", kind: "watch" });
+  });
+
+  it("--invisible declares nothing", async () => {
+    expect(await run(["--invisible"])).toEqual({ watch: null, kind: null });
+  });
+});

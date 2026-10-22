@@ -1274,3 +1274,88 @@ describe("spec wait: withdrawal and replacement versions", () => {
     expect(outcomeOf(run.stdout)).toBe("withdrawn · spec v2 · reworking");
   });
 });
+
+describe("spec wait: listed as a live watcher (T-540)", () => {
+  const declared = (calls: { url: string }[]) => {
+    const feed = calls
+      .map((call) => new URL(call.url, "http://stub.test"))
+      .find((url) => url.pathname === "/api/events");
+    return {
+      watch: feed?.searchParams.get("watch") ?? null,
+      kind: feed?.searchParams.get("watch_kind") ?? null,
+    };
+  };
+  const routes = (): Route[] => {
+    const sse = sseStub();
+    let drains = 0;
+    return [
+      ["GET", "/api/me", ME],
+      ["GET", "/api/events", () => sse.reply()],
+      ["GET", SPEC_PATH, () => specInfo({ current_version: 3 })],
+      [
+        "POST",
+        PUSH_PATH,
+        {
+          unchanged: false,
+          version: 3,
+          added: [],
+          changed: ["plan.md"],
+          removed: [],
+          cursor: "pc3",
+        },
+      ],
+      [
+        "GET",
+        TIMELINE_PATH,
+        () => {
+          drains += 1;
+          return drains >= 2
+            ? page([comment(44, "再改一处", "2026-08-11T12:00:00.000Z")], "c44")
+            : page([], null);
+        },
+      ],
+    ];
+  };
+  const run = async (argv: string[]) => {
+    const { fetchImpl, calls } = fakeFetch(routes());
+    const result = await runCli(argv, {
+      fetchImpl,
+      env: loggedInEnv("proj"),
+      clock: virtualClock(),
+    });
+    expect(result.exitCode).toBe(0);
+    return declared(calls);
+  };
+
+  it("spec wait declares the card as a spec wait", async () => {
+    expect(await run(["spec", "wait", "23", "--debounce", "0"])).toEqual({
+      watch: "issue:proj/23",
+      kind: "spec_wait",
+    });
+  });
+
+  it("spec push --wait declares the same", async () => {
+    expect(
+      await run(["spec", "push", "23", specDir(), "--wait", "--debounce", "0"]),
+    ).toEqual({ watch: "issue:proj/23", kind: "spec_wait" });
+  });
+
+  it("--invisible declares nothing, on either command", async () => {
+    const none = { watch: null, kind: null };
+    expect(
+      await run(["spec", "wait", "23", "--debounce", "0", "--invisible"]),
+    ).toEqual(none);
+    expect(
+      await run([
+        "spec",
+        "push",
+        "23",
+        specDir(),
+        "--wait",
+        "--debounce",
+        "0",
+        "--invisible",
+      ]),
+    ).toEqual(none);
+  });
+});

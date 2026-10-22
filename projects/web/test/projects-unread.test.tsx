@@ -13,7 +13,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import type { InboxPage, Project } from "@todou/shared";
+import type { InboxPage, Project, WatchersOverview } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { InboxButton } from "../src/components/inbox-button.tsx";
@@ -21,6 +21,7 @@ import { ProjectSwitcher } from "../src/components/project-switcher.tsx";
 import { InboxPage as InboxPageView } from "../src/pages/inbox.tsx";
 import { ProjectsPage } from "../src/pages/projects.tsx";
 import { testQueryClient } from "./render.tsx";
+import { BOT, CLAUDE, watcher } from "./watcher-fixtures.ts";
 
 const me = {
   id: 1,
@@ -112,16 +113,19 @@ function renderProjects({
   includeNav = false,
   includeInbox = false,
   getInbox,
+  watchers,
 }: {
   projects: Project[];
   inbox?: InboxPage;
   includeNav?: boolean;
   includeInbox?: boolean;
   getInbox?: () => Promise<InboxPage>;
+  watchers?: WatchersOverview;
 }) {
   const client = testQueryClient();
   client.setQueryData(["me"], me);
   client.setQueryData(["projects"], projects);
+  client.setQueryData(["watchers"], watchers ?? { projects: {} });
   vi.spyOn(api, "me").mockResolvedValue(me);
   vi.spyOn(api, "listProjects").mockResolvedValue(projects);
   if (inbox) {
@@ -185,7 +189,7 @@ function renderProjects({
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { ...view, client, inboxSpy };
+  return { ...view, client, inboxSpy, router };
 }
 
 /** The whole linked ProjectCard, not the page heading or the switcher row. */
@@ -475,5 +479,54 @@ describe("Mark all read badge coherence (T-444)", () => {
     expect(client.getQueryData(limitedKey)).toEqual(limited);
     expect(client.getQueryData(otherKey)).toEqual(other);
     await act(async () => refresh.resolve(original));
+  });
+});
+
+describe("ProjectsPage watchers (T-540)", () => {
+  it("puts a project's watchers in its card's badge slot, and nowhere else", async () => {
+    const { container } = renderProjects({
+      projects: [project("alpha"), project("beta")],
+      inbox: page({}),
+      watchers: {
+        projects: {
+          alpha: [
+            watcher(CLAUDE, { scope: "project" }),
+            watcher(CLAUDE, { scope: "project" }),
+            watcher(BOT, { scope: "all_projects" }),
+          ],
+        },
+      },
+    });
+    await waitFor(() => cardOf(container, "alpha"));
+    const badge = cardOf(container, "alpha").querySelector(
+      '[data-slot="project-card-badge"]',
+    );
+    const button = badge?.querySelector("button");
+    expect(button?.getAttribute("aria-label")).toBe(
+      "Watching: Claude Agent (2 sessions), Bot One",
+    );
+    expect(
+      cardOf(container, "beta").querySelector(
+        '[data-slot="project-card-badge"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("opens the session list from the badge without following the card's link", async () => {
+    const { container, router } = renderProjects({
+      projects: [project("alpha")],
+      inbox: page({}),
+      watchers: {
+        projects: { alpha: [watcher(BOT, { scope: "all_projects" })] },
+      },
+    });
+    await waitFor(() => cardOf(container, "alpha"));
+    const button = cardOf(container, "alpha").querySelector(
+      '[data-slot="project-card-badge"] button',
+    ) as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(await screen.findByText("Watching alpha")).toBeTruthy();
+    expect(screen.getByText("all projects", { exact: false })).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/projects");
   });
 });

@@ -8,7 +8,9 @@ import {
   type CapabilityId,
   can,
   ORIGIN_HEADER,
+  ProjectWatchers,
   TodouClient,
+  WatchersOverview,
 } from "@todou/shared";
 
 /**
@@ -91,6 +93,27 @@ export const projectQuery = (slug: string) =>
     queryKey: ["project", slug],
     queryFn: () => api.getProject(slug),
     staleTime: METADATA_STALE_MS,
+  });
+
+/**
+ * Live agent watchers (T-540). Never stale by time: the feed's `watchers`
+ * event and its reconnect catch-up are what invalidate them.
+ *
+ * Parsed, unlike most reads here: presence is decoration on pages that have
+ * to stand without it, so an answer of the wrong shape becomes a failed read,
+ * which every surface renders as nothing, rather than a page that throws.
+ */
+export const watchersQuery = queryOptions({
+  queryKey: ["watchers"],
+  queryFn: async () => WatchersOverview.parse(await api.watchers()),
+  staleTime: Number.POSITIVE_INFINITY,
+});
+
+export const projectWatchersQuery = (slug: string) =>
+  queryOptions({
+    queryKey: ["watchers", slug],
+    queryFn: async () => ProjectWatchers.parse(await api.projectWatchers(slug)),
+    staleTime: Number.POSITIVE_INFINITY,
   });
 
 export const statusesQuery = (slug: string) =>

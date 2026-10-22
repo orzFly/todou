@@ -132,6 +132,18 @@ describe("a resident watch follows its session id (T-289)", () => {
     expect(
       result.stderr.split("\n").filter((l) => l.includes("session id rotated")),
     ).toHaveLength(1);
+    // The feed follows too (T-540): the first stream reported the live id
+    // rather than the environment's, and was closed and replaced by one
+    // reporting the rotated id.
+    const feeds = calls.filter((c) => c.url.includes("/api/events"));
+    const sessions = feeds.map(
+      (c) =>
+        JSON.parse(
+          (c.init.headers as Record<string, string>)["x-todou-agent-context"],
+        ).session_id,
+    );
+    expect(sessions).toEqual([CURRENT, ROTATED]);
+    expect(feeds[0]?.init.signal?.aborted).toBe(true);
   });
 
   it("keeps the startup id, and says so, when the record cannot be read", async () => {

@@ -973,6 +973,30 @@ describe("TodouClient change stream (T-123)", () => {
     stream.close();
   });
 
+  it("puts a per-call query and headers on the request (T-540)", async () => {
+    const server = feed();
+    const client = new TodouClient({
+      baseUrl: "http://api.test",
+      token: "todou_pat_test",
+      fetch: server.fetch,
+      headers: { "x-todou-agent-context": "startup", "x-other": "kept" },
+    });
+    const stream = await client.openChangeStream({
+      onEvent: () => {},
+      query: { watch: "issue:todou/7", watch_kind: "spec_wait" },
+      headers: { "x-todou-agent-context": "live" },
+    });
+    const url = new URL(server.calls[0]?.url ?? "");
+    expect(url.pathname).toBe("/api/events");
+    expect(url.searchParams.get("watch")).toBe("issue:todou/7");
+    expect(url.searchParams.get("watch_kind")).toBe("spec_wait");
+    const headers = server.calls[0]?.init.headers as Record<string, string>;
+    expect(headers["x-todou-agent-context"]).toBe("live");
+    expect(headers["x-other"]).toBe("kept");
+    expect(headers.authorization).toBe("Bearer todou_pat_test");
+    stream.close();
+  });
+
   it("dispatches change events and reports liveness for every chunk", async () => {
     const server = feed();
     const client = new TodouClient({ fetch: server.fetch });

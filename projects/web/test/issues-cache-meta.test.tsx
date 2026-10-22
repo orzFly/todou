@@ -130,6 +130,9 @@ function stubServer(): string[] {
         autolinks: [],
       });
     }
+    if (path === `/api/projects/${SLUG}/watchers`) {
+      return jsonOf({ project: [], issues: {} });
+    }
     if (path === "/api/me/prefs") return jsonOf({});
     if (path === "/api/me/mutes") return jsonOf({ issues: [], projects: [] });
     if (path === "/api/me") {

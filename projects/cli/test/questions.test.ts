@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { fakeFetch, loggedInEnv, runCli, virtualClock } from "./harness.ts";
+import {
+  fakeFetch,
+  loggedInEnv,
+  runCli,
+  sseStub,
+  virtualClock,
+} from "./harness.ts";
 
 const USER = {
   id: 1,
@@ -414,5 +420,44 @@ describe("question answer", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("extra");
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("question wait: listed as a live watcher (T-540)", () => {
+  const run = async (extra: string[]) => {
+    const sse = sseStub();
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/events", () => sse.reply()],
+      [
+        "GET",
+        TIMELINE_PATH,
+        { items: [], prev_cursor: null, next_cursor: null },
+      ],
+      ["GET", QUESTIONS_PATH, { items: [STORED_ITEM], open: 1 }],
+    ]);
+    const result = await runCli(
+      ["question", "wait", "19", "42", "--timeout", "4", ...extra],
+      { fetchImpl, env: loggedInEnv("todou"), clock: virtualClock() },
+    );
+    expect(result.exitCode).toBe(3);
+    const feed = calls
+      .map((call) => new URL(call.url, "http://stub.test"))
+      .find((url) => url.pathname === "/api/events");
+    expect(feed).toBeDefined();
+    return {
+      watch: feed?.searchParams.get("watch") ?? null,
+      kind: feed?.searchParams.get("watch_kind") ?? null,
+    };
+  };
+
+  it("declares the card as a question wait", async () => {
+    expect(await run([])).toEqual({
+      watch: "issue:todou/19",
+      kind: "question_wait",
+    });
+  });
+
+  it("--invisible declares nothing", async () => {
+    expect(await run(["--invisible"])).toEqual({ watch: null, kind: null });
   });
 });

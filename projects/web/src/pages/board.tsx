@@ -18,6 +18,7 @@ import {
   type Label,
   type Member,
   type Status,
+  type Watcher,
 } from "@todou/shared";
 import { TagIcon, UserPlusIcon } from "lucide-react";
 import { type PointerEvent, useEffect, useRef, useState } from "react";
@@ -31,6 +32,7 @@ import { useRefPlacement } from "@/api/prefs.ts";
 import {
   labelsQuery,
   membersQuery,
+  projectWatchersQuery,
   statusesQuery,
   useCanIfLoaded,
 } from "@/api/queries.ts";
@@ -41,7 +43,10 @@ import {
   QuestionBadge,
   SpecReviewBadge,
 } from "@/components/issue/attention-badge.tsx";
-import { MetaEditButton } from "@/components/issue/issue-row.tsx";
+import {
+  AssigneesAndWatchers,
+  MetaEditButton,
+} from "@/components/issue/issue-row.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
   LabelPicker,
@@ -50,11 +55,11 @@ import {
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
+import { ProjectWatchersChip } from "@/components/shared/project-watchers.tsx";
 import {
   useRegisterReturnArea,
   useReturnLinkState,
 } from "@/components/shared/return-context.tsx";
-import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { openBlockCount } from "@/lib/blocks.ts";
@@ -235,6 +240,7 @@ export function BoardPage() {
             row of its own — project-scoped, like the list's copy, because
             the endpoint sweeps a project and not a column (T-100). */}
         <div className="flex shrink-0 justify-end">
+          <ProjectWatchersChip slug={slug} className="me-auto" />
           <MarkAllReadButton slug={slug} scopeName="this project" />
           <ProjectMuteButton slug={slug} />
         </div>
@@ -279,6 +285,8 @@ function BoardColumn({
   edit: CardEdit;
 }) {
   const column = useQuery(boardColumnQuery(slug, status.id));
+  // One project-wide read that every column shares, not one per card.
+  const watchers = useQuery(projectWatchersQuery(slug)).data?.issues;
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
   const { slot, viewport } = useOverlayScrollbars(column.data !== undefined);
   // The column registers its own scrolling region because the page above it
@@ -339,6 +347,7 @@ function BoardColumn({
               issue={issue}
               statusId={status.id}
               edit={edit}
+              watchers={watchers?.[String(issue.number)]}
             />
           ))}
           {column.data?.items.length === 0 && (
@@ -357,11 +366,13 @@ function BoardCard({
   issue,
   statusId,
   edit,
+  watchers,
 }: {
   slug: string;
   issue: IssueListItem;
   statusId: number;
   edit: CardEdit;
+  watchers?: Watcher[];
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `issue-${issue.number}`,
@@ -386,7 +397,12 @@ function BoardCard({
       // snapshot outlives the board it was taken from (T-407).
       data-return-id={String(issue.id)}
     >
-      <BoardCardContent slug={slug} issue={issue} edit={edit} />
+      <BoardCardContent
+        slug={slug}
+        issue={issue}
+        edit={edit}
+        watchers={watchers}
+      />
     </div>
   );
 }
@@ -395,10 +411,13 @@ export function BoardCardContent({
   slug,
   issue,
   edit,
+  watchers = [],
 }: {
   slug: string;
   issue: IssueListItem;
   edit?: CardEdit;
+  /** This card's card-level watchers (T-540). */
+  watchers?: readonly Watcher[];
 }) {
   const editable = edit?.canTriage ? edit : undefined;
   const refPrefix = useRefPrefix(slug);
@@ -419,7 +438,9 @@ export function BoardCardContent({
     issue.spec_review_status === "unreviewed" ||
     openBlockCount(issue.blocked_by) > 0 ||
     issue.labels.length > 0 ||
-    issue.assignees.length > 0;
+    issue.assignees.length > 0 ||
+    watchers.length > 0;
+  const hasAvatars = issue.assignees.length > 0 || watchers.length > 0;
   return (
     <div className="relative">
       {issue.unread && (
@@ -467,8 +488,14 @@ export function BoardCardContent({
            `overflow-hidden` clips at the padding box, so `pb-1` moves the
            lower clip edge down by the distance UserAvatar's bot badge extends
            below the avatar (`-bottom-1` there). `-mb-1` takes those 4px back
-           out of the parent's flow, so the card height is unchanged (T-361). */
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 overflow-hidden pb-1 -mb-1">
+           out of the parent's flow, so the card height is unchanged (T-361).
+           The top edge does the same for the live dot and its ring, which
+           reach 4px above a watching avatar (T-540): `pt-1` moves the clip
+           up and `mt-0.5` is the `mt-1.5` that was there, less those 4px. */
+        <div
+          data-card-meta=""
+          className="mt-0.5 flex flex-wrap items-center gap-1.5 overflow-hidden pt-1 pb-1 -mb-1"
+        >
           {placement === "after" && (
             <span className="text-xs text-muted-foreground">{ref}</span>
           )}
@@ -492,21 +519,19 @@ export function BoardCardContent({
           {/* `pr-1.5` equals the distance the bot badge extends past its
               avatar (`-right-1.5` on UserAvatar), so `ml-auto` stops the last
               avatar 6px earlier and the badge stays inside the clip. Applied
-              only when there are assignees, because on an empty span those
-              6px still count as width and can push a label chip onto the
-              next line (T-361). */}
+              only when the group holds an avatar, watchers included, because
+              on an empty span those 6px still count as width and can push a
+              label chip onto the next line (T-361). */}
           <span
             className={cn(
-              "ml-auto flex gap-1",
-              issue.assignees.length > 0 && "pr-1.5",
+              "ml-auto flex items-center gap-1",
+              hasAvatars && "pr-1.5",
             )}
           >
             {/* Ahead of the avatars, so the hidden icon's room does not
                 push them in from the edge (T-536). */}
             {editable && <CardAssigneeEdit issue={issue} edit={editable} />}
-            {issue.assignees.map((user) => (
-              <UserChip key={user.id} user={user} compact />
-            ))}
+            <AssigneesAndWatchers issue={issue} watchers={watchers} />
           </span>
         </div>
       )}

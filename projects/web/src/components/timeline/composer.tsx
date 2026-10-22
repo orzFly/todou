@@ -5,6 +5,7 @@ import type {
   Me,
   TimelineComment,
   TimelineItem,
+  Watcher,
 } from "@todou/shared";
 import { COMMENT_HIDE_MAX_IDS } from "@todou/shared";
 import { MessageSquarePlusIcon, SendIcon } from "lucide-react";
@@ -28,6 +29,11 @@ import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
+import { WatcherStack } from "@/components/shared/watcher-stack.tsx";
+import {
+  ComposerWatchersLine,
+  openerLabel,
+} from "@/components/timeline/composer-watchers.tsx";
 import { useQuoteSink } from "@/components/timeline/quote-reply.tsx";
 import { Button } from "@/components/ui/button";
 import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
@@ -293,6 +299,8 @@ export function settledToast(result: CommandSubmitResult): string | null {
 /** The folded phone composer's button, which opens the box (T-532). */
 const OPENER = "[data-composer-opener]";
 
+const NO_WATCHERS: readonly Watcher[] = [];
+
 /**
  * Whether the reader is working in `root` (T-532). Focus arriving anywhere in
  * it engages; leaving disengages only once focus has gone somewhere outside.
@@ -362,6 +370,7 @@ export function Composer({
   failed,
   onRetry,
   atEnd = false,
+  watchers = NO_WATCHERS,
 }: {
   slug: string;
   issueNumber: number;
@@ -378,6 +387,8 @@ export function Composer({
    * composer is a box there rather than a button (T-538): it covers nothing.
    */
   atEnd?: boolean;
+  /** This card's card-level watchers (T-540). */
+  watchers?: readonly Watcher[];
 }) {
   const editor = useRef<MarkdownEditorHandle>(null);
   const [uploading, setUploading] = useState(false);
@@ -603,6 +614,14 @@ export function Composer({
           ))}
         </div>
       )}
+      {/* On a phone mid-timeline the floating button carries the watchers
+          instead, so the line would only cover the timeline twice. */}
+      <ComposerWatchersLine
+        slug={slug}
+        issueNumber={issueNumber}
+        watchers={watchers}
+        className={cn(opener && "max-sm:hidden")}
+      />
       <form
         className="flex flex-col"
         onSubmit={(e) => {
@@ -644,8 +663,23 @@ export function Composer({
               data-composer-opener=""
               className="pointer-events-auto rounded-full shadow-lg"
               onClick={() => editor.current?.focus()}
+              aria-label={
+                watchers.length > 0 ? openerLabel(watchers) : undefined
+              }
             >
               <MessageSquarePlusIcon className="size-4" /> Comment
+              {/* Display only: the whole button still opens the editor, and
+                  an interactive element inside a button is invalid. */}
+              {watchers.length > 0 && (
+                <>
+                  <span aria-hidden className="mx-1 h-4 w-px bg-current/30" />
+                  <WatcherStack
+                    watchers={watchers}
+                    aria-hidden
+                    ringClassName="ring-primary"
+                  />
+                </>
+              )}
             </Button>
           </div>
         )}

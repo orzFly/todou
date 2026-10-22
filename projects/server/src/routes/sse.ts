@@ -10,14 +10,19 @@ import {
   SSE_CHANGE_EVENT,
   SSE_ME_EVENT,
   SSE_PING_EVENT,
+  type WatcherKind,
+  WatcherKind as WatcherKindSchema,
 } from "@todou/shared";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { AppEnv } from "../auth/middleware.ts";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
+import { DomainError } from "../errors.ts";
+import type { WatcherHandle, WatcherScopes } from "../events/watchers.ts";
 import {
   accessibleProjectRows,
+  findProjectsByRefs,
   type ProjectRow,
   requireCapability,
   routeInfoOf,
@@ -87,6 +92,99 @@ const metadataParam = MetadataNamespaceSelector.optional().openapi({
     "the parameter no metadata event is delivered at all.",
 });
 
+const presenceParam = z
+  .literal("1")
+  .optional()
+  .openapi({
+    param: { name: "presence", in: "query" },
+    description:
+      "Opt in to `watchers` change events (T-540): the live agent watchers " +
+      "of a project or card changed. Without it none is delivered, so a " +
+      "watch is never woken by another agent arriving or leaving.",
+  });
+
+const watchParam = z
+  .string()
+  .optional()
+  .openapi({
+    param: { name: "watch", in: "query" },
+    description:
+      "Declare what this connection watches (T-540), so it is listed as a " +
+      "live watcher: comma-separated `project:<ref>`, `issue:<ref>/<number>`, " +
+      "or `all` alone; at most 50 entries. Only a request carrying " +
+      "`x-todou-agent-context` is listed. Entries naming projects the " +
+      "caller cannot read are dropped. Malformed → 400 `invalid_watch`.",
+  });
+
+const watchKindParam = z
+  .string()
+  .optional()
+  .openapi({
+    param: { name: "watch_kind", in: "query" },
+    description:
+      "`watch` (default), `spec_wait` or `question_wait`; ignored without " +
+      "`watch`. Anything else → 400 `invalid_watch`.",
+  });
+
+const WATCH_MAX_ENTRIES = 50;
+
+class InvalidWatchError extends DomainError {
+  constructor(message: string) {
+    super(400, "invalid_watch", message);
+  }
+}
+
+export type WatchDeclaration =
+  | { all: true }
+  | { all: false; projects: string[]; issues: Array<[string, number]> };
+
+/** The `watch` query parameter, checked for shape only; refs resolve later. */
+export function parseWatchParam(raw: string): WatchDeclaration {
+  const entries = raw.split(",");
+  if (entries.length > WATCH_MAX_ENTRIES) {
+    throw new InvalidWatchError(
+      `watch takes at most ${WATCH_MAX_ENTRIES} entries`,
+    );
+  }
+  if (entries.includes("all")) {
+    if (entries.length > 1) {
+      throw new InvalidWatchError("watch=all cannot be combined");
+    }
+    return { all: true };
+  }
+  const projects: string[] = [];
+  const issues: Array<[string, number]> = [];
+  for (const entry of entries) {
+    const project = /^project:(.+)$/.exec(entry);
+    const issue = /^issue:(.+)\/([1-9]\d{0,14})$/.exec(entry);
+    if (
+      project?.[1] !== undefined &&
+      ProjectRef.safeParse(project[1]).success
+    ) {
+      projects.push(project[1]);
+    } else if (
+      issue?.[1] !== undefined &&
+      ProjectRef.safeParse(issue[1]).success
+    ) {
+      issues.push([issue[1], Number(issue[2])]);
+    } else {
+      throw new InvalidWatchError(
+        `malformed watch entry: ${entry || "(empty)"}`,
+      );
+    }
+  }
+  return { all: false, projects, issues };
+}
+
+function parseWatchKind(raw: string | undefined): WatcherKind {
+  if (raw === undefined) return "watch";
+  const parsed = WatcherKindSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new InvalidWatchError(`unknown watch_kind: ${raw}`);
+  }
+  return parsed.data;
+}
+
 const userEventsRoute = createRoute({
   method: "get",
   path: "/events",
@@ -103,7 +201,13 @@ const userEventsRoute = createRoute({
     "changes live: being added to a project starts its events mid-stream, " +
     "being removed silences them.",
   request: {
-    query: z.object({ inbox: inboxParam, metadata: metadataParam }),
+    query: z.object({
+      inbox: inboxParam,
+      metadata: metadataParam,
+      presence: presenceParam,
+      watch: watchParam,
+      watch_kind: watchKindParam,
+    }),
   },
   responses: { 200: { description: "text/event-stream" } },
 });
@@ -118,7 +222,11 @@ const projectEventsRoute = createRoute({
     "REST. The stream closes when the caller loses access to the project.",
   request: {
     params: z.object({ slug: ProjectRef }),
-    query: z.object({ inbox: inboxParam, metadata: metadataParam }),
+    query: z.object({
+      inbox: inboxParam,
+      metadata: metadataParam,
+      presence: presenceParam,
+    }),
   },
   responses: { 200: { description: "text/event-stream" } },
 });
@@ -131,6 +239,9 @@ function streamChanges(
   wantInbox: boolean,
   /** Undefined = this connection asked for no metadata at all. */
   wantMetadata: MetadataNamespaceSelector | undefined,
+  wantPresence: boolean,
+  /** What the connection declared it watches; null = not listed (T-540). */
+  declared: { what: WatchDeclaration; kind: WatcherKind } | null,
 ) {
   return streamSSE(c, async (stream) => {
     // The visible set decides delivery per event; each row carries the slug
@@ -230,6 +341,7 @@ function streamChanges(
 
     const send = async (project: ProjectRow, event: ChangeEvent) => {
       if (event.entity === "metadata" && !wantsMetadata(event)) return;
+      if (event.entity === "watchers" && !wantPresence) return;
       const payload: CrossChangeEvent = { ...event, project: project.slug };
       if (wantInbox) {
         const row = await judge(project, event);
@@ -242,6 +354,82 @@ function streamChanges(
         event: SSE_CHANGE_EVENT,
         data: JSON.stringify(payload),
       });
+    };
+
+    // The declaration resolved to ids once, then re-filtered against
+    // `visible` whenever it moves, so a project the account loses stops
+    // listing it (T-540).
+    const agentContext = c.get("agentContext");
+    const connectionId = crypto.randomUUID();
+    let resolved: { projects: number[]; issues: Array<[number, number]> } = {
+      projects: [],
+      issues: [],
+    };
+    let watcher: WatcherHandle | null = null;
+    let watcherKey = "";
+    const resolveDeclared = async () => {
+      if (declared === null || declared.what.all) return;
+      const { projects: refs, issues } = declared.what;
+      const bySlug = new Map([...visible.values()].map((r) => [r.slug, r]));
+      const idOf = new Map<string, number>();
+      const misses: string[] = [];
+      for (const ref of [...refs, ...issues.map(([ref]) => ref)]) {
+        const row = visible.get(Number(ref)) ?? bySlug.get(ref);
+        if (row !== undefined) idOf.set(ref, row.id);
+        else misses.push(ref);
+      }
+      if (misses.length > 0) {
+        for (const [ref, found] of await findProjectsByRefs(ctx, misses)) {
+          idOf.set(ref, found.project.id);
+        }
+      }
+      const projects = new Set<number>();
+      for (const ref of refs) {
+        const id = idOf.get(ref);
+        if (id !== undefined) projects.add(id);
+      }
+      const pairs = new Map<string, [number, number]>();
+      for (const [ref, number] of issues) {
+        const id = idOf.get(ref);
+        if (id !== undefined) pairs.set(`${id}/${number}`, [id, number]);
+      }
+      resolved = { projects: [...projects], issues: [...pairs.values()] };
+    };
+    const syncWatcher = () => {
+      if (declared === null || agentContext === null) return;
+      if (declared.what.all) {
+        if (watcher === null) {
+          watcher = ctx.watchers.register({
+            user,
+            agentContext,
+            kind: declared.kind,
+            connectionId,
+            scopes: { all: visible },
+          });
+        } else {
+          watcher.touch();
+        }
+        return;
+      }
+      const scopes: WatcherScopes = {
+        projects: resolved.projects.filter((id) => visible.has(id)),
+        issues: resolved.issues.filter(([id]) => visible.has(id)),
+      };
+      const key = JSON.stringify(scopes);
+      if (watcher !== null && key === watcherKey) return;
+      const previous = watcher;
+      watcherKey = key;
+      watcher =
+        scopes.projects.length + scopes.issues.length === 0
+          ? null
+          : ctx.watchers.register({
+              user,
+              agentContext,
+              kind: declared.kind,
+              connectionId,
+              scopes,
+            });
+      previous?.release();
     };
 
     const recompute = async () => {
@@ -260,6 +448,7 @@ function streamChanges(
       // What the caller can read just moved, and the judgement filters
       // cross-references against exactly that.
       crossRefVisible = null;
+      syncWatcher();
     };
 
     // Flipped instead of breaking out directly so the revocation paths deep
@@ -267,8 +456,10 @@ function streamChanges(
     let closed = false;
 
     try {
+      if (declared !== null && agentContext !== null) await resolveDeclared();
       // Lets clients (and tests) know the subscription is live.
       await stream.writeSSE({ event: "hello", data: "{}" });
+      syncWatcher();
 
       while (!closed && !stream.aborted && !shutdown.aborted) {
         while (meQueue.length > 0 && !stream.aborted && !closed) {
@@ -340,6 +531,7 @@ function streamChanges(
               if (row !== undefined) {
                 await send(row, event);
                 visible.delete(projectId);
+                syncWatcher();
                 // recompute() is deliberately not called on this path — the
                 // send above needs the project as it was — so the
                 // judgement's set has to be dropped by hand, or it would go
@@ -386,6 +578,8 @@ function streamChanges(
         }
       }
     } finally {
+      // Assigned only inside closures, which narrowing cannot see.
+      (watcher as WatcherHandle | null)?.release();
       unsubscribe();
       unsubscribeMe?.();
       shutdown.removeEventListener("abort", onShutdown);
@@ -396,16 +590,28 @@ function streamChanges(
 export function sseRoutes() {
   const app = new OpenAPIHono<AppEnv>();
 
-  app.openapi(userEventsRoute, async (c) =>
-    streamChanges(
+  app.openapi(userEventsRoute, async (c) => {
+    const query = c.req.valid("query");
+    // Checked before the stream opens, so a bad declaration is a 400 the
+    // client can see rather than a stream that silently lists nothing.
+    const declared =
+      query.watch === undefined
+        ? null
+        : {
+            what: parseWatchParam(query.watch),
+            kind: parseWatchKind(query.watch_kind),
+          };
+    return streamChanges(
       c,
       c.get("appCtx"),
       c.get("user"),
       { kind: "all" },
-      c.req.valid("query").inbox === "1",
-      c.req.valid("query").metadata,
-    ),
-  );
+      query.inbox === "1",
+      query.metadata,
+      query.presence === "1",
+      declared,
+    );
+  });
 
   app.openapi(projectEventsRoute, async (c) => {
     const ctx = c.get("appCtx");
@@ -423,6 +629,8 @@ export function sseRoutes() {
       { kind: "project", row: project },
       c.req.valid("query").inbox === "1",
       c.req.valid("query").metadata,
+      c.req.valid("query").presence === "1",
+      null,
     );
   });
 

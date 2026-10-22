@@ -238,6 +238,10 @@ export class SpecPushCommand extends ProjectCommand {
   interval = Option.String("--interval", {
     description: "With --wait: seconds between server polls (default 2)",
   });
+  invisible = Option.Boolean("--invisible", false, {
+    description:
+      "With --wait: do not show this watch to others as a live watcher",
+  });
 
   protected async run(client: TodouClient): Promise<number | void> {
     assertWriteCursorFlags(this);
@@ -305,6 +309,8 @@ export class SpecPushCommand extends ProjectCommand {
       expectedVersion: result.version,
       from: outcome.cursor,
       session: this.sessionSource(),
+      invisible: this.invisible,
+      context: () => this.liveAgentContext(),
       ...waitFlags,
       paint,
       clock: this.clock,
@@ -915,6 +921,9 @@ export class SpecWaitCommand extends ProjectCommand {
   interval = Option.String("--interval", {
     description: "Seconds between server polls (default 2)",
   });
+  invisible = Option.Boolean("--invisible", false, {
+    description: "Do not show this watch to others as a live watcher",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
     assertWriteCursorFlags({
@@ -929,6 +938,8 @@ export class SpecWaitCommand extends ProjectCommand {
       number,
       from: this.since,
       session: this.sessionSource(),
+      invisible: this.invisible,
+      context: () => this.liveAgentContext(),
       ...specWaitFlags(this, true),
       paint: makePainter(this.context.stdout, this.context.env),
       clock: this.clock,

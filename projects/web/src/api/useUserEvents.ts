@@ -279,6 +279,10 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
         refetch(["search-comment-ref"]),
         refetch(["search-comment-location"]),
       ];
+    case "watchers":
+      // One prefix for both the overview and every project's own list: who
+      // watches a project shows on the projects home as well (T-540).
+      return [refetch(["watchers"])];
     case "project":
       return [
         refetch(["project", slug]),
@@ -946,6 +950,8 @@ export function reconnectInvalidations(): QueryKeyLike[] {
     // A preference toggled on another device during the outage arrives
     // nowhere else: its `me` event was dropped with the connection.
     ["me-prefs"],
+    // Agents that arrived or left while the feed was down (T-540).
+    ["watchers"],
   ];
 }
 
@@ -1129,7 +1135,7 @@ export function useUserEvents(userId?: number) {
       // default, and this is the explicit opt-in that matches a page which
       // shows all of it.
       const es = new EventSource(
-        api.userEventsUrl({ inbox: true, metadata: "*" }),
+        api.userEventsUrl({ inbox: true, metadata: "*", presence: true }),
       );
       source = es;
       armStallTimer();

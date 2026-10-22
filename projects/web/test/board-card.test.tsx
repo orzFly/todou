@@ -195,12 +195,12 @@ describe("BoardCardContent ref placement (T-153, T-157)", () => {
     expect(precedes(title, ref)).toBe(true);
     // A bare card is its title and that line — no meta row is spun up to
     // hold the ref, and none spends its margin.
-    expect(container.querySelector(".mt-1\\.5")).toBeNull();
+    expect(container.querySelector("[data-card-meta]")).toBeNull();
   });
 
   it("keeps that line above the meta row", async () => {
     const { container, title, ref } = await renderCard("own_line", 2);
-    const meta = container.querySelector(".mt-1\\.5");
+    const meta = container.querySelector("[data-card-meta]");
     expect(meta).not.toBeNull();
     expect(precedes(title, ref)).toBe(true);
     expect(precedes(ref, meta as Element)).toBe(true);
@@ -215,17 +215,19 @@ describe("BoardCardContent ref placement (T-153, T-157)", () => {
     const { container, title, ref } = await renderCard("after");
     expect(title.contains(ref)).toBe(false);
     expect(precedes(title, ref)).toBe(true);
-    expect(container.querySelector(".mt-1\\.5")?.contains(ref)).toBe(true);
+    expect(container.querySelector("[data-card-meta]")?.contains(ref)).toBe(
+      true,
+    );
   });
 
   it("drops the emptied meta row rather than leaving its margin behind", async () => {
     const { container } = await renderCard("before");
-    expect(container.querySelector(".mt-1\\.5")).toBeNull();
+    expect(container.querySelector("[data-card-meta]")).toBeNull();
   });
 
   it("keeps the meta row for a card that still has badges", async () => {
     const { container } = await renderCard("before", 2);
-    expect(container.querySelector(".mt-1\\.5")).not.toBeNull();
+    expect(container.querySelector("[data-card-meta]")).not.toBeNull();
   });
 
   it("reads its own surface's key, not the list's (T-157)", async () => {
@@ -268,7 +270,7 @@ describe("board contains long tokens (T-303)", () => {
       <BoardCardContent slug="p" issue={issue(2)} />,
     );
     await view.findByText("issue 1");
-    const meta = view.container.querySelector(".mt-1\\.5");
+    const meta = view.container.querySelector("[data-card-meta]");
     expect(meta).not.toBeNull();
     expect((meta as Element).className).toContain("overflow-hidden");
   });
@@ -378,7 +380,7 @@ describe("board reserves room for the bot badge (T-361)", () => {
       <BoardCardContent slug="p" issue={{ ...issue(0), assignees: [agent] }} />,
     );
     await view.findByText("issue 1");
-    const meta = view.container.querySelector(".mt-1\\.5") as Element;
+    const meta = view.container.querySelector("[data-card-meta]") as Element;
     expect(meta.className).toContain("pb-1");
     expect(meta.querySelector(".ml-auto")?.className).toContain("pr-1.5");
   });
@@ -388,7 +390,7 @@ describe("board reserves room for the bot badge (T-361)", () => {
       <BoardCardContent slug="p" issue={issue(2)} />,
     );
     await view.findByText("issue 1");
-    const meta = view.container.querySelector(".mt-1\\.5") as Element;
+    const meta = view.container.querySelector("[data-card-meta]") as Element;
     expect(meta.querySelector(".ml-auto")?.className).not.toContain("pr-1.5");
   });
 });

@@ -612,3 +612,143 @@ describe("one-card waits over the change feed (T-208)", () => {
     expect(drains).toBe(2);
   });
 });
+
+describe("watcher declaration on the feed (T-540)", () => {
+  const eventsCalls = (calls: { url: string; init: RequestInit }[]) =>
+    calls.filter(
+      (c) => new URL(c.url, "http://stub.test").pathname === "/api/events",
+    );
+  const paramsOf = (call: { url: string } | undefined) =>
+    new URL(call?.url ?? "", "http://stub.test").searchParams;
+  const sessionsSent = (calls: { url: string; init: RequestInit }[]) =>
+    eventsCalls(calls).map(
+      (c) =>
+        JSON.parse(
+          (c.init.headers as Record<string, string>)["x-todou-agent-context"] ??
+            "{}",
+        ).session_id,
+    );
+
+  const open = async (
+    over: Partial<Parameters<typeof openChangeNudges>[0]>,
+    events: () => unknown = () => sseStub().reply(),
+  ) => {
+    const { fetchImpl, calls } = fakeFetch([["GET", "/api/events", events]]);
+    const nudges = await openChangeNudges({
+      client: new TodouClient({ baseUrl: "", token: "t", fetch: fetchImpl }),
+      projects: new Set(["todou"]),
+      intervalSec: 2,
+      clock: virtualClock(),
+      random: () => 0,
+      ...over,
+    });
+    return { nudges, calls };
+  };
+
+  it.each([
+    [
+      "a project watch",
+      { projects: new Set(["todou", "ops"]) },
+      "project:todou,project:ops",
+    ],
+    ["an issue watch", { issue: 540 }, "issue:todou/540"],
+    ["an all-projects watch", { projects: null }, "all"],
+  ] as const)("declares %s", async (_name, over, watch) => {
+    const { nudges, calls } = await open({
+      ...over,
+      declare: { kind: "spec_wait" },
+    });
+    const params = paramsOf(eventsCalls(calls)[0]);
+    expect(params.get("watch")).toBe(watch);
+    expect(params.get("watch_kind")).toBe("spec_wait");
+    nudges.close();
+  });
+
+  it("declares nothing without `declare`", async () => {
+    const { nudges, calls } = await open({});
+    expect(eventsCalls(calls)[0]?.url).toBe("/api/events");
+    nudges.close();
+  });
+
+  it("opens each stream with the context asked for at that moment", async () => {
+    let session = "s-one";
+    const { nudges, calls } = await open({
+      context: () => ({ agent: "claude-code", session_id: session }),
+    });
+    expect(sessionsSent(calls)).toEqual(["s-one"]);
+    await nudges.wait(1_000);
+    expect(sessionsSent(calls)).toEqual(["s-one"]);
+    // The harness rotated: the open stream is closed and replaced at once.
+    session = "s-two";
+    await nudges.wait(1_000);
+    expect(sessionsSent(calls)).toEqual(["s-one", "s-two"]);
+    expect(eventsCalls(calls)[0]?.init.signal?.aborted).toBe(true);
+    nudges.close();
+  });
+
+  it("falls back to an undeclared stream on 400 invalid_watch, not to polling", async () => {
+    const sse = sseStub();
+    let attempts = 0;
+    const { nudges, calls } = await open({ declare: { kind: "watch" } }, () =>
+      ++attempts === 1
+        ? {
+            __status: 400,
+            body: { error: { code: "invalid_watch", message: "bad" } },
+          }
+        : sse.reply(),
+    );
+    const sent = eventsCalls(calls);
+    expect(sent).toHaveLength(2);
+    expect(paramsOf(sent[0]).get("watch")).toBe("project:todou");
+    expect(sent[1]?.url).toBe("/api/events");
+    expect(sse.opens()).toBe(1);
+    nudges.close();
+  });
+
+  const watchRun = async (extra: string[]) => {
+    const clock = virtualClock();
+    const sse = sseStub();
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/me", me],
+      ["GET", "/api/events", () => sse.reply()],
+      ["GET", "/api/projects/todou/activity", page([], null)],
+    ]);
+    const result = await runCli(
+      [
+        "watch",
+        "-p",
+        "todou",
+        "--since",
+        "a0",
+        "--timeout",
+        "5",
+        "--json",
+        ...extra,
+      ],
+      {
+        fetchImpl,
+        clock,
+        env: {
+          ...loggedInEnv(),
+          CLAUDECODE: "1",
+          CLAUDE_CODE_SESSION_ID: "session-sentinel",
+        },
+      },
+    );
+    expect(result.exitCode).toBe(3);
+    return { params: paramsOf(eventsCalls(calls)[0]), calls };
+  };
+
+  it("`watch` declares its projects, with its session", async () => {
+    const { params, calls } = await watchRun([]);
+    expect(params.get("watch")).toBe("project:todou");
+    expect(params.get("watch_kind")).toBe("watch");
+    expect(sessionsSent(calls)).toEqual(["session-sentinel"]);
+  });
+
+  it("`watch --invisible` declares nothing", async () => {
+    const { params } = await watchRun(["--invisible"]);
+    expect(params.get("watch")).toBeNull();
+    expect(params.get("watch_kind")).toBeNull();
+  });
+});

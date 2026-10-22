@@ -32,6 +32,24 @@ export function initialsOf(displayName: string): string {
 }
 
 /**
+ * Marks a watching account's avatar: the top-right corner, which the bot
+ * badge leaves free. Static; the pulse belongs to the stacks that lead a
+ * surface, so a list of rows does not blink at the reader.
+ */
+export function LiveDot({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      data-live-dot=""
+      className={cn(
+        "pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full bg-green-600 ring-2 ring-background",
+        className,
+      )}
+    />
+  );
+}
+
+/**
  * Separate from UserChip so a row that lays out its own name still takes the
  * chip's avatar size from here instead of picking one of its own.
  */
@@ -39,6 +57,7 @@ export function UserAvatar({
   user,
   className,
   badge = false,
+  live = false,
   ...props
 }: {
   user: {
@@ -52,6 +71,8 @@ export function UserAvatar({
    * nothing but agents gains no information from it (T-236).
    */
   badge?: boolean;
+  /** This account is watching what the avatar sits on (T-540). */
+  live?: boolean;
 } & React.ComponentProps<typeof Avatar>) {
   const avatar = (
     <Avatar
@@ -65,7 +86,15 @@ export function UserAvatar({
     </Avatar>
   );
 
-  if (!badge || user.kind !== "machine") return avatar;
+  if (!badge || user.kind !== "machine") {
+    if (!live) return avatar;
+    return (
+      <span className="relative inline-flex align-middle">
+        {avatar}
+        <LiveDot />
+      </span>
+    );
+  }
   // The badge is absolutely positioned, so these two offsets put it 6px past
   // the right edge and 4px past the bottom edge of the chip's own box, and
   // that overhang is not part of any element's width. A container that clips
@@ -78,6 +107,7 @@ export function UserAvatar({
         aria-label="agent"
         className="absolute -right-1.5 -bottom-1 size-3 rounded-full bg-background text-muted-foreground"
       />
+      {live && <LiveDot />}
     </span>
   );
 }
@@ -102,6 +132,7 @@ export function UserChip({
   showLogin = false,
   nameClassName,
   link = true,
+  live = false,
 }: {
   user: UserRef;
   compact?: boolean;
@@ -117,11 +148,14 @@ export function UserChip({
    * steals the click the control wanted or is invalid content outright.
    */
   link?: boolean;
+  /** Compact only: the live dot and "· watching" in the tooltip (T-540). */
+  live?: boolean;
 }) {
+  const watching = compact && live ? " · watching" : "";
   const body = (
     <>
       {compact ? (
-        <UserAvatar user={user} badge />
+        <UserAvatar user={user} badge live={live} />
       ) : (
         // Out of flow, so that the chip's box is the name's line box and
         // nothing else. In flow the avatar decided two things it has no
@@ -201,7 +235,7 @@ export function UserChip({
 
   // The avatar's `alt` is empty and the fallback only carries initials, so a
   // compact chip reaching for a name of its own has none to find.
-  const label = compact ? displayNameOf(user) : undefined;
+  const label = compact ? `${displayNameOf(user)}${watching}` : undefined;
 
   const chip = link ? (
     <Link
@@ -224,6 +258,7 @@ export function UserChip({
         <TooltipTrigger asChild>{chip}</TooltipTrigger>
         <TooltipContent>
           agent{user.owner ? ` · belongs to @${user.owner.login}` : ""}
+          {watching}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

@@ -147,6 +147,18 @@ export abstract class ApiCommand extends Command<CliContext> {
     return this.liveSession().id ?? this.agentContext?.session_id;
   }
 
+  /**
+   * The startup context with the session it holds now, for a stream that
+   * reconnects across a harness rotating its session (T-540).
+   */
+  protected liveAgentContext(): AgentContext | null {
+    if (this.agentContext === null) return null;
+    const session = this.ownSession();
+    return session === undefined
+      ? this.agentContext
+      : { ...this.agentContext, session_id: session };
+  }
+
   /** Both halves of that, for a holder long-lived enough to have to re-ask. */
   protected sessionSource(): SessionSource {
     return {

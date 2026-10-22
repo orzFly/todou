@@ -42,6 +42,7 @@ export * from "./schemas/token.ts";
 export * from "./schemas/user.ts";
 export * from "./schemas/user-view.ts";
 export * from "./schemas/version.ts";
+export * from "./schemas/watcher.ts";
 export * from "./search-query.ts";
 export * from "./spec-rename.ts";
 export * from "./sse.ts";

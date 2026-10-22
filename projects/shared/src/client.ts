@@ -64,6 +64,7 @@ import type {
   Project,
   ProjectCreateInput,
   ProjectUpdateInput,
+  ProjectWatchers,
   PublicUser,
   PutSettings,
   ReferenceConfig,
@@ -95,6 +96,7 @@ import type {
   UserIssuesPage,
   UserProjects,
   VersionInfo,
+  WatchersOverview,
 } from "./index.ts";
 import { type BatchStreamItem, SSE_BATCH_ITEM_EVENT } from "./schemas/batch.ts";
 // Imported from their own modules rather than the barrel: these are values,
@@ -731,6 +733,13 @@ export class TodouClient {
    */
   getUser = (ref: string | number) =>
     this.request<PublicUser>("GET", `/users/${ref}`);
+  /** Project-level agent watchers of every readable project (T-540). */
+  watchers = () => this.request<WatchersOverview>("GET", "/watchers");
+  projectWatchers = (slug: string) =>
+    this.request<ProjectWatchers>(
+      "GET",
+      `/projects/${encodeURIComponent(slug)}/watchers`,
+    );
   getUserActivityCalendar = (
     ref: string | number,
     query: ActivityCalendarQueryInput,
@@ -1227,10 +1236,13 @@ export class TodouClient {
     inbox?: boolean;
     /** Namespaces whose metadata events this stream wants (T-282). */
     metadata?: MetadataNamespaceSelector;
+    /** Opt in to `watchers` events (T-540). */
+    presence?: boolean;
   }) =>
     `${this.#baseUrl}/api/events${queryString({
       inbox: opts?.inbox ? "1" : undefined,
       metadata: opts?.metadata,
+      presence: opts?.presence ? "1" : undefined,
     })}`;
 
   /**
@@ -1252,14 +1264,23 @@ export class TodouClient {
     onEvent: (event: CrossChangeEvent) => void;
     /** Any bytes at all, framed or not — liveness for stall detection. */
     onAlive?: () => void;
+    /** Appended to `/api/events`, e.g. the T-540 `watch` declaration. */
+    query?: Record<string, string>;
+    /** Merged over the client's own headers for this request only. */
+    headers?: Record<string, string>;
   }): Promise<ChangeStream> => {
     const headers: Record<string, string> = {
       ...this.#headers,
+      ...opts.headers,
       accept: "text/event-stream",
     };
     if (this.#token) headers.authorization = `Bearer ${this.#token}`;
     const abort = new AbortController();
-    const res = await this.#fetch(`${this.#baseUrl}/api/events`, {
+    const search =
+      opts.query && Object.keys(opts.query).length > 0
+        ? `?${new URLSearchParams(opts.query)}`
+        : "";
+    const res = await this.#fetch(`${this.#baseUrl}/api/events${search}`, {
       method: "GET",
       headers,
       credentials: "same-origin",

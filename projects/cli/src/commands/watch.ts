@@ -287,6 +287,9 @@ export class WatchCommand extends ProjectCommand {
   since = Option.String("--since", {
     description: "Only entries after this cursor (default: now)",
   });
+  invisible = Option.Boolean("--invisible", false, {
+    description: "Do not show this watch to others as a live watcher",
+  });
   poll = Option.Boolean("--poll", false, {
     description: "Check once and exit instead of blocking",
   });
@@ -398,6 +401,8 @@ export class WatchCommand extends ProjectCommand {
           projects: slugs === null ? null : new Set(slugs),
           intervalSec,
           clock: this.clock,
+          declare: this.invisible ? undefined : { kind: "watch" },
+          context: () => this.liveAgentContext(),
         });
     try {
       const code = await this.watch(client, {
