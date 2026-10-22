@@ -1,0 +1,10 @@
+todou v0.6.2
+
+Patch attachments and diff fences draw as per-file diffs, images zoom
+and pan in the attachment viewer, a question can be answered from a
+floating window, and the list and board edit assignees and labels in
+place. --follow=codex now always queues a new turn instead of landing
+inside a running one, and TODOU_CODEX_SOCKET goes with that.
+
+No migration, no configuration change, server API untouched — either CLI
+pairs with either server.
