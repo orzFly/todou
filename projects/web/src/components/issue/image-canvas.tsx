@@ -1,0 +1,364 @@
+import { MinusIcon, PlusIcon } from "lucide-react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import { Button } from "@/components/ui/button";
+import {
+  clampView,
+  type Frame,
+  fitScale,
+  fitView,
+  isAtMax,
+  isFitted,
+  panBy,
+  toggleAt,
+  type View,
+  wheelFactor,
+  zoomAt,
+} from "@/lib/image-zoom.ts";
+import { cn } from "@/lib/utils";
+
+type Point = { x: number; y: number };
+
+/** Movement under this is still a click/tap, not a drag. */
+const TAP_SLOP = 4;
+const STEP = 1.25;
+
+/**
+ * The attachment viewer's image (T-535): wheel or pinch zooms about the
+ * pointer, drag pans, a click toggles fit ↔ actual pixels, and − 100% + sit
+ * in the viewer's title bar. Mount it keyed by the image URL so paging
+ * starts every image at fit.
+ */
+export function ImageCanvas({
+  src,
+  alt,
+  maximized,
+  toolbar,
+}: {
+  src: string;
+  alt: string;
+  maximized: boolean;
+  toolbar: HTMLElement | null;
+}) {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [frame, setFrame] = useState<Frame | null>(null);
+  const [view, setView] = useState<View | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  // Every handler reads and writes the geometry here, never the rendered
+  // state: one touch frame delivers a pointermove per finger before React
+  // re-renders, and the second must build on the first.
+  const live = useRef<{ frame: Frame | null; view: View | null }>({
+    frame: null,
+    view: null,
+  });
+
+  const place = useCallback((f: Frame, v: View) => {
+    live.current = { frame: f, view: v };
+    setFrame(f);
+    setView(v);
+  }, []);
+
+  const apply = useCallback((next: View) => {
+    if (live.current.frame === null) return;
+    live.current.view = next;
+    setView(next);
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = canvasRef.current;
+    if (el === null || natural === null) return;
+    const measure = () => {
+      const next: Frame = {
+        width: el.clientWidth,
+        height: el.clientHeight,
+        naturalWidth: natural.w,
+        naturalHeight: natural.h,
+        upscale: maximized,
+      };
+      const { frame: prev, view: v } = live.current;
+      if (prev === null || v === null || isFitted(prev, v)) {
+        place(next, fitView(next));
+      } else {
+        // Keep whatever sat at the canvas centre there across a resize
+        // (maximize/restore, window resize) instead of snapping to fit.
+        place(
+          next,
+          clampView(next, {
+            z: v.z,
+            x: v.x + (next.width - prev.width) / 2,
+            y: v.y + (next.height - prev.height) / 2,
+          }),
+        );
+      }
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [natural, maximized, place]);
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (el === null) return;
+    const local = (clientX: number, clientY: number): Point => {
+      const r = el.getBoundingClientRect();
+      return { x: clientX - r.left, y: clientY - r.top };
+    };
+    // React's onWheel is passive, so it cannot stop the page from scrolling
+    // or Chrome's ctrl+wheel from zooming the whole page.
+    const onWheel = (e: WheelEvent) => {
+      const { frame: f, view: v } = live.current;
+      if (f === null || v === null) return;
+      e.preventDefault();
+      const p = local(e.clientX, e.clientY);
+      apply(
+        zoomAt(f, v, wheelFactor(e.deltaY, e.deltaMode, e.ctrlKey), p.x, p.y),
+      );
+    };
+    // Safari reports trackpad pinch as gesture events rather than ctrl+wheel.
+    let gestureStart = 1;
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      gestureStart = live.current.view?.z ?? 1;
+    };
+    const onGestureChange = (e: Event) => {
+      const { frame: f, view: v } = live.current;
+      if (f === null || v === null) return;
+      e.preventDefault();
+      const g = e as Event & {
+        scale: number;
+        clientX: number;
+        clientY: number;
+      };
+      const p = local(g.clientX, g.clientY);
+      apply(zoomAt(f, v, (gestureStart * g.scale) / v.z, p.x, p.y));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("gesturestart", onGestureStart);
+    el.addEventListener("gesturechange", onGestureChange);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+    };
+  }, [apply]);
+
+  const atCentre = useCallback(
+    (op: (f: Frame, v: View, cx: number, cy: number) => View) => {
+      const { frame: f, view: v } = live.current;
+      if (f === null || v === null) return;
+      apply(op(f, v, f.width / 2, f.height / 2));
+    },
+    [apply],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Ctrl/⌘ +/−/0 stay the browser's page zoom.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "+" || e.key === "=")
+        atCentre((f, v, x, y) => zoomAt(f, v, STEP, x, y));
+      else if (e.key === "-")
+        atCentre((f, v, x, y) => zoomAt(f, v, 1 / STEP, x, y));
+      else if (e.key === "0") atCentre((f) => fitView(f));
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [atCentre]);
+
+  // Pointer bookkeeping: every active pointer's last position, plus where
+  // the gesture started so a click can be told apart from a drag.
+  const pointers = useRef(new Map<number, Point>());
+  const moved = useRef(false);
+  const downAt = useRef<Point>({ x: 0, y: 0 });
+
+  const localOf = (e: ReactPointerEvent): Point => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const p = localOf(e);
+    pointers.current.set(e.pointerId, p);
+    if (pointers.current.size === 1) {
+      moved.current = false;
+      downAt.current = p;
+    } else {
+      // A second finger makes this a pinch, never a tap.
+      moved.current = true;
+    }
+  };
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const prev = pointers.current.get(e.pointerId);
+    const { frame, view } = live.current;
+    if (prev === undefined || frame === null || view === null) return;
+    const p = localOf(e);
+    if (
+      !moved.current &&
+      Math.hypot(p.x - downAt.current.x, p.y - downAt.current.y) > TAP_SLOP
+    ) {
+      moved.current = true;
+    }
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.entries()];
+      const other = a[0] === e.pointerId ? b[1] : a[1];
+      const before = Math.hypot(prev.x - other.x, prev.y - other.y);
+      const after = Math.hypot(p.x - other.x, p.y - other.y);
+      const mid = { x: (p.x + other.x) / 2, y: (p.y + other.y) / 2 };
+      const shift = { x: (p.x - prev.x) / 2, y: (p.y - prev.y) / 2 };
+      const zoomed =
+        before > 0 ? zoomAt(frame, view, after / before, mid.x, mid.y) : view;
+      apply(panBy(frame, zoomed, shift.x, shift.y));
+    } else if (pointers.current.size === 1 && moved.current) {
+      if (!isFitted(frame, view)) {
+        setDragging(true);
+        apply(panBy(frame, view, p.x - prev.x, p.y - prev.y));
+      }
+    }
+    pointers.current.set(e.pointerId, p);
+  };
+
+  const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pointers.current.delete(e.pointerId)) return;
+    if (pointers.current.size > 0) return;
+    setDragging(false);
+    const { frame, view } = live.current;
+    if (moved.current || frame === null || view === null) return;
+    const p = localOf(e);
+    apply(toggleAt(frame, view, p.x, p.y));
+  };
+
+  const onPointerCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size === 0) setDragging(false);
+  };
+
+  const ready = frame !== null && view !== null;
+  const fitted = !ready || isFitted(frame, view);
+  // Before the image has loaded nothing can be measured, so reserve the
+  // height the old flow layout gave it rather than collapsing to zero.
+  const height =
+    maximized || natural === null || frame === null
+      ? undefined
+      : natural.h * Math.min(1, frame.width / natural.w);
+
+  const controls = (
+    <span className="inline-flex shrink-0 items-center gap-0.5">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="zoom out"
+        disabled={fitted}
+        onClick={() => atCentre((f, v, x, y) => zoomAt(f, v, 1 / STEP, x, y))}
+      >
+        <MinusIcon />
+      </Button>
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        disabled={!ready}
+        aria-label={fitted ? "zoom to actual size" : "zoom to fit"}
+        className="min-w-12 font-normal text-muted-foreground tabular-nums"
+        onClick={() => atCentre(toggleAt)}
+      >
+        {ready ? `${Math.round(view.z * 100)}%` : "–"}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="zoom in"
+        disabled={!ready || isAtMax(frame, view)}
+        onClick={() => atCentre((f, v, x, y) => zoomAt(f, v, STEP, x, y))}
+      >
+        <PlusIcon />
+      </Button>
+    </span>
+  );
+
+  // Nothing to measure or zoom; the static image is what the viewer showed
+  // before T-535, and its alt text and broken-image icon are the error.
+  if (failed) {
+    return (
+      <img
+        src={src}
+        alt={alt}
+        className={cn(
+          "mx-auto rounded-md object-contain",
+          maximized ? "h-full" : "max-h-[75vh]",
+        )}
+      />
+    );
+  }
+
+  return (
+    <>
+      {toolbar !== null && createPortal(controls, toolbar)}
+      <div
+        ref={canvasRef}
+        data-testid="image-canvas"
+        data-zoom={view === null ? undefined : view.z.toFixed(4)}
+        data-fit={frame === null ? undefined : fitScale(frame).toFixed(4)}
+        className={cn(
+          "relative touch-none overflow-hidden select-none",
+          maximized ? "h-full" : "max-h-[75vh] min-h-24",
+          fitted
+            ? "cursor-zoom-in"
+            : dragging
+              ? "cursor-grabbing"
+              : "cursor-grab",
+        )}
+        style={height === undefined ? undefined : { height }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+      >
+        <img
+          src={src}
+          alt={alt}
+          draggable={false}
+          onError={() => setFailed(true)}
+          onLoad={(e) =>
+            setNatural({
+              w: e.currentTarget.naturalWidth,
+              h: e.currentTarget.naturalHeight,
+            })
+          }
+          className={cn(
+            "absolute top-0 left-0 max-w-none origin-top-left",
+            view === null && "invisible",
+          )}
+          style={
+            natural === null || view === null
+              ? undefined
+              : {
+                  width: natural.w,
+                  height: natural.h,
+                  transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})`,
+                  // The old static image's rounded-md, divided back out of
+                  // the scale; zoomed in, a rounded corner would read as the
+                  // image's own edge.
+                  borderRadius: fitted ? 6 / view.z : 0,
+                }
+          }
+        />
+      </div>
+    </>
+  );
+}

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { attachmentTextQuery } from "@/api/attachments.ts";
+import { ImageCanvas } from "@/components/issue/image-canvas.tsx";
 import { DocumentView } from "@/components/shared/document-card.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
@@ -195,13 +196,12 @@ export function AttachmentViewerDialog({
               )}
             >
               {kind === "image" ? (
-                <img
+                <ImageCanvas
+                  key={target.url}
                   src={target.url}
                   alt={target.filename}
-                  className={cn(
-                    "mx-auto rounded-md object-contain",
-                    maximized ? "h-full" : "max-h-[75vh]",
-                  )}
+                  maximized={maximized}
+                  toolbar={toolbar}
                 />
               ) : kind === "html" ? (
                 // Never add allow-same-origin: attachments share the API's
