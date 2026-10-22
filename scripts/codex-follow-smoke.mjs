@@ -6,17 +6,17 @@
  *   node scripts/codex-follow-smoke.mjs --codex-bin /path/to/codex --keep
  *   node scripts/codex-follow-smoke.mjs --cli result/bin/todou  # a built CLI
  *   node scripts/codex-follow-smoke.mjs --mutate queue   # must fail
- *   node scripts/codex-follow-smoke.mjs --mutate steer   # must fail
+ *   node scripts/codex-follow-smoke.mjs --mutate busy   # must fail
  *
  * Three checks, each against what the model is actually sent:
  *   queue  — no control socket: a comment on the card reaches the idle thread
  *            through `codex queue` as a new turn;
- *   steer  — the thread's app-server socket: a comment posted while a turn is
- *            running lands in that same turn rather than a new one;
+ *   busy   — even with an App socket present, another card's comment waits
+ *            for the active turn to finish and survives the watcher exiting;
  *   range  — the second batch's `since:` is the first batch's `cursor:`.
  *
  * `--mutate` breaks one input on purpose so the check guarding it can be seen
- * to fail: `queue` hands the watch a `codex` that confirms nothing, `steer`
+ * to fail: `queue` hands the watch a `codex` that confirms nothing, `busy`
  * lets the running turn finish before the comment is posted.
  *
  * The smoke posts as the account the watch runs as, so the watch takes
@@ -35,6 +35,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -57,8 +58,8 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (key in options) options[key] = process.argv[++i];
   else throw new Error(`unknown option ${process.argv[i]}`);
 }
-if (!["", "queue", "steer"].includes(options.mutate)) {
-  throw new Error("--mutate takes queue or steer");
+if (!["", "queue", "busy"].includes(options.mutate)) {
+  throw new Error("--mutate takes queue or busy");
 }
 
 mkdirSync(join(root, ".tmp"), { recursive: true });
@@ -277,9 +278,9 @@ const issue = (
     bearer,
   )
 ).json;
-const comment = (body) =>
+const comment = (body, number = issue.number) =>
   api(
-    `/api/projects/smoke/issues/${issue.number}/comments`,
+    `/api/projects/smoke/issues/${number}/comments`,
     { method: "POST", body: JSON.stringify({ body }) },
     bearer,
   );
@@ -296,6 +297,26 @@ const codexBin = execFileSync(
 say(
   `codex: ${execFileSync(codexBin, ["--version"], { encoding: "utf8" }).trim()} at ${codexBin}`,
 );
+// Observe actual queue admission before stopping the watcher in the busy case.
+const queueLog = join(scratch, "queued.jsonl");
+writeFileSync(queueLog, "");
+const queueBin = join(short, "codex-queue-observed");
+writeFileSync(
+  queueBin,
+  `#!${process.execPath}
+import { spawnSync } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+const result = spawnSync(${JSON.stringify(codexBin)}, args, { encoding: 'utf8' });
+if (result.status === 0 && result.stdout.startsWith('Queued message '))
+  appendFileSync(${JSON.stringify(queueLog)}, JSON.stringify(args) + '\\n');
+process.stdout.write(result.stdout || '');
+process.stderr.write(result.stderr || '');
+process.exit(result.status ?? 1);
+`,
+);
+chmodSync(queueBin, 0o755);
+const admitted = (marker) => readFileSync(queueLog, "utf8").includes(marker);
 const codexEnv = { PATH: process.env.PATH, HOME: short, CODEX_HOME: codexHome };
 start(
   "app-server",
@@ -382,9 +403,9 @@ function watch(threadId, extra) {
     options.cli ? resolve(options.cli) : process.execPath,
     [
       ...(options.cli ? [] : [cliEntry]),
-      "issue",
       "watch",
-      `smoke/${issue.number}`,
+      "-p",
+      "smoke",
       "--follow=codex",
       "--debounce",
       "0",
@@ -401,6 +422,7 @@ function watch(threadId, extra) {
       TODOU_TOKEN: token,
       CODEX_HOME: codexHome,
       CODEX_THREAD_ID: threadId,
+      TODOU_CODEX_BIN: queueBin,
       ...extra,
     },
   );
@@ -474,48 +496,97 @@ await check(
 );
 queueWatch.kill("SIGTERM");
 
-// steer
-const steered = await thread();
-const steerWatch = watch(steered, { TODOU_CODEX_SOCKET: appSocket });
-await check("watch opens over the app-server socket", () =>
+// An App-connected thread busy on one card must process another card later.
+const busy = await thread();
+const other = (
+  await api(
+    "/api/projects/smoke/issues",
+    {
+      method: "POST",
+      body: JSON.stringify({ title: "another card needs revision" }),
+    },
+    bearer,
+  )
+).json;
+const busyWatch = watch(busy, { TODOU_CODEX_SOCKET: appSocket });
+await check("App watch also opens over codex queue", () =>
   until(
     "the via line",
-    () => steerWatch.output.stderr.includes("via the App Server socket"),
+    () => busyWatch.output.stderr.includes("via codex queue"),
     30_000,
   ),
 );
 slowGate = new Promise((r) => {
   releaseSlow = r;
 });
-await rpc("turn/start", {
-  threadId: steered,
-  input: [{ type: "text", text: "SLOW" }],
+const current = await rpc("turn/start", {
+  threadId: busy,
+  input: [{ type: "text", text: "SLOW work on the first card" }],
 });
-await until("the slow turn to start", () => started(steered) >= 2, 10_000);
-if (options.mutate === "steer") {
+await until(
+  "the slow request to reach the model",
+  () => requestWith("SLOW"),
+  10_000,
+);
+if (options.mutate === "busy") {
   releaseSlow();
-  await until("the slow turn to end", () => completed(steered) >= 2, 10_000);
+  await until("the slow turn to end", () => completed(busy) >= 2, 10_000);
 }
-const third = `SMOKE-STEER-${randomUUID()}`;
-await comment(third);
-// Long enough for the watch to poll and push before the turn is let go.
-await sleep(5_000);
+const third = `SMOKE-BUSY-${randomUUID()}`;
+await comment(third, other.number);
+await check(
+  "busy: another card waits, then starts a new turn after watch exit",
+  async () => {
+    await until(
+      "the batch to be durably queued",
+      () => admitted(third),
+      30_000,
+    );
+    // Exercise at least one queue polling interval while the turn is held.
+    await sleep(12_000);
+    assert.equal(completed(busy), 1, "the original turn must still be busy");
+    assert.equal(
+      started(busy),
+      2,
+      "the batch must not start a concurrent turn",
+    );
+    assert.equal(
+      requestWith(third),
+      undefined,
+      "the batch must not steer current work",
+    );
+    busyWatch.kill("SIGTERM");
+    await until(
+      "the watcher to stop",
+      () => busyWatch.exitCode !== null || busyWatch.signalCode !== null,
+      10_000,
+    );
+    releaseSlow();
+    await until(
+      "the queued batch to finish",
+      () => completed(busy) >= 3,
+      45_000,
+    );
+    assert.ok(
+      requestWith(third),
+      "the model receives the other card after watch exit",
+    );
+    const lifecycle = turns.filter((t) => t.thread === busy);
+    const finished = lifecycle.findIndex(
+      (t) => t.event === "turn/completed" && t.turn === current.turn.id,
+    );
+    assert.ok(finished >= 0);
+    assert.equal(lifecycle[finished + 1]?.event, "turn/started");
+    assert.notEqual(lifecycle[finished + 1]?.turn, current.turn.id);
+    assert.equal(
+      started(busy),
+      3,
+      "exactly one new turn handles the queued batch",
+    );
+  },
+);
 releaseSlow();
-await check("steer: a comment posted mid-turn lands in that turn", async () => {
-  await until(
-    "the model to see the mid-turn comment",
-    () => requestWith(third),
-    30_000,
-  );
-  await until("the turn to finish", () => completed(steered) >= 2, 30_000);
-  await sleep(2_000);
-  assert.equal(
-    started(steered),
-    2,
-    "no extra turn was started for the comment",
-  );
-});
-steerWatch.kill("SIGTERM");
+busyWatch.kill("SIGTERM");
 
 say(failures.length === 0 ? "PASS" : `FAILED: ${failures.join("; ")}`);
 if (options.keep) say(`scratch kept at ${scratch}`);

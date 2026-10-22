@@ -228,10 +228,11 @@ export class WatchCommand extends ProjectCommand {
       position first, so a restart resumes from that \`--since\`.
 
       \`--follow=codex\` instead delivers into the Codex thread named by
-      \`CODEX_THREAD_ID\`: over the App Server's control socket when a daemon
-      on this host holds the thread, which steers a running turn or starts
-      one, and otherwise through \`codex queue\`, which starts a turn once
-      the thread is idle. Failed or uncertain delivery stops and prints the
+      \`CODEX_THREAD_ID\` through \`codex queue\`, including in the App over
+      SSH. Each batch waits for the current turn to end and starts a later
+      turn, so activity for another card is not absorbed by the current work.
+      Requires \`codex\` on PATH or an absolute \`TODOU_CODEX_BIN\`.
+      Failed or uncertain queue admission stops and prints the
       unconfirmed events and cursor; inspect the chat before replaying. It
       never retries an uncertain push.
     `,

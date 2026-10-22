@@ -1,14 +1,16 @@
-import { once } from "node:events";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WebSocketServer } from "ws";
 import {
   codexTarget,
   openCodex,
-  openCodexPush,
   openCodexQueuePush,
   type QueueRunner,
 } from "../src/codex-push.ts";
@@ -30,105 +32,10 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-type Request = { id: number; method: string; params: Record<string, unknown> };
-async function daemon(
-  options: {
-    state?: string;
-    identity?: string;
-    delivery?: "reject" | "drop" | "timeout" | "invalid";
-  } = {},
-) {
-  const dir = mkdtempSync(join(tmpdir(), "todou-codex-"));
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-  const socket = join(dir, "control.sock");
-  const http = createServer();
-  const server = new WebSocketServer({ server: http });
-  const requests: Request[] = [];
-  const extensions: Array<string | undefined> = [];
-  const clientResponses: unknown[] = [];
-  const thread = {
-    id: options.identity ?? THREAD,
-    status: { type: options.state ?? "active" },
-  };
-  server.on("connection", (client, upgrade) => {
-    extensions.push(upgrade.headers["sec-websocket-extensions"]);
-    client.on("message", (data) => {
-      const message = JSON.parse(data.toString());
-      if (!message.method) {
-        clientResponses.push(message);
-        return;
-      }
-      if (message.id === undefined) return;
-      requests.push(message);
-      const reply = (result: unknown) =>
-        client.send(JSON.stringify({ id: message.id, result }));
-      switch (message.method) {
-        case "initialize":
-          reply({ userAgent: "codex/test" });
-          break;
-        case "thread/read":
-        case "thread/resume":
-          reply({ thread });
-          break;
-        case "turn/start":
-          if (options.delivery === "drop") {
-            client.terminate();
-            break;
-          }
-          if (options.delivery === "timeout") break;
-          if (options.delivery === "reject") {
-            client.send(
-              JSON.stringify({
-                id: message.id,
-                error: { code: -32602, message: "private input must not leak" },
-              }),
-            );
-            break;
-          }
-          reply(
-            options.delivery === "invalid" ? {} : { turn: { id: "turn-test" } },
-          );
-          break;
-        default:
-          client.send(
-            JSON.stringify({ id: message.id, error: { code: -32601 } }),
-          );
-      }
-    });
-  });
-  http.listen(socket);
-  await once(http, "listening");
-  cleanups.push(async () => {
-    for (const client of server.clients) client.terminate();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await new Promise<void>((resolve) => http.close(() => resolve()));
-  });
-  return {
-    target: { threadId: THREAD, socket },
-    requests,
-    server,
-    extensions,
-    clientResponses,
-  };
-}
-
-async function channel(options: Parameters<typeof daemon>[0] = {}) {
-  const fixture = await daemon(options);
-  const notes: string[] = [];
-  const push = await openCodexPush<string>({
-    target: fixture.target,
-    timeoutMs: options.delivery === "timeout" ? 200 : 2000,
-    render: (items, since, cursor) =>
-      `${items.join("\n")}\nsince: ${since}\ncursor: ${cursor}`,
-    note: (line) => notes.push(line),
-  });
-  cleanups.push(push.close);
-  return { ...fixture, push, notes };
-}
-
-describe("Codex existing App Server transport", () => {
+describe("Codex watch delivery", () => {
   it("flushes a batch still being debounced before re-raising SIGTERM", async () => {
-    const { target, requests } = await daemon();
+    const { bin, calls: requests } = codexOnPath();
+    const target = { threadId: THREAD, bin };
     const clock = virtualClock();
     const emitted: unknown[] = [];
     const item = { created_at: clock.iso() };
@@ -171,7 +78,7 @@ describe("Codex existing App Server transport", () => {
       follow.finish();
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(emitted).toEqual([{ items: [item], since: "c0", cursor: "c1" }]);
-      expect(requests.filter((r) => r.method === "turn/start")).toEqual([]);
+      expect(requests()).toEqual([]);
       expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
     } finally {
       follow.finish();
@@ -183,7 +90,8 @@ describe("Codex existing App Server transport", () => {
   it.each(["project", "issue"])(
     "wires the %s watch to Codex and preserves the self filter",
     async (scope) => {
-      const { target, requests } = await daemon();
+      const { bin, calls: requests } = codexOnPath();
+      const target = { threadId: THREAD, bin };
       const clock = virtualClock();
       const sse = sseStub();
       let page = 0;
@@ -246,151 +154,25 @@ describe("Codex existing App Server transport", () => {
           env: {
             ...loggedInEnv("todou"),
             CODEX_THREAD_ID: THREAD,
-            TODOU_CODEX_SOCKET: target.socket,
+            TODOU_CODEX_BIN: target.bin,
           },
         },
       );
       expect(result.exitCode).toBe(1); // Scripted tracker shutdown after delivery.
       expect(result.stdout).toBe("cursor: c1\n");
       expect(result.stderr).toContain("--follow=codex following");
-      const delivered = requests.filter((r) => r.method === "turn/start");
+      const delivered = requests();
       expect(delivered).toHaveLength(1);
-      expect(JSON.stringify(delivered[0].params.toolOutput)).toContain(
-        "review ready",
-      );
+      expect(JSON.stringify(delivered[0])).toContain("review ready");
       expect(calls.filter((c) => c.url.includes(endpoint))[0].url).toContain(
         THREAD,
       );
     },
   );
 
-  it("reports Codex availability through the agent command", async () => {
-    const { target } = await daemon();
-    const result = await runCli(["agent", "can-i-follow"], {
-      env: { CODEX_THREAD_ID: THREAD, TODOU_CODEX_SOCKET: target.socket },
-    });
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("--follow=codex");
-    expect(result.stdout).toContain("into the running turn");
-  });
-
-  it.each(["active", "idle"])(
-    "delivers to the same %s thread without changing its policy",
-    async (state) => {
-      const { push, requests, extensions } = await channel({ state });
-      await push.send(["review approved"], "c0", "c1");
-      expect(requests.map((r) => r.method)).toEqual([
-        "initialize",
-        "thread/read",
-        "thread/resume",
-        "turn/start",
-      ]);
-      expect(extensions).toEqual([undefined]);
-      expect(requests[2].params).toEqual({
-        threadId: THREAD,
-        excludeTurns: true,
-      });
-      expect(requests[3].params).toEqual({
-        threadId: THREAD,
-        input: [],
-        toolOutput: {
-          name: "todou_watch",
-          output: expect.stringContaining(
-            "review approved\nsince: c0\ncursor: c1",
-          ),
-        },
-      });
-      expect(push.rejected).toBeNull();
-      expect(push.unconfirmed().items).toEqual([]);
-    },
-  );
-
-  it.each(["notLoaded", "systemError", "unknown"])(
-    "refuses a %s thread instead of starting another session",
-    async (state) => {
-      const { target, requests } = await daemon({ state });
-      await expect(openCodexPush({ target, render: () => "" })).rejects.toThrow(
-        "not loaded",
-      );
-      expect(requests.map((r) => r.method)).toEqual([
-        "initialize",
-        "thread/read",
-      ]);
-    },
-  );
-
-  it("refuses an identity mismatch", async () => {
-    const { target } = await daemon({ identity: "sibling-thread" });
-    await expect(openCodexPush({ target, render: () => "" })).rejects.toThrow(
-      "not loaded",
-    );
-  });
-
-  it.each(["reject", "drop", "timeout", "invalid"] as const)(
-    "retains a batch after %s and never resends it automatically",
-    async (delivery) => {
-      const { push, requests } = await channel({ delivery });
-      await push.send(["answer"], "c0", "c1");
-      await push.whenRejected;
-      expect(push.unconfirmed()).toEqual({
-        items: ["answer"],
-        since: "c0",
-        cursor: "c1",
-      });
-      expect(push.rejected?.reason).not.toContain("private input");
-      await push.send(["another"], "c1", "c2");
-      expect(requests.filter((r) => r.method === "turn/start")).toHaveLength(1);
-      expect(push.unconfirmed().items).toEqual(["answer", "another"]);
-    },
-  );
-
-  it("ignores sibling notifications and leaves approvals to the App", async () => {
-    const { push, server, clientResponses, notes } = await channel();
-    for (const client of server.clients) {
-      client.send(
-        JSON.stringify({
-          method: "thread/archived",
-          params: { threadId: "sibling" },
-        }),
-      );
-      client.send(
-        JSON.stringify({
-          id: "approval-1",
-          method: "item/commandExecution/requestApproval",
-          params: { threadId: THREAD },
-        }),
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(push.rejected).toBeNull();
-    expect(clientResponses).toEqual([]);
-    expect(notes).toEqual([
-      "Codex requests user interaction; answer in the connected App",
-    ]);
-    for (const client of server.clients) {
-      client.send(
-        JSON.stringify({
-          method: "thread/archived",
-          params: { threadId: THREAD },
-        }),
-      );
-    }
-    await push.whenRejected;
-    expect(push.rejected?.reason).toContain("closed or archived");
-  });
-
-  it("bounds an oversized batch while preserving its recovery range", async () => {
-    const { push, requests } = await channel();
-    await push.send(["界".repeat(100_000)], "c0", "c1");
-    const last = requests.at(-1);
-    if (!last) throw new Error("missing delivery request");
-    const output = (last.params.toolOutput as { output: string }).output;
-    expect(Buffer.byteLength(output)).toBeLessThan(1000);
-    expect(output).toContain("since: c0\ncursor: c1");
-  });
-
   it("flushes undelivered events and cursor through the shared follow contract", async () => {
-    const { target } = await daemon({ delivery: "reject" });
+    const { bin } = codexOnPath();
+    const target = { threadId: THREAD, bin };
     const emitted: unknown[] = [];
     const notes: string[] = [];
     const before = process.listenerCount("SIGTERM");
@@ -405,6 +187,9 @@ describe("Codex existing App Server transport", () => {
       render: (items) => items.join("\n"),
       emit: (items, since, cursor) => emitted.push({ items, since, cursor }),
       messaging: { codex: target },
+      runCodexQueue: async () => {
+        throw new Error("queue unavailable");
+      },
       session: () => THREAD,
       clock: virtualClock(),
       note: (line) => notes.push(line),
@@ -420,9 +205,35 @@ describe("Codex existing App Server transport", () => {
     expect(process.listenerCount("SIGTERM")).toBe(before);
   });
 
-  it("requires a thread plus a real local socket and never borrows Claude messaging", async () => {
-    const { target } = await daemon();
-    const env = { CODEX_THREAD_ID: THREAD, TODOU_CODEX_SOCKET: target.socket };
+  it("wakes a quiet follow when cancelled instead of waiting for another tracker event", async () => {
+    const stop = new AbortController();
+    const follow = await openFollow<string>({
+      transport: "codex",
+      label: "watch",
+      subject: "todou",
+      following: "todou",
+      baseline: "c0",
+      intervalSec: 2,
+      signal: stop.signal,
+      wait: () => new Promise<void>(() => {}),
+      render,
+      emit: () => {},
+      messaging: { codex: { threadId: THREAD, bin: "/opt/codex" } },
+      session: () => THREAD,
+      clock: virtualClock(),
+      note: () => {},
+    });
+    cleanups.push(follow.finish);
+    const waiting = follow.wait!(600_000);
+    stop.abort();
+    await waiting;
+    expect(follow.shouldStop?.()).toBe(true);
+  });
+
+  it("requires an executable and explicit thread; never borrows Claude or socket-only delivery", () => {
+    const { bin } = codexOnPath();
+    const env = { CODEX_THREAD_ID: THREAD, TODOU_CODEX_BIN: bin };
+    const target = { threadId: THREAD, bin };
     expect(codexTarget(env)).toEqual(target);
     expect(
       harnessMessaging({ ...env, CLAUDE_CODE_MESSAGING_SOCKET: "/wrong.sock" }),
@@ -430,13 +241,13 @@ describe("Codex existing App Server transport", () => {
     expect(
       codexTarget({ ...env, CODEX_THREAD_ID: "../thread" }),
     ).toBeUndefined();
+    expect(codexTarget({ TODOU_CODEX_BIN: bin })).toBeUndefined();
     expect(
-      codexTarget({ ...env, TODOU_CODEX_SOCKET: "relative.sock" }),
+      codexTarget({
+        CODEX_THREAD_ID: THREAD,
+        TODOU_CODEX_SOCKET: "/run/control.sock",
+      }),
     ).toBeUndefined();
-    expect(codexTarget({ TODOU_CODEX_SOCKET: target.socket })).toBeUndefined();
-    const file = join(target.socket, "..", "ordinary-file");
-    writeFileSync(file, "not a socket");
-    expect(codexTarget({ ...env, TODOU_CODEX_SOCKET: file })).toBeUndefined();
     expect(
       followTransport({
         raw: "codex",
@@ -460,13 +271,31 @@ describe("Codex existing App Server transport", () => {
 });
 
 /** A directory holding an executable `codex`, for PATH lookups. */
-function codexOnPath(): { dir: string; bin: string } {
+function codexOnPath() {
   const dir = mkdtempSync(join(tmpdir(), "todou-codex-bin-"));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const bin = join(dir, "codex");
-  writeFileSync(bin, "#!/bin/sh\nexit 0\n");
+  const log = join(dir, "queue.jsonl");
+  writeFileSync(log, "");
+  writeFileSync(
+    bin,
+    `#!${process.execPath}
+import * as fs from 'node:fs';
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+console.log('Queued message test-batch for thread ${THREAD}.');
+`,
+  );
   chmodSync(bin, 0o755);
-  return { dir, bin };
+  return {
+    dir,
+    bin,
+    calls: (): string[][] =>
+      readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
+  };
 }
 
 /** Records every `codex queue` call and answers like the real command. */
@@ -505,16 +334,19 @@ describe("Codex queue transport", () => {
     expect(codexTarget({ ...env, CODEX_THREAD_ID: "../t" })).toBeUndefined();
   });
 
-  it("keeps both channels when both exist, socket first", async () => {
-    const { target } = await daemon();
+  it("uses the queue even when an App socket is configured", async () => {
     const { bin } = codexOnPath();
-    expect(
-      codexTarget({
-        CODEX_THREAD_ID: THREAD,
-        TODOU_CODEX_SOCKET: target.socket,
-        TODOU_CODEX_BIN: bin,
-      }),
-    ).toEqual({ threadId: THREAD, socket: target.socket, bin });
+    const target = codexTarget({
+      CODEX_THREAD_ID: THREAD,
+      TODOU_CODEX_SOCKET: "/run/control.sock",
+      TODOU_CODEX_BIN: bin,
+    });
+    expect(target).toEqual({ threadId: THREAD, bin });
+    const { calls, run } = queueRunner(() => QUEUED);
+    const push = await openCodex({ target: target!, render, run });
+    await push.send(["next card"], "c0", "c1");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[1]).toBe("queue");
   });
 
   it("queues each batch for this thread and confirms on Codex's receipt", async () => {
@@ -543,13 +375,17 @@ describe("Codex queue transport", () => {
   it.each([
     ["an unconfirmed answer", () => "something else\n"],
     [
+      "a receipt for another thread",
+      () => "Queued message test for thread sibling.\n",
+    ],
+    [
       "a failing command",
       () => {
         throw Object.assign(new Error("secret batch text"), { code: 1 });
       },
     ],
   ])("stops on %s and keeps the whole range", async (_, answer) => {
-    const { run } = queueRunner(answer);
+    const { calls, run } = queueRunner(answer);
     const push = openCodexQueuePush<string>({
       threadId: THREAD,
       bin: "/opt/codex",
@@ -561,10 +397,40 @@ describe("Codex queue transport", () => {
     expect(push.rejected?.reason).not.toContain("secret");
     await push.whenRejected;
     await push.send(["two"], "c1", "c2");
+    expect(calls).toHaveLength(1);
     expect(push.unconfirmed()).toEqual({
       items: ["one", "two"],
       since: "c0",
       cursor: "c2",
+    });
+  });
+
+  it("retains in-flight admission on cancellation, even if a late receipt arrives", async () => {
+    const stop = new AbortController();
+    let complete!: (value: string) => void;
+    const run: QueueRunner = async (_bin, _args, signal) => {
+      expect(signal).toBe(stop.signal);
+      return new Promise<string>((resolve) => {
+        complete = resolve;
+      });
+    };
+    const push = openCodexQueuePush({
+      threadId: THREAD,
+      bin: "/opt/codex",
+      render,
+      run,
+      signal: stop.signal,
+    });
+    cleanups.push(push.close);
+    const sending = push.send(["answer"], "c0", "c1");
+    stop.abort();
+    await push.whenRejected;
+    complete(QUEUED);
+    await sending;
+    expect(push.unconfirmed()).toEqual({
+      items: ["answer"],
+      since: "c0",
+      cursor: "c1",
     });
   });
 
@@ -580,30 +446,6 @@ describe("Codex queue transport", () => {
     const message = calls[0]?.[5] ?? "";
     expect(Buffer.byteLength(message)).toBeLessThan(128 * 1024);
     expect(message).toContain("since: c0\ncursor: c1");
-  });
-
-  it("falls back to the queue when the socket does not hold this thread", async () => {
-    const { target, requests } = await daemon({ state: "notLoaded" });
-    const { calls, run } = queueRunner(() => QUEUED);
-    const notes: string[] = [];
-    const { push, via } = await openCodex<string>({
-      target: { ...target, bin: "/opt/codex" },
-      render,
-      note: (line) => notes.push(line),
-      run,
-    });
-    expect(via).toBe("queue");
-    expect(notes.join("\n")).toContain("using `codex queue` instead");
-    await push.send(["answer"], "c0", "c1");
-    expect(calls).toHaveLength(1);
-    expect(requests.map((r) => r.method)).not.toContain("turn/start");
-  });
-
-  it("refuses the socket's failure when there is no queue to fall back on", async () => {
-    const { target } = await daemon({ state: "notLoaded" });
-    await expect(
-      openCodex<string>({ target, render, note: () => {} }),
-    ).rejects.toThrow("not loaded");
   });
 
   it("delivers through openFollow and names the channel it chose", async () => {

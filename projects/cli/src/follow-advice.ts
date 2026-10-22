@@ -16,7 +16,6 @@ export type FollowSituation =
   | "omp-tool"
   | "pi-tool"
   | "pi-no-tool"
-  | "codex"
   | "codex-queue"
   | "codex-no-peer"
   | "claude-code-no-peer"
@@ -207,22 +206,16 @@ export function followAdvice(input: {
   });
 
   if (harness === "codex") {
-    if (input.codex?.socket !== undefined) {
-      return advice("codex", [
-        "running under Codex, and this thread's App Server control socket is on this host, so `--follow=codex` delivers each batch into this conversation: into the running turn, or as a new turn when it is idle.",
-        ...CODEX_START,
-        CLOSING,
-      ]);
-    }
     if (input.codex?.bin !== undefined) {
       return advice("codex-queue", [
-        "running under Codex without an App Server control socket, so `--follow=codex` hands each batch to `codex queue`: it starts a new turn when this conversation is idle, and otherwise waits for the running turn to end.",
+        "running under Codex, so `--follow=codex` hands each batch to `codex queue`: it starts a new turn when this conversation is idle, and otherwise waits for the running turn to end.",
         ...CODEX_START,
+        "Handle every affected card in a delivered batch, checking current ownership, authorization and review state. For changes_requested, read annotations and revise the design; implementation still needs approval. End quietly when nothing authorized can proceed. The existing watch handles later batches; do not start another monitor.",
         CLOSING,
       ]);
     }
     return advice("codex-no-peer", [
-      "running under Codex, but neither an App Server control socket nor a `codex` executable on PATH is available, so nothing can deliver into this conversation.",
+      "running under Codex, but no `codex` executable is available on PATH or at an absolute TODOU_CODEX_BIN path, so nothing can deliver into this conversation.",
       "A background command's output does not wake Codex, so `--follow=stdout` cannot help here: use poll mode. Either watch, run without `--follow`, blocks, returns one batch and exits; re-open it from the cursor it printed. `--poll` checks once without blocking.",
       CLOSING,
     ]);

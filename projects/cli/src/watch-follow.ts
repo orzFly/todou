@@ -148,7 +148,7 @@ export function followTransport(opts: {
   if (transport === "codex" && !opts.codex) {
     throw new CliError(
       "no Codex thread with a way to deliver into it",
-      "--follow=codex requires CODEX_THREAD_ID plus either the App Server's control socket on this host or a `codex` executable on PATH (or TODOU_CODEX_BIN) for `codex queue`; use --poll otherwise",
+      "--follow=codex requires CODEX_THREAD_ID plus a `codex` executable on PATH (or TODOU_CODEX_BIN) for `codex queue`; use --poll otherwise",
     );
   }
   return transport;
@@ -325,12 +325,10 @@ export async function openFollow<T>(opts: {
   let opened: PeerPush<T> | null = null;
   if (opts.transport === "codex") {
     if (!opts.messaging.codex) throw new CliError("missing Codex target");
-    // Fail before collecting anything when neither channel opens: a watch
-    // that cannot deliver must not look like one that is delivering.
-    const codex = await openCodex<T>({
+    // Queue owns next-turn scheduling even when the App has an active turn.
+    opened = await openCodex<T>({
       target: opts.messaging.codex,
       signal,
-      note: opts.note,
       run: opts.runCodexQueue,
       render: (items, since, cursor) =>
         [
@@ -338,9 +336,8 @@ export async function openFollow<T>(opts: {
           opts.render(items, since, cursor),
         ].join("\n"),
     });
-    opened = codex.push;
     opts.note(
-      `--follow=codex following ${opts.following} in thread ${opts.messaging.codex.threadId} via ${codex.via === "socket" ? "the App Server socket" : "codex queue"}`,
+      `--follow=codex following ${opts.following} in thread ${opts.messaging.codex.threadId} via codex queue`,
     );
   }
   if (opts.transport === "uds") {

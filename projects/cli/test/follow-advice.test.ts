@@ -39,7 +39,7 @@ const CLOSING =
 describe("followAdvice", () => {
   it("offers Codex only with an explicit local target", () => {
     const codex = {
-      socket: "/run/codex/control.sock",
+      bin: "/opt/codex",
       threadId: "thread-test",
     };
     expect(
@@ -49,7 +49,7 @@ describe("followAdvice", () => {
         socket: undefined,
         optedOut: false,
       }).situation,
-    ).toBe("codex");
+    ).toBe("codex-queue");
     // The existing opt-out is specific to --follow=uds.
     expect(
       followAdvice({
@@ -58,7 +58,7 @@ describe("followAdvice", () => {
         socket: undefined,
         optedOut: true,
       }).situation,
-    ).toBe("codex");
+    ).toBe("codex-queue");
     const missing = followAdvice({
       harness: "codex",
       socket: SOCKET,
