@@ -224,7 +224,14 @@ export function IssueDetailPage() {
               {!trashed && (
                 <div
                   ref={composerRef}
-                  className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4"
+                  // A folded composer (T-532) is one line on a wide screen and
+                  // only a floating button on a phone, whose strip lets the
+                  // page show and take touches around it.
+                  className={cn(
+                    "sticky bottom-0 z-10 border-t bg-background pt-3 pb-4",
+                    "has-[[data-collapsed]]:py-2",
+                    "max-sm:has-[[data-collapsed]]:pointer-events-none max-sm:has-[[data-collapsed]]:border-transparent max-sm:has-[[data-collapsed]]:bg-transparent max-sm:has-[[data-collapsed]]:pt-0 max-sm:has-[[data-collapsed]]:pb-4",
+                  )}
                 >
                   <Composer
                     // `/issues/7 → /issues/8` is one route with a changed param,

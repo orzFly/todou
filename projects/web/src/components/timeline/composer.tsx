@@ -7,8 +7,8 @@ import type {
   TimelineItem,
 } from "@todou/shared";
 import { COMMENT_HIDE_MAX_IDS } from "@todou/shared";
-import { SendIcon } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { MessageSquarePlusIcon, SendIcon } from "lucide-react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   api,
@@ -289,6 +289,70 @@ export function settledToast(result: CommandSubmitResult): string | null {
   return parts.length === 0 ? null : `Hiding also ${parts.join(" and ")}.`;
 }
 
+/** The folded phone composer's button, which opens the box (T-532). */
+const OPENER = "[data-composer-opener]";
+
+/**
+ * Whether the reader is working in `root` (T-532). Focus arriving anywhere in
+ * it engages; leaving disengages only once focus has gone somewhere outside.
+ *
+ * Three ways focus goes missing without the reader having left:
+ * - Safari never focuses a clicked button, so pressing the attach button
+ *   blurs the editor to nowhere. A press that started inside holds on.
+ * - Switching tab or app blurs the editor too, and hands focus straight back
+ *   on return.
+ * - After that Safari click, nothing inside holds focus, so a later press
+ *   outside will not produce a blur. The press itself has to disengage.
+ *
+ * A press outside while focus is still inside is left to the blur that
+ * follows: a touch that starts a scroll moves no focus, and the box with the
+ * keyboard up must not fold under the reader's caret.
+ */
+function useEngaged(root: RefObject<HTMLElement | null>): boolean {
+  const [engaged, setEngaged] = useState(false);
+
+  useEffect(() => {
+    const host = root.current;
+    if (host === null) return;
+    const within = (node: unknown) =>
+      node instanceof Node && host.contains(node);
+    let pressing = false;
+
+    const down = (event: PointerEvent) => {
+      pressing = within(event.target);
+      if (!pressing && !within(document.activeElement)) setEngaged(false);
+    };
+    const up = () => {
+      pressing = false;
+    };
+    const focusIn = (event: FocusEvent) => {
+      // The opener is focused by the very press that opens it, and unfolding
+      // then would pull it out from under that press before its click
+      // arrives. Its click focuses the editor instead.
+      if (event.target instanceof Element && event.target.closest(OPENER)) {
+        return;
+      }
+      setEngaged(true);
+    };
+    const focusOut = (event: FocusEvent) => {
+      if (within(event.relatedTarget)) return;
+      if (pressing || !document.hasFocus()) return;
+      setEngaged(false);
+    };
+
+    const controller = new AbortController();
+    const listen = { capture: true, passive: true, signal: controller.signal };
+    document.addEventListener("pointerdown", down, listen);
+    document.addEventListener("pointerup", up, listen);
+    document.addEventListener("pointercancel", up, listen);
+    host.addEventListener("focusin", focusIn, { signal: controller.signal });
+    host.addEventListener("focusout", focusOut, { signal: controller.signal });
+    return () => controller.abort();
+  }, [root]);
+
+  return engaged;
+}
+
 export function Composer({
   slug,
   issueNumber,
@@ -312,7 +376,8 @@ export function Composer({
   const [uploading, setUploading] = useState(false);
   const [running, setRunning] = useState(false);
   const [draft, setDraft] = useState("");
-  const [touched, setTouched] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const engaged = useEngaged(root);
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const registry = useCommandRegistry(slug, "comment");
@@ -391,13 +456,16 @@ export function Composer({
     (parsed?.body ?? draft).trim() === "" &&
     staging.staged.length === 0 &&
     commands.length === 0;
+  // Folding an empty box is what keeps it from taking the screen (T-532); one
+  // holding anything stays open, because the draft is the only copy of it.
+  //
   // A broken command line counts as content even though `empty` cannot see it:
   // it yields neither a body nor a command, so a draft that is nothing else
   // reads as empty while still rendering its error block. That error block is
   // then the one thing that can outlive the buttons explaining what to do
   // about it — and the next card drops it along with the draft it came from,
   // because `issue-detail.tsx` keys this component by card number (T-317).
-  const expanded = touched || !empty || broken.length > 0;
+  const expanded = engaged || !empty || broken.length > 0;
   const label = submitLabel({
     uploading,
     running,
@@ -481,15 +549,21 @@ export function Composer({
     editor.current?.setValue("");
     setDraft("");
     staging.clear();
-    setTouched(false);
   }
 
   return (
-    <div className="space-y-2">
+    <div
+      ref={root}
+      className="space-y-2"
+      // The dock in `issue-detail.tsx` styles itself off this.
+      data-collapsed={expanded ? undefined : ""}
+    >
       {failed.map((entry) => (
         <div
           key={entry.key}
-          className="flex items-center justify-between rounded-md border border-destructive/40 px-3 py-1.5 text-sm text-destructive"
+          // Opaque and clickable over the see-through dock a folded phone
+          // composer leaves behind.
+          className="pointer-events-auto flex items-center justify-between rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-sm text-destructive"
         >
           <span className="truncate">Failed to send: {entry.comment.body}</span>
           <Button
@@ -527,19 +601,23 @@ export function Composer({
           e.preventDefault();
           void submit();
         }}
-        // Focus rather than click, so tabbing in reaches the buttons too;
-        // pointerdown as well, because a submit resets this while the caret
-        // stays in the editor, and clicking back in then fires no focusin.
-        onFocus={() => setTouched(true)}
-        onPointerDown={() => setTouched(true)}
       >
         <MarkdownEditor
           ref={editor}
           ariaLabel="Write a comment"
-          placeholder="Write a comment… (#N references other issues, / runs a command, < inserts a collapsible block; paste or drop files)"
+          placeholder={
+            expanded
+              ? "Write a comment… (#N references other issues, / runs a command, < inserts a collapsible block; paste or drop files)"
+              : "Write a comment…"
+          }
           // Sticky at the viewport bottom: an auto-growing draft must not
-          // swallow the page, especially on small/mobile viewports.
-          className="max-h-[40dvh] min-h-16"
+          // swallow the page, especially on small/mobile viewports. Folded on
+          // a phone it leaves only the button below; `sr-only` rather than
+          // unmounted, because that button has to focus it inside the tap
+          // for iOS to raise the keyboard.
+          className={
+            expanded ? "max-h-[40dvh] min-h-16" : "max-h-[40dvh] max-sm:sr-only"
+          }
           extensions={extensions}
           onChange={setDraft}
           onPaste={staging.onPaste}
@@ -547,6 +625,20 @@ export function Composer({
           onDragOver={staging.onDragOver}
           onSubmit={() => void submit()}
         />
+        {/* Centred, not in a corner: the bottom corners are where a phone's
+            edge swipes start. */}
+        {!expanded && (
+          <div className="flex justify-center sm:hidden">
+            <Button
+              type="button"
+              data-composer-opener=""
+              className="pointer-events-auto rounded-full shadow-lg"
+              onClick={() => editor.current?.focus()}
+            >
+              <MessageSquarePlusIcon className="size-4" /> Comment
+            </Button>
+          </div>
+        )}
         {/* The buttons get a row of their own (attach left, submit right —
             the same layout as the issue-body, edit-comment and new-issue
             editors) because `submitLabel` grows with the commands it parsed:

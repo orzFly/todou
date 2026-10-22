@@ -15,7 +15,7 @@ import type {
   TimelineComment,
   TimelineItem,
 } from "@todou/shared";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   api,
   labelsQuery,
@@ -544,23 +544,15 @@ describe("Composer buttons", () => {
     expect(submitButton(view).disabled).toBe(true);
   });
 
-  it("keeps them once shown, even after the focus leaves", async () => {
-    const view = mount();
-    cmFocus(view.container);
-    await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
-    fireEvent.focusOut(cmView(view.container).contentDOM);
-    expect(maybeSubmit(view)).not.toBeNull();
-    expect(attachButton(view)).not.toBeNull();
-  });
-
-  it("hides them again once a submission lands", async () => {
+  it("keeps them after a submission while the caret is still in the box", async () => {
     const view = mount();
     cmFocus(view.container);
     cmSetValue(view.container, "hello");
     await waitFor(() => expect(submitButton(view).disabled).toBe(false));
     submitButton(view).click();
-    await waitFor(() => expect(maybeSubmit(view)).toBeNull());
-    expect(attachButton(view)).toBeNull();
+    await waitFor(() => expect(view.onSend).toHaveBeenCalled());
+    expect(cmGetValue(view.container)).toBe("");
+    expect(maybeSubmit(view)).not.toBeNull();
   });
 
   it("keeps them when the submission is refused", async () => {
@@ -662,6 +654,166 @@ describe("Composer buttons", () => {
     cmFocus(view.container);
     await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
     expect(actionRow(view)?.className).toContain("composer-actions-in");
+  });
+});
+
+const folded = (view: { container: HTMLElement }) =>
+  view.container.querySelector("[data-collapsed]") !== null;
+const opener = (view: { container: HTMLElement }) =>
+  view.container.querySelector<HTMLButtonElement>("[data-composer-opener]");
+
+/**
+ * T-532: the box unfolds on entry and folds back only once it is empty and
+ * focus has left the whole composer — never because focus moved to one of the
+ * composer's own controls.
+ */
+describe("Composer folding", () => {
+  // happy-dom's answer is not the browser's; each test says which it means.
+  const windowFocused = (focused: boolean) =>
+    vi.spyOn(document, "hasFocus").mockReturnValue(focused);
+  let outside: HTMLButtonElement;
+  beforeEach(() => {
+    windowFocused(true);
+    outside = document.createElement("button");
+    outside.textContent = "elsewhere";
+    document.body.append(outside);
+  });
+  afterEach(() => {
+    outside.remove();
+    vi.restoreAllMocks();
+  });
+
+  /** Focus leaving the editor for `next`, as the browser reports it. */
+  const leaveFor = (view: { container: HTMLElement }, next: Element | null) => {
+    if (next instanceof HTMLElement) next.focus();
+    else (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.focusOut(cmView(view.container).contentDOM, {
+      relatedTarget: next,
+    });
+  };
+
+  it("starts folded, with only the opener for a phone", () => {
+    const view = mount();
+    expect(folded(view)).toBe(true);
+    expect(opener(view)).not.toBeNull();
+    expect(maybeSubmit(view)).toBeNull();
+  });
+
+  it("unfolds on entry and folds again once focus leaves an empty box", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(folded(view)).toBe(false));
+    expect(opener(view)).toBeNull();
+    leaveFor(view, outside);
+    await waitFor(() => expect(folded(view)).toBe(true));
+    expect(maybeSubmit(view)).toBeNull();
+  });
+
+  it("folds when focus goes nowhere, as a click on blank page does", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(folded(view)).toBe(false));
+    fireEvent.pointerDown(document.body);
+    leaveFor(view, null);
+    fireEvent.pointerUp(document.body);
+    await waitFor(() => expect(folded(view)).toBe(true));
+  });
+
+  it("stays open while Tab moves focus to the attach button", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(attachButton(view)).not.toBeNull());
+    const attach = attachButton(view) as HTMLButtonElement;
+    leaveFor(view, attach);
+    expect(folded(view)).toBe(false);
+    expect(attachButton(view)).toBe(attach);
+  });
+
+  it("stays open through a Safari press, which focuses nothing", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(attachButton(view)).not.toBeNull());
+    const attach = attachButton(view) as HTMLButtonElement;
+    // Safari blurs the editor to nowhere on a button press.
+    fireEvent.pointerDown(attach);
+    leaveFor(view, null);
+    fireEvent.pointerUp(attach);
+    expect(folded(view)).toBe(false);
+
+    // Nothing inside holds focus now, so no blur will come: a press elsewhere
+    // is the only signal that the reader has left.
+    fireEvent.pointerDown(outside);
+    await waitFor(() => expect(folded(view)).toBe(true));
+  });
+
+  it("stays open when a press outside moves no focus, as a scroll does", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(folded(view)).toBe(false));
+    fireEvent.pointerDown(outside);
+    fireEvent.pointerUp(outside);
+    expect(folded(view)).toBe(false);
+  });
+
+  it("stays open when the whole window loses focus", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(folded(view)).toBe(false));
+    windowFocused(false);
+    fireEvent.focusOut(cmView(view.container).contentDOM, {
+      relatedTarget: null,
+    });
+    expect(folded(view)).toBe(false);
+  });
+
+  it("stays open with a draft in it after focus leaves", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    cmSetValue(view.container, "half a thought");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    leaveFor(view, outside);
+    expect(folded(view)).toBe(false);
+    expect(maybeSubmit(view)).not.toBeNull();
+  });
+
+  it("stays open with only a staged file in it after focus leaves", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    fireEvent.drop(cmView(view.container).contentDOM, {
+      dataTransfer: carrying(
+        new File(["bytes"], "shot.png", { type: "image/png" }),
+      ),
+    });
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    leaveFor(view, outside);
+    expect(folded(view)).toBe(false);
+  });
+
+  it("folds once a submission empties it and focus then leaves", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    cmSetValue(view.container, "hello");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    submitButton(view).click();
+    await waitFor(() => expect(view.onSend).toHaveBeenCalled());
+    expect(folded(view)).toBe(false);
+    leaveFor(view, outside);
+    await waitFor(() => expect(folded(view)).toBe(true));
+  });
+
+  it("opens from the opener's click, not from the press that focuses it", async () => {
+    const view = mount();
+    const button = opener(view) as HTMLButtonElement;
+    // The press focuses the opener first; unfolding then would remove it
+    // before its click could arrive.
+    fireEvent.pointerDown(button);
+    button.focus();
+    fireEvent.focusIn(button);
+    expect(folded(view)).toBe(true);
+    fireEvent.pointerUp(button);
+    button.click();
+    await waitFor(() => expect(folded(view)).toBe(false));
+    expect(document.activeElement).toBe(cmView(view.container).contentDOM);
   });
 });
 
