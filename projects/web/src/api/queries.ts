@@ -1,6 +1,7 @@
 import {
   QueryClient,
   queryOptions,
+  useQuery,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import {
@@ -134,6 +135,17 @@ export const accessDenialsQuery = (slug: string) =>
 export function useCan(slug: string, cap: CapabilityId): boolean {
   const project = useSuspenseQuery(projectQuery(slug));
   return can(project.data.viewer_role ?? null, cap);
+}
+
+/**
+ * `useCan` for a component that must not suspend — a list body under a
+ * boundary kept for the focus in the search box (T-381), a board whose
+ * columns each wait on their own. Reads false until the project answers,
+ * which in the app the project layout above has already waited for.
+ */
+export function useCanIfLoaded(slug: string, cap: CapabilityId): boolean {
+  const project = useQuery(projectQuery(slug));
+  return can(project.data?.viewer_role ?? null, cap);
 }
 
 /**

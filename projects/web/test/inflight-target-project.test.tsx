@@ -759,7 +759,11 @@ describe("a project write the hook then left", () => {
 
     onlineManager.setOnline(false);
     act(() =>
-      hook.result.current.mutate({ slug: "p", issueNumber: 7, labelIds: [3] }),
+      hook.result.current.mutate({
+        slug: "p",
+        issueNumber: 7,
+        labels: [{ id: 3, name: "bug", color: "#ef4444" }],
+      }),
     );
     await letTheLoopRun();
     expect(writeCalls(calls).length).toBe(0);

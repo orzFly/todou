@@ -8,7 +8,9 @@ import type {
   IssueListFilter,
   IssueListItem,
   IssueListPage,
+  Label,
   Status,
+  UserRef,
 } from "@todou/shared";
 import { enumValue } from "@todou/shared";
 import { toast } from "sonner";
@@ -626,25 +628,100 @@ export function useMoveIssueMutation() {
   });
 }
 
-/** Optimistic label toggle from the list view. */
-export function useIssueLabelsMutation() {
+/** Pure cache patch for a row's labels or assignees, exported for tests. */
+export function patchIssueItem(
+  page: IssueListPage,
+  issueNumber: number,
+  patch: Partial<Pick<IssueListItem, "labels" | "assignees">>,
+): IssueListPage {
+  return {
+    ...page,
+    items: page.items.map((item) =>
+      item.number === issueNumber ? { ...item, ...patch } : item,
+    ),
+  };
+}
+
+/**
+ * Label and assignee edits from a list row or a board card (T-533).
+ *
+ * Optimistic because both pickers stay open across toggles, and each toggle
+ * computes the next set from the row on screen. Left to the refetch, a second
+ * toggle made before the first one's answer lands is computed from the set
+ * the first one replaced, and its write takes the first one's change back out.
+ *
+ * Only the last write of a burst refetches: an earlier one's refetch can land
+ * between a later write's patch and its answer and paint the row back.
+ */
+function useIssueRowMutation<V extends { slug: string; issueNumber: number }>(
+  field: string,
+  send: (vars: V) => Promise<unknown>,
+  patchOf: (vars: V) => Partial<Pick<IssueListItem, "labels" | "assignees">>,
+) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (vars: {
-      slug: string;
-      issueNumber: number;
-      labelIds: number[];
-    }) =>
-      api.updateIssue(vars.slug, vars.issueNumber, {
-        label_ids: vars.labelIds,
-      }),
-    onError: (error) =>
-      toast.error(`Could not update labels: ${error.message}`),
+    mutationKey: ["issue-row", field],
+    mutationFn: send,
+    onMutate: async (vars: V) => {
+      await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
+      const snapshots = queryClient.getQueriesData<IssueListPage | IssueCounts>(
+        { queryKey: ["issues", vars.slug] },
+      );
+      for (const [key, data] of snapshots) {
+        if (data && "items" in data) {
+          queryClient.setQueryData(
+            key,
+            patchIssueItem(data, vars.issueNumber, patchOf(vars)),
+          );
+        }
+      }
+      return { snapshots };
+    },
+    onError: (error, _vars, context) => {
+      for (const [key, data] of context?.snapshots ?? []) {
+        queryClient.setQueryData(key, data);
+      }
+      toast.error(`Could not update ${field}: ${error.message}`);
+    },
     onSettled: (_data, _error, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
       queryClient.invalidateQueries({
         queryKey: ["issue", vars.slug, vars.issueNumber],
       });
+      // Still counts itself while its own onSettled runs.
+      if (queryClient.isMutating({ mutationKey: ["issue-row"] }) > 1) return;
+      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
     },
   });
+}
+
+export function useIssueLabelsMutation() {
+  return useIssueRowMutation(
+    "labels",
+    (vars: { slug: string; issueNumber: number; labels: Label[] }) =>
+      api.updateIssue(vars.slug, vars.issueNumber, {
+        label_ids: vars.labels.map((label) => label.id),
+      }),
+    (vars) => ({ labels: vars.labels }),
+  );
+}
+
+export function useIssueAssigneesMutation() {
+  return useIssueRowMutation(
+    "assignees",
+    (vars: { slug: string; issueNumber: number; assignees: UserRef[] }) =>
+      api.updateIssue(vars.slug, vars.issueNumber, {
+        assignee_ids: vars.assignees.map((user) => user.id),
+      }),
+    (vars) => ({ assignees: vars.assignees }),
+  );
+}
+
+/** The set after toggling `item` in or out, by id. */
+export function toggledById<T extends { id: number }>(
+  current: T[],
+  item: T,
+): T[] {
+  return current.some((c) => c.id === item.id)
+    ? current.filter((c) => c.id !== item.id)
+    : [...current, item];
 }

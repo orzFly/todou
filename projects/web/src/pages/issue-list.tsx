@@ -15,6 +15,7 @@ import type {
   IssueListItem,
   IssueListPage as IssueListPageData,
   Label,
+  Member,
   Status,
 } from "@todou/shared";
 import { ArrowLeftIcon, Trash2Icon } from "lucide-react";
@@ -40,6 +41,8 @@ import {
   issuesQuery,
   listFilter,
   listParams,
+  toggledById,
+  useIssueAssigneesMutation,
   useIssueLabelsMutation,
   useIssueStatusMutation,
   useRestoreIssueMutation,
@@ -50,6 +53,7 @@ import {
   labelsQuery,
   membersQuery,
   statusesQuery,
+  useCanIfLoaded,
   useIsProjectAdmin,
 } from "@/api/queries.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
@@ -1073,8 +1077,14 @@ export function ProjectIssueRows({
 }) {
   const statusMutation = useIssueStatusMutation();
   const labelsMutation = useIssueLabelsMutation();
+  const assigneesMutation = useIssueAssigneesMutation();
   const statusMutate = statusMutation.mutate;
   const labelsMutate = labelsMutation.mutate;
+  const assigneesMutate = assigneesMutation.mutate;
+  // Already loaded by the page for the filter bar, so this never waits.
+  const members = useQuery(membersQuery(slug)).data ?? NO_MEMBERS;
+  // The server refuses assignees from a reporter outright (see new-issue).
+  const canTriage = useCanIfLoaded(slug, "issue.triage");
 
   // Every prop below has to keep its identity across a render, or the memo on
   // the row is inert. Typing in the search box re-renders this list on every
@@ -1087,16 +1097,27 @@ export function ProjectIssueRows({
   );
   const onToggleLabel = useCallback(
     (issue: IssueListItem, label: Label) => {
-      const current = issue.labels.map((l) => l.id);
       labelsMutate({
         slug,
         issueNumber: issue.number,
-        labelIds: current.includes(label.id)
-          ? current.filter((id) => id !== label.id)
-          : [...current, label.id],
+        labels: toggledById(issue.labels, label),
       });
     },
     [labelsMutate, slug],
+  );
+  const onToggleAssignee = useCallback(
+    (issue: IssueListItem, userId: number) => {
+      const user =
+        issue.assignees.find((u) => u.id === userId) ??
+        members.find((m) => m.user.id === userId)?.user;
+      if (!user) return;
+      assigneesMutate({
+        slug,
+        issueNumber: issue.number,
+        assignees: toggledById(issue.assignees, user),
+      });
+    },
+    [assigneesMutate, members, slug],
   );
   // `useCreateLabel` builds a fresh closure every render, so it travels
   // through a ref. Whether it exists at all is the viewer's permission and
@@ -1118,12 +1139,16 @@ export function ProjectIssueRows({
       issue={issue}
       statuses={statuses}
       allLabels={allLabels}
+      members={members}
       onStatus={onStatus}
       onToggleLabel={onToggleLabel}
       onCreateLabel={onCreateLabel === undefined ? undefined : create}
+      onToggleAssignee={canTriage ? onToggleAssignee : undefined}
     />
   ));
 }
+
+const NO_MEMBERS: Member[] = [];
 
 /**
  * One row, skipped entirely when nothing about it changed. The meta line is
@@ -1135,17 +1160,21 @@ const ProjectIssueRow = memo(function ProjectIssueRow({
   issue,
   statuses,
   allLabels,
+  members,
   onStatus,
   onToggleLabel,
   onCreateLabel,
+  onToggleAssignee,
 }: {
   slug: string;
   issue: IssueListItem;
   statuses: Status[];
   allLabels: Label[];
+  members: Member[];
   onStatus: (issue: IssueListItem, status: Status) => void;
   onToggleLabel: (issue: IssueListItem, label: Label) => void;
   onCreateLabel?: (name: string) => Promise<Label>;
+  onToggleAssignee?: (issue: IssueListItem, userId: number) => void;
 }) {
   return (
     <IssueRow
@@ -1156,9 +1185,13 @@ const ProjectIssueRow = memo(function ProjectIssueRow({
           issue={issue}
           statuses={statuses}
           allLabels={allLabels}
+          members={members}
           onStatus={(status) => onStatus(issue, status)}
           onToggleLabel={(label) => onToggleLabel(issue, label)}
           onCreateLabel={onCreateLabel}
+          onToggleAssignee={
+            onToggleAssignee && ((userId) => onToggleAssignee(issue, userId))
+          }
         />
       }
     />

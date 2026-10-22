@@ -12,18 +12,41 @@ import {
 } from "@dnd-kit/core";
 import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { formatRef, type IssueListItem, type Status } from "@todou/shared";
-import { useEffect, useRef, useState } from "react";
+import {
+  formatRef,
+  type IssueListItem,
+  type Label,
+  type Member,
+  type Status,
+} from "@todou/shared";
+import { TagIcon, UserPlusIcon } from "lucide-react";
+import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
+import {
+  toggledById,
+  useIssueAssigneesMutation,
+  useIssueLabelsMutation,
+} from "@/api/issues.ts";
 import { useRefPlacement } from "@/api/prefs.ts";
-import { statusesQuery } from "@/api/queries.ts";
+import {
+  labelsQuery,
+  membersQuery,
+  statusesQuery,
+  useCanIfLoaded,
+} from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
 import {
   BlockedBadge,
   QuestionBadge,
   SpecReviewBadge,
 } from "@/components/issue/attention-badge.tsx";
+import { MetaEditButton } from "@/components/issue/issue-row.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
+import {
+  LabelPicker,
+  useCreateLabel,
+} from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
@@ -43,6 +66,19 @@ import {
 import { useOverlayScrollbars } from "@/lib/use-overlay-scrollbars.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
 import { cn } from "@/lib/utils";
+
+/**
+ * What a card needs to edit its own labels and assignees (T-533). Absent on
+ * the drag overlay's copy, which is a picture of a card and nothing more.
+ */
+export type CardEdit = {
+  slug: string;
+  allLabels: Label[];
+  members: Member[];
+  onCreateLabel?: (name: string) => Promise<Label>;
+  /** The server refuses labels and assignees without issue.triage. */
+  canTriage: boolean;
+};
 
 type CardDragData = {
   issueNumber: number;
@@ -92,6 +128,18 @@ const everyColumnAnswered = (
 export function BoardPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   const statuses = useSuspenseQuery(statusesQuery(slug));
+  const createLabel = useCreateLabel(slug);
+  const canCreateLabels = useCanIfLoaded(slug, "label.create");
+  const canTriage = useCanIfLoaded(slug, "issue.triage");
+  const allLabels = useQuery(labelsQuery(slug)).data;
+  const members = useQuery(membersQuery(slug)).data;
+  const edit: CardEdit = {
+    slug,
+    allLabels: allLabels ?? [],
+    members: members ?? [],
+    onCreateLabel: canCreateLabels ? createLabel : undefined,
+    canTriage,
+  };
   const canvas = useRef<HTMLDivElement>(null);
   useRegisterReturnArea({
     region: BOARD_CANVAS_REGION,
@@ -198,7 +246,12 @@ export function BoardPage() {
           className="flex min-h-60 flex-1 gap-4 overflow-x-auto"
         >
           {statuses.data.map((status) => (
-            <BoardColumn key={status.id} slug={slug} status={status} />
+            <BoardColumn
+              key={status.id}
+              slug={slug}
+              status={status}
+              edit={edit}
+            />
           ))}
         </div>
       </div>
@@ -216,7 +269,15 @@ export function BoardPage() {
   );
 }
 
-function BoardColumn({ slug, status }: { slug: string; status: Status }) {
+function BoardColumn({
+  slug,
+  status,
+  edit,
+}: {
+  slug: string;
+  status: Status;
+  edit: CardEdit;
+}) {
   const column = useQuery(boardColumnQuery(slug, status.id));
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
   const { slot, viewport } = useOverlayScrollbars(column.data !== undefined);
@@ -277,6 +338,7 @@ function BoardColumn({ slug, status }: { slug: string; status: Status }) {
               slug={slug}
               issue={issue}
               statusId={status.id}
+              edit={edit}
             />
           ))}
           {column.data?.items.length === 0 && (
@@ -294,10 +356,12 @@ function BoardCard({
   slug,
   issue,
   statusId,
+  edit,
 }: {
   slug: string;
   issue: IssueListItem;
   statusId: number;
+  edit: CardEdit;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `issue-${issue.number}`,
@@ -314,7 +378,7 @@ function BoardCard({
       {...attributes}
       {...listeners}
       className={cn(
-        "cursor-grab rounded-md border bg-background p-2.5 shadow-xs",
+        "group/card cursor-grab rounded-md border bg-background p-2.5 shadow-xs",
         isDragging && "opacity-30",
       )}
       // The card's own id, the same identity `key` uses above. The number is
@@ -322,7 +386,7 @@ function BoardCard({
       // snapshot outlives the board it was taken from (T-407).
       data-return-id={String(issue.id)}
     >
-      <BoardCardContent slug={slug} issue={issue} />
+      <BoardCardContent slug={slug} issue={issue} edit={edit} />
     </div>
   );
 }
@@ -330,10 +394,13 @@ function BoardCard({
 export function BoardCardContent({
   slug,
   issue,
+  edit,
 }: {
   slug: string;
   issue: IssueListItem;
+  edit?: CardEdit;
 }) {
+  const editable = edit?.canTriage ? edit : undefined;
   const refPrefix = useRefPrefix(slug);
   const placement = useRefPlacement("board");
   const ref = formatRef(refPrefix, issue.number);
@@ -346,6 +413,7 @@ export function BoardCardContent({
   // card has nothing left to put there, and an empty flex row still spends
   // its top margin.
   const showMeta =
+    editable !== undefined ||
     placement === "after" ||
     issue.open_questions > 0 ||
     issue.spec_review_status === "unreviewed" ||
@@ -420,6 +488,7 @@ export function BoardCardContent({
           )}
           <BlockedBadge slug={slug} blockedBy={issue.blocked_by} />
           <LabelChips labels={issue.labels} />
+          {editable && <CardLabelEdit issue={issue} edit={editable} />}
           {/* `pr-1.5` equals the distance the bot badge extends past its
               avatar (`-right-1.5` on UserAvatar), so `ml-auto` stops the last
               avatar 6px earlier and the badge stays inside the clip. Applied
@@ -435,9 +504,94 @@ export function BoardCardContent({
             {issue.assignees.map((user) => (
               <UserChip key={user.id} user={user} compact />
             ))}
+            {editable && <CardAssigneeEdit issue={issue} edit={editable} />}
           </span>
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The card's edit icons wait for the pointer (T-533), so a board of cards is
+ * not a board of icons. Hidden by opacity rather than removed, so the card
+ * does not change height under the pointer that arrives. A device that cannot
+ * hover never gets the pointer there, so it always sees them; neither does a
+ * keyboard, which gets them once focus is anywhere on the card.
+ */
+const CARD_EDIT_VISIBILITY =
+  "opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100";
+
+/**
+ * Keeps a press on an edit icon from arming the card's drag: the sensor
+ * listens for pointerdown on the card, and the menus open from the same
+ * event. Radix composes this ahead of its own handler, which still runs.
+ */
+const keepOffDrag = (event: PointerEvent) => event.stopPropagation();
+
+function CardLabelEdit({
+  issue,
+  edit,
+}: {
+  issue: IssueListItem;
+  edit: CardEdit;
+}) {
+  const { mutate } = useIssueLabelsMutation();
+  return (
+    <LabelPicker
+      allLabels={edit.allLabels}
+      selected={issue.labels}
+      onToggle={(label) =>
+        mutate({
+          slug: edit.slug,
+          issueNumber: issue.number,
+          labels: toggledById(issue.labels, label),
+        })
+      }
+      onCreate={edit.onCreateLabel}
+      trigger={
+        <MetaEditButton
+          label="Edit labels"
+          icon={<TagIcon className="size-3.5" />}
+          className={CARD_EDIT_VISIBILITY}
+          onPointerDown={keepOffDrag}
+        />
+      }
+    />
+  );
+}
+
+function CardAssigneeEdit({
+  issue,
+  edit,
+}: {
+  issue: IssueListItem;
+  edit: CardEdit;
+}) {
+  const { mutate } = useIssueAssigneesMutation();
+  return (
+    <AssigneePicker
+      members={edit.members}
+      selectedIds={issue.assignees.map((user) => user.id)}
+      onToggle={(userId) => {
+        const user =
+          issue.assignees.find((u) => u.id === userId) ??
+          edit.members.find((m) => m.user.id === userId)?.user;
+        if (!user) return;
+        mutate({
+          slug: edit.slug,
+          issueNumber: issue.number,
+          assignees: toggledById(issue.assignees, user),
+        });
+      }}
+      trigger={
+        <MetaEditButton
+          label="Edit assignees"
+          icon={<UserPlusIcon className="size-3.5" />}
+          className={cn("self-center", CARD_EDIT_VISIBILITY)}
+          onPointerDown={keepOffDrag}
+        />
+      }
+    />
   );
 }

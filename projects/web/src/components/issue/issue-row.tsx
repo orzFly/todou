@@ -3,12 +3,14 @@ import {
   formatRef,
   type IssueListItem,
   type Label,
+  type Member,
   type Status,
 } from "@todou/shared";
-import { CheckIcon, TagIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckIcon, TagIcon, UserPlusIcon } from "lucide-react";
+import type { ComponentProps, ReactNode } from "react";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
 import {
   BlockedBadge,
   MentionBadge,
@@ -327,13 +329,19 @@ export function IssueRowMeta({
   issue,
   statuses,
   allLabels,
+  members,
   onStatus,
   onToggleLabel,
   onCreateLabel,
+  onToggleAssignee,
 }: {
   issue: IssueListItem;
   statuses: Status[];
   allLabels: Label[];
+  /** What the assignee menu offers; only read with `onToggleAssignee`. */
+  members?: Member[];
+  /** Absent where the viewer may not assign; the avatars stay as display. */
+  onToggleAssignee?: (userId: number) => void;
   onStatus: (status: Status) => void;
   onToggleLabel: (label: Label) => void;
   onCreateLabel?: (name: string) => Promise<Label>;
@@ -368,20 +376,61 @@ export function IssueRowMeta({
         onToggle={onToggleLabel}
         onCreate={onCreateLabel}
         trigger={
-          <button
-            type="button"
-            className="flex cursor-pointer text-muted-foreground hover:text-foreground"
-          >
-            <TagIcon className="size-3.5" aria-label="edit labels" />
-          </button>
+          <MetaEditButton
+            label="Edit labels"
+            icon={<TagIcon className="size-3.5" />}
+          />
         }
       />
       <span className="flex-1" />
-      <span className="flex gap-1">
+      <span className="flex items-center gap-1">
         {issue.assignees.map((user) => (
           <UserChip key={user.id} user={user} compact />
         ))}
+        {onToggleAssignee && (
+          <AssigneePicker
+            members={members ?? []}
+            selectedIds={issue.assignees.map((user) => user.id)}
+            onToggle={onToggleAssignee}
+            trigger={
+              <MetaEditButton
+                label="Edit assignees"
+                icon={<UserPlusIcon className="size-3.5" />}
+                className="ml-1"
+              />
+            }
+          />
+        )}
       </span>
     </>
+  );
+}
+
+/**
+ * The 14px icon that opens a picker from a list row or a board card. Props
+ * are spread because Radix's `asChild` hands its trigger the handlers, ref
+ * and open state that way. The hit area grows past the icon through a
+ * pseudo-element, so a finger gets a target without the line growing.
+ */
+export function MetaEditButton({
+  label,
+  icon,
+  className,
+  ...props
+}: ComponentProps<"button"> & { label: string; icon: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={cn(
+        "relative flex cursor-pointer text-muted-foreground hover:text-foreground",
+        "after:absolute after:-inset-1.5 pointer-coarse:after:-inset-2.5",
+        className,
+      )}
+      {...props}
+    >
+      {icon}
+    </button>
   );
 }
