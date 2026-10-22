@@ -31,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
-import { revealBlock } from "@/lib/scroll-insets.ts";
+import { holdRevealed, revealBlock, useOwnHold } from "@/lib/scroll-insets.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 type Draft = { selected: Set<number>; other: string; declined: boolean };
@@ -355,13 +355,19 @@ function AnswerForm({
   // across comments, and a document-wide query would land on whichever
   // question card rendered first.
   const root = useRef<HTMLDivElement>(null);
+  const keepHold = useOwnHold();
   const firstOpen = () => {
     const q = component.questions.find(
       (x) => !resolved(drafts[x.key] ?? emptyDraft()),
     );
     const row =
-      q && root.current?.querySelector(`[data-question-key="${q.key}"]`);
-    if (row) revealBlock(row as HTMLElement);
+      q &&
+      root.current?.querySelector<HTMLElement>(
+        `[data-question-key="${q.key}"]`,
+      );
+    if (!row) return;
+    revealBlock(row);
+    keepHold(holdRevealed(row, document.body));
   };
 
   return (

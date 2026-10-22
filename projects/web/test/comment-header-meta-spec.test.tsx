@@ -19,6 +19,7 @@ import { api } from "../src/api/queries.ts";
 import { AnnotatedMarkdown } from "../src/components/spec/annotated-markdown.tsx";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
+import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
 import {
   expectHeaderMeta,
   expectSplitHeader,
@@ -77,6 +78,8 @@ vi.mock("@pierre/diffs/react", () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  FakeResizeObserver.instances = [];
   localStorage.clear();
 });
 
@@ -524,5 +527,45 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
       return els[0] as HTMLElement;
     });
     expectSplitHeader(headerRowOf(card), { identity: ["Alice", "v1"] });
+  });
+});
+
+describe("the popover's locate control holds where it lands (T-527)", () => {
+  it("reveals the annotated block again as the page goes on loading", async () => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    mockSpec([ON_DESIGN]);
+    const view = await page("?v=2&view=rendered&file=design.md");
+    fireEvent.click(await view.findByLabelText("1 comment(s) on this block"));
+    const popover = await waitFor(() => {
+      const el = document.querySelector("[data-slot='popover-content']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    const locate = popover.querySelector<HTMLElement>(
+      "button[title='Scroll to what this points at']",
+    );
+    if (locate === null) throw new Error("no locate control");
+    const reveals: Element[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+    ) {
+      reveals.push(this);
+    });
+
+    fireEvent.pointerDown(locate);
+    fireEvent.click(locate);
+    expect(reveals).toHaveLength(1);
+    resizePage();
+    expect(reveals).toEqual([reveals[0], reveals[0]]);
+
+    // Escape is the reader's own key: nothing is held past it.
+    fireEvent.keyDown(popover, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-slot='popover-content']"),
+      ).toBeNull(),
+    );
+    resizePage();
+    expect(reveals).toHaveLength(2);
   });
 });

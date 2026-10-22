@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
+import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
 import { testQueryClient } from "./render.tsx";
 
 vi.mock("@pierre/diffs/react", () => ({
@@ -35,6 +36,8 @@ vi.mock("@pierre/diffs/react", () => ({
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  FakeResizeObserver.instances = [];
   localStorage.clear();
   // testing-library removes only the container it made, and the shell stub
   // stands beside it.
@@ -626,6 +629,55 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(countSlot(comparing)?.getAttribute("title")).toContain(
       "Turn comparing on",
     );
+  });
+
+  it("holds the change n lands on while the page goes on loading (T-527)", async () => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    const view = await toolbar("?v=2&file=design.md");
+    stubTops(view, [500, 700, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/3"));
+    const reveals: { el: Element; behavior?: ScrollBehavior }[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+      arg?: boolean | ScrollIntoViewOptions,
+    ) {
+      reveals.push({
+        el: this,
+        behavior: typeof arg === "object" ? arg.behavior : undefined,
+      });
+    });
+    const first = view.container.querySelector(".spec-changed");
+
+    fireEvent.keyDown(document.body, { key: "n" });
+    expect(reveals.map((r) => r.el)).toEqual([first]);
+    resizePage();
+    // Again, and as smoothly: an instant re-reveal would cut the glide short.
+    expect(reveals.map((r) => r.el)).toEqual([first, first]);
+    expect(reveals.at(-1)?.behavior).toBe("smooth");
+
+    fireEvent.wheel(window);
+    resizePage();
+    expect(reveals).toHaveLength(2);
+  });
+
+  it("holds the first change of the file n crossed into (T-527)", async () => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    const view = await toolbar("?v=2&file=stable.md");
+    const reveals: Element[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+    ) {
+      reveals.push(this);
+    });
+    fireEvent.keyDown(document.body, { key: "n" });
+    await waitFor(() => expect(reveals).toHaveLength(1));
+    expect(view.router.state.location.search).toMatchObject({
+      file: "design.md",
+    });
+    const landed = reveals[0];
+    expect(landed?.classList.contains("spec-changed")).toBe(true);
+    resizePage();
+    expect(reveals).toEqual([landed, landed]);
   });
 
   it("steps with n and p exactly as the arrows do (T-224)", async () => {

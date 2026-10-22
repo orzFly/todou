@@ -8,6 +8,7 @@ import type { QuestionsComponent } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
 import { cmPressKey, cmSetValue } from "./cm.ts";
+import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
 import { renderWithProviders } from "./render.tsx";
 
 // A fence in an answer reaches the real pierre CodeView through MarkdownView,
@@ -205,6 +206,7 @@ function deferredFetch(comp: QuestionsComponent = component) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  FakeResizeObserver.instances = [];
   vi.restoreAllMocks();
   // A range left standing would trip the next test's click guard.
   window.getSelection()?.removeAllRanges();
@@ -550,6 +552,28 @@ describe("QuestionsCard gated submit (T-517)", () => {
     ).toBe(true);
     // Pointing is not submitting.
     expect(posts).toEqual([]);
+  });
+
+  it("holds that question while the page above it goes on loading (T-527)", async () => {
+    stubFetch();
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+    const reveals: string[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+    ) {
+      reveals.push(this.getAttribute("data-question-key") ?? this.id);
+    });
+
+    fireEvent.pointerDown(submitButton(view));
+    fireEvent.click(submitButton(view));
+    resizePage();
+    expect(reveals).toEqual(["schema", "schema"]);
+    // Choosing the answer is the reader's input: the hold lets go.
+    fireEvent.pointerDown(optionButton(view, "New entity"));
+    resizePage();
+    expect(reveals).toEqual(["schema", "schema"]);
   });
 
   it("force-submits through the confirm, declining only the unanswered", async () => {

@@ -103,6 +103,7 @@ import {
   restingScrollY,
   revealBlock,
   usableViewport,
+  useOwnHold,
   useScrollInsets,
 } from "@/lib/scroll-insets.ts";
 import {
@@ -693,8 +694,16 @@ function SpecViewBody({
     return new Map(stats.map((s) => [s.path, s]));
   }, [baselineFiles, files.data.files]);
 
-  const flashTo = (target: HTMLElement, mode: RevealMode = "auto") => {
-    revealBlock(target, { mode, behavior: "smooth" });
+  // Held like every other landing (T-527). Native scroll anchoring already
+  // keeps the stop here in Chromium; the hold is for engines without it.
+  const keepHold = useOwnHold();
+  const flashTo = (
+    target: HTMLElement,
+    mode: RevealMode = "auto",
+    highlight = true,
+  ) => {
+    revealBlock(target, { mode, behavior: "smooth", flash: highlight });
+    keepHold(holdRevealed(target, document.body, mode, "smooth"));
   };
 
   /**
@@ -899,7 +908,7 @@ function SpecViewBody({
     const target = direction === 1 ? els[0] : els[els.length - 1];
     if (target) flashTo(target);
     // A file with no highlighted blocks (e.g. brand new) starts at the top.
-    else revealBlock(root, { mode: "start", flash: false, behavior: "smooth" });
+    else flashTo(root, "start", false);
   }, [selectedPath, changedRanges]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: fold changes the blocks' heights, not measurePosition's inputs

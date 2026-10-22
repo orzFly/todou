@@ -43,6 +43,7 @@ import {
   ProjectRouteError,
 } from "../src/pages/project-layout.tsx";
 import { router as appRouter } from "../src/router.tsx";
+import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
 
 // These imports deliberately reach the production keyed Timeline through the
 // actual detail page, so `vitest related` follows the same graph as the app.
@@ -603,7 +604,10 @@ function scrolling(): Scrolling {
     reveals: (id: string) =>
       state.events.filter((event) => event === `reveal:${id}`).length,
     bottoms: () => state.events.filter((event) => event === "bottom").length,
+    // A reader's scroll arrives behind a gesture, and the gesture is what
+    // lets go of a held landing (T-527).
     userAt: (y: number) => {
+      fireEvent.wheel(window);
       state.y = y;
       fireEvent.scroll(window);
     },
@@ -659,6 +663,7 @@ afterEach(() => {
   for (const dispose of disposers.splice(0).reverse()) dispose();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  FakeResizeObserver.instances = [];
   window.history.replaceState(null, "", initialWindowUrl);
   document.documentElement.style.removeProperty("scroll-padding-top");
   document.documentElement.style.removeProperty("scroll-padding-bottom");
@@ -791,6 +796,22 @@ describe("question landing through the real issue route", () => {
       expect(view.queryByText(LOCATE_FAILURE)).toBeNull();
     },
   );
+
+  it("C6 the latest fallback holds the end while the card goes on loading (T-527)", async () => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    const model = card([], [comment(1), comment(2)]);
+    serve({ "p/7": model });
+    const scroll = scrolling();
+    const view = renderAt();
+    await waitFor(() => expect(scroll.bottoms()).toBe(1));
+    await waitFor(() => expect(view.router.state.location.hash).toBe(""));
+    resizePage();
+    expect(scroll.bottoms()).toBe(2);
+    scroll.userAt(0);
+    resizePage();
+    expect(scroll.bottoms()).toBe(2);
+    expect(scroll.position()).toBe(0);
+  });
 
   it.each(["old unanswered", "empty"])(
     "C7 waits for a fresh read despite a 5000ms %s cache",

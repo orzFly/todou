@@ -52,7 +52,7 @@ import {
   rehypeSourceLines,
   SOURCE_LINE_ATTR,
 } from "@/lib/rehype-source-lines.ts";
-import { revealBlock } from "@/lib/scroll-insets.ts";
+import { holdRevealed, revealBlock, useOwnHold } from "@/lib/scroll-insets.ts";
 import { buildBaselineTree } from "@/lib/spec-baseline-tree.ts";
 import { type LineRange, rangesIntersect } from "@/lib/spec-changes.ts";
 import {
@@ -881,6 +881,7 @@ export function AnnotatedMarkdown({
     return () => container.removeEventListener("toggle", layout, true);
   }, [layout]);
 
+  const keepHold = useOwnHold();
   /** Jump to what a popover entry points at — its own mark, or its block. */
   const flashAnnotation = useCallback(
     (annotation: DisplayedAnnotation, blockKey: string) => {
@@ -895,8 +896,9 @@ export function AnnotatedMarkdown({
         );
       if (target === null) return;
       revealBlock(target, { behavior: "smooth" });
+      keepHold(holdRevealed(target, document.body, "auto", "smooth"));
     },
-    [],
+    [keepHold],
   );
 
   /**

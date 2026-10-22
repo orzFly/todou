@@ -3,11 +3,15 @@ import { createElement, useRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   blockFor,
+  holdRevealed,
+  isHoldingTarget,
+  landAtBottom,
   restingScrollY,
   usableViewport,
   useScrollInsets,
 } from "../src/lib/scroll-insets.ts";
 import { currentIndex } from "../src/lib/spec-change-nav.ts";
+import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
 
 // The overlays measured on a 1280×800 screen: shell header 57, floating title
 // bar 40, comment composer 93 collapsed — 129, 167 and 385 as a draft grows.
@@ -194,5 +198,59 @@ describe("useScrollInsets (T-299)", () => {
 
     view.getByText("elsewhere").focus();
     expect(insets()).toEqual({ top: "48px", bottom: "93px" });
+  });
+});
+
+describe("one hold per page (T-527)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    FakeResizeObserver.instances = [];
+    document.body.replaceChildren();
+  });
+
+  function target(id: string) {
+    const el = document.createElement("div");
+    el.id = id;
+    document.body.append(el);
+    return el;
+  }
+
+  it("retires the older landing when a newer one is held", () => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    const reveals: string[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+    ) {
+      reveals.push(this.id);
+    });
+    const bottoms = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const releaseAnchor = holdRevealed(target("anchor"), document.body);
+    expect(isHoldingTarget()).toBe(true);
+    const releaseEnd = landAtBottom();
+    // The end is not a target an arriving item would be yanked off.
+    expect(isHoldingTarget()).toBe(false);
+    resizePage();
+    expect(reveals).toEqual([]);
+    expect(bottoms).toHaveBeenCalledTimes(2);
+    // The stale release must not drop the newer hold on its way out.
+    releaseAnchor();
+    resizePage();
+    expect(bottoms).toHaveBeenCalledTimes(3);
+    releaseEnd();
+    resizePage();
+    expect(bottoms).toHaveBeenCalledTimes(3);
+  });
+
+  it("lets go of a target that has left the document", () => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    const reveal = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+    const el = target("gone");
+    holdRevealed(el, document.body);
+    el.remove();
+    resizePage();
+    expect(reveal).not.toHaveBeenCalled();
+    expect(isHoldingTarget()).toBe(false);
   });
 });

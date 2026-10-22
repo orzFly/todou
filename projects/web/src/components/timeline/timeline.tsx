@@ -43,6 +43,11 @@ import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts"
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isQuestionLandingHash } from "@/lib/question-landing.ts";
+import {
+  isHoldingTarget,
+  landAtBottom,
+  useOwnHold,
+} from "@/lib/scroll-insets.ts";
 import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 
@@ -138,10 +143,12 @@ export function Timeline({
   );
   // Bottom of the document, not of the list: the composer is sticky, and
   // the document end sits below its in-flow position — so this lands with
-  // the last item fully visible above the composer.
+  // the last item fully visible above the composer. Held, because the images
+  // above it are still arriving and push the end away (T-527).
+  const keepHold = useOwnHold();
   const scrollToBottom = useCallback(() => {
-    window.scrollTo(0, document.documentElement.scrollHeight);
-  }, []);
+    keepHold(landAtBottom());
+  }, [keepHold]);
   const questionLanding = useQuestionLanding(slug, issueNumber);
   const timelineReady = tail.isSuccess && (!headEnabled || head.isSuccess);
   const finishQuestionLanding = (error?: "unavailable" | "stalled") => {
@@ -268,7 +275,9 @@ export function Timeline({
       prevLastKey.current !== null
     ) {
       if (atBottomRef.current) {
-        scrollToBottom();
+        // An anchor or a question still held is where the untouched reader
+        // was sent, and following would yank them off it (T-520).
+        if (!isHoldingTarget()) scrollToBottom();
       } else {
         setNewBelow(true);
       }
