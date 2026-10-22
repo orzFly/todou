@@ -36,6 +36,7 @@ export function DocumentView({
   slug,
   issueNumber,
   clipped = false,
+  toolbar,
 }: {
   filename: string;
   text: string;
@@ -47,6 +48,12 @@ export function DocumentView({
   /** The document's creation time (T-80 time cutoff for issue refs). */
   /** Shown inside a height-capped box with its overflow hidden. */
   clipped?: boolean;
+  /**
+   * A spot in the surrounding title bar for a patch's controls (T-529).
+   * Only a patch takes it: a markdown document's ```diff fences each frame
+   * their own.
+   */
+  toolbar?: HTMLElement | null;
 }) {
   if (render === "markdown") {
     return (
@@ -63,6 +70,7 @@ export function DocumentView({
         lineNumbers
         invalidNote
         clipped={clipped}
+        toolbar={toolbar}
       />
     );
   }
@@ -107,6 +115,8 @@ export function DocumentCard({
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const [overflowing, setOverflowing] = useState(false);
+  const [cardToolbar, setCardToolbar] = useState<HTMLElement | null>(null);
+  const [dialogToolbar, setDialogToolbar] = useState<HTMLElement | null>(null);
 
   // The cap sits on the outer box, so growth of the inner content (lazy
   // CodeBlock upgrade, images loading) never resizes the observed border
@@ -152,6 +162,7 @@ export function DocumentCard({
             </span>
           )}
         </button>
+        <span ref={setCardToolbar} className="contents" />
         {headerActions}
         {downloadUrl !== undefined && (
           <a
@@ -184,6 +195,7 @@ export function DocumentCard({
             slug={slug}
             issueNumber={issueNumber}
             clipped
+            toolbar={cardToolbar}
           />
         </div>
         {overflowing && (
@@ -221,6 +233,7 @@ export function DocumentCard({
             <DialogTitle className="min-w-0 flex-1 truncate">
               {filename}
             </DialogTitle>
+            <span ref={setDialogToolbar} className="contents" />
             <Button
               variant="ghost"
               size="icon-sm"
@@ -242,6 +255,7 @@ export function DocumentCard({
               render={resolvedRender}
               slug={slug}
               issueNumber={issueNumber}
+              toolbar={dialogToolbar}
             />
           </div>
           {(meta !== undefined || downloadUrl !== undefined) && (

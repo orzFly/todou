@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { PatchCommit } from "@/lib/patch-commit.ts";
 import { syntaxThemeOf, type ThemePref, useThemePref } from "@/lib/theme.ts";
 
 // @pierre/diffs is the heaviest dependency in the web bundle (T-24). Every
@@ -172,6 +173,21 @@ const FENCE_DIFF_OPTIONS = new Map<
 >();
 const PATCH_OPTIONS = new Map<SyntaxTheme, CodeViewProps["options"]>();
 
+// The only file items in a patch view are commit messages, and a message's
+// line numbers count nothing the reader can use. pierre's own
+// disableLineNumbers would take them off the diffs as well.
+const COMMIT_MESSAGE_CSS = `
+[data-file] [data-gutter-buffer], [data-file] [data-column-number] {
+  min-width: 0; padding: 0; border-right: 0;
+}
+[data-file] [data-column-number]::before { min-width: 0; }
+[data-file] [data-line-number-content] { display: none; }
+[data-file] [data-line] { min-height: 1lh; }
+`;
+
+/** px; the header rows `PatchFiles` callers draw must be exactly this tall. */
+export const PATCH_HEADER_HEIGHT = 36;
+
 function patchOptions(theme: SyntaxTheme): CodeViewProps["options"] {
   const cached = PATCH_OPTIONS.get(theme);
   if (cached) return cached;
@@ -184,6 +200,9 @@ function patchOptions(theme: SyntaxTheme): CodeViewProps["options"] {
     overflow: "wrap",
     preferredHighlighter: PIERRE_HIGHLIGHTER,
     onPostRender: handlePostRender,
+    unsafeCSS: COMMIT_MESSAGE_CSS,
+    layout: { paddingTop: 0, paddingBottom: 0, gap: 8 },
+    itemMetrics: { diffHeaderHeight: PATCH_HEADER_HEIGHT },
   } as const;
   PATCH_OPTIONS.set(theme, options);
   return options;
@@ -489,16 +508,14 @@ export function patchFileId(index: number): string {
   return `file-${index}`;
 }
 
-/** What a commit's preamble is called in its header: its subject, if any. */
-function preambleName(preamble: string): string {
-  const subject = /^Subject:[ \t]*(.+)$/m.exec(preamble)?.[1]?.trim();
-  return subject === undefined || subject === "" ? "commit message" : subject;
+/** The CodeView item id of a commit's message, counted across the patch. */
+export function patchCommitId(index: number): string {
+  return `commit-${index}`;
 }
 
 /**
- * A parsed patch in one virtualized CodeView: per commit, the text that came
- * before its files (message, author, `--stat`) as written, then one diff per
- * file.
+ * A parsed patch in one virtualized CodeView: per commit, its message, then
+ * one diff per file.
  *
  * `className` must cap the height. CodeView virtualizes against its own box,
  * so an uncapped one grows to the whole patch and lays every line out: a
@@ -513,6 +530,8 @@ export function PatchFiles({
   text,
   className,
   viewRef,
+  commits,
+  renderHeader,
 }: {
   patches: ParsedPatch[];
   /** The patch as written, for the plain-text fallback. */
@@ -520,13 +539,22 @@ export function PatchFiles({
   className: string;
   /** For scrolling to a file by `patchFileId`. */
   viewRef?: Ref<CodeViewHandle<undefined>>;
+  /**
+   * What each patch's preamble says, index for index with `patches`. A
+   * commit gets an item of its own, carrying its message; null gets none.
+   */
+  commits: (PatchCommit | null)[];
+  /**
+   * Every item's header row, `PATCH_HEADER_HEIGHT` tall: pierre reserves that
+   * height for it without measuring.
+   */
+  renderHeader: (item: CodeViewItem) => ReactNode;
 }) {
   const syntaxTheme = useSyntaxTheme();
   const options = useMemo(() => patchOptions(syntaxTheme), [syntaxTheme]);
   const items = useMemo(() => {
     let position = 0;
     return patches.flatMap((patch, commit): CodeViewItem[] => {
-      const preamble = patch.patchMetadata?.trimEnd() ?? "";
       const files = patch.files.map(
         (fileDiff): CodeViewItem => ({
           id: patchFileId(position++),
@@ -534,21 +562,24 @@ export function PatchFiles({
           fileDiff,
         }),
       );
-      if (preamble.trim() === "") return files;
+      const parsed = commits[commit];
+      if (parsed == null) return files;
       return [
         {
-          id: `commit-${commit}`,
+          id: patchCommitId(commit),
           type: "file",
+          // Only the header row when there is no message under the subject.
+          collapsed: parsed.body === "",
           file: {
-            name: preambleName(preamble),
-            contents: preamble,
+            name: patchCommitId(commit),
+            contents: parsed.body,
             lang: "text",
           },
         },
         ...files,
       ];
     });
-  }, [patches]);
+  }, [patches, commits]);
   const [degraded, setDegraded] = useState(false);
   const warned = useRef(false);
   const containerRef = useCallback((node: HTMLDivElement | null) => {
@@ -573,6 +604,7 @@ export function PatchFiles({
           options={options}
           className={className}
           containerRef={containerRef}
+          renderCustomHeader={renderHeader}
         />
       </Suspense>
     </CodeViewBoundary>

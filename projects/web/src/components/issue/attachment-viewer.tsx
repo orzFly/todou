@@ -34,10 +34,12 @@ function TextPane({
   target,
   slug,
   issueNumber,
+  toolbar,
 }: {
   target: PreviewTarget;
   slug: string;
   issueNumber: number;
+  toolbar: HTMLElement | null;
 }) {
   const text = useQuery(attachmentTextQuery(target.url));
   if (text.isPending) {
@@ -67,6 +69,7 @@ function TextPane({
       render={documentKind(target)}
       slug={slug}
       issueNumber={issueNumber}
+      toolbar={toolbar}
     />
   );
 }
@@ -112,6 +115,7 @@ export function AttachmentViewerDialog({
   // "Maximize" fills the browser window without entering system fullscreen
   // (the form the reviewer picked on T-58); the dialog stays a modal.
   const [maximized, setMaximized] = useState(false);
+  const [toolbar, setToolbar] = useState<HTMLElement | null>(null);
 
   const target = state?.items[state.index];
   const kind = target === undefined ? null : previewKind(target);
@@ -151,6 +155,7 @@ export function AttachmentViewerDialog({
               <DialogTitle className="min-w-0 flex-1 truncate">
                 {target.filename}
               </DialogTitle>
+              <span ref={setToolbar} className="contents" />
               {count > 1 && (
                 <>
                   <Button
@@ -218,6 +223,7 @@ export function AttachmentViewerDialog({
                   target={target}
                   slug={slug}
                   issueNumber={issueNumber}
+                  toolbar={toolbar}
                 />
               ) : (
                 <DownloadOnlyPane target={target} />

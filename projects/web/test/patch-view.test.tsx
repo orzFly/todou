@@ -1,34 +1,38 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { DocumentCard } from "../src/components/shared/document-card.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { PatchView } from "../src/components/shared/patch-view.tsx";
 import { renderWithProviders } from "./render.tsx";
 
+type Item =
+  | { id: string; type: "file"; file: { name: string; contents: string } }
+  | { id: string; type: "diff"; fileDiff: { name: string } };
+
 // The real parser runs (it is plain string work); only the renderer is a
-// stand-in that says what it was handed.
+// stand-in that says what it was handed, header rows included.
 vi.mock("@pierre/diffs/react", () => ({
   CodeView: ({
     items,
     className,
+    renderCustomHeader,
   }: {
     className?: string;
-    items: Array<
-      | { id: string; type: "file"; file: { name: string; contents: string } }
-      | { id: string; type: "diff"; fileDiff: { name: string } }
-    >;
+    items: Item[];
+    renderCustomHeader?: (item: Item) => ReactNode;
   }) => (
     <div data-testid="codeview" data-class={className ?? ""}>
-      {items.map((item) =>
-        item.type === "diff" ? (
-          <div key={item.id} data-diff={item.fileDiff.name}>
-            {item.id}
-          </div>
-        ) : (
-          <pre key={item.id} data-file={item.file.name}>
-            {item.file.contents}
-          </pre>
-        ),
-      )}
+      {items.map((item) => (
+        <section key={item.id} data-item={item.id}>
+          <header>{renderCustomHeader?.(item)}</header>
+          {item.type === "diff" ? (
+            <div data-diff={item.fileDiff.name}>{item.id}</div>
+          ) : (
+            <pre data-file={item.file.name}>{item.file.contents}</pre>
+          )}
+        </section>
+      ))}
     </div>
   ),
   MultiFileDiff: () => null,
@@ -80,6 +84,13 @@ const diffs = () =>
     el.getAttribute("data-diff"),
   );
 
+/** The row a DocumentCard draws its filename in. */
+const titleBar = (filename: string) => {
+  const bar = screen.getByRole("button", { name: filename }).parentElement;
+  if (bar === null) throw new Error("no title bar");
+  return bar;
+};
+
 describe("PatchView (T-528)", () => {
   it("draws one diff per file, behind a height cap", async () => {
     renderWithProviders(<PatchView filename="x.patch" text={TWO_FILES} />);
@@ -91,26 +102,20 @@ describe("PatchView (T-528)", () => {
     expect(cls).toMatch(/\boverflow-auto\b/);
   });
 
-  it("keeps the commit preamble, named by its subject", async () => {
-    renderWithProviders(<PatchView filename="x.patch" text={FORMAT_PATCH} />);
-    await waitFor(() => expect(diffs()).toEqual(["src/a.ts"]));
-    const preamble = document.querySelector("[data-file]");
-    expect(preamble?.getAttribute("data-file")).toBe("[PATCH] fix: say deux");
-    expect(preamble?.textContent).toContain("The body of the message.");
-  });
-
   it("lists the files with their counts and toggles to the raw text", async () => {
     renderWithProviders(<PatchView filename="x.patch" text={TWO_FILES} />);
     const summary = await screen.findByRole("button", { name: /2 files/ });
     expect(summary.textContent).toContain("+3");
     expect(summary.textContent).toContain("−1");
     fireEvent.click(summary);
-    expect(screen.getByRole("button", { name: /src\/b\.ts/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /b\.ts/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    const raw = screen.getByRole("button", { name: "raw" });
+    fireEvent.click(raw);
+    expect(raw.getAttribute("aria-pressed")).toBe("true");
     expect(diffs()).toEqual([]);
     expect(document.querySelector("[data-file]")?.textContent).toBe(TWO_FILES);
-    fireEvent.click(screen.getByRole("button", { name: "Diff" }));
+    fireEvent.click(raw);
     expect(diffs()).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
@@ -119,8 +124,10 @@ describe("PatchView (T-528)", () => {
       <PatchView filename="x.patch" text={TWO_FILES} clipped />,
     );
     fireEvent.click(await screen.findByRole("button", { name: /2 files/ }));
-    expect(screen.queryByRole("button", { name: /src\/b\.ts/ })).toBeNull();
-    expect(screen.getByText("src/b.ts")).toBeTruthy();
+    await waitFor(() =>
+      expect(document.querySelector('li[title="src/b.ts"]')).not.toBeNull(),
+    );
+    expect(screen.queryByRole("button", { name: /b\.ts/ })).toBeNull();
     expect(screen.getByTestId("codeview").getAttribute("data-class")).toMatch(
       /\boverflow-hidden\b/,
     );
@@ -140,6 +147,84 @@ describe("PatchView (T-528)", () => {
       <PatchView filename="x.patch" text={"just notes\n"} invalidNote />,
     );
     await screen.findByText("Not a valid patch — showing the text.");
+  });
+});
+
+describe("the patch header (T-529)", () => {
+  it("draws a commit as one row over its message, mail headers and stat left to raw", async () => {
+    renderWithProviders(<PatchView filename="x.patch" text={FORMAT_PATCH} />);
+    await waitFor(() => expect(diffs()).toEqual(["src/a.ts"]));
+    const commit = document.querySelector('[data-item="commit-0"]');
+    if (!(commit instanceof HTMLElement)) throw new Error("no commit item");
+    const header = within(commit).getByRole("banner");
+    expect(header.textContent).toContain("fix: say deux");
+    expect(header.textContent).not.toContain("[PATCH]");
+    expect(header.textContent).toContain("alice");
+    expect(header.textContent).toContain("0000000");
+    const message = commit.querySelector("[data-file]")?.textContent;
+    expect(message).toBe("The body of the message.");
+    // pierre reserves this height for the row without measuring it: a row of
+    // any other height shifts every item under it.
+    expect(header.firstElementChild?.getAttribute("style")).toMatch(
+      /height: 36px/,
+    );
+  });
+
+  it("names no commit for a bare diff command above a plain diff", async () => {
+    renderWithProviders(
+      <PatchView
+        filename="x.diff"
+        text={`diff -u a.txt b.txt\n${SHORT_HUNK.replace("-1,3 +1,3", "-1,2 +1,2")}`}
+      />,
+    );
+    await waitFor(() => expect(diffs()).toEqual(["b.txt"]));
+    expect(document.querySelector('[data-item^="commit-"]')).toBeNull();
+  });
+
+  it("puts a patch card's controls in its title bar, nothing above the diffs", async () => {
+    renderWithProviders(
+      <DocumentCard filename="x.patch" text={TWO_FILES} render="patch" />,
+    );
+    await waitFor(() => expect(diffs()).toEqual(["src/a.ts", "src/b.ts"]));
+    const bar = titleBar("x.patch");
+    expect(within(bar).getByRole("button", { name: "raw" })).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: /2 files/ })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "raw" })).toHaveLength(1);
+    // The first thing in the card's body is the diff view itself.
+    const codeview = screen.getByTestId("codeview");
+    expect(codeview.parentElement?.firstElementChild).toBe(codeview);
+  });
+
+  it("moves the controls into the dialog's title bar when expanded", async () => {
+    renderWithProviders(
+      <DocumentCard filename="x.patch" text={TWO_FILES} render="patch" />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "expand x.patch" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    const title = within(dialog).getByRole("heading", { name: "x.patch" });
+    await waitFor(() =>
+      expect(
+        within(title.parentElement as HTMLElement).getByRole("button", {
+          name: "raw",
+        }),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("frames a fence inside a markdown card, leaving the card's title bar alone", async () => {
+    renderWithProviders(
+      <DocumentCard
+        filename="notes.md"
+        text={`Notes\n\n\`\`\`diff\n${TWO_FILES}\`\`\`\n`}
+      />,
+    );
+    await waitFor(() => expect(diffs()).toEqual(["src/a.ts", "src/b.ts"]));
+    expect(
+      within(titleBar("notes.md")).queryByRole("button", { name: "raw" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "raw" })).toBeTruthy();
   });
 });
 
