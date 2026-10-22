@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Real-input regression for the attachment viewer's image zoom (T-535).
+ * Real-input regression for the attachment viewer's image zoom (T-535) and
+ * its fit / 100% / background / scaling menu (T-537).
  * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
@@ -15,7 +16,7 @@ import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
 import { createBrowserStack } from "./lib/browser-stack.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const HELP = `image-zoom-smoke — wheel, drag, click, pinch and the title-bar zoom group
+const HELP = `image-zoom-smoke — wheel, drag, click, pinch and the title-bar zoom menu
 
 Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
 
@@ -24,9 +25,11 @@ drives it with CDP input (mouse wheel, ctrl+wheel, press/move/release, touch),
 never with synthetic DOM events: the canvas's wheel listener must be
 non-passive, and only trusted input tells whether it is.
 
-Then the same desktop cases run twice more with a fault that swallows one input
-channel before the canvas sees it. Each fault names the cases it must turn red,
-so a pass is evidence the case depends on the canvas and not on chance.
+Then the same cases run again under faults that swallow one input channel
+before the canvas sees it, block the localStorage write, or show the phone's
+hidden − + buttons. Each fault names the cases it must turn red, so a pass is
+evidence the case depends on the viewer and not on chance. Every run gets a
+fresh browser context, so no run inherits another's stored choices.
 
 --keep  Retain isolated artifacts under .tmp/ after cleanup.
 Exit codes: 0 pass, 1 assertion, 2 infrastructure error.
@@ -89,6 +92,8 @@ async function seed(stack) {
   const files = [
     // Large enough to be downscaled at fit in both viewports.
     [
+      // On a phone this name fits beside the readout alone, and truncates
+      // once − + stand beside it too (T-537).
       "sheet.png",
       png(1800, 2600, (x, y) => [
         (x * 7) & 255,
@@ -136,7 +141,13 @@ function readState() {
   const title = dialog.querySelector("h2");
   const button = (label) =>
     dialog.querySelector(`button[aria-label="${label}"]`);
-  const readout = button("zoom to fit") ?? button("zoom to actual size");
+  const readout = button("zoom and display options");
+  const shown = (el) => el !== null && getComputedStyle(el).display !== "none";
+  const box = (el) => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  };
   const sameRow = (el) =>
     el !== null && el.parentElement.closest("div") === title.parentElement;
   return {
@@ -147,7 +158,15 @@ function readState() {
     natural: { w: img.naturalWidth, h: img.naturalHeight },
     cursor: getComputedStyle(canvas).cursor,
     readout: readout?.textContent ?? null,
-    readoutLabel: readout?.getAttribute("aria-label") ?? null,
+    zoomButtonsShown: [button("zoom out"), button("zoom in")].map(shown),
+    titleTruncated: title.scrollWidth > title.clientWidth,
+    look: {
+      canvasBackground: getComputedStyle(canvas).backgroundColor,
+      checker: box(canvas.querySelector("[data-testid=image-checker]")),
+      image: box(img),
+      rendering: getComputedStyle(img).imageRendering,
+      stored: localStorage.getItem("todou:image-look:v1"),
+    },
     zoomOutDisabled: button("zoom out")?.disabled ?? null,
     groupInTitleBar:
       [button("zoom out"), readout, button("zoom in")].every(sameRow) &&
@@ -160,6 +179,11 @@ const FAULTS = {
   // Swallowed at the window in the capture phase: the canvas never hears it.
   wheel: `addEventListener("wheel", (e) => e.stopImmediatePropagation(), { capture: true, passive: true });`,
   pointer: `for (const t of ["pointerdown", "pointermove", "pointerup"]) addEventListener(t, (e) => { if (e.target.closest?.("[data-testid=image-canvas]")) e.stopImmediatePropagation(); }, { capture: true });`,
+  keys: `addEventListener("keydown", (e) => { if (e.key === "0" || e.key === "1") e.stopImmediatePropagation(); }, { capture: true });`,
+  // The write goes nowhere; reads still work, so only persistence breaks.
+  storage: `Storage.prototype.setItem = function () {};`,
+  // What T-535 shipped on a phone: − and + beside the filename.
+  "zoom-buttons-shown": `addEventListener("DOMContentLoaded", () => document.head.append(Object.assign(document.createElement("style"), { textContent: '[aria-label="zoom out"], [aria-label="zoom in"] { display: inline-flex !important; }' })));`,
 };
 
 async function openViewer(context, fixture, viewport, fault) {
@@ -179,25 +203,35 @@ async function openViewer(context, fixture, viewport, fault) {
       maxTouchPoints: 5,
     });
   await page.navigate(fixture.issueUrl);
+  try {
+    await waitForViewer(page, fixture.names[0]);
+  } catch (error) {
+    await page.close();
+    throw error;
+  }
+  return page;
+}
+
+/** Click the attachment link until the viewer shows a measured image. */
+async function waitForViewer(page, name) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    const opened = await evaluate(
+    await sleep(200);
+    // A reload in flight destroys the context mid-evaluate; that is a retry.
+    const state = await evaluate(
       page,
-      (name) => {
-        const link = document.querySelector(`a[href$="/view/${name}"]`);
+      (n) => {
+        const link = document.querySelector(`a[href$="/view/${n}"]`);
         if (!link) return false;
         if (!document.querySelector("[role=dialog]")) link.click();
         return true;
       },
-      fixture.names[0],
-    );
-    if (opened) {
-      const state = await evaluate(page, readState);
-      if (state?.view && state.fit > 0) return page;
-    }
-    await sleep(200);
+      name,
+    )
+      .then((opened) => (opened ? evaluate(page, readState) : null))
+      .catch(() => null);
+    if (state?.view && state.fit > 0) return;
   }
-  await page.close();
   throw new Error("viewer never showed a measured image");
 }
 
@@ -248,6 +282,44 @@ function input(page) {
         windowsVirtualKeyCode: keyCode,
       });
     },
+    // Trusted clicks: Radix opens on pointerdown, which el.click() skips.
+    menu: async (item) => {
+      const centre = (selector, text) =>
+        evaluate(
+          page,
+          ([sel, t]) => {
+            const el = [...document.querySelectorAll(sel)].find(
+              (e) => t === null || e.textContent.trim().startsWith(t),
+            );
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+          },
+          [selector, text],
+        );
+      const tap = async (p) => {
+        await mouse("mouseMoved", p.x, p.y);
+        await mouse("mousePressed", p.x, p.y, {
+          button: "left",
+          clickCount: 1,
+        });
+        await mouse("mouseReleased", p.x, p.y, {
+          button: "left",
+          clickCount: 1,
+        });
+      };
+      const trigger = await centre(
+        '[role=dialog] button[aria-label="zoom and display options"]',
+        null,
+      );
+      if (!trigger) throw new Error("no zoom menu trigger");
+      await tap(trigger);
+      await sleep(200);
+      const entry = await centre("[role=menuitem], [role=menuitemradio]", item);
+      if (!entry) throw new Error(`no menu item ${item}`);
+      await tap(entry);
+      await sleep(200);
+    },
     press: (label) =>
       evaluate(
         page,
@@ -271,8 +343,15 @@ const pixelAt = (s, cx, cy) => ({
   y: (cy - s.rect.y - s.view.y) / s.view.z,
 });
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
+const sameBox = (a, b) =>
+  a !== null &&
+  b !== null &&
+  near(a.x, b.x, 0.5) &&
+  near(a.y, b.y, 0.5) &&
+  near(a.w, b.w, 0.5) &&
+  near(a.h, b.h, 0.5);
 
-async function desktopCases(page) {
+async function desktopCases(page, fixture) {
   const io = input(page);
   const out = [];
   const check = (name, ok, detail) =>
@@ -286,9 +365,17 @@ async function desktopCases(page) {
       s0.cursor === "zoom-in" &&
       s0.groupInTitleBar &&
       s0.zoomOutDisabled === true &&
-      s0.readout === `${Math.round(s0.fit * 100)}%` &&
-      s0.readoutLabel === "zoom to actual size",
+      s0.readout === `${Math.round(s0.fit * 100)}%`,
     s0,
+  );
+  check(
+    "default-look-checker-under-image-only",
+    s0.look.canvasBackground === "rgba(0, 0, 0, 0)" &&
+      sameBox(s0.look.checker, s0.look.image) &&
+      s0.look.image.w < s0.rect.w - 50 &&
+      s0.look.rendering === "auto" &&
+      s0.look.stored === null,
+    s0.look,
   );
 
   // The middle of the canvas: off-centre, the zoomed image would rightly be
@@ -347,12 +434,11 @@ async function desktopCases(page) {
     near(s5.view.z, Math.max(1, s5.fit * 2), 1e-4) &&
       near(b5.x, a5.x, 1) &&
       near(b5.y, a5.y, 1) &&
-      s5.readout === "100%" &&
-      s5.readoutLabel === "zoom to fit",
+      s5.readout === "100%",
     { z: s5.view.z, before: b5, after: a5 },
   );
 
-  await io.press("zoom to fit");
+  await io.menu("Fit");
   const s6 = await io.state();
   await io.press("zoom in");
   const s7 = await io.state();
@@ -373,15 +459,66 @@ async function desktopCases(page) {
     },
   );
 
+  // T-537: 100% from the menu holds the canvas centre still.
+  const cx = s8.rect.x + s8.rect.w / 2;
+  const cy = s8.rect.y + s8.rect.h / 2;
+  const bm = pixelAt(s8, cx, cy);
+  await io.menu("100%");
+  const m1 = await io.state();
+  const am = pixelAt(m1, cx, cy);
+  check(
+    "menu-100-is-actual-pixels",
+    !near(s8.view.z, 1, 0.01) &&
+      near(m1.view.z, 1, 1e-9) &&
+      near(bm.x, am.x, 1) &&
+      near(bm.y, am.y, 1) &&
+      m1.readout === "100%",
+    { from: s8.view.z, z: m1.view.z, before: bm, after: am },
+  );
+
+  await io.key("0", "Digit0", 48);
+  const k0 = await io.state();
+  await io.key("1", "Digit1", 49);
+  const k1 = await io.state();
+  check(
+    "keys-fit-and-actual",
+    near(k0.view.z, k0.fit, 1e-4) && near(k1.view.z, 1, 1e-9),
+    { zero: k0.view.z, one: k1.view.z },
+  );
+
+  await io.menu("Black");
+  const lb = await io.state();
+  check(
+    "menu-black-fills-canvas",
+    lb.look.canvasBackground === "rgb(0, 0, 0)" &&
+      lb.look.checker === null &&
+      JSON.parse(lb.look.stored ?? "{}").background === "black",
+    lb.look,
+  );
+
+  // At exactly 100% a pixel is a screen pixel, so pixelated waits for more.
+  await io.menu("Pixelated");
+  const p1 = await io.state();
+  await io.press("zoom in");
+  const p2 = await io.state();
+  check(
+    "pixelated-only-above-100",
+    near(p1.view.z, 1, 1e-9) &&
+      p1.look.rendering === "auto" &&
+      p2.view.z > 1 &&
+      p2.look.rendering === "pixelated",
+    { at100: p1.look.rendering, above: p2.look.rendering, z: p2.view.z },
+  );
+
   await io.press("maximize");
   await sleep(300);
   const s9 = await io.state();
   check(
     "maximize-keeps-zoom",
-    near(s9.view.z, s8.view.z, 1e-4) &&
-      s9.rect.w > s8.rect.w &&
+    near(s9.view.z, p2.view.z, 1e-4) &&
+      s9.rect.w > p2.rect.w &&
       s9.groupInTitleBar,
-    { before: s8.view.z, after: s9.view.z },
+    { before: p2.view.z, after: s9.view.z },
   );
 
   await io.key("ArrowRight", "ArrowRight", 39);
@@ -395,6 +532,26 @@ async function desktopCases(page) {
       near(s10.view.z, Math.min(s10.rect.w, s10.rect.h) / 48, 1e-3),
     { title: s10.title, z: s10.view.z, fit: s10.fit },
   );
+  check(
+    "look-survives-paging",
+    s10.look.canvasBackground === "rgb(0, 0, 0)" &&
+      s10.look.rendering === "pixelated",
+    s10.look,
+  );
+
+  // Fit is the floor, except that an upscaled fit cannot hide 100%.
+  await io.key("1", "Digit1", 49);
+  const s10b = await io.state();
+  check(
+    "upscaled-icon-reaches-100",
+    s10b.fit > 1 &&
+      near(s10b.view.z, 1, 1e-9) &&
+      s10b.readout === "100%" &&
+      s10b.zoomOutDisabled === true,
+    { z: s10b.view.z, fit: s10b.fit },
+  );
+  // Back to fit, so restoring below tests that fit stops upscaling.
+  await io.key("0", "Digit0", 48);
 
   await io.press("restore size");
   await sleep(300);
@@ -410,7 +567,9 @@ async function desktopCases(page) {
   const s12 = await io.state();
   check(
     "paging-back-starts-at-fit",
-    s12.natural.w === 1800 && near(s12.view.z, s12.fit, 1e-4),
+    s12.natural.w === 1800 &&
+      near(s12.view.z, s12.fit, 1e-4) &&
+      s12.look.rendering === "auto",
     s12.view,
   );
 
@@ -434,12 +593,40 @@ async function desktopCases(page) {
       broken.visible,
     broken,
   );
+
+  // The choices outlive the page: a reload reads them back from storage.
+  await page.send("Page.reload");
+  await waitForViewer(page, fixture.names[0]);
+  await io.menu("100%");
+  await io.press("zoom in");
+  const r = await io.state();
+  check(
+    "look-persists-across-reload",
+    r.view.z > 1 &&
+      r.look.canvasBackground === "rgb(0, 0, 0)" &&
+      r.look.checker === null &&
+      r.look.rendering === "pixelated",
+    { z: r.view.z, ...r.look },
+  );
   return out;
 }
 
 async function phoneCases(page) {
   const io = input(page);
   const out = [];
+  const t = await io.state();
+  out.push({
+    name: "phone-title-bar-fits",
+    ok:
+      t.zoomButtonsShown.every((shown) => !shown) &&
+      t.readout === `${Math.round(t.fit * 100)}%` &&
+      !t.titleTruncated,
+    detail: {
+      title: t.title,
+      zoomButtonsShown: t.zoomButtonsShown,
+      truncated: t.titleTruncated,
+    },
+  });
   const s0 = await io.state();
   const mx = s0.rect.x + s0.rect.w / 2;
   const my = s0.rect.y + s0.rect.h * 0.4;
@@ -528,47 +715,53 @@ async function main() {
       registerChild: stack.registerChild,
     });
     stack.addCleanup(() => browser.close());
-    const context = await browser.newContext();
-    try {
-      for (const [name, fault, requiredRed] of [
-        ["desktop", null, []],
-        // The first case that needs the channel; later ones start from its
-        // missing state, so only the direct dependants are named.
-        [
-          "fault-wheel-swallowed",
-          "wheel",
-          ["wheel-zooms-about-pointer", "ctrl-wheel-pinch-zooms"],
-        ],
-        [
-          "fault-pointer-swallowed",
-          "pointer",
-          ["drag-pans", "click-fit-zooms-to-actual-size"],
-        ],
-      ]) {
-        const page = await openViewer(context, fixture, DESKTOP, fault);
+    const runOne = async (name, viewport, cases, fault, requiredRed) => {
+      // Its own context, so no run reads another's stored image look.
+      const context = await browser.newContext();
+      try {
+        const page = await openViewer(context, fixture, viewport, fault);
         try {
-          record(name, await desktopCases(page), requiredRed);
+          record(name, await cases(page, fixture), requiredRed);
         } finally {
           await page.close();
         }
+      } finally {
+        await context.close();
       }
-      for (const [name, fault, requiredRed] of [
-        ["phone", null, []],
-        [
-          "fault-phone-pointer-swallowed",
-          "pointer",
-          ["pinch-scales-with-finger-spread"],
-        ],
-      ]) {
-        const page = await openViewer(context, fixture, PHONE, fault);
-        try {
-          record(name, await phoneCases(page), requiredRed);
-        } finally {
-          await page.close();
-        }
-      }
-    } finally {
-      await context.close();
+    };
+    for (const [name, fault, requiredRed] of [
+      ["desktop", null, []],
+      // The first case that needs the channel; later ones start from its
+      // missing state, so only the direct dependants are named.
+      [
+        "fault-wheel-swallowed",
+        "wheel",
+        ["wheel-zooms-about-pointer", "ctrl-wheel-pinch-zooms"],
+      ],
+      [
+        "fault-pointer-swallowed",
+        "pointer",
+        ["drag-pans", "click-fit-zooms-to-actual-size"],
+      ],
+      ["fault-keys-swallowed", "keys", ["keys-fit-and-actual"]],
+      ["fault-storage-unwritable", "storage", ["look-persists-across-reload"]],
+    ]) {
+      await runOne(name, DESKTOP, desktopCases, fault, requiredRed);
+    }
+    for (const [name, fault, requiredRed] of [
+      ["phone", null, []],
+      [
+        "fault-phone-pointer-swallowed",
+        "pointer",
+        ["pinch-scales-with-finger-spread"],
+      ],
+      [
+        "fault-phone-zoom-buttons-shown",
+        "zoom-buttons-shown",
+        ["phone-title-bar-fits"],
+      ],
+    ]) {
+      await runOne(name, PHONE, phoneCases, fault, requiredRed);
     }
   } catch (error) {
     exitCode = 2;

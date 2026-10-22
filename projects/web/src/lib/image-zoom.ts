@@ -35,6 +35,14 @@ export function maxScale(f: Frame): number {
   return Math.max(MAX_NATURAL_SCALE, fitScale(f) * 2);
 }
 
+/**
+ * Never smaller than fit, except that actual pixels stay reachable when an
+ * upscaled fit (maximized) is already larger than them.
+ */
+export function minScale(f: Frame): number {
+  return Math.min(fitScale(f), 1);
+}
+
 export function fitView(f: Frame): View {
   const z = fitScale(f);
   return {
@@ -46,7 +54,11 @@ export function fitView(f: Frame): View {
 
 /** Within a hair of fit counts as fit, so float drift cannot strand a view. */
 export function isFitted(f: Frame, v: View): boolean {
-  return v.z <= fitScale(f) * 1.001;
+  return Math.abs(v.z / fitScale(f) - 1) < 0.001;
+}
+
+export function isAtMin(f: Frame, v: View): boolean {
+  return v.z <= minScale(f) * 1.001;
 }
 
 export function isAtMax(f: Frame, v: View): boolean {
@@ -61,7 +73,7 @@ function clampAxis(pos: number, size: number, room: number): number {
 }
 
 export function clampView(f: Frame, v: View): View {
-  const z = Math.min(Math.max(v.z, fitScale(f)), maxScale(f));
+  const z = Math.min(Math.max(v.z, minScale(f)), maxScale(f));
   return {
     z,
     x: clampAxis(v.x, f.naturalWidth * z, f.width),
@@ -77,9 +89,14 @@ export function zoomAt(
   px: number,
   py: number,
 ): View {
-  const z = Math.min(maxScale(f), Math.max(fitScale(f), v.z * factor));
+  const z = Math.min(maxScale(f), Math.max(minScale(f), v.z * factor));
   const k = z / v.z;
   return clampView(f, { z, x: px - (px - v.x) * k, y: py - (py - v.y) * k });
+}
+
+/** Actual pixels (100%), keeping canvas point (px, py) over the same image pixel. */
+export function actualAt(f: Frame, v: View, px: number, py: number): View {
+  return zoomAt(f, v, 1 / v.z, px, py);
 }
 
 export function panBy(f: Frame, v: View, dx: number, dy: number): View {

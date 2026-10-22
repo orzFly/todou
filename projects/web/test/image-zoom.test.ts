@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  actualAt,
   clampView,
   type Frame,
   fitScale,
   fitView,
   isAtMax,
+  isAtMin,
   isFitted,
   MAX_NATURAL_SCALE,
   maxScale,
@@ -72,6 +74,36 @@ describe("zoomAt", () => {
     const top = zoomAt(big, v0, 1e6, 500, 300);
     expect(top.z).toBe(MAX_NATURAL_SCALE);
     expect(isAtMax(big, top)).toBe(true);
+  });
+});
+
+describe("actualAt (T-537)", () => {
+  it("lands on exactly 100% about the given point", () => {
+    const v0 = zoomAt(big, fitView(big), 2.3, 400, 200);
+    const v1 = actualAt(big, v0, 400, 200);
+    expect(v1.z).toBe(1);
+    const a = pixelAt(v0, 400, 200);
+    const b = pixelAt(v1, 400, 200);
+    expect(b.x).toBeCloseTo(a.x);
+    expect(b.y).toBeCloseTo(a.y);
+  });
+
+  it("reaches 100% below an upscaled fit, which then counts as the floor", () => {
+    const up = { ...icon, upscale: true };
+    const fit = fitView(up);
+    expect(fit.z).toBeGreaterThan(1);
+    const one = actualAt(up, fit, 500, 375);
+    expect(one.z).toBe(1);
+    expect(isFitted(up, one)).toBe(false);
+    expect(isAtMin(up, one)).toBe(true);
+    expect(isAtMin(up, fit)).toBe(false);
+    // A click from below fit goes back to fit, not further in.
+    expect(toggleAt(up, one, 500, 375)).toEqual(fit);
+  });
+
+  it("leaves a not-upscaled fit as the floor", () => {
+    expect(isAtMin(big, fitView(big))).toBe(true);
+    expect(zoomAt(big, fitView(big), 0.1, 0, 0).z).toBeCloseTo(fitScale(big));
   });
 });
 

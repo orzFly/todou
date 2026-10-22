@@ -1,4 +1,4 @@
-import { MinusIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, MinusIcon, PlusIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
@@ -10,11 +10,29 @@ import {
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  type ImageLook,
+  setImageLook,
+  useImageLook,
+} from "@/lib/image-look.ts";
+import {
+  actualAt,
   clampView,
   type Frame,
   fitScale,
   fitView,
   isAtMax,
+  isAtMin,
   isFitted,
   panBy,
   toggleAt,
@@ -26,15 +44,21 @@ import { cn } from "@/lib/utils";
 
 type Point = { x: number; y: number };
 
+// In screen pixels, never scaled with the image: at 800% a scaled checker
+// would be squares bigger than the pixels it is meant to show through.
+const CHECKER =
+  "repeating-conic-gradient(#d4d4d4 0 25%, #fff 0 50%) 0 0 / 16px 16px";
+
 /** Movement under this is still a click/tap, not a drag. */
 const TAP_SLOP = 4;
 const STEP = 1.25;
 
 /**
  * The attachment viewer's image (T-535): wheel or pinch zooms about the
- * pointer, drag pans, a click toggles fit ↔ actual pixels, and − 100% + sit
- * in the viewer's title bar. Mount it keyed by the image URL so paging
- * starts every image at fit.
+ * pointer, drag pans, a click toggles fit ↔ actual pixels, and − 100%▾ +
+ * sit in the viewer's title bar, the readout opening fit, 100% and the
+ * background and scaling choices (T-537). Mount it keyed by the image URL
+ * so paging starts every image at fit.
  */
 export function ImageCanvas({
   src,
@@ -47,6 +71,7 @@ export function ImageCanvas({
   maximized: boolean;
   toolbar: HTMLElement | null;
 }) {
+  const look = useImageLook();
   const canvasRef = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
@@ -171,6 +196,7 @@ export function ImageCanvas({
       else if (e.key === "-")
         atCentre((f, v, x, y) => zoomAt(f, v, 1 / STEP, x, y));
       else if (e.key === "0") atCentre((f) => fitView(f));
+      else if (e.key === "1") atCentre(actualAt);
       else return;
       e.preventDefault();
     };
@@ -257,33 +283,85 @@ export function ImageCanvas({
       ? undefined
       : natural.h * Math.min(1, frame.width / natural.w);
 
+  // − and + give way to pinch on a phone, where the title bar has no room
+  // for them beside the filename.
   const controls = (
     <span className="inline-flex shrink-0 items-center gap-0.5">
       <Button
         variant="ghost"
         size="icon-sm"
         aria-label="zoom out"
-        disabled={fitted}
+        disabled={!ready || isAtMin(frame, view)}
+        className="max-sm:hidden"
         onClick={() => atCentre((f, v, x, y) => zoomAt(f, v, 1 / STEP, x, y))}
       >
         <MinusIcon />
       </Button>
-      <Button
-        type="button"
-        size="xs"
-        variant="ghost"
-        disabled={!ready}
-        aria-label={fitted ? "zoom to actual size" : "zoom to fit"}
-        className="min-w-12 font-normal text-muted-foreground tabular-nums"
-        onClick={() => atCentre(toggleAt)}
-      >
-        {ready ? `${Math.round(view.z * 100)}%` : "–"}
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={!ready}
+            aria-label="zoom and display options"
+            className="min-w-12 font-normal text-muted-foreground tabular-nums"
+          >
+            {ready ? `${Math.round(view.z * 100)}%` : "–"}
+            <ChevronDownIcon />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem onSelect={() => atCentre((f) => fitView(f))}>
+            Fit
+            <DropdownMenuShortcut className="pointer-coarse:hidden">
+              0
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => atCentre(actualAt)}>
+            100%
+            <DropdownMenuShortcut className="pointer-coarse:hidden">
+              1
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-xs text-muted-foreground">
+            Background
+          </DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={look.background}
+            onValueChange={(v) =>
+              setImageLook({ background: v as ImageLook["background"] })
+            }
+          >
+            <DropdownMenuRadioItem value="black">Black</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="checker">
+              Checkerboard
+            </DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-xs text-muted-foreground">
+            Scaling
+          </DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={look.smoothing}
+            onValueChange={(v) =>
+              setImageLook({ smoothing: v as ImageLook["smoothing"] })
+            }
+          >
+            <DropdownMenuRadioItem value="smooth">Smooth</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="pixelated">
+              Pixelated
+            </DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <Button
         variant="ghost"
         size="icon-sm"
         aria-label="zoom in"
         disabled={!ready || isAtMax(frame, view)}
+        className="max-sm:hidden"
         onClick={() => atCentre((f, v, x, y) => zoomAt(f, v, STEP, x, y))}
       >
         <PlusIcon />
@@ -316,6 +394,7 @@ export function ImageCanvas({
         data-fit={frame === null ? undefined : fitScale(frame).toFixed(4)}
         className={cn(
           "relative touch-none overflow-hidden select-none",
+          look.background === "black" && "bg-black",
           maximized ? "h-full" : "max-h-[75vh] min-h-24",
           fitted
             ? "cursor-zoom-in"
@@ -329,6 +408,23 @@ export function ImageCanvas({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
       >
+        {look.background === "checker" && natural !== null && view !== null && (
+          // Under the image only, so the letterbox still shows where the
+          // image ends; black, by contrast, fills the canvas.
+          <div
+            aria-hidden
+            data-testid="image-checker"
+            className="absolute"
+            style={{
+              left: view.x,
+              top: view.y,
+              width: natural.w * view.z,
+              height: natural.h * view.z,
+              background: CHECKER,
+              borderRadius: fitted ? 6 : 0,
+            }}
+          />
+        )}
         <img
           src={src}
           alt={alt}
@@ -355,6 +451,13 @@ export function ImageCanvas({
                   // the scale; zoomed in, a rounded corner would read as the
                   // image's own edge.
                   borderRadius: fitted ? 6 / view.z : 0,
+                  // Shrunk, nearest-neighbour drops whole rows and columns;
+                  // pixelated only means something once an image pixel is
+                  // bigger than a screen pixel.
+                  imageRendering:
+                    look.smoothing === "pixelated" && view.z > 1
+                      ? "pixelated"
+                      : undefined,
                 }
           }
         />
