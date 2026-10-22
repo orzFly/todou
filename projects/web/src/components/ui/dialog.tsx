@@ -139,13 +139,15 @@ function DialogContent({
   onWheel,
   onTouchStart,
   onTouchMove,
+  container,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  container?: HTMLElement;
 }) {
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   return (
-    <DialogPortal>
+    <DialogPortal container={container}>
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"

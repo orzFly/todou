@@ -3,8 +3,10 @@ import {
   fireEvent,
   type RenderResult,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type { QuestionsComponent } from "@todou/shared";
+import { Window as HappyWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
 import { cmPressKey, cmSetValue } from "./cm.ts";
@@ -826,5 +828,129 @@ describe("QuestionsCard when /questions fails (T-376)", () => {
     fireEvent.click(view.getByRole("button", { name: "Retry" }));
     await view.findByText("answered by");
     expect(gets.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/**
+ * A Document Picture-in-Picture window (T-530) as far as the card can tell:
+ * its own document, `close()`, and the `pagehide` the browser fires however
+ * the window goes away.
+ */
+function stubPip() {
+  // A whole second window, not `createHTMLDocument`: a document without a
+  // `defaultView` is one testing-library cannot query or fire events into.
+  const win = new HappyWindow();
+  const close = vi
+    .spyOn(win, "close")
+    .mockImplementation(() => win.dispatchEvent(new win.Event("pagehide")));
+  const requestWindow = vi.fn(async () => win as unknown as Window);
+  vi.stubGlobal("documentPictureInPicture", { requestWindow });
+  return { doc: win.document as unknown as Document, win, close };
+}
+
+const POP_OUT = "Answer in a floating window";
+
+describe("QuestionsCard (floating window)", () => {
+  it("offers no pop-out where the browser has no Document PiP", async () => {
+    stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+    expect(view.queryByRole("button", { name: POP_OUT })).toBeNull();
+  });
+
+  it("moves the form into the window and back, drafts intact", async () => {
+    stubFetch();
+    const pip = stubPip();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(optionButton(view, "Inline"));
+    fireEvent.click(view.getByRole("button", { name: POP_OUT }));
+    const inPip = within(pip.doc.body);
+    await inPip.findByText("awaiting answer");
+
+    // One form, and it is the window's: the page keeps only the placeholder.
+    expect(view.queryByText("awaiting answer")).toBeNull();
+    view.getByText("Answering in a floating window");
+    expect(inPip.queryByRole("button", { name: POP_OUT })).toBeNull();
+    expect(optionButton(inPip, "Inline").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+
+    // Answered inside the window, then the user closes it.
+    fireEvent.click(optionButton(inPip, "dev"));
+    act(() => {
+      pip.win.dispatchEvent(new pip.win.Event("pagehide"));
+    });
+    await view.findByText("awaiting answer");
+    expect(pip.doc.body.textContent).toBe("");
+    expect(optionButton(view, "Inline").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(optionButton(view, "dev").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("Bring back closes the window", async () => {
+    stubFetch();
+    const pip = stubPip();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(view.getByRole("button", { name: POP_OUT }));
+    await within(pip.doc.body).findByText("awaiting answer");
+    fireEvent.click(view.getByRole("button", { name: "Bring back" }));
+
+    await view.findByText("awaiting answer");
+    expect(pip.close).toHaveBeenCalled();
+  });
+
+  it("opens the skip confirmation inside the window", async () => {
+    stubFetch();
+    const pip = stubPip();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(view.getByRole("button", { name: POP_OUT }));
+    const inPip = within(pip.doc.body);
+    fireEvent.click(
+      await inPip.findByRole("button", { name: "Skip unanswered…" }),
+    );
+
+    await inPip.findByRole("dialog");
+    expect(view.queryByRole("dialog")).toBeNull();
+  });
+
+  it("closes the window once its submission lands", async () => {
+    const stub = deferredFetch();
+    const pip = stubPip();
+    const view = renderCard();
+    await act(async () => stub.resolveGet(null));
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(view.getByRole("button", { name: POP_OUT }));
+    const inPip = within(pip.doc.body);
+    await inPip.findByText("awaiting answer");
+    fireEvent.click(optionButton(inPip, "Inline"));
+    fireEvent.click(optionButton(inPip, "prod"));
+    fireEvent.click(inPip.getByRole("button", { name: "Submit answers" }));
+    // Still pending: the window holds until the answer is established.
+    await inPip.findByRole("button", { name: "Submitting…" });
+    expect(pip.close).not.toHaveBeenCalled();
+
+    await act(async () =>
+      stub.resolvePost({
+        type: "event",
+        id: 7,
+        event_type: "question_answered",
+        actor: user,
+        payload: { comment_id: 42, answers: answered.answers },
+        created_at: "2026-08-12T01:00:00Z",
+        agent_context: null,
+      }),
+    );
+    await view.findByText("answered by");
+    expect(stub.posts).toHaveLength(1);
+    expect(pip.close).toHaveBeenCalled();
+    expect(view.queryByText("Answering in a floating window")).toBeNull();
   });
 });

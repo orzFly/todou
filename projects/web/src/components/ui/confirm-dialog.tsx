@@ -32,6 +32,7 @@ export function ConfirmDialog({
   destructive = false,
   pending = false,
   onConfirm,
+  container,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -42,10 +43,12 @@ export function ConfirmDialog({
   destructive?: boolean;
   pending?: boolean;
   onConfirm: () => void;
+  /** Mount point other than this page's body — a floating window's (T-530). */
+  container?: HTMLElement;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent container={container}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}

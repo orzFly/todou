@@ -13,10 +13,12 @@ import {
   ChevronUpIcon,
   CircleIcon,
   CircleSlashIcon,
+  PictureInPicture2Icon,
   SquareCheckIcon,
   SquareIcon,
 } from "lucide-react";
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { questionsQuery } from "@/api/questions.ts";
@@ -33,6 +35,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { holdRevealed, revealBlock, useOwnHold } from "@/lib/scroll-insets.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
+import { documentPip, useDocumentPip } from "@/lib/use-document-pip.ts";
 
 type Draft = { selected: Set<number>; other: string; declined: boolean };
 
@@ -85,9 +88,11 @@ type SubmitVars = Target & { answers: QuestionAnswerInput[] };
  * on Chromium 151), so copying an option's text would answer the question.
  * The selection is already built by the time the handler runs; a plain click
  * leaves it collapsed, even when the page had a stale selection elsewhere.
+ * The row's own document, not this one: popped out (T-530), the drag selects
+ * inside the floating window.
  */
 function selectingInside(row: HTMLElement): boolean {
-  const sel = window.getSelection();
+  const sel = row.ownerDocument.getSelection();
   return (
     sel !== null &&
     !sel.isCollapsed &&
@@ -356,6 +361,12 @@ function AnswerForm({
   // question card rendered first.
   const root = useRef<HTMLDivElement>(null);
   const keepHold = useOwnHold();
+  // Popped out (T-530), the form is the floating window's whole content.
+  // Its subtree remounts on every move, the Other editors included, so
+  // anything a move must keep belongs in `drafts`, which stays here. The
+  // window closes with this component — submitting swaps the card to its
+  // answered state.
+  const pip = useDocumentPip();
   const firstOpen = () => {
     const q = component.questions.find(
       (x) => !resolved(drafts[x.key] ?? emptyDraft()),
@@ -367,21 +378,45 @@ function AnswerForm({
       );
     if (!row) return;
     revealBlock(row);
-    keepHold(holdRevealed(row, document.body));
+    // The hold keeps the row in place while this page reflows; the floating
+    // window has no timeline loading around it.
+    if (!pip.window) keepHold(holdRevealed(row, document.body));
+  };
+  const popOut = () => {
+    const rect = root.current?.getBoundingClientRect();
+    // Padding around the form inside the window, as `p-3` below.
+    const pad = 24;
+    pip
+      .open({
+        width: Math.round(Math.min((rect?.width ?? 480) + pad, 480)),
+        height: Math.round(Math.min((rect?.height ?? 640) + pad, 720)),
+      })
+      .catch((error: Error) => toast.error(error.message));
   };
 
-  return (
+  const form = (
     <div
       ref={root}
       className="@container mt-1 space-y-4 rounded-md border border-amber-500/60 bg-amber-500/5 p-3"
     >
-      <div className="flex">
+      <div className="flex items-center justify-between gap-2">
         <Badge
           variant="outline"
           className="border-amber-500/60 text-amber-700 dark:text-amber-400"
         >
           awaiting answer
         </Badge>
+        {!pip.window && documentPip() && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            title="Answer in a floating window"
+            aria-label="Answer in a floating window"
+            onClick={popOut}
+          >
+            <PictureInPicture2Icon />
+          </Button>
+        )}
       </div>
       {component.questions.map((q) => (
         <QuestionForm
@@ -442,7 +477,12 @@ function AnswerForm({
               : "Answer all to submit"}
         </Button>
       </div>
+      {/* The failure toast lands in the page, behind the floating window. */}
+      {pip.window && submit.isError && (
+        <p className="text-sm text-destructive">{submit.error.message}</p>
+      )}
       <ConfirmDialog
+        container={pip.window?.document.body}
         open={forcing}
         onOpenChange={setForcing}
         title="Submit with unanswered questions?"
@@ -460,6 +500,25 @@ function AnswerForm({
         }}
       />
     </div>
+  );
+
+  if (!pip.window) return form;
+  return (
+    <>
+      <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-dashed border-amber-500/60 bg-amber-500/5 px-3 py-1.5 text-sm text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <PictureInPicture2Icon className="size-4 shrink-0" />
+          Answering in a floating window
+        </span>
+        <Button variant="ghost" size="xs" onClick={pip.close}>
+          Bring back
+        </Button>
+      </div>
+      {createPortal(
+        <div className="p-3">{form}</div>,
+        pip.window.document.body,
+      )}
+    </>
   );
 }
 
