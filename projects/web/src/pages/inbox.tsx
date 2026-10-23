@@ -252,6 +252,7 @@ function InboxGroupSection({
           >
             <ProjectIcon
               project={{
+                slug: group.project.slug,
                 name: group.project.name,
                 prefix: refs.get(group.project.slug)?.prefix ?? null,
                 icon_url: group.project.icon_url,

@@ -95,11 +95,12 @@ export function ProjectCard({
             <ProjectIcon
               aria-hidden="true"
               project={{
+                slug: project.slug,
                 name: project.name,
                 prefix: project.prefix,
                 icon_url: project.icon_url,
               }}
-              className="size-10 text-sm"
+              className="size-10"
             />
             {/* No `min-w-0`: `truncate` brings `overflow-hidden`, which
                 already resolves this flex item's `min-width: auto` to 0, so a

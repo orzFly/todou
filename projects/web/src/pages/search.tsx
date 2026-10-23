@@ -470,6 +470,7 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
                 lead={
                   <ProjectIcon
                     project={{
+                      slug: row.slug,
                       name: row.name,
                       prefix: row.prefix,
                       icon_url: row.icon_url,

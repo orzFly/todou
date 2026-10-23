@@ -147,7 +147,11 @@ function ProjectBadges({ memberships }: { memberships: AgentMembership[] }) {
           {m.project.icon_url && (
             <ProjectIcon
               aria-hidden="true"
-              project={{ name: m.project.name, icon_url: m.project.icon_url }}
+              project={{
+                slug: m.project.slug,
+                name: m.project.name,
+                icon_url: m.project.icon_url,
+              }}
               className="size-3.5"
             />
           )}
@@ -356,7 +360,12 @@ function MembershipRow({
     <div className="flex items-center gap-2">
       <ProjectIcon
         aria-hidden="true"
-        project={{ name: project.name, prefix, icon_url: project.icon_url }}
+        project={{
+          slug: project.slug,
+          name: project.name,
+          prefix,
+          icon_url: project.icon_url,
+        }}
         className="size-6 shrink-0"
       />
       <div className="min-w-0 flex-1">

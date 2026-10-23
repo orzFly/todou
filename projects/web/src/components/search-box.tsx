@@ -744,6 +744,7 @@ export function SearchBox({
                       lead={
                         <ProjectIcon
                           project={{
+                            slug: row.slug,
                             name: row.name,
                             prefix: row.prefix,
                             icon_url: row.icon_url,

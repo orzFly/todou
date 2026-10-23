@@ -296,7 +296,12 @@ export function IssueRowProjectTrailing({
   activeAt,
 }: {
   status: Pick<Status, "name" | "color">;
-  project: { name: string; prefix: string | null; icon_url?: string | null };
+  project: {
+    slug: string;
+    name: string;
+    prefix: string | null;
+    icon_url?: string | null;
+  };
   /** Last activity, for the list whose group is a date rather than a person. */
   activeAt?: { dateTime: string; text: string };
 }) {

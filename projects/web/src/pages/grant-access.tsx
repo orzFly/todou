@@ -499,6 +499,7 @@ function TargetRow({
               >
                 <ProjectIcon
                   project={{
+                    slug: candidate,
                     name: candidateProject?.name ?? candidate,
                     prefix: refs[candidate]?.prefix ?? null,
                     icon_url: candidateProject?.icon_url,
@@ -532,6 +533,7 @@ function TargetRow({
       <div className="flex min-w-40 flex-1 items-center gap-2">
         <ProjectIcon
           project={{
+            slug,
             name,
             prefix: refs[slug]?.prefix ?? null,
             icon_url: project?.icon_url,

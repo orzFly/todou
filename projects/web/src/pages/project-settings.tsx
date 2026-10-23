@@ -260,7 +260,7 @@ function ProjectIconEditor({ slug }: { slug: string }) {
         imageUrl: project.data.icon_url ?? null,
       }}
       shape="square"
-      fallback={projectIconFallback({ name: project.data.name, prefix })}
+      fallback={projectIconFallback({ slug, name: project.data.name, prefix })}
       onUpload={(file) => upload.mutate(file)}
       onRemove={() => remove.mutate()}
       pending={upload.isPending || remove.isPending}

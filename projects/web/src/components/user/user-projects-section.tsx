@@ -87,6 +87,7 @@ export function UserProjectsSection({ login }: { login: string }) {
                 <ProjectIcon
                   aria-hidden="true"
                   project={{
+                    slug: item.project.slug,
                     name: item.project.name,
                     prefix: refs.get(item.project.slug)?.prefix ?? null,
                     icon_url: item.project.icon_url,

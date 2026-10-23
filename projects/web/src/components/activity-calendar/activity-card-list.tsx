@@ -164,6 +164,7 @@ export function ActivityCardList({
                     <IssueRowProjectTrailing
                       status={card.status}
                       project={{
+                        slug: card.project.slug,
                         name: card.project.name,
                         prefix: card.project.issue_prefix,
                       }}

@@ -283,6 +283,7 @@ function Row({
           <ProjectIcon
             aria-hidden="true"
             project={{
+              slug: option.project.slug,
               name: option.project.name,
               prefix,
               icon_url: option.project.icon_url,

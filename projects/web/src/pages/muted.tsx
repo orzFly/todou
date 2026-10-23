@@ -98,7 +98,12 @@ export function MutedProjectRow({ project }: { project: MutedProject }) {
           className="flex min-w-0 items-center gap-2 text-sm underline-offset-2 hover:underline"
         >
           <ProjectIcon
-            project={{ name: project.name, prefix, icon_url: project.icon_url }}
+            project={{
+              slug: project.slug,
+              name: project.name,
+              prefix,
+              icon_url: project.icon_url,
+            }}
             aria-hidden="true"
             className="size-5 shrink-0"
           />

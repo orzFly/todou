@@ -3,13 +3,16 @@ import {
   ProjectIcon,
   projectIconFallback,
 } from "../src/components/shared/project-icon.tsx";
+import { projectTint } from "../src/lib/project-tint.ts";
 import { render } from "./render.tsx";
 
 const draw = (project: {
+  slug?: string;
   name: string;
   prefix?: string | null;
   icon_url?: string | null;
-}) => render(<ProjectIcon project={project} />).container;
+}) =>
+  render(<ProjectIcon project={{ slug: "homelab", ...project }} />).container;
 
 describe("what a project icon draws", () => {
   // The loaded-image path is not assertable here: Radix mounts the <img>
@@ -50,13 +53,21 @@ describe("what a project icon draws", () => {
   // settings page's icon editor draws its box through `AvatarEditor` and
   // reaches this rule only by calling it.
   it("cuts a long REF to the same three characters wherever it is called", () => {
-    expect(
-      projectIconFallback({ name: "Pathological", prefix: "W".repeat(20) }),
-    ).toBe("WWW");
+    const glyph = projectIconFallback({
+      slug: "pathological",
+      name: "Pathological",
+      prefix: "W".repeat(20),
+    });
+    expect(render(glyph).container.textContent).toBe("WWW");
   });
 
   it("falls back to initials when called with no REF", () => {
-    expect(projectIconFallback({ name: "Home Lab", prefix: null })).toBe("HL");
+    const glyph = projectIconFallback({
+      slug: "home-lab",
+      name: "Home Lab",
+      prefix: null,
+    });
+    expect(render(glyph).container.textContent).toBe("HL");
   });
 
   it("is square, so a project never reads as a person", () => {
@@ -66,5 +77,35 @@ describe("what a project icon draws", () => {
         .querySelector('[data-slot="avatar"]')
         ?.getAttribute("data-shape"),
     ).toBe("square");
+  });
+
+  it("paints the fallback in the tint hashed from the slug", () => {
+    const container = draw({ slug: "todou", name: "todou", prefix: "T" });
+    const stops = [...container.querySelectorAll("stop")].map((stop) =>
+      stop.getAttribute("stop-color"),
+    );
+    const { from, to } = projectTint("todou");
+    expect(stops).toEqual([from, to]);
+  });
+
+  it("gives every icon on a page its own gradient", () => {
+    // Two rows naming the same project is the ordinary case (a search list);
+    // with one id between them, either could paint from the other.
+    const { container } = render(
+      <>
+        <ProjectIcon project={{ slug: "todou", name: "todou", prefix: "T" }} />
+        <ProjectIcon project={{ slug: "todou", name: "todou", prefix: "T" }} />
+      </>,
+    );
+    const ids = [...container.querySelectorAll("linearGradient")].map(
+      (gradient) => gradient.id,
+    );
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    for (const [index, rect] of [
+      ...container.querySelectorAll("rect"),
+    ].entries()) {
+      expect(rect.getAttribute("fill")).toBe(`url(#${ids[index]})`);
+    }
   });
 });

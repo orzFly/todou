@@ -178,6 +178,7 @@ export function AppShell({
                       <ProjectIcon
                         aria-hidden="true"
                         project={{
+                          slug,
                           name: project.data?.name ?? slug,
                           prefix: refs.get(slug)?.prefix ?? null,
                           icon_url: project.data?.icon_url,
