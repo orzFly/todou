@@ -19,7 +19,7 @@ import { renderWithProviders, testQueryClient } from "./render.tsx";
  * This used to be the projects home's own card (T-390), and the test beside
  * it asserted that both pages drew the same one. The sidebar is a single
  * narrow column, and the card is built for a three-across grid — it carries a
- * three-line description and a REF watermark sized against its own box — so
+ * three-line description — so
  * the seats are a row now and the parity is gone on purpose. What is asserted
  * here is that the row still answers the two questions the card answered:
  * where the project is, and what this person is in it.
@@ -169,7 +169,7 @@ describe("the user page's seats (T-374)", () => {
   });
 
   it("carries none of the home card's chrome into the sidebar", async () => {
-    // The description and the watermark are what the row gave up; naming
+    // The card and its description are what the row gave up; naming
     // their slots is what stops the card creeping back in one node at a time.
     const homelab = project(
       "homelab",
@@ -185,7 +185,6 @@ describe("the user page's seats (T-374)", () => {
 
     expect(row.querySelector('[data-slot="card"]')).toBeNull();
     expect(row.querySelector('[data-slot="card-description"]')).toBeNull();
-    expect(row.querySelector('[data-slot="ref-watermark"]')).toBeNull();
     expect(row.textContent).not.toContain("Every machine under the sink");
   });
 

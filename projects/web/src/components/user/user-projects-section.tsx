@@ -23,9 +23,9 @@ const SKELETONS = [0, 1, 2];
  *
  * A row rather than the projects home's card (T-390): this list stands in the
  * user page's sidebar, which is a single narrow column, and the card carries a
- * three-line description and a REF watermark sized against its own box. The
- * seats are here to say *where* this person works, and the reader is one click
- * from the project itself for everything else.
+ * three-line description built for a three-across grid. The seats are here to
+ * say *where* this person works, and the reader is one click from the project
+ * itself for everything else.
  */
 export function UserProjectsSection({ login }: { login: string }) {
   const query = userProjectsQuery(login);

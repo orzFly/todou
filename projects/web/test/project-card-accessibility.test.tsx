@@ -13,9 +13,9 @@ describe("ProjectCard accessible name", () => {
     const view = renderWithProviders(<ProjectCard project={project} />);
     const link = await view.findByRole("link", { name: "Atlas Lab XYZ" });
 
-    // The meaningful watermark names the REF once; the decorative icon must
+    // The screen-reader copy names the REF once; the decorative icon must
     // not prepend a duplicate prefix to that accessible name.
-    expect(within(link).getByRole("img", { name: "XYZ" })).toBeTruthy();
+    expect(link.querySelector(".sr-only")?.textContent).toBe("XYZ");
     const fallback = within(link).getByText("XYZ", {
       selector: '[data-slot="avatar-fallback"] text',
     });
@@ -52,8 +52,6 @@ describe("ProjectCard accessible name", () => {
     expect(view.getByRole("link", { name: "Atlas Lab XYZ" })).toBe(link);
     // Empty alt already keeps a loaded image out of the link's name;
     // the fallback test above is the guard for this placement's hide.
-    expect(within(link).getAllByRole("img")).toEqual([
-      within(link).getByRole("img", { name: "XYZ" }),
-    ]);
+    expect(within(link).queryAllByRole("img")).toEqual([]);
   });
 });
