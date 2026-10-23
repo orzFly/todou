@@ -1,0 +1,8 @@
+todou v0.6.4
+
+Security update: the runtime moves to Node 26.12.1, and the compiled CLI
+binaries to Deno 2.9.8.
+
+Docker images carry Node 26. Hosts deployed with systemd and mise must
+switch to Node 26 themselves (mise use -g node@26) before updating.
+No migration, no configuration change.
