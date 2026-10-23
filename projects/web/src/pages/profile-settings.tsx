@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import {
   prefsQuery,
   useBoxedRefLinks,
+  useOpenExternalLinksInNewTab,
   usePatchPrefs,
   useRefPlacement,
   useShowRepeatedRefTitle,
@@ -248,6 +249,7 @@ function BodyReferencesSection() {
   const boxed = useBoxedRefLinks();
   const truncate = useTruncateRefTitle();
   const repeated = useShowRepeatedRefTitle();
+  const newTab = useOpenExternalLinksInNewTab();
 
   return (
     <div className="space-y-4 border-t pt-6">
@@ -285,6 +287,15 @@ function BodyReferencesSection() {
         disabled={pending}
         onChange={(checked) =>
           patch.mutate({ show_repeated_ref_title: checked })
+        }
+      />
+      <ToggleRow
+        id="open-external-links-in-new-tab"
+        label="Open external links in a new tab"
+        checked={newTab}
+        disabled={pending}
+        onChange={(checked) =>
+          patch.mutate({ open_external_links_in_new_tab: checked })
         }
       />
     </div>

@@ -101,6 +101,7 @@ function mockInbox(fixture: InboxFixture): InboxPageData {
     boxed_ref_links: true,
     truncate_ref_title: true,
     show_repeated_ref_title: false,
+    open_external_links_in_new_tab: false,
   });
   return page;
 }
@@ -755,6 +756,7 @@ describe("InboxPage · load failure (T-376)", () => {
       boxed_ref_links: true,
       truncate_ref_title: true,
       show_repeated_ref_title: false,
+      open_external_links_in_new_tab: false,
     });
     const view = renderWithProviders(<InboxPage />);
 

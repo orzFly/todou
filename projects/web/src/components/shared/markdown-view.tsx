@@ -11,6 +11,7 @@ import {
   MarkdownAttachmentAnchor,
   MarkdownAttachmentImage,
 } from "@/components/issue/attachment-markdown.tsx";
+import { BodyAnchor } from "@/components/shared/body-anchor.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
 import { MermaidBlock } from "@/components/shared/mermaid-block.tsx";
 import { PatchView } from "@/components/shared/patch-view.tsx";
@@ -284,7 +285,14 @@ export function MarkdownViewWithPlugins({
         <MarkdownPre {...props} fenceBaselines={fenceBaselines} />
       ),
       ...(slug === undefined
-        ? undefined
+        ? {
+            a: ({
+              node: _node,
+              ...props
+            }: ComponentProps<"a"> & { node?: unknown }): ReactNode => (
+              <BodyAnchor {...props} />
+            ),
+          }
         : {
             // A document card is block content, which HTML forbids
             // inside <p>; paragraphs that carry an embed swap to a

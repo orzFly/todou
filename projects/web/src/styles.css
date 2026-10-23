@@ -969,6 +969,19 @@ diffs-container {
     text-decoration: underline;
     text-underline-offset: 2px;
   }
+  /* Only BodyAnchor sets a target, and only when the reader asked for new
+     tabs (T-552). Generated rather than written into the DOM so a copy of
+     the paragraph does not pick it up; the empty alt keeps screen readers
+     from announcing an arrow. Inline-block stops the underline running
+     under it. An image link is its own affordance and gets no arrow. */
+  .markdown-body a[target="_blank"]:not(:has(img))::after {
+    content: "↗";
+    content: "↗" / "";
+    display: inline-block;
+    margin-left: 0.1em;
+    font-size: 0.8em;
+    text-decoration: none;
+  }
 
   .markdown-body ul,
   .markdown-body ol {

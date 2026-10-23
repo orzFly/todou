@@ -22,6 +22,7 @@ import {
 } from "@/api/prefs.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
+import { BodyAnchor } from "@/components/shared/body-anchor.tsx";
 import { CommentHoverCard } from "@/components/shared/comment-hover-card.tsx";
 import { CommentReference } from "@/components/shared/comment-reference.tsx";
 import { useCanHoverPreview } from "@/components/shared/hover-preview.ts";
@@ -619,5 +620,5 @@ export function MarkdownLink({
       />
     );
   }
-  return <a {...props} />;
+  return <BodyAnchor {...props} />;
 }

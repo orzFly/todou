@@ -187,7 +187,6 @@ function nodeFor(segment: RefSegment, position: MdNode["position"]): MdNode {
         type: "link",
         url: segment.href,
         title: segment.href,
-        data: { hProperties: { target: "_blank", rel: "noreferrer" } },
         children,
         position,
       }

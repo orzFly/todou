@@ -35,6 +35,7 @@ const DEFAULT_PREFS: MePrefs = {
   boxed_ref_links: true,
   truncate_ref_title: true,
   show_repeated_ref_title: false,
+  open_external_links_in_new_tab: false,
 };
 
 function renderSettings(prefs: Partial<MePrefs> = {}) {
@@ -222,12 +223,18 @@ describe("references-in-text preferences (T-371)", () => {
     ["Bordered references", "boxed_ref_links", false],
     ["Shorten long titles", "truncate_ref_title", false],
     ["Title on every mention", "show_repeated_ref_title", true],
+    [
+      "Open external links in a new tab",
+      "open_external_links_in_new_tab",
+      true,
+    ],
   ] as const;
 
   it("shows each key's stored value", async () => {
     const view = renderSettings({
       boxed_ref_links: false,
       show_repeated_ref_title: true,
+      open_external_links_in_new_tab: true,
     });
     const state = async (name: string) =>
       (await view.findByRole("switch", { name })).dataset.state;
@@ -235,6 +242,7 @@ describe("references-in-text preferences (T-371)", () => {
     expect(await state("Bordered references")).toBe("unchecked");
     expect(await state("Shorten long titles")).toBe("checked");
     expect(await state("Title on every mention")).toBe("checked");
+    expect(await state("Open external links in a new tab")).toBe("checked");
   });
 
   it.each([true, false])(

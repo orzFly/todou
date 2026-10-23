@@ -106,6 +106,7 @@ const PREFS: MePrefs = {
   boxed_ref_links: true,
   truncate_ref_title: true,
   show_repeated_ref_title: false,
+  open_external_links_in_new_tab: false,
 };
 
 function seeded(overrides: Partial<MePrefs> = {}): QueryClient {

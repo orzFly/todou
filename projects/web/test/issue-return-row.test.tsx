@@ -126,6 +126,7 @@ function seededClient(
     boxed_ref_links: true,
     truncate_ref_title: true,
     show_repeated_ref_title: false,
+    open_external_links_in_new_tab: false,
   } satisfies MePrefs);
   return client;
 }

@@ -37,29 +37,34 @@ export function useRefPlacement<S extends RefSurface>(
   return (prefs ?? PREF_DEFAULTS)[`ref_placement_${surface}`];
 }
 
-/** The keys that decide how a reference renders inside a body (T-371). */
-type BodyRefPref = {
+/** The on/off keys, which are all display-only switches. */
+type BooleanPref = {
   [K in keyof MePrefs]: MePrefs[K] extends boolean ? K : never;
 }[keyof MePrefs];
 
-function useBodyRefPref(key: BodyRefPref): boolean {
+function useBooleanPref(key: BooleanPref): boolean {
   const prefs = useQuery(prefsQuery).data;
   return (prefs ?? PREF_DEFAULTS)[key];
 }
 
 /** Whether a markdown body draws its rich references as bordered chips. */
 export function useBoxedRefLinks(): boolean {
-  return useBodyRefPref("boxed_ref_links");
+  return useBooleanPref("boxed_ref_links");
 }
 
 /** Whether an over-long reference title is cut to the chip's width cap. */
 export function useTruncateRefTitle(): boolean {
-  return useBodyRefPref("truncate_ref_title");
+  return useBooleanPref("truncate_ref_title");
 }
 
 /** Whether a card named twice in one body carries its title both times. */
 export function useShowRepeatedRefTitle(): boolean {
-  return useBodyRefPref("show_repeated_ref_title");
+  return useBooleanPref("show_repeated_ref_title");
+}
+
+/** Whether an off-site link in a markdown body opens in a new tab (T-552). */
+export function useOpenExternalLinksInNewTab(): boolean {
+  return useBooleanPref("open_external_links_in_new_tab");
 }
 
 /**

@@ -16,6 +16,7 @@ const DEFAULTS = {
   boxed_ref_links: true,
   truncate_ref_title: true,
   show_repeated_ref_title: false,
+  open_external_links_in_new_tab: false,
 };
 
 describe("user preferences", () => {
@@ -169,6 +170,21 @@ describe("user preferences", () => {
     expect(prefs.truncate_ref_title).toBe(true);
     expect(prefs.show_repeated_ref_title).toBe(false);
     expect(prefs).toEqual({ ...DEFAULTS, show_weak_unread: false });
+  });
+
+  it("round-trips the new-tab preference and leaves a pre-T-552 row off", async () => {
+    await storeBlob({ truncate_ref_title: false });
+    expect((await json(await getPrefs())).open_external_links_in_new_tab).toBe(
+      false,
+    );
+
+    const res = await patchPrefs({ open_external_links_in_new_tab: true });
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({
+      ...DEFAULTS,
+      truncate_ref_title: false,
+      open_external_links_in_new_tab: true,
+    });
   });
 
   it("fills every key from an empty stored blob", async () => {

@@ -57,6 +57,11 @@ export const MePrefs = z.strictObject({
   boxed_ref_links: z.boolean().default(true),
   truncate_ref_title: z.boolean().default(true),
   show_repeated_ref_title: z.boolean().default(false),
+  /*
+   * Open off-site links in markdown bodies in a new tab (T-552).
+   * Display-only, like the keys above.
+   */
+  open_external_links_in_new_tab: z.boolean().default(false),
 });
 export type MePrefs = z.infer<typeof MePrefs>;
 
@@ -74,5 +79,6 @@ export const MePrefsPatch = z.strictObject({
   boxed_ref_links: z.boolean().optional(),
   truncate_ref_title: z.boolean().optional(),
   show_repeated_ref_title: z.boolean().optional(),
+  open_external_links_in_new_tab: z.boolean().optional(),
 });
 export type MePrefsPatch = z.infer<typeof MePrefsPatch>;

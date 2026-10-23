@@ -268,7 +268,8 @@ describe("MarkdownView reading and preview", () => {
       "a[href='https://github.com/o/r/issues/12']",
     );
     expect(external).not.toBeNull();
-    expect(external?.getAttribute("target")).toBe("_blank");
+    // Same tab unless the reader asked otherwise (T-552).
+    expect(external?.getAttribute("target")).toBeNull();
     expect(external?.textContent).toBe("#12");
     // Internal spelling follows the CURRENT format.
     const internal = view.container.querySelector("a[data-issue-link='7']");
@@ -538,6 +539,7 @@ describe("IssueLink ref placement (T-153, T-157)", () => {
       boxed_ref_links: true,
       truncate_ref_title: true,
       show_repeated_ref_title: false,
+      open_external_links_in_new_tab: false,
     } satisfies MePrefs);
     return client;
   };
