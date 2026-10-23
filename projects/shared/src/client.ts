@@ -48,6 +48,7 @@ import type {
   IssueMuteInput,
   IssueQuestions,
   IssueReadInput,
+  IssueReferences,
   IssueUpdateInput,
   Label,
   LabelCreateInput,
@@ -958,6 +959,11 @@ export class TodouClient {
       "GET",
       `/projects/${slug}/issues/${number}/timeline`,
       { query: query ? { ...query, last: query.last ? 1 : undefined } : {} },
+    );
+  getIssueReferences = (slug: string, number: number) =>
+    this.request<IssueReferences>(
+      "GET",
+      `/projects/${slug}/issues/${number}/references`,
     );
   getActivity = (
     slug: string,

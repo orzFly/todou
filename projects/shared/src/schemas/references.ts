@@ -137,3 +137,26 @@ export function refToken(prefix: string | null): string {
 export function formatRef(prefix: string | null, number: number): string {
   return `${refToken(prefix)}${number}`;
 }
+
+/** One card on either side of an issue's references (T-553). */
+export const IssueReferenceEntry = z.object({
+  /** The other card's current address, followed through any moves. */
+  project_id: Id,
+  number: Id,
+  /**
+   * The comment the link is written in; null = the body. For `linked_from`
+   * that is the other card's comment, for `links_to` this card's.
+   */
+  comment_id: Id.nullable(),
+  /** `links_to` only: further places in this card linking the same card. */
+  more: z.number().int().min(0),
+  /** When the link was first written. */
+  created_at: Timestamp,
+});
+export type IssueReferenceEntry = z.infer<typeof IssueReferenceEntry>;
+
+export const IssueReferences = z.object({
+  linked_from: z.array(IssueReferenceEntry),
+  links_to: z.array(IssueReferenceEntry),
+});
+export type IssueReferences = z.infer<typeof IssueReferences>;

@@ -70,12 +70,14 @@ async function openMenu() {
 const entry = (name: RegExp) => screen.getByRole("menuitem", { name });
 
 describe("IssueMoreActions", () => {
-  it("keeps both entries behind the one trigger", async () => {
+  it("keeps every entry behind the one trigger", async () => {
     await mount();
+    expect(screen.queryByText(/All references/)).toBeNull();
     expect(screen.queryByText(/Move to another project/)).toBeNull();
     expect(screen.queryByText(/Move to trash/)).toBeNull();
 
     await openMenu();
+    expect(entry(/All references/)).toBeTruthy();
     expect(entry(/Move to another project/)).toBeTruthy();
     expect(entry(/Move to trash/)).toBeTruthy();
   });
@@ -91,14 +93,24 @@ describe("IssueMoreActions", () => {
     await openMenu();
     const entries = screen.getAllByRole("menuitem");
     expect(entries.map((e) => e.textContent)).toEqual([
+      "All references",
       "Move to another project…",
       "Move to trash…",
     ]);
     expect(entries[0]?.dataset.variant).toBe("default");
-    expect(entries[1]?.dataset.variant).toBe("destructive");
+    expect(entries[1]?.dataset.variant).toBe("default");
+    expect(entries[2]?.dataset.variant).toBe("destructive");
   });
 
-  it("opens the move dialog from the first entry", async () => {
+  it("opens the references dialog from the first entry", async () => {
+    await openMenu();
+    fireEvent.click(entry(/All references/));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("All references")).toBeTruthy();
+  });
+
+  it("opens the move dialog from the second entry", async () => {
     await openMenu();
     fireEvent.click(entry(/Move to another project/));
 

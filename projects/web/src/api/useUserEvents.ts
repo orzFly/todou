@@ -195,6 +195,8 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
               number: event.issue_number,
             }),
             refetch(["timeline", slug, event.issue_number]),
+            // A body edit adds or drops the card's own outgoing links.
+            refetch(["issue-references", slug, event.issue_number]),
             // A current-cohort write can change every historical range.
             refetch(insightsKeys.burn(slug)),
             // A gone row can be trash or a move. Old slugs, stored numeric
@@ -220,6 +222,7 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
           ]
         : [
             refetch(["timeline", slug, event.issue_number]),
+            refetch(["issue-references", slug, event.issue_number]),
             refetch(["questions", slug, event.issue_number]),
             issueRow(slug, {
               verdict: "contains",
@@ -233,6 +236,7 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
         ? []
         : [
             refetch(["timeline", slug, event.issue_number]),
+            refetch(["issue-references", slug, event.issue_number]),
             refetch(["questions", slug, event.issue_number]),
             issueRow(slug, {
               verdict: "contains",

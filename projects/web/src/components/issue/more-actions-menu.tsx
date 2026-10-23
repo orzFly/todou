@@ -1,10 +1,16 @@
 import { useNavigate } from "@tanstack/react-router";
 import { formatRef, type Issue } from "@todou/shared";
-import { EllipsisIcon, FolderInputIcon, Trash2Icon } from "lucide-react";
+import {
+  EllipsisIcon,
+  FolderInputIcon,
+  LinkIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import { useDeleteIssueMutation } from "@/api/issues.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { MoveIssueDialog } from "@/components/issue/move-issue-dialog.tsx";
+import { IssueReferencesDialog } from "@/components/issue/references-dialog.tsx";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -20,7 +26,7 @@ import {
  * The sidebar's overflow menu (T-248), holding what acts on the card as a
  * whole rather than on one of its fields.
  *
- * Both entries open a dialog, so neither is navigation and neither needs an
+ * Every entry opens a dialog, so none is navigation and none needs an
  * `href`. An entry that did take the reader somewhere would have to be
  * `<DropdownMenuItem asChild><Link …>`, per AGENTS.md.
  */
@@ -34,6 +40,7 @@ export function IssueMoreActions({
   const navigate = useNavigate();
   const refPrefix = useRefPrefix(slug);
   const deleteIssue = useDeleteIssueMutation();
+  const [referencing, setReferencing] = useState(false);
   const [moving, setMoving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -65,6 +72,10 @@ export function IssueMoreActions({
           {/* The entries need far more room than the trigger's width, which is
               what the menu defaults to and which here is a 24px square. */}
           <DropdownMenuContent className="w-auto" align="end">
+            <DropdownMenuItem onSelect={() => setReferencing(true)}>
+              <LinkIcon className="size-3.5" />
+              All references
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setMoving(true)}>
               <FolderInputIcon className="size-3.5" />
               Move to another project…
@@ -83,6 +94,15 @@ export function IssueMoreActions({
         </DropdownMenu>
       }
     >
+      <IssueReferencesDialog
+        slug={slug}
+        issueNumber={issue.number}
+        open={referencing}
+        onOpenChange={(next) => {
+          setReferencing(next);
+          returnFocus(next);
+        }}
+      />
       <MoveIssueDialog
         slug={slug}
         issueNumber={issue.number}

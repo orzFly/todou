@@ -18,6 +18,7 @@ import {
   IssueListPage,
   IssueListQuery,
   IssueQuestions,
+  IssueReferences,
   IssueUpdateInput,
   MetadataNamespaceSelector,
   MoveIssueInput,
@@ -41,6 +42,7 @@ import {
   setCommentsHidden,
   updateComment,
 } from "../services/comments.ts";
+import { getIssueReferences } from "../services/issue-references.ts";
 import {
   countIssuesByCategory,
   createIssue,
@@ -185,6 +187,22 @@ const timelineRoute = createRoute({
   request: { params: issueParams, query: TimelineQuery },
   responses: {
     200: { description: "Page", ...jsonBody(TimelinePage) },
+    ...movedResponses,
+  },
+});
+
+const referencesRoute = createRoute({
+  method: "get",
+  path: "/{slug}/issues/{number}/references",
+  summary: "Cards this issue links to and cards linking to it",
+  description:
+    "`linked_from` is read from the reference events on this card, so a " +
+    "link edited out of its source still counts; `links_to` is parsed from " +
+    "this card's body and comments as they stand now. Both name each card " +
+    "at its current address, once.",
+  request: { params: issueParams },
+  responses: {
+    200: { description: "References", ...jsonBody(IssueReferences) },
     ...movedResponses,
   },
 });
@@ -499,6 +517,14 @@ export function issueRoutes() {
         number,
         c.req.valid("query"),
       ),
+      200,
+    );
+  });
+
+  app.openapi(referencesRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await getIssueReferences(c.get("appCtx"), c.get("user"), slug, number),
       200,
     );
   });

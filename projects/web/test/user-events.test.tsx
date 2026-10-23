@@ -137,6 +137,7 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
         },
       },
       { key: ["timeline", "todou", 42], scope: "refetch" },
+      { key: ["issue-references", "todou", 42], scope: "refetch" },
       { key: ["insights-burn", "todou"], scope: "refetch" },
       { key: ["search-issue-ref", "todou", 42], scope: "refetch" },
       { key: ["search-comment-ref", "todou", 42], scope: "refetch" },
@@ -270,6 +271,7 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       ),
     ).toEqual([
       { key: ["timeline", "todou", 7], scope: "refetch" },
+      { key: ["issue-references", "todou", 7], scope: "refetch" },
       { key: ["questions", "todou", 7], scope: "refetch" },
       // Unread markers (T-46) ride the list payload. An unpaired timeline
       // entry (`referenced`, a comment edit) does not bump updated_at
@@ -294,6 +296,7 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       ).map((invalidation) => invalidation.key),
     ).toEqual([
       ["timeline", "todou", 7],
+      ["issue-references", "todou", 7],
       ["questions", "todou", 7],
       ["issues", "todou"],
       ["search-comment-ref"],
@@ -1495,6 +1498,7 @@ describe("useUserEvents", () => {
     expect(timelineCalls).toHaveLength(1);
     expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toEqual([
       ["timeline", "todou", 3],
+      ["issue-references", "todou", 3],
       ["questions", "todou", 3],
       ["issues", "todou"],
       ["insights-burn", "todou"],
@@ -1504,6 +1508,7 @@ describe("useUserEvents", () => {
       ["activity-user"],
       ["inbox"],
       ["timeline", "other", 3],
+      ["issue-references", "other", 3],
       ["questions", "other", 3],
       ["issues", "other"],
       ["insights-burn", "other"],

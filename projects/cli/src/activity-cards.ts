@@ -146,24 +146,15 @@ async function collect(
     // A card already being read whole is not worth a slot in a list request:
     // that read carries its title as well.
     const numbers = [...group].filter((n) => !whole.has(key(slug, n)));
-    for (let i = 0; i < numbers.length; i += BATCH_LIMIT) {
-      const chunk = numbers.slice(i, i + BATCH_LIMIT);
-      reads.push(
-        client
-          .listIssues(slug, { numbers: chunk, limit: chunk.length })
-          .then((page) => {
-            for (const row of page.items) {
-              // A list row has no body (IssueListItem omits it), and only the
-              // `opened` line wants one.
-              cards.set(key(slug, row.number), {
-                title: row.title,
-                body: null,
-              });
-            }
-          })
-          .catch(() => {}),
-      );
-    }
+    reads.push(
+      listTitles(client, slug, numbers).then((found) => {
+        for (const [number, title] of found) {
+          // A list row has no body (IssueListItem omits it), and only the
+          // `opened` line wants one.
+          cards.set(key(slug, number), { title, body: null });
+        }
+      }),
+    );
   }
   // No pool: the worst 60-second window this tracker has — the default
   // `--follow` debounce, so the realistic ceiling after batching — is one
@@ -171,6 +162,32 @@ async function collect(
   // cursor sends more, but that drain has already sent one activity request
   // per page, serially, so this is not a new order of magnitude.
   await Promise.all(reads);
+}
+
+/**
+ * Titles of one project's cards, a `numbers=…` request per hundred. A card
+ * the reader cannot see, or a request that fails, is simply absent.
+ */
+export async function listTitles(
+  client: TodouClient,
+  slug: string,
+  numbers: readonly number[],
+): Promise<Map<number, string>> {
+  const found = new Map<number, string>();
+  const reads: Array<Promise<void>> = [];
+  for (let i = 0; i < numbers.length; i += BATCH_LIMIT) {
+    const chunk = numbers.slice(i, i + BATCH_LIMIT);
+    reads.push(
+      client
+        .listIssues(slug, { numbers: chunk, limit: chunk.length })
+        .then((page) => {
+          for (const row of page.items) found.set(row.number, row.title);
+        })
+        .catch(() => {}),
+    );
+  }
+  await Promise.all(reads);
+  return found;
 }
 
 function key(slug: string, number: number): string {

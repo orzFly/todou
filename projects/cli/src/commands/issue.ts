@@ -2,6 +2,7 @@ import type {
   BlockRef,
   Issue,
   IssueListItem,
+  IssueReferenceEntry,
   IssueUpdateInput,
   Label,
   MoveIssueResult,
@@ -15,7 +16,11 @@ import {
   TodouError,
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
-import { activityCards, clearCardsAfterBatch } from "../activity-cards.ts";
+import {
+  activityCards,
+  clearCardsAfterBatch,
+  listTitles,
+} from "../activity-cards.ts";
 import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { openChangeNudges } from "../change-nudges.ts";
@@ -54,10 +59,12 @@ import {
 } from "../resolve.ts";
 import {
   BARE_SUMMARY_CHARS,
+  commentRef,
   drainTimeline,
   groupHiddenRuns,
   HIDDEN_HINT,
   hasHiddenRun,
+  referenceTarget,
   renderActivityLine,
   renderHiddenRun,
   renderTimelineItem,
@@ -829,6 +836,97 @@ export class IssueEventsCommand extends ProjectCommand {
     );
     // No markIssueRead: like `--brief`, a slice that hides every comment
     // cannot be what marks the card read (T-183).
+  }
+}
+
+export class IssueRefsCommand extends ProjectCommand {
+  static paths = [["issue", "refs"]];
+  static usage = Command.Usage({
+    description: "Show the cards linking to an issue and the cards it links to",
+    details: `
+      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL.
+
+      \`linked from\` counts a link that has since been edited out of its
+      card; \`links to\` reads this card's body and comments as they stand
+      now. Each card appears once per side, at its current address, with
+      the first place the link was written and \`+N\` for the rest. \`⇄\`
+      marks a card on both sides.
+
+      \`--json\` prints the endpoint's response as it is.
+    `,
+    examples: [
+      ["Who mentioned this card", "$0 issue refs 16"],
+      ["The same, for a script", "$0 issue refs 16 --json"],
+    ],
+  });
+
+  number = Option.String({ required: true });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const refs = await client.getIssueReferences(project, number);
+    if (this.json) {
+      this.output(refs, () => "");
+      return;
+    }
+
+    const spelling = await fetchRefSpelling(client, project);
+    const origin = { ...spelling, project };
+    const targetOf = (entry: IssueReferenceEntry) =>
+      referenceTarget(
+        { by_project_id: entry.project_id, by_issue: entry.number },
+        origin,
+      );
+    const wanted = new Map<string, Set<number>>();
+    for (const entry of [...refs.linked_from, ...refs.links_to]) {
+      const target = targetOf(entry);
+      if (target?.slug == null) continue;
+      const group = wanted.get(target.slug) ?? new Set<number>();
+      group.add(target.number);
+      wanted.set(target.slug, group);
+    }
+    const titles = new Map(
+      await Promise.all(
+        [...wanted].map(
+          async ([slug, numbers]) =>
+            [slug, await listTitles(client, slug, [...numbers])] as const,
+        ),
+      ),
+    );
+
+    const keyOf = (e: IssueReferenceEntry) => `${e.project_id}/${e.number}`;
+    const to = new Set(refs.links_to.map(keyOf));
+    const both = new Set(
+      refs.linked_from.map(keyOf).filter((key) => to.has(key)),
+    );
+    const paint = makePainter(this.context.stdout, this.context.env);
+    const line = (entry: IssueReferenceEntry) => {
+      const target = targetOf(entry);
+      const ref = target?.ref ?? `${entry.project_id}/${entry.number}`;
+      const title =
+        target?.slug == null
+          ? undefined
+          : titles.get(target.slug)?.get(target.number);
+      const place =
+        entry.comment_id === null ? "body" : commentRef(entry.comment_id);
+      const more = entry.more > 0 ? ` +${entry.more}` : "";
+      return [
+        `  ${ref}`,
+        ...(title === undefined ? [] : [title]),
+        paint("dim", `(${place}${more})`),
+        ...(both.has(keyOf(entry)) ? ["⇄"] : []),
+      ].join("  ");
+    };
+    const section = (heading: string, entries: IssueReferenceEntry[]) => [
+      `${heading} (${entries.length})`,
+      ...(entries.length === 0 ? ["  none"] : entries.map(line)),
+    ];
+    this.output(refs, () =>
+      [
+        ...section("linked from", refs.linked_from),
+        ...section("links to", refs.links_to),
+      ].join("\n"),
+    );
   }
 }
 
