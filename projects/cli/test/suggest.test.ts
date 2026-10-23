@@ -100,6 +100,7 @@ describe("commandTable", () => {
       "view",
       "show",
       "events",
+      "refs",
       "watch",
       "edit",
       "update",
