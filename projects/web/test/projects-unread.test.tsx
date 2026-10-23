@@ -483,7 +483,7 @@ describe("Mark all read badge coherence (T-444)", () => {
 });
 
 describe("ProjectsPage watchers (T-540)", () => {
-  it("puts a project's watchers in its card's badge slot, and nowhere else", async () => {
+  it("puts a project's watchers in its card's corner, a live dot per account, and nowhere else (T-542)", async () => {
     const { container } = renderProjects({
       projects: [project("alpha"), project("beta")],
       inbox: page({}),
@@ -498,21 +498,23 @@ describe("ProjectsPage watchers (T-540)", () => {
       },
     });
     await waitFor(() => cardOf(container, "alpha"));
-    const badge = cardOf(container, "alpha").querySelector(
-      '[data-slot="project-card-badge"]',
-    );
-    const button = badge?.querySelector("button");
+    const alpha = cardOf(container, "alpha");
+    const corner = alpha.querySelector('[data-slot="project-card-corner"]');
+    const button = corner?.querySelector("button");
     expect(button?.getAttribute("aria-label")).toBe(
       "Watching: Claude Agent (2 sessions), Bot One",
     );
+    expect(button?.querySelectorAll("[data-live-dot]")).toHaveLength(2);
+    expect(button?.querySelector(".watcher-pulse")).toBeNull();
+    expect(alpha.querySelector('[data-slot="project-card-badge"]')).toBeNull();
     expect(
       cardOf(container, "beta").querySelector(
-        '[data-slot="project-card-badge"]',
+        '[data-slot="project-card-corner"]',
       ),
     ).toBeNull();
   });
 
-  it("opens the session list from the badge without following the card's link", async () => {
+  it("opens the session list from the corner without following the card's link", async () => {
     const { container, router } = renderProjects({
       projects: [project("alpha")],
       inbox: page({}),
@@ -522,7 +524,7 @@ describe("ProjectsPage watchers (T-540)", () => {
     });
     await waitFor(() => cardOf(container, "alpha"));
     const button = cardOf(container, "alpha").querySelector(
-      '[data-slot="project-card-badge"] button',
+      '[data-slot="project-card-corner"] button',
     ) as HTMLButtonElement;
     fireEvent.click(button);
     expect(await screen.findByText("Watching alpha")).toBeTruthy();

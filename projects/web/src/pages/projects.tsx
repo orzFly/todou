@@ -66,11 +66,12 @@ export function ProjectsPage() {
                   icon_url: project.icon_url,
                 }}
                 muted={neverVisited}
-                badge={
-                  watching ? (
+                corner={
+                  watching?.length ? (
                     <ProjectWatchersButton
                       projectName={project.name}
                       watchers={watching}
+                      live
                     />
                   ) : undefined
                 }

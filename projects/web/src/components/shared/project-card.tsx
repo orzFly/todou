@@ -40,6 +40,7 @@ export function ProjectCard({
   muted = false,
   badge,
   action,
+  corner,
   children,
 }: {
   project: {
@@ -54,6 +55,8 @@ export function ProjectCard({
   badge?: ReactNode;
   /** Optional header action; omitted means no action wrapper or layout change. */
   action?: ReactNode;
+  /** The bottom-right corner, under the action (T-542). */
+  corner?: ReactNode;
   /** The description slot. */
   children?: ReactNode;
 }) {
@@ -67,7 +70,22 @@ export function ProjectCard({
       <Card className="relative h-full transition-colors hover:bg-accent/50">
         {/* Above the watermark: the mark is a background, and a positioned
             element would otherwise paint over this. */}
-        <CardHeader className="relative z-10">
+        {/* With a corner the header takes the card's full height and its
+            second row the slack, so the corner's `self-end` lands on the
+            card's bottom padding. The corner sits in the action's column
+            rather than out of flow: the column narrows the title and the
+            description, which is what keeps a three-line description from
+            running under it. `minmax(0,1fr)`, not the base `1fr`: that
+            column's floor is the title's min-content, so a long name pushed
+            the whole second column out past the card's clip, unread badge
+            included. */}
+        <CardHeader
+          className={cn(
+            "relative z-10 has-data-[slot=card-action]:grid-cols-[minmax(0,1fr)_auto]",
+            corner !== undefined &&
+              "flex-1 grid-cols-[minmax(0,1fr)_auto] has-data-[slot=card-description]:grid-rows-[auto_1fr]",
+          )}
+        >
           <CardTitle
             className={cn(
               "flex items-center gap-2.5 text-base",
@@ -101,6 +119,14 @@ export function ProjectCard({
               176px against the 136px the clamp holds them to. */}
           <CardDescription className="line-clamp-3">{children}</CardDescription>
           {action !== undefined && <CardAction>{action}</CardAction>}
+          {corner !== undefined && (
+            <div
+              data-slot="project-card-corner"
+              className="col-start-2 row-span-2 row-start-1 flex self-end justify-self-end"
+            >
+              {corner}
+            </div>
+          )}
         </CardHeader>
         {project.prefix && <RefWatermark prefix={project.prefix} />}
       </Card>

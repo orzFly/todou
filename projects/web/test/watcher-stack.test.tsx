@@ -62,6 +62,31 @@ describe("WatcherStack (T-540)", () => {
     expect(view.getByText("+1")).toBeTruthy();
   });
 
+  it("puts a live dot on every avatar instead of a leading pulse when live (T-542)", () => {
+    const view = render(
+      <WatcherStack
+        watchers={[watcher(CLAUDE), watcher(CLAUDE), watcher(BOT)]}
+        live
+      />,
+    );
+    const avatars = view.container.querySelectorAll('[data-slot="avatar"]');
+    expect(avatars).toHaveLength(2);
+    for (const avatar of avatars) {
+      expect(
+        avatar.parentElement?.querySelector(":scope > [data-live-dot]"),
+      ).not.toBeNull();
+    }
+    expect(view.container.querySelector(".watcher-pulse")).toBeNull();
+  });
+
+  it("leads with the pulse and draws no per-avatar dot by default", () => {
+    const view = render(
+      <WatcherStack watchers={[watcher(CLAUDE), watcher(BOT)]} pulse />,
+    );
+    expect(view.container.querySelector(".watcher-pulse")).not.toBeNull();
+    expect(view.container.querySelector("[data-live-dot]")).toBeNull();
+  });
+
   it("drops its own label when hidden inside a labelled control", () => {
     const view = render(<WatcherStack watchers={[watcher(BOT)]} aria-hidden />);
     expect(view.queryByRole("img")).toBeNull();

@@ -9,14 +9,17 @@ import {
 } from "@/components/shared/watcher-stack.tsx";
 import { cn } from "@/lib/utils";
 
-/** A project's project-level watchers as a pulsing stack that opens the session list. */
+/** A project's project-level watchers as a stack that opens the session list. */
 export function ProjectWatchersButton({
   projectName,
   watchers,
+  live = false,
   className,
 }: {
   projectName: string;
   watchers: readonly Watcher[];
+  /** A dot on each avatar instead of the toolbar's leading pulse (T-542). */
+  live?: boolean;
   className?: string;
 }) {
   if (watchers.length === 0) return null;
@@ -27,7 +30,14 @@ export function ProjectWatchersButton({
       label={watchingLabel(groupWatchers(watchers))}
       className={className}
     >
-      <WatcherStack watchers={watchers} pulse aria-hidden />
+      <WatcherStack
+        watchers={watchers}
+        pulse={!live}
+        live={live}
+        // On a card the dot's ring cuts it out of the card, not the page.
+        ringClassName={live ? "ring-card" : undefined}
+        aria-hidden
+      />
     </WatcherPopover>
   );
 }

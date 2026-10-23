@@ -1,8 +1,12 @@
 import type { UserRef, Watcher } from "@todou/shared";
 import type { ReactNode } from "react";
-import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
+import {
+  displayNameOf,
+  LiveDot,
+  UserAvatar,
+} from "@/components/shared/user-chip.tsx";
 
-export { LiveDot } from "@/components/shared/user-chip.tsx";
+export { LiveDot };
 
 import { cn } from "@/lib/utils";
 
@@ -95,6 +99,7 @@ export function WatcherStack({
   watchers,
   size = 20,
   pulse = false,
+  live = false,
   max = 3,
   ringClassName = "ring-background",
   className,
@@ -103,6 +108,12 @@ export function WatcherStack({
   watchers: readonly Watcher[];
   size?: 16 | 20;
   pulse?: boolean;
+  /**
+   * Each avatar carries its own live dot, as on a list row, instead of one
+   * pulse ahead of the stack (T-542). The avatars stop overlapping, because
+   * the next one would cover the dot.
+   */
+  live?: boolean;
   max?: number;
   /** The overlap ring takes the surface's colour; a dark button passes its own. */
   ringClassName?: string;
@@ -128,13 +139,18 @@ export function WatcherStack({
             key={group.user.id}
             className={cn(
               "relative inline-flex",
-              index > 0 && (afterPill ? "ms-1.5" : "-ms-1"),
+              index > 0 && (afterPill || live ? "ms-1.5" : "-ms-1"),
             )}
           >
             <UserAvatar
               user={group.user}
-              className={cn(dims.avatar, dims.text, "ring-2", ringClassName)}
+              className={cn(
+                dims.avatar,
+                dims.text,
+                !live && ["ring-2", ringClassName],
+              )}
             />
+            {live && <LiveDot className={ringClassName} />}
             {sessions > 1 && (
               <span
                 data-session-count=""
