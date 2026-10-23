@@ -1,6 +1,6 @@
 {
   "name": "@todou/server",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "todou backend API server",
   "private": true,
   "license": "BSD-3-Clause",
