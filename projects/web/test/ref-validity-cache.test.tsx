@@ -191,7 +191,7 @@ afterEach(() => {
 
 describe("visible reference session cache", () => {
   it.each(["issue", "full comment", "bare comment"] as const)(
-    "resolves a %s once and preserves its anchor through ten minutes, focus, reconnect and remount",
+    "resolves a %s once and preserves its anchor through ten minutes, focus, reconnect, invalidation and remount",
     async (kind) => {
       const issueRequest = deferred<IssueListPage>();
       const commentRequest = deferred<TimelineComment>();
@@ -254,8 +254,10 @@ describe("visible reference session cache", () => {
         (key) => client.getQueryState(key)?.dataUpdatedAt,
       );
       if (kind === "bare comment") expect(timestamps[1]).toBe(timestamps[2]);
+      // Lookups the card's own events have asked for (T-549).
+      let refreshes = 0;
       const expectRequests = () => {
-        expect(list).toHaveBeenCalledTimes(1);
+        expect(list).toHaveBeenCalledTimes(1 + refreshes);
         expect(getComment).toHaveBeenCalledTimes(
           kind === "full comment" ? 1 : 0,
         );
@@ -286,13 +288,22 @@ describe("visible reference session cache", () => {
       });
       await advance(1);
       expectSameAnchor();
+      // Invalidation is how the change feed reports the card changed: the
+      // issue lookup runs once more, the comment caches stay as they are, and
+      // an unchanged answer leaves the anchor untouched — no fallback flash.
       await act(async () => {
-        await Promise.all(
-          keys.map((queryKey) => client.invalidateQueries({ queryKey })),
-        );
+        for (const queryKey of keys)
+          void client.invalidateQueries({ queryKey });
       });
-      await advance(1);
+      refreshes = 1;
+      await advance(5);
       expectSameAnchor();
+      // Only the issue entry was re-read.
+      const refreshed = keys.map(
+        (key) => client.getQueryState(key)?.dataUpdatedAt,
+      );
+      expect(refreshed[0]).toBeGreaterThan(timestamps[0] ?? Infinity);
+      expect(refreshed.slice(1)).toEqual(timestamps.slice(1));
 
       view.unmount();
       await advance(10 * 60_000);
@@ -302,7 +313,7 @@ describe("visible reference session cache", () => {
       expect(rich(remounted)?.outerHTML).toBe(markup);
       expect(
         keys.map((key) => client.getQueryState(key)?.dataUpdatedAt),
-      ).toEqual(timestamps);
+      ).toEqual(refreshed);
       expectRequests();
       remounted.unmount();
       client.clear();

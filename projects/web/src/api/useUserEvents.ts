@@ -86,16 +86,34 @@ export type IssueListVerdict =
   | { verdict: "fields"; number: number; row: IssueFieldsRow }
   | { verdict: "gone"; number: number };
 
+/**
+ * A change a rich reference can show (T-549). Its cache is keyed by the
+ * address the reference was written with — a slug, an old slug, a numeric
+ * project id — which the event cannot enumerate, so an entry is matched by
+ * the card or status its resolved data holds. An entry that resolved to
+ * nothing holds no card; the event's own address is the only way to find it
+ * when the card comes back from the trash.
+ */
+export type IssueRefChange =
+  | { kind: "issue"; id: number; project: string; number?: number }
+  | { kind: "status"; id: number };
+
 export type InvalidationScope =
   | "refetch"
   | { inboxRows: InboxRowVerdict[] }
   | { issueRows: IssueListVerdict[] }
-  | { metadataRows: MetadataChange[] };
+  | { metadataRows: MetadataChange[] }
+  | { issueRefs: IssueRefChange[] };
 export type Invalidation = { key: QueryKeyLike; scope: InvalidationScope };
 
 const refetch = (key: QueryKeyLike): Invalidation => ({
   key,
   scope: "refetch",
+});
+
+const issueRefs = (change: IssueRefChange): Invalidation => ({
+  key: ["issue-ref"],
+  scope: { issueRefs: [change] },
 });
 
 /** One verdict about one row, on the project's list key. */
@@ -158,6 +176,7 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
         ? [
             refetch(["issues", slug]),
             refetch(insightsKeys.burn(slug)),
+            issueRefs({ kind: "issue", id: event.id, project: slug }),
             refetch(["search-issue-ref"]),
             refetch(["search-comment-ref"]),
             refetch(["search-comment-location"]),
@@ -167,6 +186,14 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
             // so the write path says it instead (T-279).
             issueListInvalidation(slug, event.issue_number, event.list_row),
             refetch(["issue", slug, event.issue_number]),
+            // Every reference to the card, wherever it is rendered. An
+            // `activity` row cannot be skipped: a title edit reports as one.
+            issueRefs({
+              kind: "issue",
+              id: event.id,
+              project: slug,
+              number: event.issue_number,
+            }),
             refetch(["timeline", slug, event.issue_number]),
             // A current-cohort write can change every historical range.
             refetch(insightsKeys.burn(slug)),
@@ -253,6 +280,8 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
     case "status":
       return [
         refetch(["statuses", slug]),
+        // A rename, recolour or category move repaints every chip in it.
+        issueRefs({ kind: "status", id: event.id }),
         refetch(["issues", slug]),
         refetch(insightsKeys.settings(slug)),
         refetch(insightsKeys.burn(slug)),
@@ -679,6 +708,26 @@ export function pageHasUnreadRow(data: unknown, issueNumber: number): boolean {
   });
 }
 
+/** Does a cached rich reference display what this change touched? */
+export function issueRefShows(
+  key: QueryKeyLike,
+  data: unknown,
+  change: IssueRefChange,
+): boolean {
+  if (typeof data !== "object" || data === null) {
+    return (
+      change.kind === "issue" &&
+      data === null &&
+      key[1] === change.project &&
+      key[2] === change.number
+    );
+  }
+  const item = data as { id?: unknown; status?: { id?: unknown } };
+  return change.kind === "issue"
+    ? item.id === change.id
+    : item.status?.id === change.id;
+}
+
 /**
  * `maxRefetch` is the strongest refetch this tab is willing to pay for
  * (T-276): `"none"` on a tab the reader cannot see, which marks the same
@@ -744,6 +793,18 @@ export function applyInvalidation(
       queryKey: key,
       refetchType: maxRefetch,
       predicate: (query) => attention(query.state.data),
+    });
+    return;
+  }
+  if ("issueRefs" in scope) {
+    const changes = scope.issueRefs;
+    queryClient.invalidateQueries({
+      queryKey: key,
+      refetchType: maxRefetch,
+      predicate: (query) =>
+        changes.some((change) =>
+          issueRefShows(query.queryKey, query.state.data, change),
+        ),
     });
     return;
   }
@@ -831,7 +892,9 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
         ? "inboxRows"
         : "issueRows" in scope
           ? "issueRows"
-          : "metadataRows";
+          : "issueRefs" in scope
+            ? "issueRefs"
+            : "metadataRows";
     const mergeId = `${kind}:${idOf(inv.key)}`;
     const into = merged.get(mergeId);
     if (into === undefined) {
@@ -843,7 +906,9 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
             ? { inboxRows: [...scope.inboxRows] }
             : "issueRows" in scope
               ? { issueRows: [...scope.issueRows] }
-              : { metadataRows: [...scope.metadataRows] },
+              : "issueRefs" in scope
+                ? { issueRefs: [...scope.issueRefs] }
+                : { metadataRows: [...scope.metadataRows] },
       });
       out.push(merged.get(mergeId) as Invalidation);
       continue;
@@ -869,6 +934,14 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
       // A burst that moves several keys of one card asks the one question
       // once, for the same reason the two scopes above do.
       target.metadataRows.push(...scope.metadataRows);
+    } else if (
+      "issueRefs" in scope &&
+      typeof target === "object" &&
+      "issueRefs" in target
+    ) {
+      // One pass over the reference cache, so a burst about several cards
+      // lands in the same batched lookup instead of cancelling it.
+      target.issueRefs.push(...scope.issueRefs);
     }
   }
   return out;
@@ -943,6 +1016,8 @@ export function reconnectInvalidations(): QueryKeyLike[] {
     ["projects"],
     ["reference-directory"],
     ["reference-config"],
+    // Any card a rich reference names may have changed during the gap.
+    ["issue-ref"],
     ["search-issue-ref"],
     ["search-comment-ref"],
     ["search-comment-location"],

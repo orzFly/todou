@@ -389,7 +389,7 @@ describe("reference cache isolation", () => {
     stop();
     client.clear();
   });
-  it("retains a prewarmed base ref through ten minutes, invalidation and remount", async () => {
+  it("retains a prewarmed base ref through ten minutes and remount, refreshing only on invalidation", async () => {
     vi.useFakeTimers();
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -400,23 +400,39 @@ describe("reference cache isolation", () => {
       const key = issueRefQuery("todou", 3).queryKey;
       const updatedAt = Date.now() - 59_000;
       client.setQueryData(key, refItem(3, "Prewarmed"), { updatedAt });
-      const refreshed = vi.fn(async () => refItem(3, "Unexpected refresh"));
+      let release: ((item: IssueListItem) => void) | undefined;
+      const refreshed = vi.fn(
+        () =>
+          new Promise<IssueListItem>((resolve) => {
+            release = resolve;
+          }),
+      );
       const observer = new QueryObserver(client, {
         ...issueRefQuery("todou", 3),
         queryFn: refreshed,
       });
       stop = observer.subscribe(() => {});
       await vi.advanceTimersByTimeAsync(10 * 60_000);
-      await client.invalidateQueries({ queryKey: key });
-      expect(observer.getCurrentResult().data?.title).toBe("Prewarmed");
       expect(observer.getCurrentResult().isStale).toBe(false);
-      expect(refreshed).not.toHaveBeenCalled();
       stop();
       await vi.advanceTimersByTimeAsync(10 * 60_000);
       stop = observer.subscribe(() => {});
       expect(observer.getCurrentResult().data?.title).toBe("Prewarmed");
       expect(client.getQueryState(key)?.dataUpdatedAt).toBe(updatedAt);
       expect(refreshed).not.toHaveBeenCalled();
+
+      // The change feed's way in (T-549): one refetch, and the confirmed
+      // data stays on screen until its replacement lands.
+      void client.invalidateQueries({ queryKey: key });
+      expect(refreshed).toHaveBeenCalledTimes(1);
+      expect(observer.getCurrentResult().data?.title).toBe("Prewarmed");
+      release?.(refItem(3, "Refreshed"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(observer.getCurrentResult().data?.title).toBe("Refreshed");
+      stop();
+      stop = observer.subscribe(() => {});
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(refreshed).toHaveBeenCalledTimes(1);
     } finally {
       stop?.();
       client.clear();

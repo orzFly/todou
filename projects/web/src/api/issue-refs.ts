@@ -167,18 +167,18 @@ async function fetchSingleTarget(
   }
 }
 
-// Display references resolve once per client session (T-462). Static data
-// survives invalidation; infinite gcTime also preserves it across page visits.
+// Display references are fresh until the change feed says the card they name
+// changed (T-549): no clock, so no periodic re-resolution (T-462), but an
+// invalidated entry refetches while mounted and on its next mount or focus.
+// IssueLink keeps painting the old data meanwhile, so a refetch never drops
+// the decoration. Infinite gcTime preserves entries across page visits.
 // Live search confirmation uses independent keys in search-refs.ts.
 export const issueRefQuery = (slug: string, number: number) =>
   queryOptions<ResolvedIssueRef | null>({
     queryKey: ["issue-ref", slug, number],
     queryFn: () => fetchIssueRef(slug, number),
-    staleTime: "static",
+    staleTime: Infinity,
     gcTime: Infinity,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
   });
 
 export type ResolvedCommentRef = TimelineComment & {

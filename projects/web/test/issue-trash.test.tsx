@@ -1,6 +1,10 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { DEFAULT_REFERENCE_CONFIG, type IssueListItem } from "@todou/shared";
+import {
+  type ChangeEvent,
+  DEFAULT_REFERENCE_CONFIG,
+  type IssueListItem,
+} from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { api, projectsQuery } from "../src/api/queries.ts";
@@ -8,6 +12,10 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import {
+  applyInvalidation,
+  invalidationsFor,
+} from "../src/api/useUserEvents.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { ICONS, renderEvent } from "../src/components/timeline/event-row.tsx";
 import { NO_ENTITIES } from "../src/components/timeline/use-event-entities.ts";
@@ -97,8 +105,8 @@ function withProjects(client: QueryClient): QueryClient {
 
 /**
  * Initial resolution of a trashed card keeps the authored text and hides its
- * title. Background invalidation preserves the current display; a full page
- * refresh resolves restoration or deletion with a fresh query cache.
+ * title. Other cards' events leave the display alone; the card's own trash
+ * or restore event re-resolves it in place (T-549).
  */
 describe("references to a card in the trash", () => {
   const clients: QueryClient[] = [];
@@ -131,7 +139,24 @@ describe("references to a card in the trash", () => {
     expect(view.container.textContent).not.toContain(SECRET);
   });
 
-  it("resolves a restored card after a page refresh, not background invalidation", async () => {
+  /** Run one change event through the same descriptors the stream uses. */
+  const changeEvent = async (client: QueryClient, event: ChangeEvent) => {
+    await act(async () => {
+      for (const inv of invalidationsFor(event, "todou")) {
+        applyInvalidation(client, inv);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  };
+  const elsewhere: ChangeEvent = {
+    entity: "issue",
+    id: 99,
+    action: "updated",
+    issue_number: 99,
+    list_row: { kind: "activity" },
+  };
+
+  it("resolves a restored card when its restore event arrives (T-549)", async () => {
     const listIssues = vi.spyOn(api, "listIssues").mockResolvedValue({
       items: [],
       next_cursor: null,
@@ -170,12 +195,9 @@ describe("references to a card in the trash", () => {
       items: [item(5, SECRET)],
       next_cursor: null,
     });
-    await act(async () => {
-      await client.invalidateQueries({ queryKey: ["issue-ref", "todou"] });
-    });
-
-    // A restore invalidation neither repeats the lookup nor replaces the
+    // Another card's event neither repeats the lookup nor replaces the
     // paragraph, its authored reference, or the surrounding text nodes.
+    await changeEvent(client, elsewhere);
     expect(listIssues).toHaveBeenCalledTimes(1);
     expect(getIssue).toHaveBeenCalledTimes(1);
     expect(client.getQueryData(refKey)).toBeNull();
@@ -184,22 +206,19 @@ describe("references to a card in the trash", () => {
     originalNodes.forEach((node, index) => {
       expect(paragraph.childNodes[index]).toBe(node);
     });
-    expect(view.container.textContent).toContain("Blocked by #5 for now.");
-    expect(view.container.querySelector("a[data-issue-link='5']")).toBeNull();
     expect(view.container.textContent).not.toContain(SECRET);
 
-    // Reloading the page unmounts the display and starts with an empty ref cache.
-    view.unmount();
-    const refreshedClient = newClient();
-    expect(refreshedClient.getQueryData(refKey)).toBeUndefined();
-    const refreshedView = renderWithProviders(
-      <MarkdownView slug="todou">{STORED}</MarkdownView>,
-      refreshedClient,
-    );
+    // The restore itself: an entry that resolved to nothing holds no card id,
+    // so it is found by the address the event names.
+    await changeEvent(client, {
+      entity: "issue",
+      id: 5,
+      action: "updated",
+      issue_number: 5,
+      list_row: { kind: "fields", status_id: 1 },
+    });
     const link = await waitFor(() => {
-      const el = refreshedView.container.querySelector(
-        "a[data-issue-link='5']",
-      );
+      const el = view.container.querySelector("a[data-issue-link='5']");
       expect(el).not.toBeNull();
       expect(el?.textContent).toContain(SECRET);
       return el as HTMLAnchorElement;
@@ -210,11 +229,11 @@ describe("references to a card in the trash", () => {
       numbers: [5],
       limit: 1,
     });
-    // The refreshed list resolves the restored card without another fallback.
+    // The list resolves the restored card without another fallback.
     expect(getIssue).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a resolved link through deletion and invalidation until a page refresh", async () => {
+  it("withdraws a resolved link when its card goes to the trash (T-549)", async () => {
     const resolved = item(5, SECRET);
     const listIssues = vi.spyOn(api, "listIssues").mockResolvedValue({
       items: [resolved],
@@ -238,17 +257,10 @@ describe("references to a card in the trash", () => {
     const originalNodes = Array.from(link.childNodes);
     expect(link.getAttribute("href")).toBe("/projects/todou/issues/5");
     expect(listIssues).toHaveBeenCalledTimes(1);
-    expect(listIssues).toHaveBeenCalledWith("todou", {
-      numbers: [5],
-      limit: 1,
-    });
     expect(getIssue).not.toHaveBeenCalled();
 
     listIssues.mockResolvedValue({ items: [], next_cursor: null });
-    await act(async () => {
-      await client.invalidateQueries({ queryKey: ["issue-ref", "todou"] });
-    });
-
+    await changeEvent(client, elsewhere);
     expect(listIssues).toHaveBeenCalledTimes(1);
     expect(getIssue).not.toHaveBeenCalled();
     expect(client.getQueryData(refKey)).toEqual(resolved);
@@ -257,33 +269,28 @@ describe("references to a card in the trash", () => {
     originalNodes.forEach((node, index) => {
       expect(link.childNodes[index]).toBe(node);
     });
-    expect(link.getAttribute("href")).toBe("/projects/todou/issues/5");
-    expect(link.textContent).toContain(SECRET);
 
-    view.unmount();
-    const refreshedClient = newClient();
-    expect(refreshedClient.getQueryData(refKey)).toBeUndefined();
-    const refreshedView = renderWithProviders(
-      <MarkdownView slug="todou">{STORED}</MarkdownView>,
-      refreshedClient,
-    );
+    // A trash move says only that the row is gone; the card id is what finds
+    // every reference to it.
+    await changeEvent(client, {
+      entity: "issue",
+      id: resolved.id,
+      action: "deleted",
+      issue_number: 5,
+      list_row: { kind: "gone" },
+    });
     await waitFor(() => {
-      expect(refreshedClient.getQueryData(refKey)).toBeNull();
-      expect(refreshedView.container.textContent).toContain(
-        "Blocked by #5 for now.",
-      );
-      expect(
-        refreshedView.container.querySelector("a[data-issue-link='5']"),
-      ).toBeNull();
-      expect(refreshedView.container.textContent).not.toContain(SECRET);
+      expect(client.getQueryData(refKey)).toBeNull();
+      expect(view.container.textContent).toContain("Blocked by #5 for now.");
+      expect(view.container.querySelector("a[data-issue-link='5']")).toBeNull();
+      expect(view.container.textContent).not.toContain(SECRET);
     });
     expect(listIssues).toHaveBeenCalledTimes(2);
     expect(listIssues).toHaveBeenNthCalledWith(2, "todou", {
       numbers: [5],
       limit: 1,
     });
-    expect(getIssue).toHaveBeenCalledTimes(1);
-    expect(getIssue).toHaveBeenCalledWith("todou", 5);
+    expect(getIssue).toHaveBeenCalledExactlyOnceWith("todou", 5);
   });
 });
 

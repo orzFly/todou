@@ -205,20 +205,25 @@ async function hover(anchor: Element) {
   });
 }
 
+/**
+ * Events that say nothing about the referenced card itself. A reconnect is
+ * not one of them: any card may have changed during the gap, so it re-reads
+ * display references (T-549) and is exercised on its own below.
+ */
 const backgroundEvents = [
   "comment",
   "timeline",
   "issue",
   "member",
   "project",
-  "reconnect",
 ] as const;
 
+/** Card 56 sits beside the referenced 55; fixture ids equal numbers. */
 async function backgroundEvent(
   client: QueryClient,
-  entity: (typeof backgroundEvents)[number],
+  entity: (typeof backgroundEvents)[number] | "reconnect",
   slug = DESTINATION,
-  issueNumber = 55,
+  issueNumber = 56,
 ) {
   await act(async () => {
     const invalidations =
@@ -228,7 +233,12 @@ async function backgroundEvent(
             scope: "refetch" as const,
           }))
         : invalidationsFor(
-            { entity, id: 8, action: "updated", issue_number: issueNumber },
+            {
+              entity,
+              id: entity === "issue" ? issueNumber : 8,
+              action: "updated",
+              issue_number: issueNumber,
+            },
             slug,
           );
     for (const invalidation of invalidations) {
@@ -509,10 +519,10 @@ describe.each([SOURCE, "999"])(
         const issueData = client.getQueryData(issueKey);
         const noteData = client.getQueryData(noteKey);
         readable = false;
-        // Also invalidate the historical keys directly: destination-scoped
-        // SSE events alone cannot prove static behavior for migrated refs.
+        // Also invalidate the historical comment key directly:
+        // destination-scoped SSE events alone cannot prove static behavior
+        // for migrated comment refs.
         await act(async () => {
-          await client.invalidateQueries({ queryKey: issueKey });
           await client.invalidateQueries({ queryKey: noteKey });
         });
 
@@ -548,6 +558,19 @@ describe.each([SOURCE, "999"])(
         expect(getIssue).toHaveBeenCalledTimes(2 + bodyReads);
         expect(getComment).toHaveBeenCalledTimes(kind === "comment" ? 2 : 0);
         expect(locate).not.toHaveBeenCalled();
+
+        // The card's own event re-resolves the historical address, which is
+        // found through the card id it resolved to, and the card is no longer
+        // readable (T-549).
+        await backgroundEvent(client, "issue", DESTINATION, 55);
+        await waitFor(() => {
+          expect(client.getQueryData(issueKey)).toBeNull();
+          expect(
+            view.container.querySelector("a[data-issue-link='55']"),
+          ).toBeNull();
+        });
+        expect(view.container.textContent).not.toContain(OLD_TITLE);
+        expect(getIssue).toHaveBeenLastCalledWith(source, 12);
         unsubscribeBody();
       },
     );
@@ -626,6 +649,19 @@ describe("static located comment references", () => {
         staleUpdatedAt,
       );
     }
+
+    // A reconnect re-reads the parent card (T-549); an unchanged answer
+    // leaves the DOM alone, and the location and comment stay as they were.
+    await backgroundEvent(client, "reconnect");
+    unchanged();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenLastCalledWith(DESTINATION, {
+      numbers: [55],
+      limit: 1,
+    });
+    expect(locate).toHaveBeenCalledExactlyOnceWith(SOURCE, 7);
+    expect(getComment).not.toHaveBeenCalled();
+    expect(client.getQueryData(locationKey)).toBe(locationData);
   });
 });
 

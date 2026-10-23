@@ -49,7 +49,7 @@ const CURRENT_NOTE = "(current)";
 
 /**
  * GitHub-style rich issue reference: status icon, title and muted ref once
- * the complete target is confirmed for this session (in the viewer's preferred order,
+ * the complete target is confirmed (in the viewer's preferred order,
  * T-153). Until then a known address remains an ordinary link; a bare
  * unresolved comment remains text. With `commentId` the link deep-links to
  * that comment's anchor and names the final comment ID with its author.
@@ -57,8 +57,9 @@ const CURRENT_NOTE = "(current)";
  * alone is anchored to its created_at.
  *
  * A reference names a card, not an address: `slug`/`number` are where it was
- * written, which is how the row is found. Resolution follows any moves once;
- * the displayed title and destination then remain a snapshot for this session.
+ * written, which is how the row is found. Resolution follows any moves; the
+ * displayed title, status and destination are re-read only when the change
+ * feed reports the card itself changed (T-549).
  *
  * `asWritten` is the one exception, for a sentence that really is about an
  * address rather than a card: a migration's source and destination, which
@@ -163,7 +164,10 @@ export function IssueLink({
     ref.data !== undefined &&
     ref.data !== null &&
     ref.data.deleted_at == null &&
-    !ref.isError &&
+    // A failed refresh of a confirmed card keeps the confirmed snapshot: a
+    // network blip during a T-549 refetch must not strip the decoration.
+    // Unreadable targets do not reach here as errors — they resolve to null.
+    !ref.isLoadingError &&
     !(ref.data.at === undefined && /^\d+$/.test(toSlug));
   const confirmedComment =
     commentId === undefined ||

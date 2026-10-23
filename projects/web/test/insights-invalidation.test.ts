@@ -21,6 +21,10 @@ describe("insights event invalidation", () => {
     expect(invalidationsFor(event, slug)).toEqual([
       { key: ["issues", slug], scope: "refetch" },
       burn,
+      {
+        key: ["issue-ref"],
+        scope: { issueRefs: [{ kind: "issue", id: 1, project: slug }] },
+      },
       { key: ["search-issue-ref"], scope: "refetch" },
       { key: ["search-comment-ref"], scope: "refetch" },
       { key: ["search-comment-location"], scope: "refetch" },
@@ -41,6 +45,12 @@ describe("insights event invalidation", () => {
         scope: { issueRows: [{ verdict: "gone", number: 4 }] },
       },
       { key: ["issue", slug, 4], scope: "refetch" },
+      {
+        key: ["issue-ref"],
+        scope: {
+          issueRefs: [{ kind: "issue", id: 1, project: slug, number: 4 }],
+        },
+      },
       { key: ["timeline", slug, 4], scope: "refetch" },
       burn,
       { key: ["search-issue-ref"], scope: "refetch" },
@@ -59,6 +69,12 @@ describe("insights event invalidation", () => {
       ).toEqual([
         { key: ["issues", slug], scope: "refetch" },
         { key: ["issue", slug, 4], scope: "refetch" },
+        {
+          key: ["issue-ref"],
+          scope: {
+            issueRefs: [{ kind: "issue", id: 1, project: slug, number: 4 }],
+          },
+        },
         { key: ["timeline", slug, 4], scope: "refetch" },
         burn,
         { key: ["search-issue-ref", slug, 4], scope: "refetch" },
@@ -73,6 +89,7 @@ describe("insights event invalidation", () => {
   it("refreshes definitions, effective settings, and all burn ranges on status changes", () => {
     expect(invalidationsFor({ ...event, entity: "status" }, slug)).toEqual([
       { key: ["statuses", slug], scope: "refetch" },
+      { key: ["issue-ref"], scope: { issueRefs: [{ kind: "status", id: 1 }] } },
       { key: ["issues", slug], scope: "refetch" },
       settings,
       burn,

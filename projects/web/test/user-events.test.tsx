@@ -130,6 +130,12 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     ).toEqual([
       { key: ["issues", "todou"], scope: "refetch" },
       { key: ["issue", "todou", 42], scope: "refetch" },
+      {
+        key: ["issue-ref"],
+        scope: {
+          issueRefs: [{ kind: "issue", id: 1, project: "todou", number: 42 }],
+        },
+      },
       { key: ["timeline", "todou", 42], scope: "refetch" },
       { key: ["insights-burn", "todou"], scope: "refetch" },
       { key: ["search-issue-ref", "todou", 42], scope: "refetch" },
@@ -188,9 +194,12 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     expect(keys).toContainEqual(["search-comment-location"]);
     expect(keys).not.toContainEqual(["search-issue-ref", "old-slug", 42]);
     const prefixes = keys.map((key) => key[0]);
-    for (const prefix of ["issue-ref", "comment-ref", "comment-location"]) {
+    for (const prefix of ["comment-ref", "comment-location"]) {
       expect(prefixes).not.toContain(prefix);
     }
+    // Display references are matched by the card they resolved to, which
+    // reaches every historical address at once (T-549).
+    expect(keys).toContainEqual(["issue-ref"]);
   });
 
   it.each([
@@ -299,6 +308,7 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       invalidationsFor({ entity: "status", id: 1, action: "updated" }, "p"),
     ).toEqual([
       { key: ["statuses", "p"], scope: "refetch" },
+      { key: ["issue-ref"], scope: { issueRefs: [{ kind: "status", id: 1 }] } },
       { key: ["issues", "p"], scope: "refetch" },
       { key: ["insights-settings", "p"], scope: "refetch" },
       { key: ["insights-burn", "p"], scope: "refetch" },
@@ -337,14 +347,36 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
   ] as const)(
     "invalidates search references without targeting static display prefixes for %s (issue %s)",
     (entity, issue_number) => {
-      const prefixes = invalidationsFor(
+      const invalidations = invalidationsFor(
         { entity, id: 1, action: "updated", issue_number },
         "todou",
-      ).map(({ key }) => key[0]);
+      );
+      const prefixes = invalidations.map(({ key }) => key[0]);
 
-      for (const prefix of ["issue-ref", "comment-ref", "comment-location"]) {
+      for (const prefix of ["comment-ref", "comment-location"]) {
         expect(prefixes).not.toContain(prefix);
       }
+      // Only an event about the card itself reaches its display references,
+      // and only through the targeted scope, never a broad refetch (T-549).
+      expect(invalidations.filter(({ key }) => key[0] === "issue-ref")).toEqual(
+        entity === "issue"
+          ? [
+              {
+                key: ["issue-ref"],
+                scope: {
+                  issueRefs: [
+                    {
+                      kind: "issue",
+                      id: 1,
+                      project: "todou",
+                      number: issue_number,
+                    },
+                  ],
+                },
+              },
+            ]
+          : [],
+      );
       expect(prefixes).toContain("search-comment-ref");
       expect(prefixes).toContain("search-comment-location");
       if (entity === "issue" || entity === "member" || entity === "project") {
@@ -403,9 +435,11 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     expect(keys).toContainEqual(["search-comment-ref"]);
     expect(keys).toContainEqual(["search-comment-location"]);
     const prefixes = keys.map((key) => key[0]);
-    for (const prefix of ["issue-ref", "comment-ref", "comment-location"]) {
+    for (const prefix of ["comment-ref", "comment-location"]) {
       expect(prefixes).not.toContain(prefix);
     }
+    // Any card a rich reference names may have changed during the gap (T-549).
+    expect(keys).toContainEqual(["issue-ref"]);
     expect(keys).toContainEqual(["activity-project"]);
     expect(keys).toContainEqual(["activity-user"]);
     // A preference toggled elsewhere during the outage has no other way in:
@@ -1425,6 +1459,7 @@ describe("useUserEvents", () => {
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
     expect(spy.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
       ["statuses", "todou"],
+      ["issue-ref"],
       ["issues", "todou"],
       ["insights-settings", "todou"],
       ["insights-burn", "todou"],
@@ -1574,7 +1609,7 @@ describe("useUserEvents", () => {
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] }),
     );
-    expect(spy).toHaveBeenCalledTimes(26);
+    expect(spy).toHaveBeenCalledTimes(27);
     expect(spy.mock.calls.map((call) => call[0]?.queryKey)).toEqual(
       reconnectInvalidations(),
     );
