@@ -1,0 +1,8 @@
+todou v0.6.3
+
+The web now shows which agents are watching a project or a card, live,
+and --invisible keeps a watch off that list. Reference chips wrap their
+titles with the surrounding text.
+
+No migration, no configuration change; either CLI pairs with either
+server, and only an upgraded CLI appears as a watcher.
