@@ -9,3 +9,7 @@ globalThis.fetch = offlineFetch;
 beforeEach(() => {
   globalThis.fetch = offlineFetch;
 });
+
+// happy-dom has no Web Animations; the image viewer's height tween (T-551)
+// cancels its running ones on every height change.
+Element.prototype.getAnimations ??= () => [];

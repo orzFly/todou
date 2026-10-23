@@ -2,7 +2,8 @@
 /**
  * Real-input regression for the attachment viewer's image zoom (T-535), its
  * fit / 100% / background / scaling menu (T-537), and the dialog growing
- * with the zoom up to its cap (T-548).
+ * with the zoom up to its cap (T-548), tweened, and paging tweened too
+ * (T-551).
  * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
@@ -192,7 +193,8 @@ const FAULTS = {
   "zoom-buttons-shown": `addEventListener("DOMContentLoaded", () => document.head.append(Object.assign(document.createElement("style"), { textContent: '[aria-label="zoom out"], [aria-label="zoom in"] { display: inline-flex !important; }' })));`,
 };
 
-async function openViewer(context, fixture, viewport, fault, name) {
+async function openViewer(context, fixture, screen, fault, name) {
+  const { reducedMotion, ...viewport } = screen;
   const equals = fixture.cookie.indexOf("=");
   const page = await context.newPage({
     viewport,
@@ -208,6 +210,14 @@ async function openViewer(context, fixture, viewport, fault, name) {
       enabled: true,
       maxTouchPoints: 5,
     });
+  await page.send("Emulation.setEmulatedMedia", {
+    features: [
+      {
+        name: "prefers-reduced-motion",
+        value: reducedMotion ? "reduce" : "no-preference",
+      },
+    ],
+  });
   await page.navigate(fixture.issueUrl);
   try {
     await waitForViewer(page, name ?? fixture.names[0]);
@@ -241,12 +251,124 @@ async function waitForViewer(page, name) {
   throw new Error("viewer never showed a measured image");
 }
 
+async function settle(page) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const running = await evaluate(
+      page,
+      () =>
+        document.querySelector("[data-testid=image-canvas]")?.getAnimations()
+          .length ?? 0,
+    );
+    if (running === 0) return;
+    await sleep(50);
+  }
+  throw new Error("the canvas's height animation never finished");
+}
+
+/**
+ * Record the dialog's height on every frame it changes (T-551), and where
+ * the image's middle sits on screen. Sampled in a ResizeObserver created
+ * after the canvas's own, so each sample sees what that frame paints: the
+ * canvas has already reframed the view by then, or it never will this frame.
+ */
+async function startSampling(page) {
+  await evaluate(page, async () => {
+    const dialog = document.querySelector("[role=dialog]");
+    const samples = [];
+    const ro = new ResizeObserver(() => {
+      const img = dialog.querySelector("[data-testid=image-canvas] img");
+      const r = img?.getBoundingClientRect();
+      samples.push({
+        h: dialog.getBoundingClientRect().height,
+        canvas: img?.parentElement.getBoundingClientRect().height ?? null,
+        imageMid: r ? r.y + r.height / 2 : null,
+        t: Math.round(performance.now()),
+      });
+    });
+    ro.observe(dialog);
+    const canvas = dialog.querySelector("[data-testid=image-canvas]");
+    if (canvas) ro.observe(canvas);
+    // Every frame, changed or not: a red with few samples says whether the
+    // browser was painting slowly or the dialog did not move.
+    const frames = [];
+    const tick = (t) => {
+      frames.push(Math.round(t));
+      if (window.__tween?.ro === ro) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    window.__tween = { ro, samples, frames };
+    // Past the observation's first report, so the action starts after it.
+    await new Promise((done) =>
+      requestAnimationFrame(() => requestAnimationFrame(done)),
+    );
+  });
+}
+
+async function stopSampling(page) {
+  // Paging: the next image has to load before its height can move.
+  const deadline = Date.now() + 10_000;
+  while (
+    !(await evaluate(page, () => {
+      const canvas = document.querySelector("[data-testid=image-canvas]");
+      return canvas?.dataset.zoom !== undefined;
+    }))
+  ) {
+    if (Date.now() > deadline) throw new Error("next image never measured");
+    await sleep(50);
+  }
+  await settle(page);
+  // A frame for the last step to be reported.
+  await sleep(100);
+  return evaluate(page, () => {
+    const { ro, samples, frames } = window.__tween;
+    ro.disconnect();
+    window.__tween = null;
+    const gaps = frames.slice(1).map((t, i) => t - frames[i]);
+    return { samples, frameGaps: gaps };
+  });
+}
+
+/**
+ * The dialog's heights (or the canvas's) from `from` to `to`, tweened: frames between,
+ * every one moving the same way. Reduced motion: nothing in between.
+ */
+function tweenVerdict({ samples, frameGaps }, from, to, reduced, of = "h") {
+  const hs = samples.map((s) => s[of]);
+  const between = hs.filter(
+    (h) => Math.min(from, to) + 1 < h && h < Math.max(from, to) - 1,
+  );
+  const sign = Math.sign(to - from);
+  const monotonic = hs.every((h, i) => i === 0 || (h - hs[i - 1]) * sign >= 0);
+  const lands = hs.length > 0 && near(hs.at(-1), to, 0.5);
+  const ok =
+    Math.abs(to - from) > 50 &&
+    lands &&
+    // Two, not a duration's worth of frames: here a frame in which the dialog
+    // resizes takes headless Chromium 50–100ms, most of it outside script.
+    (reduced ? between.length === 0 : between.length >= 2 && monotonic);
+  return {
+    ok,
+    detail: {
+      from,
+      to,
+      between: between.length,
+      monotonic,
+      heights: hs.map((h) => Math.round(h)),
+      ms: samples.map((s) => s.t - samples[0].t),
+      frameGaps,
+    },
+  };
+}
+
 function input(page) {
   const mouse = (type, x, y, extra = {}) =>
     page.send("Input.dispatchMouseEvent", { type, x, y, ...extra });
   return {
+    // Read once the canvas's height tween (T-551) has landed.
     state: async () => {
       await sleep(120);
+      await settle(page);
       return evaluate(page, readState);
     },
     wheel: async (x, y, deltaY, times, modifiers = 0) => {
@@ -315,6 +437,8 @@ function input(page) {
           clickCount: 1,
         });
       };
+      // A tweening dialog carries the trigger away from where it was read.
+      await settle(page);
       const trigger = await centre(
         '[role=dialog] button[aria-label="zoom and display options"]',
         null,
@@ -634,7 +758,7 @@ async function desktopCases(page, fixture) {
  * T-548, on the wide image: zooming in grows the canvas, and the dialog with
  * it, to the image's own height until the 75vh cap, and only then pans.
  */
-async function growCases(page) {
+async function growCases(page, { reduced = false } = {}) {
   const io = input(page);
   const out = [];
   const check = (name, ok, detail) =>
@@ -718,11 +842,15 @@ async function growCases(page) {
 
   await io.wheel(px, py, -100, 3);
   const { s: s4 } = await sample();
+  await startSampling(page);
   await io.press("maximize");
   await sleep(300);
-  const s5 = await io.state();
+  const maximizing = await stopSampling(page);
+  const { s: s5 } = await sample();
+  await startSampling(page);
   await io.press("restore size");
   await sleep(300);
+  const restoring = await stopSampling(page);
   const { s: s6, d: d6 } = await sample();
   check(
     "restore-keeps-grown-height",
@@ -732,13 +860,41 @@ async function growCases(page) {
       near(s6.rect.h, s4.rect.h, 1),
     { zoomed: s4.rect.h, maximized: s5.rect.h, restored: s6.rect.h },
   );
+  // Maximize and restore have never animated, and the tween keeps out of them.
+  const toMax = tweenVerdict(maximizing, s4.rect.h, s5.rect.h, true, "canvas");
+  const toRestored = tweenVerdict(
+    restoring,
+    s5.rect.h,
+    s6.rect.h,
+    true,
+    "canvas",
+  );
+  check("maximize-and-restore-land-at-once", toMax.ok && toRestored.ok, {
+    maximize: toMax.detail,
+    restore: toRestored.detail,
+  });
 
   // Every image starts at its own fit, so paging away and back drops the growth.
+  // The dialog tweens from one image's height to the next's (T-551): here
+  // the wide image's grown height down to the icon's 96px, and back up.
+  await startSampling(page);
   await io.key("ArrowLeft", "ArrowLeft", 37);
-  await sleep(500);
+  const pagedOut = await stopSampling(page);
+  const { s: sIcon, d: dIcon } = await sample();
+  await startSampling(page);
   await io.key("ArrowRight", "ArrowRight", 39);
-  await sleep(500);
+  const pagedBack = await stopSampling(page);
   const { s: s7, d: d7 } = await sample();
+  const out1 = tweenVerdict(pagedOut, d6.h, dIcon.h, reduced);
+  const back1 = tweenVerdict(pagedBack, dIcon.h, d7.h, reduced);
+  check(
+    reduced ? "paging-lands-at-once" : "paging-tweens-height",
+    out1.ok &&
+      back1.ok &&
+      sIcon.natural.w === 48 &&
+      near(sIcon.rect.h, 96, 0.5),
+    { out: out1.detail, back: back1.detail },
+  );
   check(
     "paging-back-resets-height",
     s7.natural.h === 400 &&
@@ -777,8 +933,34 @@ async function growCases(page) {
     clicks,
   );
 
+  const { d: dHeld } = await sample();
+  const heldMid = await evaluate(page, () => {
+    const r = document
+      .querySelector("[data-testid=image-canvas] img")
+      .getBoundingClientRect();
+    return r.y + r.height / 2;
+  });
+  await startSampling(page);
   await io.move(px, s7.rect.y + s7.rect.h / 2);
+  const grew = await stopSampling(page);
   const { s: s8, d: d8 } = await sample();
+  const grown = tweenVerdict(grew, dHeld.h, d8.h, reduced);
+  check(
+    reduced ? "pointer-leave-grows-at-once" : "pointer-leave-tweens-height",
+    grown.ok,
+    grown.detail,
+  );
+  // Zoomed about the canvas centre and growing about it too, so the image
+  // must not move on any frame; a frame painted with the view of the old
+  // height would put its middle half the growth off.
+  const drift = grew.samples.map(
+    (x) => Math.round((x.imageMid - heldMid) * 10) / 10,
+  );
+  check(
+    "image-still-while-growing",
+    grew.samples.length > 0 && drift.every((d) => Math.abs(d) <= 1),
+    { drift },
+  );
   check(
     "grows-when-pointer-leaves-controls",
     near(s8.view.z, clicks.at(-1).z, 1e-6) &&
@@ -950,7 +1132,23 @@ async function main() {
     ]) {
       await runOne(name, DESKTOP, desktopCases, fault, requiredRed);
     }
-    await runOne("desktop-grow", DESKTOP, growCases, null, [], "wide.png");
+    await runOne(
+      "desktop-grow",
+      DESKTOP,
+      (p) => growCases(p),
+      null,
+      [],
+      "wide.png",
+    );
+    // T-551: the same growth with prefers-reduced-motion, which lands at once.
+    await runOne(
+      "desktop-grow-reduced-motion",
+      { ...DESKTOP, reducedMotion: true },
+      (p) => growCases(p, { reduced: true }),
+      null,
+      [],
+      "wide.png",
+    );
     for (const [name, fault, requiredRed] of [
       ["phone", null, []],
       [

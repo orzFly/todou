@@ -8,7 +8,7 @@ import {
   MaximizeIcon,
   MinimizeIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { attachmentTextQuery } from "@/api/attachments.ts";
 import { ImageCanvas } from "@/components/issue/image-canvas.tsx";
 import { DocumentView } from "@/components/shared/document-card.tsx";
@@ -117,9 +117,15 @@ export function AttachmentViewerDialog({
   // (the form the reviewer picked on T-58); the dialog stays a modal.
   const [maximized, setMaximized] = useState(false);
   const [toolbar, setToolbar] = useState<HTMLElement | null>(null);
+  const imageHeight = useRef<number | null>(null);
 
   const target = state?.items[state.index];
   const kind = target === undefined ? null : previewKind(target);
+  // Paging between images tweens from one's height to the next; from
+  // anything else, including a closed viewer, the image lands at once.
+  useEffect(() => {
+    if (kind !== "image") imageHeight.current = null;
+  }, [kind]);
   const count = state?.items.length ?? 0;
 
   const step = (delta: number) => {
@@ -202,6 +208,7 @@ export function AttachmentViewerDialog({
                   alt={target.filename}
                   maximized={maximized}
                   toolbar={toolbar}
+                  lastHeight={imageHeight}
                 />
               ) : kind === "html" ? (
                 // Never add allow-same-origin: attachments share the API's

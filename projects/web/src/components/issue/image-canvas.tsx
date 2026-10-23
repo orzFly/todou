@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -53,24 +53,29 @@ const CHECKER =
 /** Movement under this is still a click/tap, not a drag. */
 const TAP_SLOP = 4;
 const STEP = 1.25;
+/** The restored canvas's height changes (T-551). */
+const TWEEN = { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" };
 
 /**
  * The attachment viewer's image (T-535): wheel or pinch zooms about the
  * pointer, drag pans, a click toggles fit ↔ actual pixels, and − 100%▾ +
  * sit in the viewer's title bar, the readout opening fit, 100% and the
  * background and scaling choices (T-537). Mount it keyed by the image URL
- * so paging starts every image at fit.
+ * so paging starts every image at fit; `lastHeight` carries the canvas
+ * height across that remount, so the next image tweens from it.
  */
 export function ImageCanvas({
   src,
   alt,
   maximized,
   toolbar,
+  lastHeight,
 }: {
   src: string;
   alt: string;
   maximized: boolean;
   toolbar: HTMLElement | null;
+  lastHeight: { current: number | null };
 }) {
   const look = useImageLook();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -79,6 +84,9 @@ export function ImageCanvas({
   const [view, setView] = useState<View | null>(null);
   const [dragging, setDragging] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Kept until this image is measured, rather than collapsing to min-h-24
+  // while it loads and tweening up from there.
+  const [startHeight] = useState(() => lastHeight.current);
 
   // Every handler reads and writes the geometry here, never the rendered
   // state: one touch frame delivers a pointermove per finger before React
@@ -101,36 +109,17 @@ export function ImageCanvas({
   const heldRef = useRef<number | null>(null);
   const [heldZ, setHeldZ] = useState<number | null>(null);
 
-  const apply = useCallback(
-    (next: View) => {
-      const { frame: f } = live.current;
-      const el = canvasRef.current;
-      if (f === null) return;
-      if (!maximized && el !== null) {
-        // Resized here rather than left to the ResizeObserver, which would
-        // place this view against the old height for a frame first.
-        // clientHeight applies the min/max caps.
-        el.style.height = `${canvasHeight(f, heldRef.current ?? next.z)}px`;
-        const grown = { ...f, height: el.clientHeight };
-        if (grown.height !== f.height) {
-          place(grown, reframe(f, grown, next));
-          return;
-        }
-      }
-      live.current.view = next;
-      setView(next);
-    },
-    [maximized, place],
-  );
+  // The height this view asks for is rendered, and the ResizeObserver
+  // reframes the view against every step of the canvas getting there.
+  const apply = useCallback((next: View) => {
+    if (live.current.frame === null) return;
+    live.current.view = next;
+    setView(next);
+  }, []);
 
   const hold = (z: number | null) => {
     heldRef.current = z;
     setHeldZ(z);
-  };
-  const release = () => {
-    hold(null);
-    const { view: v } = live.current;
-    if (v !== null) apply(v);
   };
 
   useLayoutEffect(() => {
@@ -145,16 +134,20 @@ export function ImageCanvas({
         upscale: maximized,
       };
       const { frame: prev, view: v } = live.current;
+      lastHeight.current = maximized ? null : next.height;
       place(
         next,
         prev === null || v === null ? fitView(next) : reframe(prev, next, v),
       );
     };
     measure();
-    const ro = new ResizeObserver(measure);
+    // Committed before the frame paints: otherwise each frame of a tween
+    // would show the canvas at its new height with the view placed for the
+    // old one, and the image would shake (T-551).
+    const ro = new ResizeObserver(() => flushSync(measure));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [natural, maximized, place]);
+  }, [natural, maximized, place, lastHeight]);
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -300,8 +293,36 @@ export function ImageCanvas({
 
   const ready = frame !== null && view !== null;
   const fitted = !ready || isFitted(frame, view);
-  const height =
-    maximized || !ready ? undefined : canvasHeight(frame, heldZ ?? view.z);
+  const height = maximized
+    ? undefined
+    : ready
+      ? canvasHeight(frame, heldZ ?? view.z)
+      : (startHeight ?? undefined);
+
+  // From the last measured height, which mid-tween is the one on screen.
+  // Only between two restored heights at one width: maximize, restore and
+  // the first load land at once, and a resized window should not trail.
+  const tweened = useRef<{ height: number; width: number | null } | null>(null);
+  useLayoutEffect(() => {
+    const el = canvasRef.current;
+    const prev = tweened.current;
+    const from = live.current.frame;
+    tweened.current =
+      height === undefined ? null : { height, width: from?.width ?? null };
+    if (el === null) return;
+    for (const a of el.getAnimations()) a.cancel();
+    if (from === null || prev === null || height === undefined) return;
+    if (prev.width !== null && prev.width !== from.width) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // The capped height, not the requested one: a tween to a height past
+    // max-h-[75vh] would stop dead at the cap partway through its curve.
+    const to = el.clientHeight;
+    if (to !== from.height)
+      el.animate(
+        [{ height: `${from.height}px` }, { height: `${to}px` }],
+        TWEEN,
+      );
+  }, [height]);
 
   // − and + give way to pinch on a phone, where the title bar has no room
   // for them beside the filename.
@@ -319,7 +340,7 @@ export function ImageCanvas({
           hold(live.current.view?.z ?? null);
       }}
       onPointerLeave={() => {
-        if (heldRef.current !== null) release();
+        if (heldRef.current !== null) hold(null);
       }}
     >
       <Button
@@ -464,7 +485,10 @@ export function ImageCanvas({
           src={src}
           alt={alt}
           draggable={false}
-          onError={() => setFailed(true)}
+          onError={() => {
+            lastHeight.current = null;
+            setFailed(true);
+          }}
           onLoad={(e) =>
             setNatural({
               w: e.currentTarget.naturalWidth,
