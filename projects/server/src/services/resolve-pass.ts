@@ -121,6 +121,11 @@ type Candidate = {
    * which is how an existing link keeps the words the author chose.
    */
   asTyped: string | null;
+  /**
+   * Already in the stored form: resolved only for the event it owes, and never
+   * spliced back into the text.
+   */
+  anchored?: true;
   target: CandidateTarget;
 };
 
@@ -176,10 +181,30 @@ function candidateOfLink(link: MarkdownLink): Candidate | null {
   const target = link.target;
   if (target === null) return null;
   // Already anchored on an id, which is the form this pass produces. Leaving
-  // it alone is what makes a second pass over stored text a no-op — and what
-  // keeps a later move from being written into the text again. A user link
-  // is no different: `/users/12` stays, `/users/alice` is re-anchored.
-  if (target.kind !== "user" && target.project.kind === "id") return null;
+  // its text alone is what makes a second pass over stored text a no-op — and
+  // what keeps a later move from being written into the text again. A user
+  // link is no different: `/users/12` stays, `/users/alice` is re-anchored.
+  //
+  // A card link still owes its target an event (T-554). Every read hands
+  // this form back, so it is what an author copying a reference out of one
+  // card into another submits; skipping it whole recorded nothing for them.
+  if (target.kind !== "user" && target.project.kind === "id") {
+    if (target.kind !== "issue") return null;
+    return {
+      start: link.start,
+      end: link.end,
+      asTyped: null,
+      anchored: true,
+      target: {
+        kind: "issue",
+        project: { kind: "id", id: target.project.id },
+        number: target.number,
+        ...(target.commentId === undefined
+          ? {}
+          : { commentId: target.commentId }),
+      },
+    };
+  }
   const base = link.bare
     ? { start: link.start, end: link.end, asTyped: link.href }
     : { start: link.hrefStart, end: link.hrefEnd, asTyped: null };
@@ -285,14 +310,15 @@ export async function resolveText(
       unresolved.push(text.slice(candidate.start, candidate.end));
       continue;
     }
-    edits.push({
-      start: candidate.start,
-      end: candidate.end,
-      text:
-        candidate.asTyped === null
-          ? hrefFor(resolved.target)
-          : linkFor(resolved.target, candidate.asTyped),
-    });
+    if (candidate.anchored === undefined)
+      edits.push({
+        start: candidate.start,
+        end: candidate.end,
+        text:
+          candidate.asTyped === null
+            ? hrefFor(resolved.target)
+            : linkFor(resolved.target, candidate.asTyped),
+      });
     const card = resolved.card;
     if (card !== null) cards.set(`${card.projectId}/${card.number}`, card);
   }
