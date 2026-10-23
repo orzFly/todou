@@ -92,5 +92,10 @@ export default defineConfig({
     // tests (otherwise renders leak across cases).
     globals: true,
     setupFiles: ["./test/setup.ts"],
+    // Node 25+ defines its own `localStorage` on globalThis, undefined without
+    // --localstorage-file. vitest copies a happy-dom global over Node's only
+    // for names on its own list, which `localStorage` is not on, so without
+    // this flag every test touching storage reads `undefined`.
+    execArgv: ["--no-experimental-webstorage"],
   },
 });

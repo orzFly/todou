@@ -5,9 +5,9 @@
     devshell.url = "github:numtide/devshell";
     devshell.inputs.nixpkgs.follows = "nixpkgs";
     fix-hash = {
-      # v0.4.0. Pinned by commit rather than tag; record the new tag next to the
+      # v0.5.3. Pinned by commit rather than tag; record the new tag next to the
       # commit here when bumping.
-      url = "github:spotdemo4/nix-fix-hash/305bcbfb565d4aa016f7aef078a1222bdd6d919d";
+      url = "github:spotdemo4/nix-fix-hash/204564e762a798847a35c13b0bf9fa78a8e715cd";
       # `follows` costs a local build on first entry — the binary cache has no
       # result for this combination — and buys a lock file with one nixpkgs in
       # it, which is the whole reason the two flakes are split.

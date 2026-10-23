@@ -57,7 +57,7 @@ pnpm workspace, packages under `projects/*`:
 
 ## Toolchain
 
-- Node 24 — runs TypeScript directly via native type stripping; the codebase
+- Node 26 — runs TypeScript directly via native type stripping; the codebase
   uses erasable syntax only (`erasableSyntaxOnly` is enforced by tsconfig).
 - **No build step for the server and CLI**: they execute `.ts` sources
   directly. The web app runs under Vite in development and is built to static

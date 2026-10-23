@@ -44,13 +44,18 @@
     "DENO_SERVE_ADDRESS"
     # Only meaningful when serving HTTP.
     "DENO_TRUST_PROXY_HEADERS"
+    "DENO_SERVE_AUTOMATIC_COMPRESSION"
     # Deno KV is unused here, so clearing costs nothing.
     "DENO_KV_DB_MODE"
     "DENO_KV_DEFAULT_PATH"
     "DENO_KV_PATH_PREFIX"
+    "DENO_KV_REQUIRES_DISTRIBUTED_DATABASE"
     # The wrapper passes --allow-all, so permission prompts never appear.
     "DENO_NO_PROMPT"
     "DENO_TRACE_PERMISSIONS"
+    # Names an executable for `deno check` to run, a path the wrapper never
+    # reaches; clearing it keeps a stray value from ever choosing a binary.
+    "DENO_TSC_BIN"
     # The bundle has no npm resolution left to do; a bad registry could only
     # cause confusion.
     "NPM_CONFIG_REGISTRY"

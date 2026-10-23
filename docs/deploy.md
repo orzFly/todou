@@ -23,7 +23,7 @@ absolutised at load, so it may be given relative or absolute.
 
 ## Prerequisites
 
-Node 24 (the server runs `.ts` sources natively) and pnpm. On a Debian host,
+Node 26 (the server runs `.ts` sources natively) and pnpm. On a Debian host,
 `libpam-systemd`, `dbus`, and `git`; the first two are what make
 `systemctl --user` and lingering work at all.
 
@@ -37,7 +37,7 @@ Then, as that user, install the toolchain — e.g. with mise:
 
 ```bash
 curl https://mise.run | sh
-mise use -g node@24 pnpm@11
+mise use -g node@26 pnpm@11
 ```
 
 ## Install

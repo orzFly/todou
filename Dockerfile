@@ -1,6 +1,6 @@
 # Build stages match the runtime's Debian release (trixie = debian13) so the
 # glibc the native modules link against is the one distroless ships.
-FROM node:24-trixie-slim AS web-build
+FROM node:26-trixie-slim AS web-build
 RUN npm install -g pnpm@11
 WORKDIR /app
 COPY . .
@@ -13,7 +13,7 @@ RUN pnpm install --frozen-lockfile --filter '@todou/web...'
 ARG TODOU_BUILD_VERSION=""
 RUN pnpm --filter @todou/web build
 
-FROM node:24-trixie-slim AS server-deps
+FROM node:26-trixie-slim AS server-deps
 RUN npm install -g pnpm@11
 WORKDIR /app
 COPY . .
@@ -33,11 +33,11 @@ RUN mkdir -p /data && chown 65532:65532 /data
 # build the whole set — the artifacts a deployment serves have nothing to do
 # with the platform it runs on, and a deployment that could only serve its own
 # platform would be useless to everyone else's laptop.
-FROM node:24-trixie-slim AS cli-build
+FROM node:26-trixie-slim AS cli-build
 RUN npm install -g pnpm@11
 # deno publishes a multi-arch bin image, so this resolves to the builder's own
 # platform; the four compile targets are cross-built from there.
-COPY --from=docker.io/denoland/deno:bin-2.8.3 /deno /usr/local/bin/deno
+COPY --from=docker.io/denoland/deno:bin-2.9.8 /deno /usr/local/bin/deno
 RUN apt-get update \
  && apt-get install -y --no-install-recommends zstd ca-certificates \
  && rm -rf /var/lib/apt/lists/*
@@ -55,7 +55,7 @@ ARG TODOU_BUILD_VERSION=""
 RUN scripts/build-cli.sh --stage-mode copy \
  && scripts/pack-cli.sh dist /cli-dist
 
-FROM gcr.io/distroless/nodejs24-debian13:nonroot
+FROM gcr.io/distroless/nodejs26-debian13:nonroot
 COPY --from=server-deps --chown=65532:65532 /data /data
 COPY --from=server-deps /app /app
 COPY --from=web-build /app/projects/web/dist /app/projects/web/dist
