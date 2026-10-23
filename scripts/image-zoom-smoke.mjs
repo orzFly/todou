@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Real-input regression for the attachment viewer's image zoom (T-535) and
- * its fit / 100% / background / scaling menu (T-537).
+ * Real-input regression for the attachment viewer's image zoom (T-535), its
+ * fit / 100% / background / scaling menu (T-537), and the dialog growing
+ * with the zoom up to its cap (T-548).
  * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
@@ -20,7 +21,7 @@ const HELP = `image-zoom-smoke — wheel, drag, click, pinch and the title-bar z
 
 Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
 
-Seeds an issue with a large and a 48px image, opens the attachment viewer and
+Seeds an issue with a tall, a wide and a 48px image, opens the attachment viewer and
 drives it with CDP input (mouse wheel, ctrl+wheel, press/move/release, touch),
 never with synthetic DOM events: the canvas's wheel listener must be
 non-passive, and only trusted input tells whether it is.
@@ -107,6 +108,11 @@ async function seed(stack) {
         ((x >> 3) + (y >> 3)) % 2 ? [139, 92, 246] : [251, 191, 36],
       ),
     ],
+    // Short at fit, so zooming in has height to grow into (T-548).
+    [
+      "wide.png",
+      png(1600, 400, (x, y) => [(x * 3) & 255, (y * 5) & 255, (x + y) & 255]),
+    ],
     // Paged to last: an image that never loads has nothing to zoom.
     ["broken.png", Buffer.from("not a png")],
   ];
@@ -186,7 +192,7 @@ const FAULTS = {
   "zoom-buttons-shown": `addEventListener("DOMContentLoaded", () => document.head.append(Object.assign(document.createElement("style"), { textContent: '[aria-label="zoom out"], [aria-label="zoom in"] { display: inline-flex !important; }' })));`,
 };
 
-async function openViewer(context, fixture, viewport, fault) {
+async function openViewer(context, fixture, viewport, fault, name) {
   const equals = fixture.cookie.indexOf("=");
   const page = await context.newPage({
     viewport,
@@ -204,7 +210,7 @@ async function openViewer(context, fixture, viewport, fault) {
     });
   await page.navigate(fixture.issueUrl);
   try {
-    await waitForViewer(page, fixture.names[0]);
+    await waitForViewer(page, name ?? fixture.names[0]);
   } catch (error) {
     await page.close();
     throw error;
@@ -250,6 +256,7 @@ function input(page) {
         await sleep(20);
       }
     },
+    move: (x, y) => mouse("mouseMoved", x, y),
     click: async (x, y) => {
       await mouse("mouseMoved", x, y);
       await mouse("mousePressed", x, y, { button: "left", clickCount: 1 });
@@ -343,6 +350,18 @@ const pixelAt = (s, cx, cy) => ({
   y: (cy - s.rect.y - s.view.y) / s.view.z,
 });
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
+/** The viewer dialog's box and the viewport, for the T-548 growth cases. */
+function readDialog() {
+  const r = document.querySelector("[role=dialog]").getBoundingClientRect();
+  return {
+    y: r.y,
+    w: r.width,
+    h: r.height,
+    vh: innerHeight,
+    // The canvas's max-h-[75vh].
+    cap: innerHeight * 0.75,
+  };
+}
 const sameBox = (a, b) =>
   a !== null &&
   b !== null &&
@@ -611,6 +630,176 @@ async function desktopCases(page, fixture) {
   return out;
 }
 
+/**
+ * T-548, on the wide image: zooming in grows the canvas, and the dialog with
+ * it, to the image's own height until the 75vh cap, and only then pans.
+ */
+async function growCases(page) {
+  const io = input(page);
+  const out = [];
+  const check = (name, ok, detail) =>
+    out.push({ name, ok: Boolean(ok), detail });
+  const sample = async () => ({
+    s: await io.state(),
+    d: await evaluate(page, readDialog),
+  });
+
+  const { s: s0, d: d0 } = await sample();
+  check(
+    "grow-starts-at-fit-height",
+    s0.natural.h === 400 &&
+      near(s0.rect.h, Math.round(400 * s0.fit), 1) &&
+      s0.rect.h < d0.cap - 200,
+    { h: s0.rect.h, fit: s0.fit, cap: d0.cap },
+  );
+
+  const px = s0.rect.x + s0.rect.w / 2;
+  const py = s0.rect.y + s0.rect.h / 2;
+  const steps = [];
+  for (let i = 0; i < 12; i++) {
+    await io.wheel(px, py, -100, 1);
+    steps.push(await sample());
+  }
+  const row = ({ s, d }) => ({
+    z: Number(s.view.z.toFixed(3)),
+    h: s.rect.h,
+    dialogH: d.h,
+    want: Math.min(Math.round(400 * s.view.z), d.cap),
+  });
+  const growing = steps.filter(({ s, d }) => 400 * s.view.z < d.cap - 1);
+  const capped = steps.filter(({ s, d }) => 400 * s.view.z > d.cap + 1);
+  check(
+    "dialog-grows-with-zoom",
+    growing.length >= 3 &&
+      growing.every(
+        ({ s, d }) =>
+          near(s.rect.h, Math.round(400 * s.view.z), 1) &&
+          near(d.h - d0.h, s.rect.h - s0.rect.h, 1),
+      ) &&
+      growing.every((x, i) => i === 0 || x.s.rect.h > growing[i - 1].s.rect.h),
+    growing.map(row),
+  );
+  check(
+    "dialog-stops-at-max",
+    capped.length >= 3 &&
+      capped.every(({ s, d }) => near(s.rect.h, d.cap, 1)) &&
+      steps.every(
+        ({ s, d }) =>
+          s.rect.h <= d.cap + 0.5 &&
+          d.w === d0.w &&
+          d.y >= 0 &&
+          d.y + d.h <= d.vh &&
+          near(d.y + d.h / 2, d.vh / 2, 1),
+      ),
+    steps.map(row),
+  );
+
+  // At the cap the image outgrows the canvas, so a vertical drag pans.
+  const s1 = steps.at(-1).s;
+  await io.drag(px, py, 0, 50);
+  const s2 = await io.state();
+  check(
+    "pans-once-at-max",
+    -s1.view.y >= 50 &&
+      near(s2.view.y - s1.view.y, 50, 0.5) &&
+      near(s2.rect.h, s1.rect.h, 0.5),
+    { roomY: -s1.view.y, dy: s2.view.y - s1.view.y },
+  );
+
+  await io.wheel(px, py, 100, 30);
+  const { s: s3, d: d3 } = await sample();
+  check(
+    "zoom-out-shrinks-back",
+    near(s3.view.z, s3.fit, 1e-4) &&
+      near(s3.rect.h, s0.rect.h, 1) &&
+      near(d3.h, d0.h, 1),
+    { h: s3.rect.h, h0: s0.rect.h, dialogH: d3.h, dialogH0: d0.h },
+  );
+
+  await io.wheel(px, py, -100, 3);
+  const { s: s4 } = await sample();
+  await io.press("maximize");
+  await sleep(300);
+  const s5 = await io.state();
+  await io.press("restore size");
+  await sleep(300);
+  const { s: s6, d: d6 } = await sample();
+  check(
+    "restore-keeps-grown-height",
+    s4.rect.h > s0.rect.h + 50 &&
+      s5.rect.h > d6.cap &&
+      near(s6.view.z, s4.view.z, 1e-4) &&
+      near(s6.rect.h, s4.rect.h, 1),
+    { zoomed: s4.rect.h, maximized: s5.rect.h, restored: s6.rect.h },
+  );
+
+  // Every image starts at its own fit, so paging away and back drops the growth.
+  await io.key("ArrowLeft", "ArrowLeft", 37);
+  await sleep(500);
+  await io.key("ArrowRight", "ArrowRight", 39);
+  await sleep(500);
+  const { s: s7, d: d7 } = await sample();
+  check(
+    "paging-back-resets-height",
+    s7.natural.h === 400 &&
+      near(s7.view.z, s7.fit, 1e-4) &&
+      near(s7.rect.h, s0.rect.h, 1) &&
+      near(d7.h, d0.h, 1),
+    { h: s7.rect.h, h0: s0.rect.h },
+  );
+
+  // + clicked over and over at one spot: while the pointer is on the zoom
+  // controls the dialog holds its height, so the button stays under it;
+  // centred growth would slide it up, and the next click would land on the
+  // image and toggle back to fit.
+  const plusAt = () =>
+    evaluate(page, () => {
+      const r = document
+        .querySelector('[role=dialog] button[aria-label="zoom in"]')
+        .getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+  const p0 = await plusAt();
+  const clicks = [];
+  for (let i = 0; i < 6; i++) {
+    await io.click(p0.x, p0.y);
+    const s = await io.state();
+    clicks.push({ z: s.view.z, h: s.rect.h, plusY: (await plusAt()).y });
+  }
+  check(
+    "plus-clicks-land-while-hovering",
+    clicks.every(
+      (c, i) =>
+        near(c.z, s7.view.z * 1.25 ** (i + 1), 1e-3) &&
+        near(c.h, s7.rect.h, 0.5) &&
+        near(c.plusY, p0.y, 0.5),
+    ),
+    clicks,
+  );
+
+  await io.move(px, s7.rect.y + s7.rect.h / 2);
+  const { s: s8, d: d8 } = await sample();
+  check(
+    "grows-when-pointer-leaves-controls",
+    near(s8.view.z, clicks.at(-1).z, 1e-6) &&
+      s8.rect.h > s7.rect.h + 100 &&
+      near(s8.rect.h, Math.min(Math.round(400 * s8.view.z), d8.cap), 1) &&
+      near(d8.y + d8.h / 2, d8.vh / 2, 1),
+    { z: s8.view.z, h: s8.rect.h, cap: d8.cap },
+  );
+
+  // The menu's items sit outside the controls, so choosing one grows at once.
+  await io.key("0", "Digit0", 48);
+  await io.menu("100%");
+  const s9 = await io.state();
+  check(
+    "menu-zoom-grows-at-once",
+    near(s9.view.z, 1, 1e-9) && near(s9.rect.h, 400, 1),
+    { z: s9.view.z, h: s9.rect.h },
+  );
+  return out;
+}
+
 async function phoneCases(page) {
   const io = input(page);
   const out = [];
@@ -628,6 +817,7 @@ async function phoneCases(page) {
     },
   });
   const s0 = await io.state();
+  const d0 = await evaluate(page, readDialog);
   const mx = s0.rect.x + s0.rect.w / 2;
   const my = s0.rect.y + s0.rect.h * 0.4;
   await io.touch("touchStart", [[mx - 20, my]]);
@@ -649,6 +839,18 @@ async function phoneCases(page) {
     name: "pinch-scales-with-finger-spread",
     ok: near(s1.view.z / s0.view.z, spread, spread * 0.02),
     detail: { spread, ratio: s1.view.z / s0.view.z },
+  });
+  // T-548: the pinch takes the image past 75vh, so the canvas stops there.
+  const d1 = await evaluate(page, readDialog);
+  out.push({
+    name: "phone-pinch-grows-to-max",
+    ok:
+      s0.rect.h < d0.cap - 50 &&
+      near(s1.rect.h, d1.cap, 1) &&
+      d1.y >= 0 &&
+      d1.y + d1.h <= d1.vh &&
+      d1.w === d0.w,
+    detail: { from: s0.rect.h, to: s1.rect.h, cap: d1.cap, dialog: d1 },
   });
   await io.touch("touchStart", [[mx, my]]);
   for (let i = 1; i <= 8; i++) {
@@ -715,11 +917,11 @@ async function main() {
       registerChild: stack.registerChild,
     });
     stack.addCleanup(() => browser.close());
-    const runOne = async (name, viewport, cases, fault, requiredRed) => {
+    const runOne = async (name, viewport, cases, fault, requiredRed, start) => {
       // Its own context, so no run reads another's stored image look.
       const context = await browser.newContext();
       try {
-        const page = await openViewer(context, fixture, viewport, fault);
+        const page = await openViewer(context, fixture, viewport, fault, start);
         try {
           record(name, await cases(page, fixture), requiredRed);
         } finally {
@@ -748,6 +950,7 @@ async function main() {
     ]) {
       await runOne(name, DESKTOP, desktopCases, fault, requiredRed);
     }
+    await runOne("desktop-grow", DESKTOP, growCases, null, [], "wide.png");
     for (const [name, fault, requiredRed] of [
       ["phone", null, []],
       [

@@ -81,6 +81,32 @@ export function clampView(f: Frame, v: View): View {
   };
 }
 
+/**
+ * The height a restored (not maximized) canvas asks for at zoom `z`: the
+ * image's own, so zooming in grows the dialog until its CSS cap takes over
+ * and only then starts panning (T-548). Never shorter than at fit, so the
+ * request does not depend on the measured height it produces. Whole pixels,
+ * because the canvas is measured back with clientHeight.
+ */
+export function canvasHeight(f: Frame, z: number): number {
+  const restingScale = Math.min(1, f.width / f.naturalWidth);
+  return Math.round(f.naturalHeight * Math.max(z, restingScale));
+}
+
+/**
+ * Carry a view across a canvas resize. A fitted view refits; any other keeps
+ * whatever sat at the canvas centre there — the dialog is centred, so that
+ * is also what keeps the image still on screen while the canvas grows.
+ */
+export function reframe(prev: Frame, next: Frame, v: View): View {
+  if (isFitted(prev, v)) return fitView(next);
+  return clampView(next, {
+    z: v.z,
+    x: v.x + (next.width - prev.width) / 2,
+    y: v.y + (next.height - prev.height) / 2,
+  });
+}
+
 /** Scale by `factor` keeping canvas point (px, py) over the same image pixel. */
 export function zoomAt(
   f: Frame,

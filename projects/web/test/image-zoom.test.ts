@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   actualAt,
+  canvasHeight,
   clampView,
   type Frame,
   fitScale,
@@ -11,6 +12,7 @@ import {
   MAX_NATURAL_SCALE,
   maxScale,
   panBy,
+  reframe,
   toggleAt,
   type View,
   wheelFactor,
@@ -154,5 +156,39 @@ describe("wheelFactor", () => {
   it("treats a line as 16px and a pinch delta as finer-grained", () => {
     expect(wheelFactor(-3, 1, false)).toBeCloseTo(wheelFactor(-48, 0, false));
     expect(wheelFactor(-10, 0, true)).toBeCloseTo(wheelFactor(-50, 0, false));
+  });
+});
+
+const wide: Frame = {
+  width: 1000,
+  height: 250,
+  naturalWidth: 2000,
+  naturalHeight: 500,
+  upscale: false,
+};
+
+describe("canvasHeight", () => {
+  it("asks for the image's height at fit, then grows with the zoom", () => {
+    expect(canvasHeight(wide, fitScale(wide))).toBe(250);
+    expect(canvasHeight(wide, 1)).toBe(500);
+    expect(canvasHeight(wide, 3)).toBe(1500);
+  });
+
+  it("never asks for less than the width-fit height", () => {
+    expect(canvasHeight(wide, 0.1)).toBe(250);
+    expect(canvasHeight(icon, 1)).toBe(48);
+  });
+});
+
+describe("reframe", () => {
+  const grown = { ...wide, height: 750 };
+
+  it("refits a fitted view", () => {
+    expect(reframe(wide, grown, fitView(wide))).toEqual(fitView(grown));
+  });
+
+  it("moves the image down by half the growth, holding it still on screen", () => {
+    const v = clampView(wide, { z: 2, x: -500, y: -500 });
+    expect(reframe(wide, grown, v)).toEqual({ z: 2, x: -500, y: -250 });
   });
 });

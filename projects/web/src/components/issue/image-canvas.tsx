@@ -27,7 +27,7 @@ import {
 } from "@/lib/image-look.ts";
 import {
   actualAt,
-  clampView,
+  canvasHeight,
   type Frame,
   fitScale,
   fitView,
@@ -35,6 +35,7 @@ import {
   isAtMin,
   isFitted,
   panBy,
+  reframe,
   toggleAt,
   type View,
   wheelFactor,
@@ -93,11 +94,44 @@ export function ImageCanvas({
     setView(v);
   }, []);
 
-  const apply = useCallback((next: View) => {
-    if (live.current.frame === null) return;
-    live.current.view = next;
-    setView(next);
-  }, []);
+  // While the pointer is over − 100%▾ +, the canvas keeps the height it had
+  // when the pointer arrived: the dialog is centred, so growing would slide
+  // the title bar out from under the pointer, and the next click on + would
+  // land on the image and toggle back to fit (T-548).
+  const heldRef = useRef<number | null>(null);
+  const [heldZ, setHeldZ] = useState<number | null>(null);
+
+  const apply = useCallback(
+    (next: View) => {
+      const { frame: f } = live.current;
+      const el = canvasRef.current;
+      if (f === null) return;
+      if (!maximized && el !== null) {
+        // Resized here rather than left to the ResizeObserver, which would
+        // place this view against the old height for a frame first.
+        // clientHeight applies the min/max caps.
+        el.style.height = `${canvasHeight(f, heldRef.current ?? next.z)}px`;
+        const grown = { ...f, height: el.clientHeight };
+        if (grown.height !== f.height) {
+          place(grown, reframe(f, grown, next));
+          return;
+        }
+      }
+      live.current.view = next;
+      setView(next);
+    },
+    [maximized, place],
+  );
+
+  const hold = (z: number | null) => {
+    heldRef.current = z;
+    setHeldZ(z);
+  };
+  const release = () => {
+    hold(null);
+    const { view: v } = live.current;
+    if (v !== null) apply(v);
+  };
 
   useLayoutEffect(() => {
     const el = canvasRef.current;
@@ -111,20 +145,10 @@ export function ImageCanvas({
         upscale: maximized,
       };
       const { frame: prev, view: v } = live.current;
-      if (prev === null || v === null || isFitted(prev, v)) {
-        place(next, fitView(next));
-      } else {
-        // Keep whatever sat at the canvas centre there across a resize
-        // (maximize/restore, window resize) instead of snapping to fit.
-        place(
-          next,
-          clampView(next, {
-            z: v.z,
-            x: v.x + (next.width - prev.width) / 2,
-            y: v.y + (next.height - prev.height) / 2,
-          }),
-        );
-      }
+      place(
+        next,
+        prev === null || v === null ? fitView(next) : reframe(prev, next, v),
+      );
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -276,17 +300,28 @@ export function ImageCanvas({
 
   const ready = frame !== null && view !== null;
   const fitted = !ready || isFitted(frame, view);
-  // Before the image has loaded nothing can be measured, so reserve the
-  // height the old flow layout gave it rather than collapsing to zero.
   const height =
-    maximized || natural === null || frame === null
-      ? undefined
-      : natural.h * Math.min(1, frame.width / natural.w);
+    maximized || !ready ? undefined : canvasHeight(frame, heldZ ?? view.z);
 
   // − and + give way to pinch on a phone, where the title bar has no room
   // for them beside the filename.
   const controls = (
-    <span className="inline-flex shrink-0 items-center gap-0.5">
+    <span
+      className="inline-flex shrink-0 items-center gap-0.5"
+      onPointerEnter={(e) => {
+        // Not when arriving on the menu's items: they are portalled out of
+        // the span but stay its React children, so React reports entering
+        // them as entering the span, and choosing Fit or 100% would be held.
+        if (
+          e.pointerType === "mouse" &&
+          e.currentTarget.contains(e.target as Node)
+        )
+          hold(live.current.view?.z ?? null);
+      }}
+      onPointerLeave={() => {
+        if (heldRef.current !== null) release();
+      }}
+    >
       <Button
         variant="ghost"
         size="icon-sm"
