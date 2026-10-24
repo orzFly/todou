@@ -1,0 +1,8 @@
+todou v0.6.5
+
+A card's All references dialog and todou issue refs, your agents' tokens
+managed from Personal tokens, status changes from the inbox, settings
+split into categories, and coloured icons for projects without one.
+
+No migration, no configuration change, nothing breaking. Either CLI pairs
+with either server, except todou issue refs, which needs a 0.6.5 server.
