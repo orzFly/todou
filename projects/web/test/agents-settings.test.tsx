@@ -52,6 +52,7 @@ const AUTOMATION = {
   expires_at: null,
   revoked_at: null,
   last_used_at: "2026-09-16T08:30:00Z",
+  holder: PROBE,
 } satisfies TokenListItem;
 
 function renderAgents(agents: Agent[], initialEntry = "/") {

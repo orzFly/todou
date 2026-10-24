@@ -94,6 +94,7 @@ import type {
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
+  TokenListQuery,
   UserIssuesPage,
   UserProjects,
   VersionInfo,
@@ -660,7 +661,10 @@ export class TodouClient {
     );
   denyCliAuthRequest = (id: number) =>
     this.request<void>("POST", `/auth/cli/requests/${id}/deny`);
-  listMyTokens = () => this.request<TokenListItem[]>("GET", "/me/tokens");
+  listMyTokens = (holder?: TokenListQuery["holder"]) =>
+    this.request<TokenListItem[]>("GET", "/me/tokens", {
+      query: holder ? { holder } : undefined,
+    });
   revokeMyToken = (id: number) =>
     this.request<void>("DELETE", `/me/tokens/${id}`);
 

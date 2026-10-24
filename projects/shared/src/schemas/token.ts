@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
+import { UserRef } from "./user.ts";
 
 export const TokenCreateInput = z.object({
   name: z.string().min(1).max(100),
@@ -25,5 +26,16 @@ export const TokenListItem = z.object({
   expires_at: Timestamp.nullable(),
   revoked_at: Timestamp.nullable(),
   last_used_at: Timestamp.nullable(),
+  holder: UserRef,
 });
 export type TokenListItem = z.infer<typeof TokenListItem>;
+
+/**
+ * Whose tokens `GET /me/tokens` lists: the caller's own, those of the agents
+ * the caller owns, or both. Ownership is the only widening — an instance
+ * admin's `agents` is still just the agents they own.
+ */
+export const TokenListQuery = z.object({
+  holder: z.enum(["me", "agents", "all"]).default("me"),
+});
+export type TokenListQuery = z.infer<typeof TokenListQuery>;

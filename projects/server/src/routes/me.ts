@@ -15,6 +15,7 @@ import {
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
+  TokenListQuery,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ForbiddenError, ValidationFailedError } from "../errors.ts";
@@ -31,7 +32,7 @@ import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
 import { bulkMarkRead, markIssueRead } from "../services/reads.ts";
 import { referenceDirectory } from "../services/reference-directory.ts";
 import { resolveRefLocator } from "../services/reference-resolve.ts";
-import { issueToken, listTokens, revokeToken } from "../services/tokens.ts";
+import { issueToken, listHeldTokens, revokeToken } from "../services/tokens.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
 
 const meRoute = createRoute({
@@ -103,7 +104,10 @@ const deleteMyAvatarRoute = createRoute({
 const listTokensRoute = createRoute({
   method: "get",
   path: "/me/tokens",
-  summary: "List my active personal access tokens",
+  summary:
+    "List active personal access tokens — mine, my agents', or both " +
+    "(holder=me|agents|all, default me)",
+  request: { query: TokenListQuery },
   responses: {
     200: {
       description: "Tokens (prefix only — plaintext is never stored)",
@@ -306,7 +310,8 @@ export function meRoutes() {
 
   app.openapi(listTokensRoute, async (c) => {
     const db = c.get("appCtx").router.system();
-    return c.json(await listTokens(db, c.get("user").id), 200);
+    const { holder } = c.req.valid("query");
+    return c.json(await listHeldTokens(db, c.get("user").id, holder), 200);
   });
 
   app.openapi(createTokenRoute, async (c) => {
