@@ -12,7 +12,12 @@ import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { PatchView } from "@/components/shared/patch-view.tsx";
 import { CodeBlock } from "@/components/shared/pierre.tsx";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogCloseButton,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { documentKind } from "@/lib/attachment-preview.ts";
 import { cn } from "@/lib/utils";
 
@@ -228,8 +233,9 @@ export function DocumentCard({
               : "sm:max-w-4xl",
           )}
           aria-describedby={undefined}
+          showCloseButton={false}
         >
-          <div className="flex items-center gap-1 pr-8">
+          <div className="flex items-center gap-1">
             <DialogTitle className="min-w-0 flex-1 truncate">
               {filename}
             </DialogTitle>
@@ -242,6 +248,7 @@ export function DocumentCard({
             >
               {maximized ? <MinimizeIcon /> : <MaximizeIcon />}
             </Button>
+            <DialogCloseButton />
           </div>
           <div
             className={cn(

@@ -16,6 +16,7 @@ import {
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   Dialog,
+  DialogCloseButton,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -181,7 +182,7 @@ function KeyedRevisionHistory({
           if (!isOpen) setSelected(null);
         }}
       >
-        <DialogContent className="sm:max-w-3xl">
+        <DialogContent className="sm:max-w-3xl" showCloseButton={false}>
           {/* Mounted only while a revision is selected, which is what makes
               the saved wrapping choice a per-opening read: the `(edited)`
               marker outside this dialog stays mounted for the life of the
@@ -216,9 +217,7 @@ function RevisionDialog({
   const [wrap, setWrap] = useState(readHistoryWrap);
   return (
     <>
-      {/* `pr-8` clears the dialog's own Close, which is absolutely positioned
-          over this row's right end rather than laid out in it. */}
-      <DialogHeader className="flex-row items-center gap-3 pr-8 text-left">
+      <DialogHeader className="flex-row items-center gap-3 text-left">
         <DialogTitle className="min-w-0 flex-1">
           Edit history — {label}
         </DialogTitle>
@@ -246,6 +245,7 @@ function RevisionDialog({
           <WrapTextIcon className="size-3.5" />
           wrap
         </button>
+        <DialogCloseButton />
       </DialogHeader>
       <RevisionDiff revision={revision} filename={filename} wrap={wrap} />
     </>

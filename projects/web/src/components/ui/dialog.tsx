@@ -184,19 +184,30 @@ function DialogContent({
       >
         {children}
         {showCloseButton && (
-          <DialogPrimitive.Close data-slot="dialog-close" asChild>
-            <Button
-              variant="ghost"
-              className="absolute top-2 right-2"
-              size="icon-sm"
-            >
-              <XIcon />
-              <span className="sr-only">Close</span>
-            </Button>
-          </DialogPrimitive.Close>
+          <DialogCloseButton className="absolute top-2 right-2" />
         )}
       </DialogPrimitive.Content>
     </DialogPortal>
+  );
+}
+
+/**
+ * The X on its own, for a dialog whose title bar is a row of controls: laid
+ * out as the row's last item it shares their centre and right edge, which
+ * the corner-pinned one cannot know (T-562). Pass `showCloseButton={false}`
+ * to that dialog's content.
+ */
+function DialogCloseButton({
+  className,
+  ...props
+}: React.ComponentProps<typeof Button>) {
+  return (
+    <DialogPrimitive.Close data-slot="dialog-close" asChild>
+      <Button variant="ghost" size="icon-sm" className={className} {...props}>
+        <XIcon />
+        <span className="sr-only">Close</span>
+      </Button>
+    </DialogPrimitive.Close>
   );
 }
 
@@ -272,6 +283,7 @@ function DialogDescription({
 export {
   Dialog,
   DialogClose,
+  DialogCloseButton,
   DialogContent,
   DialogDescription,
   DialogFooter,

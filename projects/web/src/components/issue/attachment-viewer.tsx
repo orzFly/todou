@@ -14,7 +14,12 @@ import { ImageCanvas } from "@/components/issue/image-canvas.tsx";
 import { DocumentView } from "@/components/shared/document-card.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogCloseButton,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   documentKind,
   formatSize,
@@ -205,6 +210,7 @@ export function AttachmentViewerDialog({
     >
       <DialogContent
         aria-describedby={undefined}
+        showCloseButton={false}
         onKeyDown={(e) => {
           if (e.key === "ArrowLeft") step(-1);
           if (e.key === "ArrowRight") step(1);
@@ -221,7 +227,7 @@ export function AttachmentViewerDialog({
       >
         {target && (
           <>
-            <div className="flex items-center gap-1 pr-8">
+            <div className="flex items-center gap-1">
               <DialogTitle className="min-w-0 flex-1 truncate">
                 {target.filename}
               </DialogTitle>
@@ -267,6 +273,7 @@ export function AttachmentViewerDialog({
               >
                 {maximized ? <MinimizeIcon /> : <MaximizeIcon />}
               </Button>
+              <DialogCloseButton />
             </div>
             <div
               className={cn(
