@@ -120,7 +120,7 @@ describe("commandTable", () => {
   it("marks the first words that run on their own", () => {
     expect(table.get("attach")).toEqual({
       bare: true,
-      verbs: ["add", "list", "download"],
+      verbs: ["add", "list", "download", "delete"],
     });
     expect(table.get("search")?.bare).toBe(true);
     expect(table.get("issue")?.bare).toBe(false);

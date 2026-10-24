@@ -15,6 +15,7 @@ import type {
   AgentUpdateInput,
   AnswersSubmitInput,
   Attachment,
+  AttachmentReference,
   AuthMode,
   Autolink,
   AutolinkCreateInput,
@@ -36,6 +37,7 @@ import type {
   CommentHideResult,
   CommentLocation,
   CrossActivityPage,
+  DeletedAttachment,
   DirectUploadTicket,
   InboxPage,
   Issue,
@@ -1142,18 +1144,43 @@ export class TodouClient {
     slug: string,
     issueNumber: number,
     file: File,
+    opts: { draft?: boolean } = {},
   ): Promise<Attachment> => {
+    const draft = opts.draft === true;
     if (!this.#directUploadUnavailable) {
-      const direct = await this.#tryDirectUpload(slug, issueNumber, file);
+      const direct = await this.#tryDirectUpload(
+        slug,
+        issueNumber,
+        file,
+        draft,
+      );
       if (direct) return direct;
     }
     const form = new FormData();
     form.set("file", file);
     form.set("issue_number", String(issueNumber));
+    if (draft) form.set("draft", "true");
     return this.request<Attachment>("POST", `/projects/${slug}/attachments`, {
       form,
     });
   };
+
+  deleteAttachment = (slug: string, attachmentId: number) =>
+    this.request<void>(
+      "DELETE",
+      `/projects/${slug}/attachments/${attachmentId}`,
+    );
+  listAttachmentReferences = (slug: string, attachmentId: number) =>
+    this.request<AttachmentReference[]>(
+      "GET",
+      `/projects/${slug}/attachments/${attachmentId}/references`,
+    );
+  listDeletedAttachments = (slug: string, issueNumber: number) =>
+    this.request<DeletedAttachment[]>(
+      "GET",
+      `/projects/${slug}/attachments/deleted`,
+      { query: { issue_number: issueNumber } },
+    );
 
   /** Remembered per client: the backend said it cannot presign. */
   #directUploadUnavailable = false;
@@ -1171,6 +1198,7 @@ export class TodouClient {
     slug: string,
     issueNumber: number,
     file: File,
+    draft: boolean,
   ): Promise<Attachment | null> => {
     const sha256 = await this.#sha256(file);
     let ticket: DirectUploadTicket;
@@ -1185,6 +1213,7 @@ export class TodouClient {
             content_type: file.type || "application/octet-stream",
             size: file.size,
             ...(sha256 ? { sha256 } : {}),
+            ...(draft ? { draft } : {}),
           },
         },
       );

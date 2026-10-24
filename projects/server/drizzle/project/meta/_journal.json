@@ -148,6 +148,13 @@
       "when": 1790007721098,
       "tag": "0020_activity_project_created_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792858402367,
+      "tag": "0021_attachment_drafts",
+      "breakpoints": true
     }
   ]
 }

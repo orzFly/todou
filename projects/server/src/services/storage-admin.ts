@@ -1,4 +1,4 @@
-import { eq, isNotNull, lt } from "drizzle-orm";
+import { and, eq, isNotNull, lt } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { attachments, pendingUploads } from "../db/project-schema.ts";
 import type { DbRouter } from "../db/router.ts";
@@ -193,4 +193,97 @@ async function isRegistered(db: Db, storageKey: string): Promise<boolean> {
     .where(eq(attachments.storageKey, storageKey))
     .limit(1);
   return rows.length > 0;
+}
+
+export type DraftReapReport = {
+  deletedRows: number;
+  deletedObjects: number;
+  wouldDelete: number;
+  failedProjects: number;
+};
+
+/**
+ * Deletes draft attachments (T-568) older than `minAgeHours`: files an
+ * editor uploaded for a text that was never sent, which nobody but their
+ * uploader ever saw.
+ *
+ * Unlike `gcPendingUploads` the row goes first, because a draft can still be
+ * claimed: a text that links it turns it into an attachment with one
+ * `UPDATE … WHERE draft`, and the `DELETE … WHERE draft` here races that
+ * statement for the row. Whichever commits first keeps it, so this pass never
+ * deletes the bytes of a file a text just made public. The cost is that an
+ * object whose delete fails has no row left to retry from; it is logged.
+ *
+ * Every backend, not only s3: drafts come from the multipart route too.
+ */
+export async function reapDraftAttachments(
+  router: DbRouter,
+  storage: StorageBackend,
+  opts: { dryRun: boolean; minAgeHours: number; log: (line: string) => void },
+): Promise<DraftReapReport> {
+  const report: DraftReapReport = {
+    deletedRows: 0,
+    deletedObjects: 0,
+    wouldDelete: 0,
+    failedProjects: 0,
+  };
+  const cutoff = new Date(Date.now() - opts.minAgeHours * 3600 * 1000);
+
+  const projectRows = await router
+    .system()
+    .select({
+      id: projects.id,
+      slug: projects.slug,
+      databaseUrl: projects.databaseUrl,
+    })
+    .from(projects);
+  for (const project of projectRows) {
+    try {
+      const db = await router.forProject({
+        id: project.id,
+        slug: project.slug,
+        database_url: project.databaseUrl,
+      });
+      const stale = and(
+        eq(attachments.projectId, project.id),
+        eq(attachments.draft, true),
+        lt(attachments.createdAt, cutoff),
+      );
+      if (opts.dryRun) {
+        const rows = await db
+          .select({ id: attachments.id, key: attachments.storageKey })
+          .from(attachments)
+          .where(stale);
+        for (const row of rows) {
+          report.wouldDelete++;
+          opts.log(
+            `would delete ${project.slug} draft attachment ${row.id} and object ${row.key}`,
+          );
+        }
+        continue;
+      }
+      const deleted = await db
+        .delete(attachments)
+        .where(stale)
+        .returning({ id: attachments.id, key: attachments.storageKey });
+      report.deletedRows += deleted.length;
+      for (const row of deleted) {
+        try {
+          await storage.delete(row.key);
+          report.deletedObjects++;
+          opts.log(
+            `deleted draft attachment ${row.id} and object ${row.key} (${project.slug})`,
+          );
+        } catch (cause) {
+          opts.log(
+            `FAIL object ${row.key} of draft attachment ${row.id} (${project.slug}): ${String(cause)}`,
+          );
+        }
+      }
+    } catch (cause) {
+      report.failedProjects++;
+      opts.log(`FAIL ${project.slug}: ${String(cause)}`);
+    }
+  }
+  return report;
 }

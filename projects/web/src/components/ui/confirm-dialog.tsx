@@ -33,6 +33,7 @@ export function ConfirmDialog({
   pending = false,
   onConfirm,
   container,
+  children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -45,6 +46,8 @@ export function ConfirmDialog({
   onConfirm: () => void;
   /** Mount point other than this page's body — a floating window's (T-530). */
   container?: HTMLElement;
+  /** Block content below the description, which is a paragraph. */
+  children?: ReactNode;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -53,6 +56,7 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
+        {children}
         <DialogFooter>
           <DialogClose asChild>
             <Button variant="outline" disabled={pending}>

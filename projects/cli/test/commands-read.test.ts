@@ -467,6 +467,9 @@ describe("issue view", () => {
         event(4, "attachment_added", {
           attachment: { id: 5, filename: "shot.png", size: 123 },
         }),
+        event(11, "attachment_deleted", {
+          attachment: { id: 6, filename: "wrong.png", size: 9 },
+        }),
         event(5, "spec_pushed", {
           version: 2,
           message: "tighten scope",
@@ -522,6 +525,7 @@ describe("issue view", () => {
     // would point at an unrelated card here.
     expect(result.stdout).toContain("cross_referenced (by mirror#4)");
     expect(result.stdout).toContain("attachment_added (shot.png)");
+    expect(result.stdout).toContain("attachment_deleted (wrong.png)");
     expect(result.stdout).toContain(
       "spec_pushed (v2: 1 added, 2 changed — tighten scope · use `todou spec pull 3 --version 2 <empty-dir>` to view)",
     );

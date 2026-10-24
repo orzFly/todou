@@ -2,11 +2,16 @@ import { createWriteStream, existsSync, openAsBlob, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import type { Attachment, TodouClient } from "@todou/shared";
+import type {
+  Attachment,
+  AttachmentReference,
+  TodouClient,
+} from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { CliError } from "../errors.ts";
 import { formatBytes, table } from "../format.ts";
+import { confirm } from "../prompt.ts";
 
 // openAsBlob never fills in a type, and the server stores whatever it gets —
 // without this, every upload lands as application/octet-stream and the web
@@ -153,6 +158,87 @@ function selectAttachment(list: Attachment[], key: string): Attachment {
       ? "the issue has no attachments"
       : `attached: ${list.map((a) => `#${a.id} ${a.filename}`).join(", ")}`,
   );
+}
+
+export class AttachDeleteCommand extends ProjectCommand {
+  static paths = [["attach", "delete"]];
+  static usage = Command.Usage({
+    description:
+      "Delete an attachment (its uploader, or anyone's as a writer or admin)",
+    details:
+      "**Not reversible**: the stored file goes with it. Links to it in " +
+      "issue bodies and comments stay and stop resolving, so the " +
+      "confirmation lists every one of them in this project first; the " +
+      "card's timeline records `attachment_deleted`.\n\n" +
+      "`<id-or-name>` is an id from `attach list` or a filename, matched as " +
+      "`attach download` matches it. Prompts unless `-y/--yes` is given, " +
+      "and refuses to run unprompted off a TTY.",
+    examples: [
+      ["Delete a misattached file", "$0 attach delete 16 shot.png -y"],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  target = Option.String({ required: true });
+  yes = Option.Boolean("-y,--yes", false, {
+    description: "Skip the confirmation prompt",
+  });
+
+  protected async run(client: TodouClient): Promise<number> {
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const attachment = selectAttachment(
+      await client.listAttachments(project, number),
+      this.target,
+    );
+    const references = await client.listAttachmentReferences(
+      project,
+      attachment.id,
+    );
+
+    if (!this.yes) {
+      if (!isTTY(this.context.stdin)) {
+        throw new CliError(
+          "refusing to delete without a confirmation",
+          `pass -y/--yes: todou attach delete ${this.number} ${this.target} -y`,
+        );
+      }
+      const linked =
+        references.length === 0
+          ? ""
+          : ` Still linked from ${references.map(referenceLabel).join(", ")}.`;
+      const ok = await confirm(
+        this.context.stdin,
+        this.context.stderr,
+        `Delete #${attachment.id} ${attachment.filename} ` +
+          `(${formatBytes(attachment.size)})?${linked}`,
+      );
+      if (!ok) {
+        this.note("cancelled");
+        return 1;
+      }
+    }
+
+    await client.deleteAttachment(project, attachment.id);
+    this.output({ ...attachment, deleted: true, references }, () =>
+      [
+        `deleted #${attachment.id} ${attachment.filename}`,
+        ...(references.length === 0
+          ? []
+          : [`still linked from ${references.map(referenceLabel).join(", ")}`]),
+      ].join("\n"),
+    );
+    return 0;
+  }
+}
+
+function referenceLabel(ref: AttachmentReference): string {
+  return ref.comment_id === null
+    ? `${ref.issue_ref} (body)`
+    : `${ref.issue_ref}#comment-${ref.comment_id}`;
+}
+
+function isTTY(stream: unknown): boolean {
+  return Boolean((stream as { isTTY?: boolean })?.isTTY);
 }
 
 export class AttachDownloadCommand extends ProjectCommand {

@@ -575,7 +575,7 @@ export function BodyBlock({
               onClick={() => {
                 // The editor mounts fresh off issue.body, so entering edit mode
                 // always starts from what is on screen.
-                staging.clear();
+                staging.discard();
                 setEditing(!editing);
               }}
             >
@@ -622,7 +622,7 @@ export function BodyBlock({
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  staging.clear();
+                  staging.discard();
                   setEditing(false);
                 }}
               >

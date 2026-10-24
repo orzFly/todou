@@ -553,6 +553,7 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
         ? `to ${payload.to_project}/${payload.to_number}`
         : "to another project";
     case "attachment_added":
+    case "attachment_deleted":
       return payload.attachment === undefined
         ? scalarDetail(payload)
         : nested(payload.attachment, "filename");

@@ -1047,7 +1047,9 @@ describe("the new-issue page's edited retries (T-477)", () => {
       [SLUG, 12, { body: `Before the retry.\n\n${marker}` }],
       [SLUG, 12, { body: `After the retry.\n\n${marker}` }],
     ]);
-    expect(upload).toHaveBeenCalledExactlyOnceWith(SLUG, 12, file);
+    expect(upload).toHaveBeenCalledExactlyOnceWith(SLUG, 12, file, {
+      draft: true,
+    });
     expect(createIssue).toHaveBeenCalledOnce();
     expect(addBlockedBy).toHaveBeenCalledTimes(2);
   });

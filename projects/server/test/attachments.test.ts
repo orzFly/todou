@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { attachments } from "../src/db/project-schema.ts";
+import { attachments, pendingUploads } from "../src/db/project-schema.ts";
+import { projects } from "../src/db/system-schema.ts";
 import { sanitizeFilename } from "../src/services/attachment-names.ts";
 import { type FakeS3, startFakeS3 } from "./fake-s3.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
@@ -985,6 +986,79 @@ describe("attachments (s3 backend)", () => {
 
   it("404s an unknown upload id", async () => {
     expect((await complete(999_999)).status).toBe(404);
+  });
+
+  it("carries a draft ticket through to a draft attachment (T-568)", async () => {
+    const body = "drafted directly";
+    const ticket = await json(
+      await requestDirect({
+        filename: "direct-draft.txt",
+        content_type: "text/plain",
+        size: body.length,
+        draft: true,
+      }),
+    );
+    await fetch(ticket.url, { method: "PUT", body });
+    const done = await complete(ticket.upload_id);
+    expect(done.status).toBe(201);
+    const attachment = await json(done);
+
+    const list = await json(
+      await t.app.request(`/api/projects/${slug}/attachments?issue_number=1`, {
+        headers: { cookie },
+      }),
+    );
+    expect(list.map((a: { id: number }) => a.id)).not.toContain(attachment.id);
+  });
+
+  it("deletes the object from the bucket with the attachment (T-567)", async () => {
+    const attachment = await json(await multipartUpload("doomed.txt", "bye"));
+    const key = [...fake.objects.entries()].find(
+      ([, b]) => b.toString() === "bye",
+    )?.[0];
+    expect(key).toBeDefined();
+    const res = await t.app.request(
+      `/api/projects/${slug}/attachments/${attachment.id}`,
+      { method: "DELETE", headers: { cookie } },
+    );
+    expect(res.status).toBe(204);
+    expect(fake.objects.has(key as string)).toBe(false);
+  });
+
+  // The reaper deletes an uncompleted upload's object a day past expiry; a
+  // complete arriving that late could otherwise register an attachment whose
+  // bytes are being deleted under it (T-569).
+  it("refuses to complete a ticket long past its expiry", async () => {
+    const body = "too late";
+    const ticket = await json(
+      await requestDirect({
+        filename: "late.txt",
+        content_type: "text/plain",
+        size: body.length,
+      }),
+    );
+    await fetch(ticket.url, { method: "PUT", body });
+    const project = (
+      await t.ctx.router
+        .system()
+        .select()
+        .from(projects)
+        .where(eq(projects.slug, slug))
+    )[0];
+    if (!project) throw new Error("project row missing");
+    const db = await t.ctx.router.forProject({
+      id: project.id,
+      slug,
+      database_url: project.databaseUrl,
+    });
+    await db
+      .update(pendingUploads)
+      .set({ expiresAt: new Date(Date.now() - 2 * 3600 * 1000) })
+      .where(eq(pendingUploads.id, ticket.upload_id));
+
+    const res = await complete(ticket.upload_id);
+    expect(res.status).toBe(409);
+    expect((await json(res)).error.details).toEqual({ reason: "expired" });
   });
 
   it("enforces the size cap at request time", async () => {

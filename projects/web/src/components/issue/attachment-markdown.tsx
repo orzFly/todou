@@ -1,12 +1,14 @@
 import type { ComponentProps, ReactNode } from "react";
 import {
   useAttachmentAddress,
+  useAttachmentDeleted,
   useAttachmentForRef,
 } from "@/api/attachments.ts";
 import { AttachmentDocumentEmbed } from "@/components/issue/attachment-embed.tsx";
 import {
   AttachmentInlineImage,
   AttachmentRichLink,
+  DeletedAttachmentMark,
 } from "@/components/issue/attachment-list.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
@@ -38,6 +40,8 @@ type Resolved = {
   viaAlias: boolean;
   /** The resolved attachment's canonical URL, when there is one. */
   url: string | undefined;
+  /** The file was deleted from this card (T-567). */
+  deleted: boolean;
 };
 
 function useResolved(
@@ -48,10 +52,18 @@ function useResolved(
   const address = useAttachmentAddress(ref);
   const found = useAttachmentForRef(slug, issueNumber, address);
   const here = address != null && address.slug === slug;
+  // Asked only once the live list has answered without it, so a file that
+  // is still here never waits on the second query.
+  const deleted = useAttachmentDeleted(
+    slug,
+    issueNumber,
+    found === null && here ? ref.id : null,
+  );
   return {
     id: found?.id ?? (here ? ref.id : null),
     viaAlias: found != null && !(here && ref.id === found.id),
     url: found?.url,
+    deleted: deleted != null,
   };
 }
 
@@ -67,7 +79,10 @@ export function MarkdownAttachmentAnchor({
   address: AttachmentRef;
   node?: { children?: Array<{ type: string; value?: string }> };
 }): ReactNode {
-  const { id } = useResolved(slug, issueNumber, address);
+  const { id, deleted } = useResolved(slug, issueNumber, address);
+  if (deleted) {
+    return <DeletedAttachmentMark name={address.name ?? "attachment"} />;
+  }
   if (id === null) {
     return (
       <MarkdownLink slug={slug} {...props}>
@@ -103,7 +118,19 @@ export function MarkdownAttachmentImage({
   embedded: boolean;
   node?: unknown;
 }): ReactNode {
-  const { id, viaAlias, url } = useResolved(slug, issueNumber, address);
+  const { id, viaAlias, url, deleted } = useResolved(
+    slug,
+    issueNumber,
+    address,
+  );
+  if (deleted) {
+    return (
+      <DeletedAttachmentMark
+        name={address.name ?? (props.alt || "image")}
+        className={props.className}
+      />
+    );
+  }
   if (id === null) {
     // biome-ignore lint/a11y/useAltText: alt is forwarded via props when the markdown provides one
     return <img {...props} />;

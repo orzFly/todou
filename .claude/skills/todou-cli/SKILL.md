@@ -34,6 +34,7 @@ todou comment delete 16 123 -y                # take back a misfire; not reversi
 todou attach -p <proj> 16 file.png ...
 todou attach list -p <proj> 16
 todou attach download -p <proj> 16 <id|name> [-o <path>|-o -]
+todou attach delete -p <proj> 16 <id|name> -y   # uploader, or a writer; lists texts still linking it
 todou config show [--json]
 todou project members -p <proj>
 todou status list -p <proj>

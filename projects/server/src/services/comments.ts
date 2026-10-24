@@ -24,6 +24,7 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
+import { commitDraftAttachments } from "./attachments.ts";
 import { loadReferenceInputs } from "./cross-references.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
 import {
@@ -183,6 +184,15 @@ export async function insertCommentInTx(
     issue.id,
     comment.id,
     mentions,
+  );
+  timeline.push(
+    ...(await commitDraftAttachments(
+      tx,
+      project,
+      actorId,
+      [body],
+      agentContext,
+    )),
   );
   return { comment, timeline };
 }
@@ -432,7 +442,7 @@ export async function updateComment(
   if (resolved.storedText === row.body)
     return toTimelineComment(ctx, row, { elideHidden: false });
 
-  const { after, refs } = await db.transaction(async (tx) => {
+  const { after, refs, drafts } = await db.transaction(async (tx) => {
     const updated = await tx
       .update(comments)
       .set({ body: resolved.storedText, editedAt: new Date() })
@@ -466,7 +476,14 @@ export async function updateComment(
       row.id,
       resolved.mentions,
     );
-    return { after, refs };
+    const drafts = await commitDraftAttachments(
+      tx,
+      project,
+      actor.id,
+      [resolved.storedText],
+      agentContext,
+    );
+    return { after, refs, drafts };
   });
   ctx.bus.publish(projectId, {
     entity: "timeline",
@@ -482,6 +499,7 @@ export async function updateComment(
       issue_number: ref.issueNumber,
     });
   }
+  for (const event of drafts) ctx.bus.publish(projectId, event);
   await recordCrossReferences(
     ctx,
     actor,

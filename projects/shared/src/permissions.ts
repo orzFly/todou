@@ -134,6 +134,18 @@ export const CAPABILITIES = [
   { id: "attachment.read", minRole: "reader", enforce: "addressed" },
   // A screenshot is part of the bug report, not a separate privilege.
   { id: "attachment.upload", minRole: "reporter", enforce: "gate" },
+  // Deleting a file (T-567) takes two entries, the way `PATCH issue` does:
+  // `attachment.delete` opens the endpoint to whoever uploaded the file, and
+  // `attachment.delete_any` is what deleting someone else's is checked
+  // against. A writer rather than an admin, because tidying other people's
+  // files off a card is the same job `comment.hide` is a writer's for.
+  {
+    id: "attachment.delete",
+    minRole: "reporter",
+    enforce: "gate",
+    ownerOnly: true,
+  },
+  { id: "attachment.delete_any", minRole: "writer", enforce: "gate" },
 
   { id: "spec.read", minRole: "reader", enforce: "addressed" },
   { id: "spec.push", minRole: "writer", enforce: "gate" },

@@ -864,6 +864,17 @@ todou-server storage gc --min-age 0  # anything past its presign expiry
 It exits 1 if any project database could not be walked; the other
 projects are still reaped.
 
+### Reaping unsent draft attachments
+
+The web editors upload a file as a *draft* the moment its comment or
+description is submitted, and the draft only becomes an attachment when that
+text is saved. When the save fails and the text is abandoned, the draft is
+left behind, seen by nobody but its uploader. The same hourly tick deletes
+drafts older than 24 hours — row and object, on every backend, fs included —
+and logs `housekeeping: deleted draft attachment …`. `storage gc` runs that
+pass too, after the direct-upload one, with `--min-age` as the draft's age in
+hours.
+
 ### Storing references as links, once
 
 A reference used to be a token the reader resolved on every render, under a

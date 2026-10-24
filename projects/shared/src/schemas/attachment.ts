@@ -36,6 +36,8 @@ export const DirectUploadRequest = z.object({
   size: z.number().int().positive(),
   /** base64 of the 32-byte SHA-256 digest; pinned into the presign if set. */
   sha256: z.string().length(44).optional(),
+  /** Hold the file back until a text references it (T-568); see `draft`. */
+  draft: z.boolean().optional(),
 });
 export type DirectUploadRequest = z.infer<typeof DirectUploadRequest>;
 
@@ -48,3 +50,29 @@ export const DirectUploadTicket = z.object({
   expires_at: Timestamp,
 });
 export type DirectUploadTicket = z.infer<typeof DirectUploadTicket>;
+
+/**
+ * A text that links an attachment (T-567): the body of card `issue_number`
+ * when `comment_id` is null, otherwise that comment on it. What the delete
+ * confirmation lists, so nobody learns from a broken image that the file
+ * it showed was taken away.
+ */
+export const AttachmentReference = z.object({
+  issue_number: Id,
+  issue_ref: z.string(),
+  comment_id: Id.nullable(),
+});
+export type AttachmentReference = z.infer<typeof AttachmentReference>;
+
+/**
+ * A file deleted from a card, read back from its `attachment_deleted` event:
+ * the row is gone, and this is how a reader tells a link to it apart from a
+ * link that never pointed anywhere.
+ */
+export const DeletedAttachment = z.object({
+  id: Id,
+  filename: z.string(),
+  deleted_by: UserRef,
+  deleted_at: Timestamp,
+});
+export type DeletedAttachment = z.infer<typeof DeletedAttachment>;

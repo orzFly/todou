@@ -7,7 +7,7 @@ import { repairBlocks } from "./blocks.ts";
 import { sweepMoves } from "./move/execute.ts";
 import { drainPendingMirrors } from "./pending-mirror.ts";
 import { syncRefPrefixMirror } from "./reference-directory.ts";
-import { gcPendingUploads } from "./storage-admin.ts";
+import { gcPendingUploads, reapDraftAttachments } from "./storage-admin.ts";
 
 /** Hourly is plenty: dead rows are inert (auth re-checks expiry/revocation
  * on every request) — the sweep only reclaims storage. */
@@ -16,6 +16,10 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 /** Same margin as `storage gc`'s default: a presigned PUT still in flight
  * when its URL expires gets a day to be completed. */
 const UPLOAD_GC_MIN_AGE_HOURS = 24;
+
+/** A draft is uploaded the moment before its text is sent; a day without
+ * that text means the text is not coming. */
+const DRAFT_GC_MIN_AGE_HOURS = 24;
 
 export type SweepResult = { sessions: number; tokens: number };
 
@@ -153,6 +157,28 @@ async function reapExpiredUploads(ctx: AppContext): Promise<void> {
 }
 
 /**
+ * Delete draft attachments (T-568) nobody linked within a day: files an
+ * editor uploaded for a comment that was never sent. Every backend, unlike
+ * the pass above — drafts come through the multipart route as well.
+ */
+async function reapDrafts(ctx: AppContext): Promise<void> {
+  try {
+    const report = await reapDraftAttachments(ctx.router, ctx.storage, {
+      dryRun: false,
+      minAgeHours: DRAFT_GC_MIN_AGE_HOURS,
+      log: (line) => console.log(`housekeeping: ${line}`),
+    });
+    if (report.deletedRows > 0) {
+      console.log(
+        `housekeeping: deleted ${report.deletedRows} unsent draft attachment(s)`,
+      );
+    }
+  } catch (err) {
+    console.error("housekeeping: draft attachment gc failed", err);
+  }
+}
+
+/**
  * Everything one periodic tick does. Exported so a test can run a whole tick
  * against a real context instead of asserting on a timer.
  */
@@ -161,6 +187,7 @@ export async function runHousekeepingTick(ctx: AppContext): Promise<void> {
   await reconcileMarkedMirrors(ctx);
   await repairBlockEdges(ctx);
   await reapExpiredUploads(ctx);
+  await reapDrafts(ctx);
   try {
     const swept = await sweepAuthRows(ctx.router.system());
     if (swept.sessions > 0 || swept.tokens > 0) {

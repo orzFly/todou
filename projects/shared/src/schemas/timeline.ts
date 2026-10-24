@@ -18,6 +18,9 @@ export const IssueEventType = z.enum([
   "referenced",
   "cross_referenced",
   "attachment_added",
+  // T-567. Same payload shape as `attachment_added`: the row is gone, so the
+  // event is the only place the name survives.
+  "attachment_deleted",
   "question_answered",
   "spec_pushed",
   "spec_withdrawn",

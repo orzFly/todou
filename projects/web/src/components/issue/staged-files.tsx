@@ -26,6 +26,8 @@ export type StagedFile = {
    * (after another file in the batch failed) must not upload it again.
    */
   uploaded?: Attachment;
+  /** The project `uploaded` went to, which is where deleting it goes. */
+  uploadedTo?: string;
 };
 
 let stagedKey = 0;
@@ -36,7 +38,10 @@ export type StagedFiles = {
   /** `false` when the list was empty — the caller's cue to ignore the paste. */
   stage: (files: Iterable<File>, opts?: { fromClipboard?: boolean }) => boolean;
   remove: (key: number) => void;
+  /** Empty the tray after the text that links its files was sent. */
   clear: () => void;
+  /** Empty the tray because the text is being abandoned (T-568). */
+  discard: () => void;
   uploadAll: (slug: string, issueNumber: number) => Promise<string[]>;
   onPaste: (event: FileClipboardEvent) => void;
   onDrop: (event: FileDragEvent) => void;
@@ -46,9 +51,23 @@ export type StagedFiles = {
 /**
  * Local staging for pasted/dropped editor files (any type): previewable
  * and removable, but nothing touches the server until uploadAll() at
- * submit time — abandoning the draft leaves no orphaned attachments.
+ * submit time. Even then the files go up as drafts (T-568), seen by nobody
+ * but the uploader until the text that links them is written — so a submit
+ * that uploads and then fails, and is abandoned, leaves nothing on the card.
+ * Dropping an uploaded file from the tray deletes its draft at once; the
+ * server reaps any that a closed tab never got to.
  * Size limits are the server's call; its 422 message is surfaced per file.
  */
+/**
+ * Delete the draft a staged file became, if it became one. Not awaited and
+ * not reported: the reader has already moved on, and a draft this misses is
+ * one the server reaps within the day anyway.
+ */
+function withdraw(item: StagedFile): void {
+  if (item.uploaded === undefined || item.uploadedTo === undefined) return;
+  api.deleteAttachment(item.uploadedTo, item.uploaded.id).catch(() => {});
+}
+
 export function useStagedFiles(): StagedFiles {
   const [staged, setStaged] = useState<StagedFile[]>([]);
   const queryClient = useQueryClient();
@@ -60,11 +79,14 @@ export function useStagedFiles(): StagedFiles {
   useDirtySource(() => staged.length > 0);
 
   // Object URLs survive React state; reclaim them if the editor unmounts
-  // with staged files still around.
+  // with staged files still around. An editor unmounting with uploaded files
+  // in its tray is one whose text was left unsent, the guard having let the
+  // reader go.
   useEffect(
     () => () => {
       for (const item of stagedRef.current) {
         if (item.previewUrl !== null) URL.revokeObjectURL(item.previewUrl);
+        withdraw(item);
       }
     },
     [],
@@ -92,6 +114,8 @@ export function useStagedFiles(): StagedFiles {
   }
 
   function remove(key: number) {
+    const hit = stagedRef.current.find((p) => p.key === key);
+    if (hit !== undefined) withdraw(hit);
     setStaged((prev) => {
       const hit = prev.find((p) => p.key === key);
       if (hit?.previewUrl) URL.revokeObjectURL(hit.previewUrl);
@@ -100,12 +124,21 @@ export function useStagedFiles(): StagedFiles {
   }
 
   function clear() {
+    // Synchronously, not at the next render: these files belong to a text
+    // that was just sent, and an unmount before that render would read the
+    // old tray and delete them.
+    stagedRef.current = [];
     setStaged((prev) => {
       for (const item of prev) {
         if (item.previewUrl !== null) URL.revokeObjectURL(item.previewUrl);
       }
       return [];
     });
+  }
+
+  function discard() {
+    for (const item of stagedRef.current) withdraw(item);
+    clear();
   }
 
   /**
@@ -125,13 +158,24 @@ export function useStagedFiles(): StagedFiles {
         let uploaded = item.uploaded;
         if (!uploaded) {
           try {
-            uploaded = await api.uploadAttachment(slug, issueNumber, item.file);
+            uploaded = await api.uploadAttachment(
+              slug,
+              issueNumber,
+              item.file,
+              { draft: true },
+            );
           } catch (error) {
             throw new Error(`${item.file.name}: ${(error as Error).message}`);
           }
           touchedServer = true;
+          const done = { uploaded, uploadedTo: slug };
+          // The ref as well as the state: a tray emptied before the next
+          // render still has to know this file is on the server.
+          stagedRef.current = stagedRef.current.map((p) =>
+            p.key === item.key ? { ...p, ...done } : p,
+          );
           setStaged((prev) =>
-            prev.map((p) => (p.key === item.key ? { ...p, uploaded } : p)),
+            prev.map((p) => (p.key === item.key ? { ...p, ...done } : p)),
           );
         }
         markers.push(
@@ -175,6 +219,7 @@ export function useStagedFiles(): StagedFiles {
     stage,
     remove,
     clear,
+    discard,
     uploadAll,
     onPaste,
     onDrop,

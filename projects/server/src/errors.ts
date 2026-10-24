@@ -283,13 +283,15 @@ export class DirectUploadUnavailableError extends DomainError {
 }
 
 export class DirectUploadIncompleteError extends DomainError {
-  constructor(reason: "missing" | "size_mismatch") {
+  constructor(reason: "missing" | "size_mismatch" | "expired") {
     super(
       409,
       "direct_upload_incomplete",
       reason === "missing"
         ? "uploaded object not found in storage"
-        : "uploaded object size does not match the declared size",
+        : reason === "size_mismatch"
+          ? "uploaded object size does not match the declared size"
+          : "the upload ticket expired; request a new one",
       { reason },
     );
   }

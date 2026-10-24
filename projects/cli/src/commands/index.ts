@@ -9,6 +9,7 @@ import {
 import { ApiPassthroughCommand } from "./api.ts";
 import {
   AttachCommand,
+  AttachDeleteCommand,
   AttachDownloadCommand,
   AttachListCommand,
 } from "./attach.ts";
@@ -164,5 +165,6 @@ export const commands: Array<CommandClass<CliContext>> = [
   AttachCommand,
   AttachListCommand,
   AttachDownloadCommand,
+  AttachDeleteCommand,
   ApiPassthroughCommand,
 ];

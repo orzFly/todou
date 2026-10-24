@@ -267,7 +267,7 @@ export function CommentItem({
                   // The editor mounts fresh off comment.body each time edit
                   // mode opens, so an abandoned draft never survives into
                   // the next one.
-                  staging.clear();
+                  staging.discard();
                   setEditing(!editing);
                 }}
               >
@@ -338,7 +338,7 @@ export function CommentItem({
               onDragOver={staging.onDragOver}
               onSubmit={() => void handleSave()}
               onCancel={() => {
-                staging.clear();
+                staging.discard();
                 setEditing(false);
               }}
             />
@@ -358,7 +358,7 @@ export function CommentItem({
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  staging.clear();
+                  staging.discard();
                   setEditing(false);
                 }}
               >

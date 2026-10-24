@@ -1,5 +1,5 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
-import type { Attachment } from "@todou/shared";
+import type { Attachment, DeletedAttachment } from "@todou/shared";
 import { api, projectsQuery } from "@/api/queries.ts";
 import {
   type AttachmentAddress,
@@ -54,6 +54,43 @@ export function useAttachmentForRef(
     attachments.data.find((a) => attachmentAnswersTo(a, address, slug)) ?? null
   );
 }
+
+/**
+ * The files deleted from a card (T-567), read off its `attachment_deleted`
+ * events. Under the list's key so everything that refreshes the list —
+ * the change feed, an upload — refreshes this with it.
+ */
+export const deletedAttachmentsQuery = (slug: string, issueNumber: number) =>
+  queryOptions({
+    queryKey: ["attachments", slug, issueNumber, "deleted"],
+    queryFn: () => api.listDeletedAttachments(slug, issueNumber),
+  });
+
+/**
+ * The deletion record of file `id` on this card: undefined while loading,
+ * null when it was not deleted from here. Only this card's files can be
+ * told apart; a link to a deleted file on another card stays a plain link
+ * that no longer resolves.
+ */
+export function useAttachmentDeleted(
+  slug: string,
+  issueNumber: number,
+  id: number | null,
+): DeletedAttachment | null | undefined {
+  const deleted = useQuery(deletedAttachmentsQuery(slug, issueNumber));
+  if (id === null) return null;
+  if (deleted.data === undefined) return undefined;
+  return deleted.data.find((d) => d.id === id) ?? null;
+}
+
+export const attachmentReferencesQuery = (slug: string, id: number) =>
+  queryOptions({
+    queryKey: ["attachment-references", slug, id],
+    queryFn: () => api.listAttachmentReferences(slug, id),
+    // Asked as the confirmation opens; last time's answer could miss a
+    // comment written since.
+    staleTime: 0,
+  });
 
 /** Raw text of one attachment. Uploads are immutable, so cache forever. */
 export const attachmentTextQuery = (url: string) =>

@@ -58,6 +58,7 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
+import { commitDraftAttachments } from "./attachments.ts";
 import {
   announceBlockChanges,
   type BlockSets,
@@ -593,6 +594,15 @@ export async function createIssue(
       issue.id,
       undefined,
       resolved.mentions,
+    );
+    events.push(
+      ...(await commitDraftAttachments(
+        tx,
+        project,
+        actor.id,
+        [resolved.storedText],
+        agentContext,
+      )),
     );
     for (const ref of refs) {
       events.push({
@@ -1189,6 +1199,15 @@ export async function updateIssue(
         before.id,
         undefined,
         resolved.mentions,
+      );
+      events.push(
+        ...(await commitDraftAttachments(
+          tx,
+          project,
+          actor.id,
+          [resolved.storedText],
+          agentContext,
+        )),
       );
       for (const ref of refs) {
         events.push({

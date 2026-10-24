@@ -343,3 +343,94 @@ describe("attach routing", () => {
     expect(seen).toEqual(["note.txt", "note.txt"]);
   });
 });
+
+describe("attach delete (T-567)", () => {
+  const REFERENCES = [
+    { issue_number: 16, issue_ref: "#16", comment_id: 501 },
+    { issue_number: 20, issue_ref: "#20", comment_id: null },
+  ];
+  function deleting(
+    references: unknown[] = REFERENCES,
+    answer: unknown = new Response(null, { status: 204 }),
+  ): Route[] {
+    return [
+      ["GET", "/api/projects/demo/attachments", [file(), NOTES]],
+      ["GET", "/api/projects/demo/attachments/42/references", references],
+      ["DELETE", "/api/projects/demo/attachments/42", answer],
+    ];
+  }
+  const deleted = (calls: { url: string; init: RequestInit }[]) =>
+    calls.some((c) => c.init.method === "DELETE");
+
+  it("refuses to delete unprompted off a TTY", async () => {
+    const { fetchImpl, calls } = fakeFetch(deleting());
+    const result = await runCli(["attach", "delete", "16", "shot.png"], {
+      fetchImpl,
+      env,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("todou attach delete 16 shot.png -y");
+    expect(deleted(calls)).toBe(false);
+  });
+
+  it("names every text still linking it in the prompt, and a refusal deletes nothing", async () => {
+    const { fetchImpl, calls } = fakeFetch(deleting());
+    const result = await runCli(["attach", "delete", "16", "42"], {
+      fetchImpl,
+      env,
+      stdinIsTTY: true,
+      stdinText: "\n",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Delete #42 shot.png");
+    expect(result.stderr).toContain("#16#comment-501");
+    expect(result.stderr).toContain("#20 (body)");
+    expect(deleted(calls)).toBe(false);
+  });
+
+  it("-y deletes by name and says what still links it", async () => {
+    const { fetchImpl, calls } = fakeFetch(deleting());
+    const result = await runCli(["attach", "delete", "16", "SHOT.png", "-y"], {
+      fetchImpl,
+      env,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(
+      "deleted #42 shot.png\nstill linked from #16#comment-501, #20 (body)\n",
+    );
+    expect(deleted(calls)).toBe(true);
+  });
+
+  it("--json says it is gone", async () => {
+    const { fetchImpl } = fakeFetch(deleting([]));
+    const result = await runCli(
+      ["attach", "delete", "16", "42", "-y", "--json"],
+      { fetchImpl, env },
+    );
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      id: 42,
+      deleted: true,
+      references: [],
+    });
+  });
+
+  it("surfaces the server's refusal", async () => {
+    const { fetchImpl } = fakeFetch(
+      deleting([], {
+        __status: 403,
+        body: {
+          error: {
+            code: "forbidden",
+            message: "only the uploader or a writer may delete this file",
+          },
+        },
+      }),
+    );
+    const result = await runCli(["attach", "delete", "16", "42", "-y"], {
+      fetchImpl,
+      env,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("only the uploader or a writer");
+  });
+});

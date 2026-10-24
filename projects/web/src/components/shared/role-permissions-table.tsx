@@ -115,6 +115,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Report",
+    label: "Delete an attachment",
+    caps: ["attachment.delete"],
+  },
+  {
+    group: "Report",
     label: "Edit the title and body of an issue",
     caps: ["issue.update"],
   },
@@ -148,6 +153,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
     group: "Collaborate",
     label: "Hide and unhide comments",
     caps: ["comment.hide"],
+  },
+  {
+    group: "Collaborate",
+    label: "Delete anyone's attachment",
+    caps: ["attachment.delete_any"],
   },
   {
     group: "Collaborate",

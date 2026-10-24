@@ -89,7 +89,7 @@ export async function bootstrap(
   };
 }
 
-async function makeStorage(config: Config): Promise<StorageBackend> {
+export async function makeStorage(config: Config): Promise<StorageBackend> {
   if (config.storage.backend !== "s3") {
     return new FsStorage(config.storage.path);
   }

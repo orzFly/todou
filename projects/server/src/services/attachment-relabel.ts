@@ -25,6 +25,10 @@ import {
 } from "../db/project-schema.ts";
 import { projects } from "../db/system-schema.ts";
 import { type ProjectRow, routeInfoOf } from "./access.ts";
+import {
+  ATTACHMENT_LINK as LINK,
+  ATTACHMENT_OWNER as OWNER,
+} from "./attachment-links.ts";
 import { encodeNameSegment } from "./attachment-names.ts";
 import { formerSlugsOf } from "./projects.ts";
 import { recordRevision } from "./revisions.ts";
@@ -46,17 +50,6 @@ export type RelabelOptions = {
 
 /** What a renamed attachment used to be called, and is called now. */
 type Rename = { before: string; after: string };
-
-/**
- * A markdown link or image whose destination is an attachment on this
- * deployment. Group 5 is optional because the routes answer without a last
- * segment too.
- */
-const LINK =
-  /(!?)\[((?:[^\][]|\\.)*)\]\((\/api\/projects\/[^)\s]*?attachments\/(\d+)\/(?:download|view)(?:\/([^)\s?#]+))?)\)/g;
-
-/** Which project a destination names, as either the slug or the id. */
-const OWNER = /\/api\/projects\/([^/]+)\/attachments\//;
 
 /**
  * Link text that is itself nothing but an attachment URL, split before its

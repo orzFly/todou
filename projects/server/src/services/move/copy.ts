@@ -504,6 +504,7 @@ async function copyAttachments(
     contentType: string;
     size: number;
     storageKey: string;
+    draft: boolean;
     createdAt: string | null;
   }> = [];
   for await (const batch of readBatches(src, attachments, ids.oldIssueId, {
@@ -513,6 +514,7 @@ async function copyAttachments(
     contentType: attachments.contentType,
     size: attachments.size,
     storageKey: attachments.storageKey,
+    draft: attachments.draft,
     createdAt: micro(attachments.createdAt),
   })) {
     rows.push(...batch);
@@ -540,6 +542,7 @@ async function copyAttachments(
         contentType: row.contentType,
         size: row.size,
         storageKey: row.storageKey,
+        draft: row.draft,
         createdAt: atMicro(row.createdAt),
         // biome-ignore lint/suspicious/noExplicitAny: SQL expressions for µs
       } as any)

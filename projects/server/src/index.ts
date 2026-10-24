@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import { resolveVersion } from "@todou/shared/version";
 import { Builtins, Cli, Command, Option } from "clipanion";
 import { createApp } from "./app.ts";
-import { bootstrap } from "./bootstrap.ts";
+import { bootstrap, makeStorage } from "./bootstrap.ts";
 import { loadConfig, resolveS3Settings } from "./config.ts";
 import { DbRouter } from "./db/router.ts";
 import { projects } from "./db/system-schema.ts";
@@ -16,6 +16,7 @@ import {
   copyMissing,
   enumerateBlobKeys,
   gcPendingUploads,
+  reapDraftAttachments,
 } from "./services/storage-admin.ts";
 import {
   adoptUser,
@@ -201,12 +202,14 @@ class StorageGcCommand extends ConfiguredCommand {
   static paths = [["storage", "gc"]];
 
   static usage = Command.Usage({
-    description: "Reap expired direct uploads that were never completed",
+    description: "Reap expired direct uploads and unsent draft attachments",
     details:
-      "Walks pending_uploads rows past expiry (plus --min-age hours of " +
-      "margin), deletes the orphaned objects of uncompleted rows, and " +
-      "drops the rows. Driven entirely by the database — the bucket is " +
-      "never listed.",
+      "Two passes, both driven entirely by the database — the bucket is " +
+      "never listed. On the s3 backend, walks pending_uploads rows past " +
+      "expiry (plus --min-age hours of margin), deletes the orphaned " +
+      "objects of uncompleted rows, and drops the rows. On every backend, " +
+      "deletes draft attachments older than --min-age hours: files an " +
+      "editor uploaded for a comment or body that was never sent.",
   });
 
   dryRun = Option.Boolean("--dry-run", false, {
@@ -214,7 +217,8 @@ class StorageGcCommand extends ConfiguredCommand {
   });
 
   minAge = Option.String("--min-age", "24", {
-    description: "Hours past expiry before a pending upload is reaped",
+    description:
+      "Hours past expiry before a pending upload is reaped, and hours a draft is kept",
   });
 
   async execute(): Promise<number | undefined> {
@@ -224,29 +228,43 @@ class StorageGcCommand extends ConfiguredCommand {
       return 1;
     }
     const config = this.loadConfig();
-    if (config.storage.backend !== "s3" || !config.s3Credentials) {
-      this.context.stdout.write(
-        "storage.backend is not s3; no direct uploads to gc\n",
-      );
-      return 0;
-    }
-    const storage = new S3Storage(config.storage.s3, config.s3Credentials);
+    const storage = await makeStorage(config);
     const router = await DbRouter.open(config);
+    const log = (line: string) => this.context.stdout.write(`${line}\n`);
     try {
-      const report = await gcPendingUploads(router, storage, {
+      let failed = 0;
+      if (storage instanceof S3Storage) {
+        const report = await gcPendingUploads(router, storage, {
+          dryRun: this.dryRun,
+          minAgeHours,
+          log,
+        });
+        this.context.stdout.write(
+          this.dryRun
+            ? `[dry-run] would reap ${report.wouldDelete} pending upload(s)\n`
+            : `reaped ${report.droppedRows} pending upload(s), ` +
+                `deleted ${report.deletedObjects} orphan object(s)\n`,
+        );
+        failed += report.failedProjects;
+      } else {
+        this.context.stdout.write(
+          "storage.backend is not s3; no direct uploads to gc\n",
+        );
+      }
+      const drafts = await reapDraftAttachments(router, storage, {
         dryRun: this.dryRun,
         minAgeHours,
-        log: (line) => this.context.stdout.write(`${line}\n`),
+        log,
       });
       this.context.stdout.write(
         this.dryRun
-          ? `[dry-run] would reap ${report.wouldDelete} pending upload(s)\n`
-          : `reaped ${report.droppedRows} pending upload(s), ` +
-              `deleted ${report.deletedObjects} orphan object(s)\n`,
+          ? `[dry-run] would delete ${drafts.wouldDelete} draft attachment(s)\n`
+          : `deleted ${drafts.deletedRows} draft attachment(s)\n`,
       );
-      if (report.failedProjects > 0) {
+      failed += drafts.failedProjects;
+      if (failed > 0) {
         this.context.stderr.write(
-          `${report.failedProjects} project(s) failed; see FAIL lines above\n`,
+          `${failed} project pass(es) failed; see FAIL lines above\n`,
         );
         return 1;
       }

@@ -336,6 +336,7 @@ export const issueEvents = pgTable(
         "referenced",
         "cross_referenced",
         "attachment_added",
+        "attachment_deleted",
         "question_answered",
         "spec_pushed",
         "spec_withdrawn",
@@ -473,11 +474,18 @@ export const attachments = pgTable(
     contentType: text("content_type").notNull(),
     size: bigint("size", { mode: "number" }).notNull(),
     storageKey: text("storage_key").notNull(),
+    // Uploaded from an editor whose text has not been sent yet (T-568): only
+    // the uploader sees it, and nothing announces it until a text that links
+    // it is written. One left behind is reaped by `reapDraftAttachments`.
+    draft: boolean("draft").notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex("attachments_storage_key_idx").on(t.storageKey),
     index("attachments_issue_idx").on(t.issueId),
+    index("attachments_draft_created_idx")
+      .on(t.createdAt)
+      .where(sql`${t.draft}`),
     // Folded, not verbatim: two names differing only in case land on the same
     // file when downloaded into one directory (T-269). NFC folding happens at
     // the upload entrance instead, in `sanitizeFilename`.
@@ -506,6 +514,8 @@ export const pendingUploads = pgTable(
     declaredSize: bigint("declared_size", { mode: "number" }).notNull(),
     sha256: text("sha256"),
     storageKey: text("storage_key").notNull(),
+    /** Carried onto the attachment `complete` creates. */
+    draft: boolean("draft").notNull().default(false),
     createdAt: createdAt(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),

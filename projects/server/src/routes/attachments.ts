@@ -2,6 +2,8 @@ import { Readable } from "node:stream";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   Attachment,
+  AttachmentReference,
+  DeletedAttachment,
   DirectUploadRequest,
   DirectUploadTicket,
   minRoleOf,
@@ -14,6 +16,9 @@ import { contentDisposition } from "../http/content-disposition.ts";
 import { servedContentType } from "../http/content-type.ts";
 import {
   completeDirectUpload,
+  deleteAttachment,
+  listAttachmentReferences,
+  listDeletedAttachments,
   listIssueAttachments,
   openAttachment,
   requestDirectUpload,
@@ -49,6 +54,20 @@ const uploadRoute = createRoute({
               .custom<File>((v: unknown) => v instanceof File, "file required")
               .openapi({ type: "string", format: "binary" }),
             issue_number: z.coerce.number().int().positive(),
+            // A form field is a string; `z.coerce.boolean` would read
+            // "false" as true.
+            draft: z
+              .enum(["true", "false"])
+              .optional()
+              .openapi({
+                description:
+                  "`true` holds the file back as a draft (T-568): it stays " +
+                  "out of the list and the timeline, and only its uploader " +
+                  "can download it, until an issue body or comment the " +
+                  "uploader writes links it. Unlinked drafts are deleted " +
+                  "after a day. Editors that upload before the text is sent " +
+                  "use this; a plain upload is attached at once.",
+              }),
           }),
         },
       },
@@ -80,6 +99,66 @@ const listRoute = createRoute({
     200: {
       description: "Attachments",
       content: { "application/json": { schema: z.array(Attachment) } },
+    },
+    ...movedResponses,
+  },
+});
+
+const deleteRoute = createRoute({
+  method: "delete",
+  path: "/{slug}/attachments/{id}",
+  summary: `Delete an attachment (its uploader at ${minRoleOf("attachment.delete")}, anyone's at ${minRoleOf("attachment.delete_any")})`,
+  description:
+    "Not reversible: the stored file is deleted with the row. Links to it in " +
+    "issue bodies and comments stay as they were and stop resolving; " +
+    "`GET …/references` lists them beforehand. Records `attachment_deleted` " +
+    "on the card. 409 while the card is being moved to another project.",
+  request: {
+    params: z.object({
+      slug: ProjectRef,
+      id: z.coerce.number().int().positive(),
+    }),
+  },
+  responses: { 204: { description: "Deleted" } },
+});
+
+const referencesRoute = createRoute({
+  method: "get",
+  path: "/{slug}/attachments/{id}/references",
+  summary: `List the issue bodies and comments that link an attachment (${minRoleOf("attachment.delete")})`,
+  description:
+    "This project's text only, and none on cards in the trash. `comment_id` " +
+    "null means the issue body.",
+  request: {
+    params: z.object({
+      slug: ProjectRef,
+      id: z.coerce.number().int().positive(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "References, by issue number",
+      content: {
+        "application/json": { schema: z.array(AttachmentReference) },
+      },
+    },
+  },
+});
+
+const deletedListRoute = createRoute({
+  method: "get",
+  path: "/{slug}/attachments/deleted",
+  summary: "List the files deleted from an issue (member)",
+  request: {
+    params: z.object({ slug: ProjectRef }),
+    query: z.object({ issue_number: z.coerce.number().int().positive() }),
+  },
+  responses: {
+    200: {
+      description: "Deleted files, oldest first",
+      content: {
+        "application/json": { schema: z.array(DeletedAttachment) },
+      },
     },
     ...movedResponses,
   },
@@ -212,8 +291,44 @@ export function attachmentRoutes() {
       form.issue_number,
       form.file,
       c.get("agentContext"),
+      form.draft === "true",
     );
     return c.json(attachment, 201);
+  });
+
+  app.openapi(deletedListRoute, async (c) => {
+    const { slug } = c.req.valid("param");
+    const { issue_number } = c.req.valid("query");
+    const list = await listDeletedAttachments(
+      c.get("appCtx"),
+      c.get("user"),
+      slug,
+      issue_number,
+    );
+    return c.json(list, 200);
+  });
+
+  app.openapi(deleteRoute, async (c) => {
+    const { slug, id } = c.req.valid("param");
+    await deleteAttachment(
+      c.get("appCtx"),
+      c.get("user"),
+      slug,
+      id,
+      c.get("agentContext"),
+    );
+    return c.body(null, 204);
+  });
+
+  app.openapi(referencesRoute, async (c) => {
+    const { slug, id } = c.req.valid("param");
+    const list = await listAttachmentReferences(
+      c.get("appCtx"),
+      c.get("user"),
+      slug,
+      id,
+    );
+    return c.json(list, 200);
   });
 
   app.openapi(listRoute, async (c) => {

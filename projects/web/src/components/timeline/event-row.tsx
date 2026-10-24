@@ -401,6 +401,13 @@ export function renderEvent(
         text,
       };
     }
+    case "attachment_deleted": {
+      const attachment = payload.attachment as
+        | { filename?: string }
+        | undefined;
+      // Plain text: there is nothing left to link to.
+      return plain(`deleted ${attachment?.filename ?? "a file"}`);
+    }
     case "question_answered": {
       const answers = payload.answers as unknown[] | undefined;
       const count = answers?.length ?? 0;
@@ -742,6 +749,9 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   referenced: <LinkIcon className="size-3.5" />,
   cross_referenced: <LinkIcon className="size-3.5" />,
   attachment_added: <PaperclipIcon className="size-3.5" />,
+  attachment_deleted: (
+    <PaperclipIcon className="size-3.5 text-muted-foreground" />
+  ),
   question_answered: <ListChecksIcon className="size-3.5 text-green-600" />,
   spec_pushed: <BookOpenTextIcon className="size-3.5" />,
   spec_withdrawn: <CirclePauseIcon className="size-3.5" />,

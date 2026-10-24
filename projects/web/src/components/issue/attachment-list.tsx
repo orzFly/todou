@@ -9,12 +9,14 @@ import {
   FileIcon,
   FilePlayIcon,
   FileTextIcon,
+  FileXIcon,
   ImageIcon,
   PaperclipIcon,
 } from "lucide-react";
 import { type MouseEvent, type ReactNode, useState } from "react";
-import { attachmentsQuery } from "@/api/attachments.ts";
+import { attachmentsQuery, useAttachmentDeleted } from "@/api/attachments.ts";
 import { useBoxedRefLinks } from "@/api/prefs.ts";
+import { AttachmentDeleteButton } from "@/components/issue/attachment-delete.tsx";
 import {
   AttachmentViewerDialog,
   type ViewerState,
@@ -191,6 +193,11 @@ export function AttachmentList({
               >
                 <DownloadIcon className="size-3.5" />
               </a>
+              <AttachmentDeleteButton
+                slug={slug}
+                issueNumber={issueNumber}
+                attachment={attachment}
+              />
             </li>
           );
         })}
@@ -326,6 +333,11 @@ export function AttachmentEventLink({
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const [viewer, setViewer] = useState<ViewerState | null>(null);
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
+  const deleted = useAttachmentDeleted(
+    slug,
+    issueNumber,
+    attachment === undefined ? attachmentId : null,
+  );
   const url = attachment
     ? attachmentAnchorHref(attachment)
     : attachmentHref(slug, attachmentId, filename);
@@ -333,6 +345,17 @@ export function AttachmentEventLink({
   // the first frame instead of changing once the query lands.
   const Icon = attachmentIcon(attachment ?? { filename });
 
+  if (deleted) {
+    return (
+      <span
+        className="font-medium text-muted-foreground line-through"
+        data-attachment-deleted=""
+      >
+        <Icon aria-hidden className="mr-0.5 inline size-3.5 align-middle" />
+        {filename}
+      </span>
+    );
+  }
   return (
     <>
       <a
@@ -511,5 +534,32 @@ export function AttachmentInlineImage({
         issueNumber={issueNumber}
       />
     </>
+  );
+}
+
+/**
+ * Where a body links a file that was deleted from this card (T-567): the
+ * name it was linked under, struck through, with the word a broken image
+ * would otherwise leave the reader to guess.
+ */
+export function DeletedAttachmentMark({
+  name,
+  className,
+}: {
+  name: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded border border-dashed px-1.5 text-sm text-muted-foreground",
+        className,
+      )}
+      data-attachment-deleted=""
+    >
+      <FileXIcon aria-hidden className="size-3.5 shrink-0" />
+      <span className="line-through">{name}</span>
+      <span>deleted</span>
+    </span>
   );
 }

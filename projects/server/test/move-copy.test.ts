@@ -44,6 +44,7 @@ describe("copyIssueTree", () => {
   let issue: { id: number; number: number };
   let commentIds: number[] = [];
   let attachmentId = 0;
+  let draftId = 0;
 
   const headers = () => ({ "content-type": "application/json", cookie });
   const req = (path: string, init?: RequestInit) =>
@@ -120,6 +121,22 @@ describe("copyIssueTree", () => {
     });
     expect(uploaded.status).toBe(201);
     attachmentId = (await json(uploaded)).id as number;
+
+    // A draft rides along as a draft (T-568): copying must not publish it.
+    const draftForm = new FormData();
+    draftForm.set(
+      "file",
+      new File(["unsent"], "d.txt", { type: "text/plain" }),
+    );
+    draftForm.set("issue_number", String(issue.number));
+    draftForm.set("draft", "true");
+    const drafted = await t.app.request(`/api/projects/${A}/attachments`, {
+      method: "POST",
+      headers: { cookie },
+      body: draftForm,
+    });
+    expect(drafted.status).toBe(201);
+    draftId = (await json(drafted)).id as number;
 
     const pushed = await req(
       `/projects/${A}/issues/${issue.number}/spec/push`,
@@ -213,6 +230,16 @@ describe("copyIssueTree", () => {
       expect(copied?.body).toBe(sourceBodies.get(oldId));
     }
     expect(map.attachments.get(attachmentId)).toBeDefined();
+    const draftFlags = await db
+      .select({ id: attachments.id, draft: attachments.draft })
+      .from(attachments)
+      .where(eq(attachments.issueId, map.issueId));
+    expect(
+      draftFlags.find((r) => r.id === map.attachments.get(draftId))?.draft,
+    ).toBe(true);
+    expect(
+      draftFlags.find((r) => r.id === map.attachments.get(attachmentId))?.draft,
+    ).toBe(false);
 
     const copiedComments = await db
       .select({
