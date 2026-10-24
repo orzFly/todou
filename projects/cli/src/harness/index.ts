@@ -4,7 +4,7 @@ import type { Env } from "../config.ts";
 import { claudeCode } from "./claude-code.ts";
 import { codex } from "./codex.ts";
 import { hermesAgent } from "./hermes-agent.ts";
-import { isOmpWorker, omp, ompHostAncestor } from "./omp.ts";
+import { behindOmpBroker, isOmpWorker, omp, ompHostAncestor } from "./omp.ts";
 import { publishedState } from "./omp-state.ts";
 import { pi, piHostAncestor } from "./pi.ts";
 import {
@@ -223,6 +223,9 @@ function hostResolver(
         cwd: found.cwd,
         openLogs: openSessionLogs(procRoot, found.pid),
         stdin: readFd(procRoot, found.pid, 0),
+        ...(selection.harness.id === "omp" && behindOmpBroker(chain, found)
+          ? { brokered: true }
+          : {}),
       };
     }
     return host;

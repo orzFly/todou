@@ -3,7 +3,11 @@ import { once } from "node:events";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { detectHarnessId } from "../../src/harness/index.ts";
+import {
+  detectAgentContext,
+  detectHarnessId,
+  liveSessionIdReader,
+} from "../../src/harness/index.ts";
 import {
   harnessMessaging,
   nativeWatchOwner,
@@ -742,5 +746,139 @@ describe("native messaging ownership", () => {
     ]);
     expect(harnessMessaging(inherited, io)).toEqual({});
     expect(nativeWatchOwner(inherited, io)).toBeUndefined();
+  });
+});
+
+/**
+ * Two omp sessions on one project, measured on omp v18.12.6 (T-566): A asked
+ * for the project's first named service, so the broker that runs every
+ * service is A's child, and B's service sits under A in the process tree
+ * while its environment is B's.
+ */
+describe("a bash service another session's broker runs", () => {
+  const A = process.ppid;
+  const B = process.pid;
+  const BROKER = 424240;
+  const SERVICE = 424239;
+
+  type Published = {
+    session_id: string;
+    socket: string;
+    token: string;
+    path: string;
+  };
+
+  function twin() {
+    const runtime = scratchDir("todou-omp-twin-");
+    const dir = join(runtime, "todou-omp");
+    mkdirSync(dir, { recursive: true });
+    const publish = (name: string, pid: number): Published => {
+      const record = {
+        v: 1,
+        pid,
+        agent: "omp",
+        session_id: `session-${name}`,
+        socket: `/run/todou/${name}.sock`,
+        token: `token-${name}`,
+        tools: ["todou_watch"],
+      };
+      const path = join(dir, `${pid}.json`);
+      writeFileSync(path, JSON.stringify(record));
+      return { ...record, path };
+    };
+    const a = publish("a", A);
+    const b = publish("b", B);
+    const service: Record<string, string> = {
+      XDG_RUNTIME_DIR: runtime,
+      OMPCODE: "1",
+      CLAUDECODE: "1",
+      PI_SESSION_ID: b.session_id,
+      TODOU_OMP_STATE: b.path,
+      TODOU_MESSAGING_SOCKET: b.socket,
+      TODOU_MESSAGING_TOKEN: b.token,
+    };
+    const tree = (env: Record<string, string>, brokered = true) =>
+      procTree([
+        { pid: SERVICE, ppid: brokered ? BROKER : A, env, argv: ["sh"] },
+        ...(brokered
+          ? [
+              {
+                pid: BROKER,
+                ppid: A,
+                env: { XDG_RUNTIME_DIR: runtime, TODOU_OMP_STATE: a.path },
+                argv: ["/opt/omp/bin/omp", "__omp_worker_daemon_broker"],
+              },
+            ]
+          : []),
+        { pid: A, ppid: 1, argv: ["/opt/omp/bin/omp"] },
+      ]);
+    return { a, b, service, tree };
+  }
+
+  it("pushes to, filters on, and lives as long as the session that asked", () => {
+    const { b, service, tree } = twin();
+    const io = tree(service);
+    expect(harnessMessaging(service, io)).toEqual({
+      peer: "omp",
+      socket: b.socket,
+      token: b.token,
+      tools: ["todou_watch"],
+    });
+    expect(nativeWatchOwner(service, io)).toEqual({
+      peer: "omp",
+      pid: B,
+      path: b.path,
+      sessionId: b.session_id,
+      socket: b.socket,
+      token: b.token,
+    });
+    expect(detectAgentContext(service, "/nonexistent", "/", io)).toEqual({
+      agent: "omp",
+      session_id: b.session_id,
+    });
+    expect(liveSessionIdReader({ env: service, io })()).toEqual({
+      id: b.session_id,
+    });
+  });
+
+  it("takes no channel where the asking session published none", () => {
+    const { service, tree } = twin();
+    const {
+      TODOU_OMP_STATE: _state,
+      TODOU_MESSAGING_SOCKET: _socket,
+      TODOU_MESSAGING_TOKEN: _token,
+      ...bare
+    } = service;
+    const io = tree(bare);
+    expect(harnessMessaging(bare, io)).toEqual({});
+    expect(nativeWatchOwner(bare, io)).toBeUndefined();
+  });
+
+  it("refuses a record naming another session than PI_SESSION_ID", () => {
+    // An omp without the extension passes an outer omp's variable on as is.
+    const { service, tree } = twin();
+    const inherited = { ...service, PI_SESSION_ID: "session-elsewhere" };
+    const io = tree(inherited);
+    expect(harnessMessaging(inherited, io)).toEqual({});
+    expect(nativeWatchOwner(inherited, io)).toBeUndefined();
+    expect(liveSessionIdReader({ env: inherited, io })()).toEqual({});
+  });
+
+  it("keeps to the process tree without PI_SESSION_ID to check against", () => {
+    // omp before 18.12.4.
+    const { a, service, tree } = twin();
+    const { PI_SESSION_ID: _id, ...old } = service;
+    const io = tree(old);
+    expect(harnessMessaging(old, io).socket).toBe(a.socket);
+    expect(nativeWatchOwner(old, io)?.pid).toBe(A);
+  });
+
+  it("keeps to the process tree where no broker stands between", () => {
+    // Variables a descendant carried away from another session agree with
+    // each other just as well, which is why only the broker earns belief.
+    const { a, service, tree } = twin();
+    const io = tree(service, false);
+    expect(harnessMessaging(service, io).socket).toBe(a.socket);
+    expect(nativeWatchOwner(service, io)?.pid).toBe(A);
   });
 });

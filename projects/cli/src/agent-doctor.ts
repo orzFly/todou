@@ -336,7 +336,7 @@ function pushLines(input: DoctorInput, harness: string | null): string[] {
       row(
         "record",
         attempt.state
-          ? `${attempt.state.path} read · pid ${attempt.state.pid} · session ${attempt.state.sessionId}`
+          ? `${attempt.state.path} read · pid ${attempt.state.pid} · session ${attempt.state.sessionId}${attempt.brokered ? " · named by the environment, behind omp's service broker" : ""}`
           : attempt.unreadable
             ? `${attempt.unreadable} could not be read or believed`
             : "none published by a process above this one",

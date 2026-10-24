@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { type CodexTarget, codexTarget } from "../codex-push.ts";
 import type { Env } from "../config.ts";
 import { detectHarnessId } from "./index.ts";
-import { ompHostAncestor, ompStateAttempt } from "./omp.ts";
+import { behindOmpBroker, ompHostAncestor, ompStateAttempt } from "./omp.ts";
 import type { OmpState } from "./omp-state.ts";
 import { piHostAncestor, piState } from "./pi.ts";
 import {
@@ -50,12 +50,14 @@ export function ownedStateAttempt(
   peer: "omp" | "pi",
   env: Env,
   io?: Partial<ProcessTreeIo>,
-): { state?: OmpState; unreadable?: string } {
+): { state?: OmpState; unreadable?: string; brokered?: true } {
   const ctx = {
     env,
     host: () => {
       const chain = readAncestors(io);
-      return peer === "omp" ? ompHostAncestor(chain) : piHostAncestor(chain);
+      if (peer === "pi") return piHostAncestor(chain);
+      const host = ompHostAncestor(chain);
+      return host && { ...host, brokered: behindOmpBroker(chain, host) };
     },
     ancestorPids: () => ancestorPids(io),
   };
@@ -73,12 +75,14 @@ export function nativeWatchOwner(
 ): NativeWatchOwner | undefined {
   const peer = detectHarnessId(env, io);
   if (peer !== "omp" && peer !== "pi") return undefined;
-  const { state } = ownedStateAttempt(peer, env, io);
+  const { state, brokered } = ownedStateAttempt(peer, env, io);
   if (state?.socket === undefined || state.token === undefined)
     return undefined;
   // Messaging keeps compatibility with explicit paths outside a visible
-  // process tree. A lifetime guard requires positive ancestry as well.
-  if (!ancestorPids(io).includes(state.pid)) return undefined;
+  // process tree. A lifetime guard requires positive ancestry as well —
+  // except behind omp's broker, where the asking session is never an
+  // ancestor and the record's session id stands in for that proof.
+  if (!brokered && !ancestorPids(io).includes(state.pid)) return undefined;
   return {
     peer,
     pid: state.pid,

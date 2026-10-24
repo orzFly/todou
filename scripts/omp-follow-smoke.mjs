@@ -20,7 +20,10 @@
  *              async job, and doing exactly that wakes the agent, twice, the
  *              second time from the cursor the first wake carried;
  *   service  — extension installed: `--follow=uds` from a named bash service
- *              (which omp runs under its daemon broker) wakes the agent.
+ *              (which omp runs under its daemon broker) wakes the agent;
+ *   twin     — two sessions in one project, A started first so the broker
+ *              hangs off A: B's service watch wakes B and never A, delivers
+ *              A's comment, and skips only B's own (T-566).
  *
  * Pushed watches run with `--debounce 0`, so a wake is not 60 seconds of
  * batching late. Every watch runs as a non-default account: the default token belongs to
@@ -43,6 +46,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -71,7 +75,7 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (key in options) options[key] = process.argv[++i];
   else throw new Error(`unknown option ${process.argv[i]}`);
 }
-const CHECKS = ["tool", "batch", "service"];
+const CHECKS = ["tool", "batch", "service", "twin"];
 if (options.only && !CHECKS.includes(options.only)) {
   throw new Error(`--only takes one of ${CHECKS.join(", ")}`);
 }
@@ -249,8 +253,11 @@ const comment = (body) =>
 /**
  * Each check installs its own script: a list of replies, each either a value
  * or a function of the newest message, consumed by main-agent requests only.
+ * A check running two sessions at once gives each its own model id and its
+ * own list in `scripts`, which is how one stub tells their requests apart.
  */
 let script = [];
+let scripts = {};
 /** Every request the main agent made, in arrival order. */
 let agentRequests = [];
 const isAgent = (body) =>
@@ -271,7 +278,7 @@ const model = createServer((req, res) => {
     const agent = isAgent(parsed);
     if (agent) agentRequests.push(parsed);
     log(`[model ${agent ? "agent" : "side"}] ${newest(parsed).slice(0, 2000)}`);
-    let next = agent ? script.shift() : undefined;
+    let next = agent ? (scripts[parsed.model] ?? script).shift() : undefined;
     if (typeof next === "function") next = next(newest(parsed));
     next ??= { text: "waiting" };
     const chunk = { id: randomUUID(), object: "chat.completion.chunk" };
@@ -361,17 +368,15 @@ function home(name, { extension }) {
           baseUrl: `http://127.0.0.1:${model.address().port}/v1`,
           api: "openai-completions",
           apiKey: "smoke-not-a-secret",
-          models: [
-            {
-              id: "local",
-              name: "Local",
-              reasoning: false,
-              input: ["text"],
-              contextWindow: 32768,
-              maxTokens: 1024,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            },
-          ],
+          models: ["local", "local-a", "local-b"].map((id) => ({
+            id,
+            name: id,
+            reasoning: false,
+            input: ["text"],
+            contextWindow: 32768,
+            maxTokens: 1024,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          })),
         },
       },
     }),
@@ -432,7 +437,7 @@ function home(name, { extension }) {
 }
 
 /** Starts an interactive omp whose first turn is `go`; resolves once idle. */
-async function session(name, where) {
+async function session(name, where, modelId = "local") {
   const terminal = join(scratch, `${name}.terminal.log`);
   const host = spawn(
     options.python,
@@ -441,7 +446,7 @@ async function session(name, where) {
       options["omp-bin"],
       "--no-title",
       "--model",
-      "smoke/local",
+      `smoke/${modelId}`,
       "--approval-mode",
       "yolo",
       "--cwd",
@@ -463,10 +468,13 @@ async function session(name, where) {
     }
   });
   host.stderr.on("data", (chunk) => appendFileSync(terminal, chunk));
-  const steps = script.length;
+  const queue = scripts[modelId] ?? script;
+  const steps = queue.length;
+  const requests = () =>
+    agentRequests.filter((body) => body.model === modelId).length;
   await until(
     `${name}: the scripted turn to run out`,
-    () => agentRequests.length > steps && script.length === 0,
+    () => requests() > steps && queue.length === 0,
     60_000,
   );
   await sleep(3000);
@@ -510,6 +518,7 @@ const failures = [];
 async function check(name, body) {
   if (options.only && options.only !== name) return;
   script = [];
+  scripts = {};
   agentRequests = [];
   try {
     await body();
@@ -604,6 +613,87 @@ await check("service", async () => {
     await wakes("service");
   } finally {
     await stop(host);
+  }
+});
+
+/** Types into an omp's terminal, as if the user had: starts a turn. */
+const type = (host, text) =>
+  host.stdin.write(`${JSON.stringify({ input: `${text}\r` })}\n`);
+
+/**
+ * Whether the request carries `marker` in a message neither the model wrote
+ * nor a tool returned — that is, in something pushed into the session. A
+ * session's own tool calls and their results carry the markers it posted.
+ */
+const pushedIn = (body, marker) =>
+  body.messages.some(
+    (message) =>
+      message.role !== "assistant" &&
+      message.role !== "tool" &&
+      JSON.stringify(message).includes(marker),
+  );
+
+await check("twin", async () => {
+  const where = home("twin", { extension: true });
+  const doctor = join(scratch, "twin-doctor.txt");
+  const of = (model) => agentRequests.filter((body) => body.model === model);
+  scripts = {
+    // A starts the project's first service, so the broker is A's child.
+    "local-a": [bash("sleep 600", { name: "hold" })],
+    "local-b": [
+      bash(
+        `${todou} agent doctor > ${doctor} 2>&1; exec ${todou} issue watch ${issue} --profile alt --follow=uds --debounce 0`,
+        { name: "todouwatch" },
+      ),
+    ],
+  };
+  const a = await session("twin-a", where, "local-a");
+  const b = await session("twin-b", where, "local-b");
+  try {
+    log(`[twin doctor in B's service]\n${readFileSync(doctor, "utf8")}`);
+    const post = (marker) =>
+      bash(`todou comment add ${issue} --profile alt --body ${marker}`);
+
+    // Another session's activity on the account B uses is B's to see.
+    const fromA = `SMOKE-twin-from-A-${randomUUID()}`;
+    scripts["local-a"] = [post(fromA)];
+    type(a, "post");
+    await until(
+      "B to be woken by A's comment",
+      () => of("local-b").some((body) => pushedIn(body, fromA)),
+      45_000,
+    );
+
+    // B's own is not, and the watch is still B's afterwards.
+    const fromB = `SMOKE-twin-from-B-${randomUUID()}`;
+    scripts["local-b"] = [post(fromB)];
+    const turn = of("local-b").length;
+    type(b, "post");
+    await until(
+      "B's own comment to be posted",
+      () => of("local-b").length > turn + 1 && scripts["local-b"].length === 0,
+      30_000,
+    );
+    const after = `SMOKE-twin-after-B-${randomUUID()}`;
+    await comment(after);
+    await until(
+      "B to be woken by the comment after its own",
+      () => of("local-b").some((body) => pushedIn(body, after)),
+      45_000,
+    );
+    assert.ok(
+      !of("local-b").some((body) => pushedIn(body, fromB)),
+      "B was pushed its own comment",
+    );
+    for (const marker of [fromA, after]) {
+      assert.ok(
+        !of("local-a").some((body) => pushedIn(body, marker)),
+        `A was pushed ${marker}`,
+      );
+    }
+  } finally {
+    await stop(b);
+    await stop(a);
   }
 });
 

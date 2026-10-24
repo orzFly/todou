@@ -132,11 +132,32 @@ export const omp = {
  * Claude Code's marker, nearer than omp itself (T-564).
  */
 export function isOmpWorker(ancestor: Ancestor): boolean {
-  const workerArg =
-    basename(ancestor.argv[0] ?? "") === "omp"
-      ? ancestor.argv[1]
-      : ancestor.argv[2];
-  return workerArg?.startsWith("__omp_worker_") ?? false;
+  return workerMode(ancestor)?.startsWith("__omp_worker_") ?? false;
+}
+
+function workerMode(ancestor: Ancestor): string | undefined {
+  return basename(ancestor.argv[0] ?? "") === "omp"
+    ? ancestor.argv[1]
+    : ancestor.argv[2];
+}
+
+/**
+ * Whether the chain reaches omp's daemon broker before it reaches `host`.
+ *
+ * One broker serves every session open on a project, and it is the child of
+ * whichever session asked for a service first: below it, the process tree
+ * names that session whoever asked for this service (T-566). The other
+ * workers stay out of this — an eval runtime is its own session's child, and
+ * its curated environment carries nothing to attribute it by instead.
+ */
+export function behindOmpBroker(
+  chain: readonly Ancestor[],
+  host: Ancestor | undefined,
+): boolean {
+  const end = host === undefined ? -1 : chain.indexOf(host);
+  return chain
+    .slice(0, end < 0 ? chain.length : end)
+    .some((ancestor) => workerMode(ancestor) === "__omp_worker_daemon_broker");
 }
 
 /**
@@ -176,8 +197,14 @@ export function ompStateAttempt({
 }: Pick<HarnessContext, "env" | "host" | "ancestorPids">): {
   state?: OmpState;
   unreadable?: string;
+  /** Believed on the environment's word; no ancestor published it. */
+  brokered?: true;
 } {
   const hostProcess = host();
+  if (hostProcess?.brokered) {
+    const attempt = brokeredStateAttempt(env);
+    if (attempt) return attempt;
+  }
   const pids = () => {
     const chain = ancestorPids();
     if (!hostProcess) return chain;
@@ -207,6 +234,39 @@ export function ompStateAttempt({
     }
   }
   return attempt.unreadable ? { unreadable: attempt.unreadable } : {};
+}
+
+/**
+ * The record of the session that asked omp's broker for this service, read
+ * from the environment the broker started it with — the asking session's
+ * own, where the process tree can only name the broker's parent.
+ *
+ * The environment is believed here and nowhere else because here it is
+ * fresh: the broker builds it per service from the asking session, while
+ * anywhere else it may be a copy that a long-lived descendant carried away
+ * from a session it no longer belongs to. Even so, an omp without the
+ * extension passes on an outer omp's `TODOU_OMP_STATE` untouched, so the
+ * record must also name the session `PI_SESSION_ID` does — which omp writes
+ * into each bash command's environment as the command starts.
+ *
+ * Undefined defers to the process tree: an omp older than `PI_SESSION_ID`
+ * (18.12.4) leaves nothing to check the variable against.
+ */
+function brokeredStateAttempt(
+  env: Env,
+): { state?: OmpState; unreadable?: string; brokered?: true } | undefined {
+  const sessionId = env.PI_SESSION_ID;
+  if (!sessionId) return undefined;
+  const path = env.TODOU_OMP_STATE;
+  // The asking session published nothing. The broker's parent may have, and
+  // its channel is not this session's.
+  if (!path) return {};
+  const state = readOmpStateAt(path);
+  if (!state) return { unreadable: path };
+  if (state.agent !== undefined && state.agent !== "omp") return {};
+  // Another session's record, or this one's after a `/new`: not who asked.
+  if (state.sessionId !== sessionId) return {};
+  return { state, brokered: true };
 }
 
 /**

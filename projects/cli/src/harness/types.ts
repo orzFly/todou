@@ -38,6 +38,12 @@ export type HostProcess = {
    * a pty or `/dev/null`, and never the terminal the harness is sitting on.
    */
   stdin?: string;
+  /**
+   * True when omp's daemon broker sits between us and this host, so the host
+   * is the session that started the broker rather than necessarily the one
+   * that asked for us (T-566).
+   */
+  brokered?: boolean;
 };
 
 /**

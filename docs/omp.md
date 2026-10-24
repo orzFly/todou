@@ -125,6 +125,16 @@ starts, with `PATH` reset to the system default. `--follow=uds` works from
 one, but the `todou` it finds on that `PATH` need not be the one the agent's
 own shell resolves; `async: true` keeps the agent's `PATH`.
 
+Every omp session open in one directory shares that broker, and it is the
+child of whichever session started a service first. todou therefore takes the
+session from the service's environment rather than from the process tree,
+checking the state file it names against the `PI_SESSION_ID` omp sets for each
+command. omp older than 18.12.4 sets no `PI_SESSION_ID`, so there a service
+binds to the session that started the broker: pushes go to that session, and
+the watch skips that session's activity instead of its own. Run the watch as
+an `async: true` job, or through `todou_watch`, when several sessions share a
+directory on such an omp.
+
 ## `todou_watch`: the tool the extension registers
 
 The extension also registers a `todou_watch` tool the model can call, which
