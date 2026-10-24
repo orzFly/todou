@@ -89,6 +89,11 @@ pnpm exec scripts/bundle-cli.sh "$STAGE" "$VERSION" "$OUT/todou.cjs"
 # package.json is deno's to find — it walks up to the nearest one and packs it
 # too — so it is supplied here rather than left to whatever is above.
 # `TZ=UTC touch -t` because `-t` reads local time, and `-d @epoch` is GNU-only.
+#
+# Identical only between Linux build hosts: deno also records the host OS's
+# filename case sensitivity (`"vfs_case_sensitivity"`), which reads "i" on
+# macOS even from a case-sensitive volume. A build from a Mac runs fine; it is
+# just never the release's bytes, so `upgrade` will ask before installing it.
 echo "==> deno compile"
 COMPILE="$OUT/.compile"
 mkdir -p "$COMPILE"
