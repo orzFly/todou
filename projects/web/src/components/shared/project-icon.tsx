@@ -1,7 +1,7 @@
-import { useId, useLayoutEffect, useRef } from "react";
+import { useProjectIconFallback } from "@/api/prefs.ts";
+import { FallbackGlyph } from "@/components/shared/fallback-glyph.tsx";
 import { initialsOf } from "@/components/shared/user-chip.tsx";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { projectTint } from "@/lib/project-tint.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,14 +20,6 @@ import { cn } from "@/lib/utils";
  */
 const GLYPH_LIMIT = 3;
 
-/**
- * In the glyph's 100-unit box. The text is sized in the same units, so it
- * scales with whatever box it is drawn in; this cap is what keeps the widest
- * REFs (`WWW`, `KGM`) inside it too, at every size and in whichever font
- * actually loaded.
- */
-const GLYPH_MAX_WIDTH = 84;
-
 interface FallbackSubject {
   slug: string;
   name: string;
@@ -35,67 +27,8 @@ interface FallbackSubject {
 }
 
 function ProjectGlyph({ slug, text }: { slug: string; text: string }) {
-  const { from, to } = projectTint(slug);
-  // Every icon on a page carries its own gradient, and a repeated id would let
-  // one icon paint with another's.
-  const gradient = `project-tint-${useId().replace(/[^\w-]/g, "")}`;
-  const fit = useRef<SVGGElement>(null);
-  const glyph = useRef<SVGTextElement>(null);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the text is the measurement input.
-  useLayoutEffect(() => {
-    const measure = () => {
-      const group = fit.current;
-      const label = glyph.current;
-      // happy-dom has no layout to measure.
-      if (!group || !label || typeof label.getBBox !== "function") return;
-      const { width } = label.getBBox();
-      const scale = width > GLYPH_MAX_WIDTH ? GLYPH_MAX_WIDTH / width : 1;
-      group.setAttribute("transform", `scale(${scale})`);
-    };
-    measure();
-    // A measurement taken in the fallback face is wrong once Geist arrives.
-    document.fonts?.addEventListener("loadingdone", measure);
-    return () => document.fonts?.removeEventListener("loadingdone", measure);
-  }, [text]);
-
-  return (
-    // Announced as the REF, the way the bare text it replaced was; the
-    // gradient carries nothing to announce.
-    <svg
-      viewBox="0 0 100 100"
-      role="img"
-      aria-label={text}
-      className="size-full"
-    >
-      <defs>
-        <linearGradient id={gradient} x2="1" y2="1">
-          <stop offset="0" stopColor={from} />
-          <stop offset="1" stopColor={to} />
-        </linearGradient>
-      </defs>
-      <rect width="100" height="100" fill={`url(#${gradient})`} />
-      <g transform="translate(50 50)">
-        {/* Left to the effect: React never writes this group's transform, so
-            a re-render cannot undo the fit. */}
-        <g ref={fit}>
-          {/* The baseline sits half of Geist's 0.7em cap height below the
-              middle, which centres capitals rather than the em box. */}
-          <text
-            ref={glyph}
-            y="15.5"
-            textAnchor="middle"
-            fontSize="44"
-            fontWeight="600"
-            fill="#fff"
-            className="drop-shadow-[0_1px_1px_rgb(0_0_0/0.25)]"
-          >
-            {text}
-          </text>
-        </g>
-      </g>
-    </svg>
-  );
+  const generator = useProjectIconFallback();
+  return <FallbackGlyph text={text} generator={generator} seed={slug} />;
 }
 
 /**
@@ -122,8 +55,8 @@ export function ProjectIcon({
   return (
     <Avatar
       shape="square"
-      // Clipped here rather than on `Avatar` itself: only this caller fills
-      // the fallback with a square gradient that has to take the box's
+      // Clipped here rather than on `Avatar` itself: only this caller can
+      // fill the fallback with a square gradient that has to take the box's
       // rounded corners, and a shared component should not carry one
       // caller's constraint.
       className={cn(

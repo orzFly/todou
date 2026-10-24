@@ -120,3 +120,19 @@ export function renderWithProviders(
 // Leaves that need neither router nor query cache mount through the plain
 // testing-library render; re-exported here so tests keep one import site.
 export { render } from "@testing-library/react";
+
+/**
+ * `render` inside a bare query client, for a component that reads a
+ * preference but needs no router: every avatar box does (T-555).
+ */
+export function renderWithClient(
+  ui: ReactElement,
+  client: QueryClient = testQueryClient(),
+) {
+  // A wrapper rather than a wrapping element, so `rerender` keeps the client.
+  return render(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}

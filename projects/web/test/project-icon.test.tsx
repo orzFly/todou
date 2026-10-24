@@ -4,7 +4,7 @@ import {
   projectIconFallback,
 } from "../src/components/shared/project-icon.tsx";
 import { projectTint } from "../src/lib/project-tint.ts";
-import { render } from "./render.tsx";
+import { renderWithClient as render } from "./render.tsx";
 
 const draw = (project: {
   slug?: string;

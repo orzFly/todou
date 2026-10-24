@@ -1,8 +1,8 @@
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvatarEditor } from "../src/components/shared/avatar-editor.tsx";
 import { initialsOf, UserChip } from "../src/components/shared/user-chip.tsx";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithClient as render, renderWithProviders } from "./render.tsx";
 
 vi.mock("sonner", async (importOriginal) => ({
   ...(await importOriginal<object>()),

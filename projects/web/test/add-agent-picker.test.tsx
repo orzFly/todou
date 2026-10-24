@@ -1,17 +1,11 @@
 import { QueryClient } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Agent, Me, Member } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentsQuery, membersQuery, meQuery } from "../src/api/queries.ts";
 import { AddAgentPicker } from "../src/components/shared/add-agent-picker.tsx";
 import { MembersSection } from "../src/pages/project-settings.tsx";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithClient as render, renderWithProviders } from "./render.tsx";
 
 let nextId = 100;
 

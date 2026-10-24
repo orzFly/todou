@@ -17,6 +17,8 @@ const DEFAULTS = {
   truncate_ref_title: true,
   show_repeated_ref_title: false,
   open_external_links_in_new_tab: false,
+  project_icon_fallback: "colorful_text",
+  user_avatar_fallback: "monochrome_text",
 };
 
 describe("user preferences", () => {
@@ -185,6 +187,41 @@ describe("user preferences", () => {
       truncate_ref_title: false,
       open_external_links_in_new_tab: true,
     });
+  });
+
+  it("round-trips the avatar generators and gives a pre-T-555 row today's look", async () => {
+    await storeBlob({ truncate_ref_title: false });
+    const before = await json(await getPrefs());
+    expect(before.project_icon_fallback).toBe("colorful_text");
+    expect(before.user_avatar_fallback).toBe("monochrome_text");
+
+    const res = await patchPrefs({
+      project_icon_fallback: "monochrome_text",
+      user_avatar_fallback: "monochrome_text",
+    });
+    expect(res.status).toBe(200);
+    const expected = {
+      ...DEFAULTS,
+      truncate_ref_title: false,
+      project_icon_fallback: "monochrome_text",
+    };
+    expect(await json(res)).toEqual(expected);
+    expect(await json(await getPrefs())).toEqual(expected);
+  });
+
+  it("refuses a generator the enum does not name, and reads a stored one as the default", async () => {
+    for (const body of [
+      { project_icon_fallback: "identicon" },
+      { user_avatar_fallback: "colorful_text" },
+    ]) {
+      expect((await patchPrefs(body)).status).toBe(422);
+    }
+
+    await storeBlob({
+      project_icon_fallback: "identicon",
+      user_avatar_fallback: "colorful_text",
+    });
+    expect(await json(await getPrefs())).toEqual(DEFAULTS);
   });
 
   it("fills every key from an empty stored blob", async () => {

@@ -12,7 +12,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
-import { initialsOf } from "@/components/shared/user-chip.tsx";
+import { userAvatarFallback } from "@/components/shared/user-chip.tsx";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { fitAvatar } from "@/lib/avatar-resize.ts";
@@ -37,7 +37,7 @@ export function AvatarEditor({
 }: {
   subject: { name: string; imageUrl: string | null };
   shape?: "circle" | "square";
-  /** Drawn in place of `subject.name`'s initials; a project shows its REF. */
+  /** Drawn in place of `subject.name`'s generated avatar; a project shows its REF. */
   fallback?: ReactNode;
   onUpload: (file: File) => void;
   onRemove: () => void;
@@ -164,12 +164,12 @@ export function AvatarEditor({
         if (file) void handleFile(file);
       }}
     >
-      {/* `overflow-hidden` rounds a project's square gradient to the box's
-          corners; the REF on it fits itself to the box. */}
+      {/* `overflow-hidden` rounds a square gradient to the box's corners;
+          the text on it fits itself to the box. */}
       <Avatar size="lg" shape={shape} className="overflow-hidden">
         {subject.imageUrl && <AvatarImage src={subject.imageUrl} alt="" />}
-        <AvatarFallback className="text-lg">
-          {fallback ?? initialsOf(subject.name)}
+        <AvatarFallback>
+          {fallback ?? userAvatarFallback(subject.name)}
         </AvatarFallback>
       </Avatar>
       <div className="flex flex-col gap-1">

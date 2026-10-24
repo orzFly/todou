@@ -67,6 +67,18 @@ export function useOpenExternalLinksInNewTab(): boolean {
   return useBooleanPref("open_external_links_in_new_tab");
 }
 
+/** What a project without an uploaded icon draws (T-555). */
+export function useProjectIconFallback(): MePrefs["project_icon_fallback"] {
+  const prefs = useQuery(prefsQuery).data;
+  return (prefs ?? PREF_DEFAULTS).project_icon_fallback;
+}
+
+/** What a person without an uploaded avatar draws (T-555). */
+export function useUserAvatarFallback(): MePrefs["user_avatar_fallback"] {
+  const prefs = useQuery(prefsQuery).data;
+  return (prefs ?? PREF_DEFAULTS).user_avatar_fallback;
+}
+
 /**
  * Optimistic preference patch (T-97): the toggle flips instantly, and the
  * inbox is invalidated alongside because the server filters weak-unread

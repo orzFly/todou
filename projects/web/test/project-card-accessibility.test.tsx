@@ -17,7 +17,7 @@ describe("ProjectCard accessible name", () => {
     // not prepend a duplicate prefix to that accessible name.
     expect(link.querySelector(".sr-only")?.textContent).toBe("XYZ");
     const fallback = within(link).getByText("XYZ", {
-      selector: '[data-slot="avatar-fallback"] text',
+      selector: '[data-slot="avatar-fallback"] [data-glyph-text]',
     });
     expectVisible(fallback);
     expect(link.getAttribute("href")).toBe("/projects/atlas");
@@ -45,7 +45,7 @@ describe("ProjectCard accessible name", () => {
       expectVisible(image as HTMLImageElement);
       expect(
         within(link).queryByText("XYZ", {
-          selector: '[data-slot="avatar-fallback"] text',
+          selector: '[data-slot="avatar-fallback"] [data-glyph-text]',
         }),
       ).toBeNull();
     });

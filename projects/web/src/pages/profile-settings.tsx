@@ -8,7 +8,9 @@ import type {
   BoardRefPlacement,
   Me,
   MeUpdateInput,
+  ProjectIconFallback,
   RefPlacement,
+  UserAvatarFallback,
 } from "@todou/shared";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -17,9 +19,11 @@ import {
   useBoxedRefLinks,
   useOpenExternalLinksInNewTab,
   usePatchPrefs,
+  useProjectIconFallback,
   useRefPlacement,
   useShowRepeatedRefTitle,
   useTruncateRefTitle,
+  useUserAvatarFallback,
 } from "@/api/prefs.ts";
 import { api, meQuery } from "@/api/queries.ts";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
@@ -136,6 +140,7 @@ export function ProfileSettingsPage() {
       <UnreadIndicatorsSection />
       <DisplaySection />
       <BodyReferencesSection />
+      <FallbackAvatarsSection />
     </div>
   );
 }
@@ -297,6 +302,52 @@ function BodyReferencesSection() {
         onChange={(checked) =>
           patch.mutate({ open_external_links_in_new_tab: checked })
         }
+      />
+    </div>
+  );
+}
+
+const PROJECT_ICON_FALLBACKS: ReadonlyArray<{
+  value: ProjectIconFallback;
+  label: string;
+}> = [
+  { value: "monochrome_text", label: "Monochrome text" },
+  { value: "colorful_text", label: "Colorful text" },
+];
+
+const USER_AVATAR_FALLBACKS: ReadonlyArray<{
+  value: UserAvatarFallback;
+  label: string;
+}> = [{ value: "monochrome_text", label: "Monochrome text" }];
+
+/** What a project or a person without an uploaded image is drawn as (T-555). */
+function FallbackAvatarsSection() {
+  const prefs = useQuery(prefsQuery);
+  const patch = usePatchPrefs();
+  const pending = prefs.isPending;
+  const project = useProjectIconFallback();
+  const user = useUserAvatarFallback();
+
+  return (
+    <div className="space-y-4 border-t pt-6">
+      <div className="space-y-1">
+        <h2 className="font-medium">Icons without an image</h2>
+      </div>
+      <PlacementRow
+        id="project-icon-fallback"
+        label="Projects"
+        value={project}
+        options={PROJECT_ICON_FALLBACKS}
+        disabled={pending}
+        onChange={(value) => patch.mutate({ project_icon_fallback: value })}
+      />
+      <PlacementRow
+        id="user-avatar-fallback"
+        label="People"
+        value={user}
+        options={USER_AVATAR_FALLBACKS}
+        disabled={pending}
+        onChange={(value) => patch.mutate({ user_avatar_fallback: value })}
       />
     </div>
   );

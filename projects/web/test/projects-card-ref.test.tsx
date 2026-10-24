@@ -110,10 +110,12 @@ describe("the REF on a project card", () => {
     renderProjects([project("homelab"), project("refract")], DIRECTORY);
     await waitFor(() => expect(cardOf("homelab")).toBeTruthy());
     expect(document.querySelector('[data-slot="ref-watermark"]')).toBeNull();
-    // What is left positioned on the card is the screen-reader copy alone.
+    // What is left positioned on the card is the screen-reader copy alone,
+    // outside the icon: its glyph stacks text over a background (T-555).
     for (const slug of ["homelab", "refract"]) {
       const positioned = [...cardOf(slug).querySelectorAll("*")].filter(
         (node) =>
+          !node.closest('[data-slot="avatar"]') &&
           (node.getAttribute("class") ?? "")
             .split(/\s+/)
             .some((token) => token === "absolute" || token === "sr-only"),

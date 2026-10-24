@@ -12,6 +12,21 @@ export const BoardRefPlacement = z.enum(["before", "after", "own_line"]);
 export type BoardRefPlacement = z.infer<typeof BoardRefPlacement>;
 
 /**
+ * How a project without an uploaded icon draws its REF (T-555): on the
+ * theme's muted square, or on a gradient hashed from its slug (T-544).
+ */
+export const ProjectIconFallback = z.enum(["monochrome_text", "colorful_text"]);
+export type ProjectIconFallback = z.infer<typeof ProjectIconFallback>;
+
+/**
+ * The same choice for a person without an uploaded avatar. One member for
+ * now; an enum rather than nothing so another generator is a new member, not
+ * a new key.
+ */
+export const UserAvatarFallback = z.enum(["monochrome_text"]);
+export type UserAvatarFallback = z.infer<typeof UserAvatarFallback>;
+
+/**
  * Per-user preferences (T-97), stored server-side so every browser and
  * machine sees the same values — the weak-unread toggle must agree with
  * the server-side inbox filtering, which reads the same row. Strict so
@@ -62,6 +77,13 @@ export const MePrefs = z.strictObject({
    * Display-only, like the keys above.
    */
   open_external_links_in_new_tab: z.boolean().default(false),
+  /*
+   * What an avatar box draws when nothing was uploaded (T-555).
+   * Display-only. The project default is the gradient every project already
+   * showed before this key existed.
+   */
+  project_icon_fallback: ProjectIconFallback.default("colorful_text"),
+  user_avatar_fallback: UserAvatarFallback.default("monochrome_text"),
 });
 export type MePrefs = z.infer<typeof MePrefs>;
 
@@ -80,5 +102,7 @@ export const MePrefsPatch = z.strictObject({
   truncate_ref_title: z.boolean().optional(),
   show_repeated_ref_title: z.boolean().optional(),
   open_external_links_in_new_tab: z.boolean().optional(),
+  project_icon_fallback: ProjectIconFallback.optional(),
+  user_avatar_fallback: UserAvatarFallback.optional(),
 });
 export type MePrefsPatch = z.infer<typeof MePrefsPatch>;

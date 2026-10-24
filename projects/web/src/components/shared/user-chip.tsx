@@ -1,6 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import type { UserKind, UserRef } from "@todou/shared";
 import { BotIcon } from "lucide-react";
+import { useUserAvatarFallback } from "@/api/prefs.ts";
+import { FallbackGlyph } from "@/components/shared/fallback-glyph.tsx";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Tooltip,
@@ -29,6 +31,22 @@ export function initialsOf(displayName: string): string {
     .slice(0, 2)
     .join("")
     .toUpperCase();
+}
+
+function UserGlyph({ name }: { name: string }) {
+  const generator = useUserAvatarFallback();
+  return (
+    <FallbackGlyph text={initialsOf(name)} generator={generator} seed={name} />
+  );
+}
+
+/**
+ * What an avatar box draws for a person who has not uploaded one. Exported for
+ * the same reason as `projectIconFallback`: `AvatarEditor` draws the same box
+ * without going through `UserAvatar`.
+ */
+export function userAvatarFallback(displayName: string) {
+  return <UserGlyph name={displayName} />;
 }
 
 /**
@@ -80,9 +98,7 @@ export function UserAvatar({
       {...props}
     >
       {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
-      <AvatarFallback className="text-[10px]">
-        {initialsOf(displayNameOf(user))}
-      </AvatarFallback>
+      <AvatarFallback>{userAvatarFallback(displayNameOf(user))}</AvatarFallback>
     </Avatar>
   );
 

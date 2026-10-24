@@ -1,4 +1,3 @@
-import { render } from "@testing-library/react";
 import type { Watcher } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,6 +5,7 @@ import {
   WatcherStack,
   watchingSentence,
 } from "../src/components/shared/watcher-stack.tsx";
+import { renderWithClient as render } from "./render.tsx";
 import { agentUser, BOT, CLAUDE, watcher } from "./watcher-fixtures.ts";
 
 const NEWCOMER = agentUser(4, "Newcomer");
@@ -37,7 +37,7 @@ describe("WatcherStack (T-540)", () => {
         watchers={[watcher(CLAUDE), watcher(CLAUDE), watcher(BOT)]}
       />,
     );
-    const stack = view.getByRole("img");
+    const stack = view.getByRole("img", { name: /^Watching/ });
     expect(stack.getAttribute("aria-label")).toBe(
       "Watching: Claude Agent (2 sessions), Bot One",
     );

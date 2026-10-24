@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import type { Label, Member } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { AssigneePicker } from "../src/components/issue/assignee-picker.tsx";
 import { LabelPicker } from "../src/components/issue/label-picker.tsx";
 import { PICKER_ROW } from "../src/components/issue/picker-row.ts";
+import { renderWithClient as render } from "./render.tsx";
 
 /**
  * The Labels and Assignees menus have to draw rows of the same height

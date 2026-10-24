@@ -36,6 +36,8 @@ const DEFAULT_PREFS: MePrefs = {
   truncate_ref_title: true,
   show_repeated_ref_title: false,
   open_external_links_in_new_tab: false,
+  project_icon_fallback: "colorful_text",
+  user_avatar_fallback: "monochrome_text",
 };
 
 function renderSettings(prefs: Partial<MePrefs> = {}) {
@@ -78,6 +80,7 @@ describe("profile after moving Muted (T-380)", () => {
       "Unread indicators",
       "Issue number placement",
       "References in text",
+      "Icons without an image",
     ]);
 
     const displayName = view.getByRole<HTMLInputElement>("textbox", {
@@ -118,12 +121,14 @@ describe("profile after moving Muted (T-380)", () => {
     expect(sections[1]?.classList.contains("space-y-4")).toBe(true);
     expect(sections[1]?.nextElementSibling).toBe(sections[2]);
     expect(sections[2]?.classList.contains("space-y-4")).toBe(true);
-    expect(sections[2]?.nextElementSibling).toBeNull();
+    expect(sections[2]?.nextElementSibling).toBe(sections[3]);
+    expect(sections[3]?.classList.contains("space-y-4")).toBe(true);
+    expect(sections[3]?.nextElementSibling).toBeNull();
 
     expect(
       view.getByRole("switch", { name: "Weak unread hints" }),
     ).toBeTruthy();
-    expect(view.getAllByRole("combobox")).toHaveLength(4);
+    expect(view.getAllByRole("combobox")).toHaveLength(6);
     for (const name of [
       "Bordered references",
       "Shorten long titles",
@@ -283,4 +288,57 @@ describe("references-in-text preferences (T-371)", () => {
       expect(Object.keys(spy.mock.calls[0]?.[0] ?? {})).toEqual([key]);
     });
   }
+});
+
+describe("icons without an image (T-555)", () => {
+  it("shows the stored generator for projects and for people", async () => {
+    const view = renderSettings({ project_icon_fallback: "monochrome_text" });
+    const value = async (name: string) =>
+      (await view.findByRole("combobox", { name })).textContent;
+
+    expect(await value("Projects")).toContain("Monochrome text");
+    expect(await value("People")).toContain("Monochrome text");
+  });
+
+  it("defaults projects to the gradient they already had", async () => {
+    const view = renderSettings();
+    expect(
+      (await view.findByRole("combobox", { name: "Projects" })).textContent,
+    ).toContain("Colorful text");
+  });
+
+  it("offers two generators for projects and one for people", async () => {
+    const options = async (name: string) => {
+      const view = renderSettings();
+      fireEvent.keyDown(await view.findByRole("combobox", { name }), {
+        key: "ArrowDown",
+      });
+      const labels = screen.getAllByRole("option").map((o) => o.textContent);
+      cleanup();
+      return labels;
+    };
+
+    expect(await options("Projects")).toEqual([
+      "Monochrome text",
+      "Colorful text",
+    ]);
+    expect(await options("People")).toEqual(["Monochrome text"]);
+  });
+
+  it("patches only the project key", async () => {
+    const spy = vi.spyOn(api, "patchMyPrefs").mockResolvedValue({
+      ...DEFAULT_PREFS,
+      project_icon_fallback: "monochrome_text",
+    });
+    const view = renderSettings();
+    fireEvent.keyDown(await view.findByRole("combobox", { name: "Projects" }), {
+      key: "M",
+    });
+
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith({
+        project_icon_fallback: "monochrome_text",
+      }),
+    );
+  });
 });

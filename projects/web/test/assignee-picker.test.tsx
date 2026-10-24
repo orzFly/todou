@@ -1,14 +1,9 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Member, UserKind } from "@todou/shared";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AssigneePicker } from "../src/components/issue/assignee-picker.tsx";
+import { renderWithClient as render } from "./render.tsx";
 
 function member(
   id: number,
