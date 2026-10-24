@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { harnessRoute } from "../src/agent-doctor.ts";
 import { saveCliConfig } from "../src/config.ts";
 import { procTree, scratchDir } from "./harness/proc-fixture.ts";
 import { runCli } from "./harness.ts";
@@ -250,6 +251,21 @@ describe("agent doctor", () => {
       ),
     );
     expect(out).toMatch(/^candidates +none /m);
+  });
+
+  it("still prints a route this report has no wording for", () => {
+    const trace = {
+      candidates: ["omp" as const],
+      // A route `select` might grow before this report is taught it.
+      route: "future-rule" as never,
+      depths: { omp: 3 },
+    };
+    expect(harnessRoute("omp", trace)).toBe(
+      "omp — route future-rule (omp depth 3)",
+    );
+    expect(harnessRoute(null, { ...trace, candidates: [] })).toBe(
+      "none — route future-rule (no candidates)",
+    );
   });
 
   it("says plainly when there is nothing to find", async () => {

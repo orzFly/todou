@@ -162,7 +162,10 @@ function binaries(input: DoctorInput): string[] {
   return lines;
 }
 
-function route(id: HarnessId | null, trace: SelectionTrace): string {
+export function harnessRoute(
+  id: HarnessId | null,
+  trace: SelectionTrace,
+): string {
   const depth = (d: number | null | undefined) =>
     d === null || d === undefined ? "not attributable" : `depth ${d}`;
   const depths = trace.candidates
@@ -188,6 +191,11 @@ function route(id: HarnessId | null, trace: SelectionTrace): string {
       return `${id} — no candidate attributable in the process tree, registry order decides (${depths})`;
     case "published-record":
       return `${id} — named by the record pid ${trace.published?.pid} published at ${trace.published?.path}`;
+    default:
+      // A route added to `select` before this report learns to word it is
+      // still printed by name: the report exists to show the decision, and a
+      // line missing here would hide exactly the case nobody has seen yet.
+      return `${id ?? "none"} — route ${String(trace.route)} (${depths || "no candidates"})`;
   }
 }
 
@@ -199,7 +207,7 @@ function harnessLines(
   const chain = readAncestors(input.processTree);
   const published = new Set(publishedStatePids(input.env));
   const lines = [
-    row("harness", route(id, trace)),
+    row("harness", harnessRoute(id, trace)),
     row(
       "candidates",
       trace.candidates.length === 0
