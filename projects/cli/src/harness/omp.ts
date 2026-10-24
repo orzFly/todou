@@ -123,21 +123,32 @@ export const omp = {
 } satisfies Harness;
 
 /**
+ * One of omp's own helper processes rather than a session host: omp re-enters
+ * its CLI with a hidden worker-mode argument for eval (v18.2.5) and for the
+ * daemon broker its named bash services hang off (v18.12.6). Their
+ * environments are curated and carry neither `OMPCODE` nor `CLAUDECODE`,
+ * while the service beneath the broker gets both back — so a broker read as
+ * an ordinary unmarked ancestor looks like the process that introduced
+ * Claude Code's marker, nearer than omp itself (T-564).
+ */
+export function isOmpWorker(ancestor: Ancestor): boolean {
+  const workerArg =
+    basename(ancestor.argv[0] ?? "") === "omp"
+      ? ancestor.argv[1]
+      : ancestor.argv[2];
+  return workerArg?.startsWith("__omp_worker_") ?? false;
+}
+
+/**
  * An inner omp can inherit OMPCODE from its parent. Its executable still
  * identifies the nearest host, including when it loaded no extension.
  */
 export function ompHostAncestor(
   chain: readonly Ancestor[],
 ): Ancestor | undefined {
-  // omp v18.2.5 re-enters its CLI for eval with a hidden worker-mode
-  // argument (subprocess/worker-client.ts), not a second session host.
-  const boundary = hostIndex((env) => env.OMPCODE === "1", chain);
+  const boundary = hostIndex((env) => env.OMPCODE === "1", chain, isOmpWorker);
   for (const ancestor of chain) {
-    const workerArg =
-      basename(ancestor.argv[0] ?? "") === "omp"
-        ? ancestor.argv[1]
-        : ancestor.argv[2];
-    if (workerArg?.startsWith("__omp_worker_")) continue;
+    if (isOmpWorker(ancestor)) continue;
     const executable = basename(ancestor.argv[0] ?? "");
     if (executable === "omp") return ancestor;
     if (executable !== "node" && executable !== "bun") continue;

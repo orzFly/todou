@@ -24,12 +24,12 @@ const UNKNOWN_HARNESS = [
 
 /** The same question put to omp, which is told how to background the watch. */
 const ASYNC =
-  "started with the bash tool's `async: true` and `timeout: 0` (`hub` is where you see how that job is doing)";
+  "started with the bash tool's `async: true` and `timeout: 0` (`read proc://` is where you see how that job is doing)";
 const OMP_DEADLINE =
   "`timeout: 0` is what keeps that job alive: the bash tool's deadline defaults to 300 seconds and ends the command with no signal it can catch, so a watch that reaches it stops without printing the cursor a restart would resume from, and whatever arrived in between is never read. Every todou command that has to outlive a single tool call takes the same parameter — `spec push --wait`, `spec wait`, `question wait`, and any watch run with `--forever`.";
-const OMP_STREAM = [
-  `If you can watch a stream continuously and be woken by what it writes, try \`--follow=stdout\` with \`todou watch\` or \`todou issue watch\`, ${ASYNC}, and if you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
-  `If you cannot, use poll mode. ${STREAM_OR_POLL_TAIL}`,
+/** omp without a channel: the one-batch watch whose exit is the wake-up (T-564). */
+const OMP_BATCH = [
+  `omp wakes you when a background job ends, not when it prints, so \`--follow=stdout\` cannot wake you here. Run \`todou watch\` or \`todou issue watch\` without \`--follow\`, ${ASYNC}: it returns one batch and exits, and its exit arrives as a message that starts your next turn. Start it again from the \`cursor:\` it printed, every time. If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
   OMP_DEADLINE,
 ];
 
@@ -146,8 +146,8 @@ describe("followAdvice", () => {
       situation: "omp-no-peer",
       harness: "omp",
       paragraphs: [
-        "running under omp, but no omp above this process has published a todou push socket, so `--follow=uds` has no session to push to.",
-        ...OMP_STREAM,
+        "running under omp, but no omp above this process has published a todou push socket, so `--follow=uds` has no session to push to. `todou integration status` says why.",
+        ...OMP_BATCH,
         CLOSING,
       ],
     });
@@ -179,7 +179,7 @@ describe("followAdvice", () => {
       harness: "omp",
       paragraphs: [
         "running under omp, but `--follow=uds` is opted out on this machine.",
-        ...OMP_STREAM,
+        ...OMP_BATCH,
         CLOSING,
       ],
     });

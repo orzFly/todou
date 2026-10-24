@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { detectHarnessId } from "../../src/harness/index.ts";
 import {
   harnessMessaging,
   nativeWatchOwner,
@@ -665,6 +666,31 @@ describe("native messaging ownership", () => {
       tools: record.tools,
     });
     expect(nativeWatchOwner(bare, io)?.path).toBe(path);
+  });
+
+  it("reads a bash service under omp's daemon broker as omp, not Claude Code", () => {
+    // Measured on omp v18.12.6 (T-564): the service gets both markers back,
+    // and the broker between it and omp carries neither.
+    const { env, record } = environment("omp");
+    const service = { ...env, CLAUDECODE: "1" };
+    const io = procTree([
+      { pid: 424239, ppid: 424240, env: service, argv: ["sh"] },
+      {
+        pid: 424240,
+        ppid: process.pid,
+        env: { XDG_RUNTIME_DIR: env.XDG_RUNTIME_DIR },
+        argv: ["/opt/omp/bin/omp", "__omp_worker_daemon_broker"],
+      },
+      { pid: process.pid, ppid: 1, argv: ["/opt/omp/bin/omp"] },
+    ]);
+    expect(detectHarnessId(service, io)).toBe("omp");
+    expect(harnessMessaging(service, io)).toEqual({
+      peer: "omp",
+      socket: record.socket,
+      token: record.token,
+      tools: record.tools,
+    });
+    expect(nativeWatchOwner(service, io)?.pid).toBe(process.pid);
   });
 
   it("does not borrow an outer omp manifest through an unmarked clean inner host", () => {

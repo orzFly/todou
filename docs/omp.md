@@ -111,6 +111,20 @@ command and reads its output is started *by* the session and has the same
 variables set, so guessing would send exactly the batches that belong on
 stdout down the push channel instead.
 
+Without the extension, `--follow=stdout` is no help inside omp itself: omp
+wakes the session when a background job *ends*, not when it prints — what a
+running job writes goes to the model that draws the job's status line, never
+to the agent (measured on omp 18.12.6). What does wake it is a watch without
+`--follow`, started with the bash tool's `async: true` and `timeout: 0`: it
+returns one batch and exits, omp announces the exit as a message that starts
+the next turn, and the agent starts it again from the `cursor:` it printed.
+`todou agent can-i-follow` says this in a session that has no channel.
+
+A named bash service (`bash` with `name`) runs under a broker process omp
+starts, with `PATH` reset to the system default. `--follow=uds` works from
+one, but the `todou` it finds on that `PATH` need not be the one the agent's
+own shell resolves; `async: true` keeps the agent's `PATH`.
+
 ## `todou_watch`: the tool the extension registers
 
 The extension also registers a `todou_watch` tool the model can call, which
@@ -128,8 +142,10 @@ Three actions: `{"action": "start", "issue": "T-16"}` follows one card,
 reports what is running, and `{"action": "stop", "id": "w1"}` ends one.
 `project` and `server` are optional and resolved from the directory omp is
 running in when left out; a directory that settles neither fails the call
-rather than guessing. `since` resumes from a cursor an earlier command
-printed.
+rather than guessing. `profile` is the token profile to watch as: the watch
+runs in omp's environment, not the agent's last shell command, so an agent
+that picks its account with `--profile` on each command passes the same name
+here. `since` resumes from a cursor an earlier command printed.
 
 The tool finds the CLI on PATH — the PATH of the shell omp was started from,
 inherited — and `TODOU_BIN` overrides that. Nothing is recorded at install

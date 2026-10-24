@@ -24,7 +24,8 @@ const V = integration("omp")?.version;
 // Fail during collection if Pi disappears from the registry; never skip its cases.
 const piIntegration = integration("pi");
 expect(piIntegration, "Pi must be registered").toBeDefined();
-expect(piIntegration?.version).toBe(1);
+expect(piIntegration?.version).toBe(2);
+const PV = piIntegration?.version;
 
 const scratch: string[] = [];
 afterAll(() => {
@@ -316,10 +317,10 @@ describe("todou integration install pi", () => {
     const home = fresh("todou-integ-pi-");
     const result = await run(["integration", "install", "pi"], home);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("pi: install v1");
+    expect(result.stdout).toContain(`pi: install v${PV}`);
     const text = readFileSync(piTarget(join(home, ".pi", "agent")), "utf8");
     expect(text).toContain("// TODOU_INTEGRATION_ID=pi");
-    expect(text).toContain("// TODOU_INTEGRATION_VERSION=1");
+    expect(text).toContain(`// TODOU_INTEGRATION_VERSION=${PV}`);
     expect(text).toContain("TODOU_PI_STATE");
     expect(text).toContain("TODOU_PI_TOOLS");
     expect(text).not.toContain("// TODOU_INTEGRATION_ID=omp");
@@ -375,7 +376,7 @@ describe("todou integration install pi", () => {
       home,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("pi: would install v1");
+    expect(result.stdout).toContain(`pi: would install v${PV}`);
     expect(result.stdout).toContain(
       "~/.pi/agent/extensions/todou-pi-session.ts",
     );
@@ -396,7 +397,7 @@ describe("todou integration install pi", () => {
       home,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("pi: would reinstall v1");
+    expect(result.stdout).toContain(`pi: would reinstall v${PV}`);
     expect(readFileSync(path, "utf8")).toBe(text);
     expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
   });
@@ -420,7 +421,8 @@ describe("todou integration install-all with Pi", () => {
       expect(existsSync(target(join(home, ".omp", "agent")))).toBe(
         agent !== "pi",
       );
-      if (agent !== "omp") expect(result.stdout).toContain("pi: install v1");
+      if (agent !== "omp")
+        expect(result.stdout).toContain(`pi: install v${PV}`);
       else expect(result.stdout).not.toContain("pi:");
       if (agent !== "pi") expect(result.stdout).toContain(`omp: install v${V}`);
       else expect(result.stdout).not.toContain("omp:");
@@ -435,7 +437,7 @@ describe("todou integration install-all with Pi", () => {
       PI_CODING_AGENT_DIR: dir,
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("pi: install v1");
+    expect(result.stdout).toContain(`pi: install v${PV}`);
     expect(existsSync(piTarget(dir))).toBe(true);
     expect(existsSync(join(home, ".pi"))).toBe(false);
   });
@@ -447,7 +449,7 @@ describe("todou integration install-all with Pi", () => {
     const before = readdirSync(home, { recursive: true }).sort();
     const result = await run(["integration", "install-all", "--dry-run"], home);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("pi: would install v1");
+    expect(result.stdout).toContain(`pi: would install v${PV}`);
     expect(result.stdout).toContain(`omp: would install v${V}`);
     expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
   });
@@ -551,20 +553,20 @@ describe("todou integration status pi", () => {
     const before = readdirSync(home, { recursive: true }).sort();
     const installed = await run(["integration", "status", "pi"], home, env);
     expect(installed.exitCode).toBe(0);
-    expect(installed.stdout).toContain("pi: installed v1");
+    expect(installed.stdout).toContain(`pi: installed v${PV}`);
     expect(installed.stdout).toContain(
       "~/custom-agent/extensions/todou-pi-session.ts",
     );
     expect(readFileSync(path, "utf8")).toBe(text);
     const stale = text.replace(
-      "TODOU_INTEGRATION_VERSION=1",
+      `TODOU_INTEGRATION_VERSION=${PV}`,
       "TODOU_INTEGRATION_VERSION=0",
     );
     writeFileSync(path, stale);
     const result = await run(["integration", "status", "pi"], home, env);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
-      "pi: installed v0, current is v1 — reinstall",
+      `pi: installed v0, current is v${PV} — reinstall`,
     );
     expect(readFileSync(path, "utf8")).toBe(stale);
     expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);

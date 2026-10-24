@@ -42,6 +42,11 @@ export const WATCH_PARAMETERS = {
       type: "string",
       description: "server origin. Left out, it is resolved the same way",
     },
+    profile: {
+      type: "string",
+      description:
+        "token profile to watch as, the one your other todou commands pass as --profile",
+    },
     since: {
       type: "string",
       description:

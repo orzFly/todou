@@ -382,13 +382,19 @@ function parsePsEnvirons(
  * means the markers come from outside the visible chain — a container or PID
  * namespace boundary, an ssh hop, or a permanently exported variable — which
  * makes the harness unattributable rather than defeated.
+ *
+ * `transparent` names plumbing a harness interposes between itself and the
+ * shells it runs, which has neither introduced markers nor dropped them for
+ * the processes below it.
  */
 export function hostIndex(
   matches: (env: Env) => boolean,
   ancestors: readonly Ancestor[],
+  transparent?: (ancestor: Ancestor) => boolean,
 ): number | undefined {
   for (let i = 0; i < ancestors.length; i++) {
     const ancestor = ancestors[i] as Ancestor;
+    if (transparent?.(ancestor)) continue;
     if (!matches(ancestor.env)) return i;
   }
   return undefined;

@@ -736,6 +736,18 @@ describe("the todou_watch tool (T-357)", () => {
     expect(list.match(/^w\d/gm)).toEqual(["w1"]);
   });
 
+  it("watches as the profile it was given, and keys on it (T-564)", async () => {
+    const { bin } = fakeTodou("profile", 'echo "$@" >&2\nexec sleep 30');
+    process.env.TODOU_BIN = bin;
+    const { run } = await bootWatch("profile");
+    const first = await run({ action: "start", issue: "T-16", profile: "alt" });
+    expect(first).toMatch(/^started w1 — .* --profile alt/);
+    // Another account sees other cards, so it is another watch.
+    const other = await run({ action: "start", issue: "T-16" });
+    expect(other).toMatch(/^started w2 — /);
+    expect(other).not.toContain("--profile");
+  });
+
   it("starts a fresh watch once the same-keyed one has ended", async () => {
     const { bin, pids } = fakeTodou("restart", "exec sleep 30");
     process.env.TODOU_BIN = bin;

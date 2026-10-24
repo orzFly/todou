@@ -39,11 +39,11 @@ export type FollowAdvice = {
  * goes looking for a parameter that does not exist — then falls back on a
  * trailing `&` or a `nohup`, which is precisely what omp steers it away from.
  *
- * omp's names `async` and not `hub`, though both belong to one job system: a
- * `--follow=uds` watch has to end with the session it pushes into, and a hub
- * process is managed per project — it outlives the session and goes on pushing
- * at a socket nobody holds. hub earns its mention as where that job is read,
- * not as the way to start it.
+ * omp's names `async` and not a named service (`name`), though both belong to
+ * one job system: measured on omp v18.12.6, a service runs under a daemon
+ * broker with PATH reset to the system default, so the `todou` it starts need
+ * not be the one the agent's own shell resolves (T-564). `proc://` earns its
+ * mention as where that job is read, not as the way to start it.
  *
  * omp's entry carries two parameters where Claude Code's carries one, because
  * `async` on its own does not outlive omp's own deadline: measured at 300
@@ -56,7 +56,7 @@ export type FollowAdvice = {
  */
 const BACKGROUNDED: Record<"claude-code" | "omp", string> = {
   "claude-code": "started as a background task (run in background = true)",
-  omp: "started with the bash tool's `async: true` and `timeout: 0` (`hub` is where you see how that job is doing)",
+  omp: "started with the bash tool's `async: true` and `timeout: 0` (`read proc://` is where you see how that job is doing)",
 };
 
 /**
@@ -66,13 +66,9 @@ const BACKGROUNDED: Record<"claude-code" | "omp", string> = {
  * reading a running command's output — and everything after that question is
  * the same advice, so it is written once and cannot drift apart.
  */
-function streamOrPoll(
-  lead: string,
-  fallback: string,
-  backgrounded = "",
-): string[] {
+function streamOrPoll(lead: string, fallback: string): string[] {
   return [
-    `${lead} \`--follow=stdout\` with \`todou watch\` or \`todou issue watch\`${backgrounded ? `, ${backgrounded}` : ""}, and if you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
+    `${lead} \`--follow=stdout\` with \`todou watch\` or \`todou issue watch\`, and if you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
     `${fallback} Either watch, run without \`--follow\`, blocks, returns one batch and exits; re-open it from the cursor it printed. \`--poll\` checks once without blocking.`,
   ];
 }
@@ -83,14 +79,11 @@ const MONITOR = streamOrPoll(
   "Without one you cannot use follow at all: use poll mode.",
 );
 
-/* Named rather than repeated: omp gets this question in the same words as
-   every unmeasured harness, and only the answer about backgrounding differs. */
-const UNKNOWN_LEAD =
-  "If you can watch a stream continuously and be woken by what it writes, try";
-const UNKNOWN_FALLBACK = "If you cannot, use poll mode.";
-
 /** Any other harness, and no harness: todou cannot answer for it. */
-const UNKNOWN_HARNESS = streamOrPoll(UNKNOWN_LEAD, UNKNOWN_FALLBACK);
+const UNKNOWN_HARNESS = streamOrPoll(
+  "If you can watch a stream continuously and be woken by what it writes, try",
+  "If you cannot, use poll mode.",
+);
 
 /**
  * Its own paragraph rather than more of the clause above, because the deadline
@@ -144,9 +137,16 @@ const CODEX_START = [
 
 const PI_POLL =
   "Use `todou issue watch` or `todou watch` with `--poll` to check once, then resume from the printed cursor. pi's bash tool cannot monitor a background stream while you work.";
-/** The same question, with omp's own way of keeping the command running. */
-const OMP_STREAM = [
-  ...streamOrPoll(UNKNOWN_LEAD, UNKNOWN_FALLBACK, BACKGROUNDED.omp),
+/**
+ * omp without a push channel. Not the stream-or-poll question every unmeasured
+ * harness gets, because omp has answered it: measured on v18.12.6, a running
+ * background job's output goes to a side model that draws the job's status
+ * widget and never reaches the agent, while a job that ends is announced as a
+ * message that starts the next turn (T-564). So `--follow=stdout` is a watch
+ * nobody reads, and a watch that ends after one batch is the wake-up.
+ */
+const OMP_BATCH = [
+  `omp wakes you when a background job ends, not when it prints, so \`--follow=stdout\` cannot wake you here. Run \`todou watch\` or \`todou issue watch\` without \`--follow\`, ${BACKGROUNDED.omp}: it returns one batch and exits, and its exit arrives as a message that starts your next turn. Start it again from the \`cursor:\` it printed, every time. If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
   OMP_DEADLINE,
 ];
 
@@ -255,15 +255,15 @@ export function followAdvice(input: {
     // can run into a report both agents and people read.
     if (!socket) {
       return advice("omp-no-peer", [
-        "running under omp, but no omp above this process has published a todou push socket, so `--follow=uds` has no session to push to.",
-        ...OMP_STREAM,
+        "running under omp, but no omp above this process has published a todou push socket, so `--follow=uds` has no session to push to. `todou integration status` says why.",
+        ...OMP_BATCH,
         CLOSING,
       ]);
     }
     if (optedOut) {
       return advice("uds-opted-out", [
         "running under omp, but `--follow=uds` is opted out on this machine.",
-        ...OMP_STREAM,
+        ...OMP_BATCH,
         CLOSING,
       ]);
     }
