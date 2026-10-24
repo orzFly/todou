@@ -290,6 +290,15 @@ describe("references-in-text preferences (T-371)", () => {
   }
 });
 
+/** An element's text without what it hides from assistive tech. */
+function spokenText(element: HTMLElement) {
+  const copy = element.cloneNode(true) as HTMLElement;
+  for (const hidden of copy.querySelectorAll('[aria-hidden="true"]')) {
+    hidden.remove();
+  }
+  return copy.textContent;
+}
+
 describe("icons without an image (T-555)", () => {
   it("shows the stored generator for projects and for people", async () => {
     const view = renderSettings({ project_icon_fallback: "monochrome_text" });
@@ -313,7 +322,7 @@ describe("icons without an image (T-555)", () => {
       fireEvent.keyDown(await view.findByRole("combobox", { name }), {
         key: "ArrowDown",
       });
-      const labels = screen.getAllByRole("option").map((o) => o.textContent);
+      const labels = screen.getAllByRole("option").map(spokenText);
       cleanup();
       return labels;
     };
@@ -416,5 +425,74 @@ describe("preview under icons without an image (T-558)", () => {
       expect(after.every((s) => s.generator === "monochrome_text")).toBe(true);
     });
     settle({ ...DEFAULT_PREFS, project_icon_fallback: "monochrome_text" });
+  });
+});
+
+describe("samples inside the generator dropdowns (T-558)", () => {
+  /** Each open option's label and what its sample is drawn as. */
+  async function openOptions(
+    view: ReturnType<typeof renderSettings>,
+    name: string,
+  ) {
+    fireEvent.keyDown(await view.findByRole("combobox", { name }), {
+      key: "ArrowDown",
+    });
+    return screen.getAllByRole("option").map((option) => {
+      const sample = option.querySelector("[data-generator-sample]");
+      const glyph = sample?.querySelector("[data-generator]");
+      return {
+        label: spokenText(option),
+        shape: sample?.getAttribute("data-shape"),
+        generator: glyph?.getAttribute("data-generator"),
+        gradient: (glyph?.querySelectorAll("stop").length ?? 0) > 0,
+      };
+    });
+  }
+
+  // Each stored value, so an option drawn with the stored choice instead of
+  // its own fails under one of them.
+  for (const stored of ["colorful_text", "monochrome_text"] as const) {
+    it(`draws each project option with its own generator (stored ${stored})`, async () => {
+      const view = renderSettings({ project_icon_fallback: stored });
+      expect(await openOptions(view, "Projects")).toEqual([
+        {
+          label: "Monochrome text",
+          shape: "square",
+          generator: "monochrome_text",
+          gradient: false,
+        },
+        {
+          label: "Colorful text",
+          shape: "square",
+          generator: "colorful_text",
+          gradient: true,
+        },
+      ]);
+    });
+  }
+
+  it("draws the people option as a round monochrome sample", async () => {
+    const view = renderSettings();
+    expect(await openOptions(view, "People")).toEqual([
+      {
+        label: "Monochrome text",
+        shape: "circle",
+        generator: "monochrome_text",
+        gradient: false,
+      },
+    ]);
+  });
+
+  it("keeps the option names and the closed select to the label", async () => {
+    const view = renderSettings();
+    const trigger = await view.findByRole("combobox", { name: "Projects" });
+    expect(trigger.querySelector("[data-generator-sample]")).toBeNull();
+    expect(trigger.textContent).toBe("Colorful text");
+
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "Colorful text" })).toBeTruthy();
+    expect(
+      screen.getByRole("option", { name: "Monochrome text" }),
+    ).toBeTruthy();
   });
 });

@@ -27,8 +27,13 @@ import {
 } from "@/api/prefs.ts";
 import { api, meQuery } from "@/api/queries.ts";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
+import {
+  type FallbackGenerator,
+  FallbackGlyph,
+} from "@/components/shared/fallback-glyph.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { UserAvatar } from "@/components/shared/user-chip.tsx";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -309,18 +314,86 @@ function BodyReferencesSection() {
   );
 }
 
+/**
+ * One option's own generator, whatever the setting currently is — which is
+ * why this is not `ProjectIcon` or `UserAvatar`: those draw with the stored
+ * choice.
+ */
+function GeneratorSample({
+  generator,
+  shape,
+  text,
+  seed,
+}: {
+  generator: FallbackGenerator;
+  shape: "square" | "circle";
+  text: string;
+  seed: string;
+}) {
+  return (
+    <Avatar
+      aria-hidden="true"
+      data-generator-sample={generator}
+      shape={shape}
+      className="inline-flex size-5 overflow-hidden align-middle"
+    >
+      <AvatarFallback>
+        <FallbackGlyph text={text} generator={generator} seed={seed} />
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
+function projectSample(generator: ProjectIconFallback) {
+  return (
+    <GeneratorSample
+      generator={generator}
+      shape="square"
+      text="DES"
+      seed="design"
+    />
+  );
+}
+
+function userSample(generator: UserAvatarFallback) {
+  return (
+    <GeneratorSample
+      generator={generator}
+      shape="circle"
+      text="AL"
+      seed="Alice Liddell"
+    />
+  );
+}
+
 const PROJECT_ICON_FALLBACKS: ReadonlyArray<{
   value: ProjectIconFallback;
   label: string;
+  sample: ReactNode;
 }> = [
-  { value: "monochrome_text", label: "Monochrome text" },
-  { value: "colorful_text", label: "Colorful text" },
+  {
+    value: "monochrome_text",
+    label: "Monochrome text",
+    sample: projectSample("monochrome_text"),
+  },
+  {
+    value: "colorful_text",
+    label: "Colorful text",
+    sample: projectSample("colorful_text"),
+  },
 ];
 
 const USER_AVATAR_FALLBACKS: ReadonlyArray<{
   value: UserAvatarFallback;
   label: string;
-}> = [{ value: "monochrome_text", label: "Monochrome text" }];
+  sample: ReactNode;
+}> = [
+  {
+    value: "monochrome_text",
+    label: "Monochrome text",
+    sample: userSample("monochrome_text"),
+  },
+];
 
 const PREVIEW_PROJECTS = [
   { slug: "design", name: "Design", prefix: "DES" },
@@ -449,11 +522,12 @@ function PlacementRow<V extends string>({
   label: string;
   description?: string;
   value: V;
-  options: ReadonlyArray<{ value: V; label: string }>;
+  options: ReadonlyArray<{ value: V; label: string; sample?: ReactNode }>;
   disabled: boolean;
   onChange: (value: V) => void;
   preview?: ReactNode;
 }) {
+  const selected = options.find((option) => option.value === value);
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="space-y-1">
@@ -471,11 +545,22 @@ function PlacementRow<V extends string>({
         onValueChange={(next) => onChange(next as V)}
       >
         <SelectTrigger id={id} className="shrink-0">
-          <SelectValue />
+          {/* Radix mirrors the chosen item's text into the trigger, sample
+              and all; the preview beside the label already draws it. */}
+          <SelectValue>
+            {selected?.sample ? selected.label : undefined}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           {options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
+            <SelectItem
+              key={option.value}
+              value={option.value}
+              // Typeahead matches this; the sample's own text would
+              // otherwise lead it, so "M" stopped finding Monochrome.
+              textValue={option.label}
+            >
+              {option.sample}
               {option.label}
             </SelectItem>
           ))}
