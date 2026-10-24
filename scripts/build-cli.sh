@@ -80,22 +80,41 @@ pnpm exec scripts/bundle-cli.sh "$STAGE" "$VERSION" "$OUT/todou.cjs"
 # takes of a pnpm tree drops the links that live inside `.pnpm`, so a
 # transitive import compiles clean and fails at startup (T-204). A bundle has
 # no imports left to resolve, and every artifact then ships the same code.
+#
+# From a directory of its own, with every file in it at one fixed mtime:
+# deno embeds the files it packs together with their mtimes, so the same
+# bundle compiled in CI, in the docker stage and on a dev machine came out as
+# three different executables. `todou upgrade` trusts a server's build without
+# asking only when it is byte-identical to the GitHub release (T-570). The
+# package.json is deno's to find — it walks up to the nearest one and packs it
+# too — so it is supplied here rather than left to whatever is above.
+# `TZ=UTC touch -t` because `-t` reads local time, and `-d @epoch` is GNU-only.
+#
+# Identical only between Linux build hosts: deno also records the host OS's
+# filename case sensitivity (`"vfs_case_sensitivity"`), which reads "i" on
+# macOS even from a case-sensitive volume. A build from a Mac runs fine; it is
+# just never the release's bytes, so `upgrade` will ask before installing it.
 echo "==> deno compile"
+COMPILE="$OUT/.compile"
+mkdir -p "$COMPILE"
+trap 'rm -rf "$STAGE" "$COMPILE"' EXIT
+cp "$OUT/todou.cjs" "$COMPILE/todou.cjs"
+printf '{}\n' > "$COMPILE/package.json"
+TZ=UTC touch -t 200001010000 "$COMPILE/todou.cjs" "$COMPILE/package.json"
 while IFS=: read -r name target; do
   [ -n "$name" ] || continue
   out="$OUT/todou-$name"
   case "$name" in windows-*) out="$out.exe" ;; esac
   echo "  -> $name ($target)"
-  # --node-modules-dir=none: deno otherwise walks up to the nearest
-  # package.json and embeds the node_modules beside it, which takes the
-  # executable from 86 MB to 464.
+  # --node-modules-dir=none: deno otherwise embeds the node_modules beside
+  # the nearest package.json, which takes the executable from 86 MB to 464.
   deno compile --node-modules-dir=none --allow-all --target "$target" \
-    --output "$out" "$OUT/todou.cjs"
+    --output "$out" "$COMPILE/todou.cjs"
 done <<EOF
 $TARGETS
 EOF
 
-rm -rf "$STAGE"
+rm -rf "$STAGE" "$COMPILE"
 
 # sha256 proves the bytes, not that they start: T-204 shipped four executables
 # that compiled without a single warning and then died on every invocation.

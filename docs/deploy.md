@@ -165,6 +165,15 @@ already holds the build gets a 304 for free. Clients that accept `zstd`
 (`curl --compressed`) receive the stored bytes instead — a third of the
 transfer, and no decompression on the server.
 
+Once installed, `todou upgrade` reads this endpoint itself. A build the
+GitHub release also carries — same version, same sha256 — installs from the
+server without a question; anything else (a commit past the last tag, or
+GitHub out of reach) asks the user to trust the server first. Release tags
+built by the docker image, or by `push-cli.sh` on a Linux machine, are
+byte-identical to the GitHub release, as long as all of them compile with the
+one deno that `scripts/deno-pins-match.sh` checks for; a build pushed from a
+Mac differs by one metadata byte, so its users get the trust prompt.
+
 The docker image ships all five builds and enables this by default. A
 checkout deployment is handed them from a development machine instead:
 

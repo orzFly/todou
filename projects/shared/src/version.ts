@@ -4,6 +4,9 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { BUILD_VERSION } from "./build-info.ts";
 
+/** null in a source run; the version string in every packaged build. */
+export { BUILD_VERSION };
+
 export type VersionDeps = {
   buildVersion: string | null;
   /** Test seam; production uses git describe. */

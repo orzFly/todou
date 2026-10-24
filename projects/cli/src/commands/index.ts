@@ -91,6 +91,7 @@ import {
   StatusInitCommand,
   StatusListCommand,
 } from "./status.ts";
+import { UpgradeCommand } from "./upgrade.ts";
 import { WatchCommand } from "./watch.ts";
 import { WhoamiCommand } from "./whoami.ts";
 
@@ -167,4 +168,5 @@ export const commands: Array<CommandClass<CliContext>> = [
   AttachDownloadCommand,
   AttachDeleteCommand,
   ApiPassthroughCommand,
+  UpgradeCommand,
 ];
