@@ -90,15 +90,16 @@ pnpm exec scripts/bundle-cli.sh "$STAGE" "$VERSION" "$OUT/todou.cjs"
 # too — so it is supplied here rather than left to whatever is above.
 # `TZ=UTC touch -t` because `-t` reads local time, and `-d @epoch` is GNU-only.
 #
-# Identical only between Linux build hosts: deno also records the host OS's
-# filename case sensitivity (`"vfs_case_sensitivity"`), which reads "i" on
-# macOS even from a case-sensitive volume. A build from a Mac runs fine; it is
-# just never the release's bytes, so `upgrade` will ask before installing it.
+# Not executable, for Windows hosts (T-572): deno packs a file's executable bit
+# only where it can read one, so a Unix host recorded `"x":true` for the bundle
+# and a Windows host never could. Nothing reads the bit unless the executable
+# self-extracts, which ours does not.
 echo "==> deno compile"
 COMPILE="$OUT/.compile"
 mkdir -p "$COMPILE"
 trap 'rm -rf "$STAGE" "$COMPILE"' EXIT
 cp "$OUT/todou.cjs" "$COMPILE/todou.cjs"
+chmod 644 "$COMPILE/todou.cjs"
 printf '{}\n' > "$COMPILE/package.json"
 TZ=UTC touch -t 200001010000 "$COMPILE/todou.cjs" "$COMPILE/package.json"
 while IFS=: read -r name target; do
@@ -115,6 +116,10 @@ $TARGETS
 EOF
 
 rm -rf "$STAGE" "$COMPILE"
+
+# A Mac or Windows host leaves one metadata byte different from the release
+# that Linux CI builds; a Linux host has nothing to change.
+node scripts/normalize-vfs-case.mjs "$OUT"/todou-*
 
 # sha256 proves the bytes, not that they start: T-204 shipped four executables
 # that compiled without a single warning and then died on every invocation.
@@ -134,11 +139,14 @@ smoke() { # <label> <command…>
 smoke todou.cjs node "$OUT/todou.cjs"
 # Only the artifact matching the build host can run; the other targets stay
 # compile-only, which the two-architecture docker build already covers for
-# linux. Windows has no build host at all — the scripts are bash.
+# linux.
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64) smoke todou-linux-amd64 "$OUT/todou-linux-amd64" ;;
   Linux/aarch64) smoke todou-linux-arm64 "$OUT/todou-linux-arm64" ;;
   Darwin/arm64) smoke todou-macos-arm64 "$OUT/todou-macos-arm64" ;;
+  MINGW64_NT-*/x86_64 | MSYS_NT-*/x86_64)
+    smoke todou-windows-amd64 "$OUT/todou-windows-amd64.exe"
+    ;;
   *)
     echo "  warn: no deno artifact runs on $(uname -s)/$(uname -m)" \
       "— only todou.cjs smoked" >&2

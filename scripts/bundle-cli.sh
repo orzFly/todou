@@ -28,7 +28,11 @@ printf 'export const BUILD_VERSION: string | null = "%s";\n' "$VERSION" \
 # as ESM whenever the nearest package.json says `"type": "module"`, which breaks
 # the moment someone drops the file into a modern project. The extension is
 # unconditional.
-esbuild "$TREE/projects/cli/src/index.ts" \
+#
+# MSYS_NO_PATHCONV: Git Bash on Windows rewrites arguments that look like POSIX
+# paths before a native program sees them, which turned the banner into
+# `#!C:/…/usr/bin/env node` (T-572). Other shells ignore the variable.
+MSYS_NO_PATHCONV=1 esbuild "$TREE/projects/cli/src/index.ts" \
   --bundle --platform=node --format=cjs \
   --banner:js='#!/usr/bin/env node' \
   --outfile="$OUT"
