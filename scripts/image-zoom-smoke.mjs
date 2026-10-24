@@ -3,7 +3,7 @@
  * Real-input regression for the attachment viewer's image zoom (T-535), its
  * fit / 100% / background / scaling menu (T-537), and the dialog growing
  * with the zoom up to its cap (T-548), tweened, and paging tweened too
- * (T-551).
+ * (T-551), the height held while the pointer rests on ‹ › (T-556).
  * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
@@ -978,6 +978,133 @@ async function growCases(page, { reduced = false } = {}) {
     "menu-zoom-grows-at-once",
     near(s9.view.z, 1, 1e-9) && near(s9.rect.h, 400, 1),
     { z: s9.view.z, h: s9.rect.h },
+  );
+
+  // T-556: paging with the pointer resting on ‹ › holds the height the same
+  // way, through images of different heights, so the next click lands on the
+  // button again. From wide.png: icon, sheet, icon, sheet.
+  await io.key("0", "Digit0", 48);
+  const { s: sFit, d: dFit } = await sample();
+  const centreOf = (label) =>
+    evaluate(
+      page,
+      (l) => {
+        const r = document
+          .querySelector(`[role=dialog] button[aria-label="${l}"]`)
+          ?.getBoundingClientRect();
+        return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
+      },
+      label,
+    );
+  const pager = async () => ({
+    previous: await centreOf("previous attachment"),
+    next: await centreOf("next attachment"),
+  });
+  // No throw on a miss: on a viewer that resizes, the click lands elsewhere,
+  // even outside the dialog and closing it, and the case reports that.
+  const shown = async (name) => {
+    const deadline = Date.now() + 3_000;
+    let s = await evaluate(page, readState);
+    while (
+      !(s?.title === name && s.view !== null && s.natural.w > 0) &&
+      Date.now() < deadline
+    ) {
+      await sleep(50);
+      s = await evaluate(page, readState);
+    }
+    return s === null ? null : io.state();
+  };
+  const pager0 = await pager();
+  await startSampling(page);
+  const pages = [];
+  for (const [button, name] of [
+    ["previous", "icon.png"],
+    ["previous", "sheet.png"],
+    ["next", "icon.png"],
+    ["previous", "sheet.png"],
+  ]) {
+    await io.click(pager0[button].x, pager0[button].y);
+    const s = await shown(name);
+    if (s === null) break;
+    pages.push({
+      s,
+      d: await evaluate(page, readDialog),
+      name,
+      at: await pager(),
+    });
+  }
+  if (pages.length < 4) {
+    check("paging-holds-height-while-hovering", false, {
+      viewerClosedAfter: pages.map(({ s }) => s.title),
+    });
+    return out;
+  }
+  // Across the gap from ‹ to + and back: one hold, not two with a release
+  // between them. Paced like a real mouse: moves sent faster than a frame
+  // release and re-hold before anything paints, and a broken hold goes green.
+  const plus = await centreOf("zoom in");
+  for (const [from, to] of [
+    [pager0.previous, plus],
+    [plus, pager0.previous],
+  ])
+    for (let i = 1; i <= 12; i++) {
+      await io.move(
+        from.x + ((to.x - from.x) * i) / 12,
+        from.y + ((to.y - from.y) * i) / 12,
+      );
+      await sleep(30);
+    }
+  const held = await stopSampling(page);
+  const heldHeights = held.samples.map((x) => Math.round(x.h * 10) / 10);
+  check(
+    "paging-holds-height-while-hovering",
+    pages.every(
+      ({ s, d, name }) =>
+        s.title === name &&
+        near(s.view.z, s.fit, 1e-4) &&
+        near(s.rect.h, sFit.rect.h, 0.5) &&
+        near(d.h, dFit.h, 0.5),
+    ) &&
+      pages.some(({ s }) => s.natural.h === 48) &&
+      pages.some(({ s }) => s.natural.h === 2600) &&
+      heldHeights.every((h) => near(h, dFit.h, 0.5)),
+    {
+      dialogH: dFit.h,
+      pages: pages.map(({ s, d }) => ({
+        title: s.title,
+        canvasH: s.rect.h,
+        dialogH: d.h,
+      })),
+      heldHeights,
+    },
+  );
+  check(
+    "pager-stays-under-pointer",
+    pages.every(({ at }) =>
+      ["previous", "next"].every(
+        (b) =>
+          at[b] !== null &&
+          near(at[b].x, pager0[b].x, 0.5) &&
+          near(at[b].y, pager0[b].y, 0.5),
+      ),
+    ),
+    { start: pager0, after: pages.map(({ at }) => at) },
+  );
+
+  await startSampling(page);
+  await io.move(px, dFit.y + dFit.h / 2);
+  const released = await stopSampling(page);
+  const { s: s10, d: d10 } = await sample();
+  const landed = tweenVerdict(released, dFit.h, d10.h, reduced);
+  check(
+    reduced
+      ? "paged-height-lands-on-leave-at-once"
+      : "paged-height-tweens-on-leave",
+    landed.ok &&
+      s10.natural.h === 2600 &&
+      near(s10.view.z, s10.fit, 1e-4) &&
+      near(s10.rect.h, d10.cap, 1),
+    { ...landed.detail, canvasH: s10.rect.h, cap: d10.cap },
   );
   return out;
 }

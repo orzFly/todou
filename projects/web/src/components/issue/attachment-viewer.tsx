@@ -128,6 +128,38 @@ export function AttachmentViewerDialog({
   }, [kind]);
   const count = state?.items.length ?? 0;
 
+  // While the pointer is over − 100%▾ + or ‹ ›, the image keeps the height
+  // it had when the pointer arrived, and takes its own once the pointer
+  // leaves: the dialog is centred, so a height change slides the title bar
+  // out from under the pointer, and the next click on + lands on the image
+  // and toggles back to fit (T-548), or the next click on › misses (T-556).
+  // One region for both groups, so crossing the gap between them is not a
+  // leave. Listened to on the DOM rather than through React: the zoom
+  // controls are portalled in from ImageCanvas, so in React's tree they sit
+  // outside this region, while the zoom menu's items, portalled out to the
+  // body, sit inside it — and choosing Fit or 100% there should not be held.
+  const [holdRegion, setHoldRegion] = useState<HTMLElement | null>(null);
+  const [held, setHeld] = useState<number | null>(null);
+  useEffect(() => {
+    if (holdRegion === null) return;
+    const enter = (e: PointerEvent) => {
+      if (e.pointerType === "mouse") setHeld(imageHeight.current);
+    };
+    const leave = () => setHeld(null);
+    holdRegion.addEventListener("pointerenter", enter);
+    holdRegion.addEventListener("pointerleave", leave);
+    return () => {
+      holdRegion.removeEventListener("pointerenter", enter);
+      holdRegion.removeEventListener("pointerleave", leave);
+    };
+  }, [holdRegion]);
+  // Closing unmounts the region under the pointer, which never reports
+  // leaving it.
+  const open = state !== null;
+  useEffect(() => {
+    if (!open) setHeld(null);
+  }, [open]);
+
   const step = (delta: number) => {
     if (state === null || count < 2) return;
     onNavigate((state.index + delta + count) % count);
@@ -135,7 +167,7 @@ export function AttachmentViewerDialog({
 
   return (
     <Dialog
-      open={state !== null}
+      open={open}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
@@ -162,30 +194,40 @@ export function AttachmentViewerDialog({
               <DialogTitle className="min-w-0 flex-1 truncate">
                 {target.filename}
               </DialogTitle>
-              <span ref={setToolbar} className="contents" />
-              {count > 1 && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="previous attachment"
-                    onClick={() => step(-1)}
-                  >
-                    <ChevronLeftIcon />
-                  </Button>
-                  <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-                    {(state?.index ?? 0) + 1} / {count}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="next attachment"
-                    onClick={() => step(1)}
-                  >
-                    <ChevronRightIcon />
-                  </Button>
-                </>
-              )}
+              <span
+                ref={setHoldRegion}
+                // Alone, the zoom controls need no box; an empty one would
+                // add a gap beside a lone file that shows neither group.
+                className={cn(
+                  "items-center gap-1",
+                  count > 1 ? "flex" : "contents",
+                )}
+              >
+                <span ref={setToolbar} className="contents" />
+                {count > 1 && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="previous attachment"
+                      onClick={() => step(-1)}
+                    >
+                      <ChevronLeftIcon />
+                    </Button>
+                    <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+                      {(state?.index ?? 0) + 1} / {count}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="next attachment"
+                      onClick={() => step(1)}
+                    >
+                      <ChevronRightIcon />
+                    </Button>
+                  </>
+                )}
+              </span>
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -209,6 +251,7 @@ export function AttachmentViewerDialog({
                   maximized={maximized}
                   toolbar={toolbar}
                   lastHeight={imageHeight}
+                  held={held}
                 />
               ) : kind === "html" ? (
                 // Never add allow-same-origin: attachments share the API's

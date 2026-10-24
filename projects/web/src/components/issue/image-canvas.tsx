@@ -62,7 +62,9 @@ const TWEEN = { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" };
  * sit in the viewer's title bar, the readout opening fit, 100% and the
  * background and scaling choices (T-537). Mount it keyed by the image URL
  * so paging starts every image at fit; `lastHeight` carries the canvas
- * height across that remount, so the next image tweens from it.
+ * height across that remount, so the next image tweens from it. While
+ * `held` is set the canvas keeps that height whatever the zoom or image
+ * asks for, and moves to its own once it is cleared.
  */
 export function ImageCanvas({
   src,
@@ -70,12 +72,14 @@ export function ImageCanvas({
   maximized,
   toolbar,
   lastHeight,
+  held,
 }: {
   src: string;
   alt: string;
   maximized: boolean;
   toolbar: HTMLElement | null;
   lastHeight: { current: number | null };
+  held: number | null;
 }) {
   const look = useImageLook();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -102,13 +106,6 @@ export function ImageCanvas({
     setView(v);
   }, []);
 
-  // While the pointer is over − 100%▾ +, the canvas keeps the height it had
-  // when the pointer arrived: the dialog is centred, so growing would slide
-  // the title bar out from under the pointer, and the next click on + would
-  // land on the image and toggle back to fit (T-548).
-  const heldRef = useRef<number | null>(null);
-  const [heldZ, setHeldZ] = useState<number | null>(null);
-
   // The height this view asks for is rendered, and the ResizeObserver
   // reframes the view against every step of the canvas getting there.
   const apply = useCallback((next: View) => {
@@ -116,11 +113,6 @@ export function ImageCanvas({
     live.current.view = next;
     setView(next);
   }, []);
-
-  const hold = (z: number | null) => {
-    heldRef.current = z;
-    setHeldZ(z);
-  };
 
   useLayoutEffect(() => {
     const el = canvasRef.current;
@@ -295,9 +287,8 @@ export function ImageCanvas({
   const fitted = !ready || isFitted(frame, view);
   const height = maximized
     ? undefined
-    : ready
-      ? canvasHeight(frame, heldZ ?? view.z)
-      : (startHeight ?? undefined);
+    : (held ??
+      (ready ? canvasHeight(frame, view.z) : (startHeight ?? undefined)));
 
   // From the last measured height, which mid-tween is the one on screen.
   // Only between two restored heights at one width: maximize, restore and
@@ -327,22 +318,7 @@ export function ImageCanvas({
   // − and + give way to pinch on a phone, where the title bar has no room
   // for them beside the filename.
   const controls = (
-    <span
-      className="inline-flex shrink-0 items-center gap-0.5"
-      onPointerEnter={(e) => {
-        // Not when arriving on the menu's items: they are portalled out of
-        // the span but stay its React children, so React reports entering
-        // them as entering the span, and choosing Fit or 100% would be held.
-        if (
-          e.pointerType === "mouse" &&
-          e.currentTarget.contains(e.target as Node)
-        )
-          hold(live.current.view?.z ?? null);
-      }}
-      onPointerLeave={() => {
-        if (heldRef.current !== null) hold(null);
-      }}
-    >
+    <span className="inline-flex shrink-0 items-center gap-0.5">
       <Button
         variant="ghost"
         size="icon-sm"
