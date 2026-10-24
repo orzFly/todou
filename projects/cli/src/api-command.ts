@@ -8,6 +8,7 @@ import {
 } from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
 import { type Clock, systemClock } from "./clock.ts";
+import type { UpgradeSeam } from "./commands/upgrade.ts";
 import { type CliConfig, configPath, loadCliConfig } from "./config.ts";
 import {
   gitRemoteUrl,
@@ -116,6 +117,8 @@ export type CliContext = BaseContext & {
   home?: string;
   /** Test seam; production leaves it unset and the real /proc is walked. */
   processTree?: Partial<ProcessTreeIo>;
+  /** Test seam; production leaves it unset and inspects this very process. */
+  upgrade?: UpgradeSeam;
 };
 
 /** Base for every command that talks to a server: context, client, --json. */

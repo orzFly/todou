@@ -3,6 +3,7 @@ import { Builtins, Cli } from "clipanion";
 import type { CliContext } from "../src/api-command.ts";
 import type { Clock } from "../src/clock.ts";
 import { commands } from "../src/commands/index.ts";
+import type { UpgradeSeam } from "../src/commands/upgrade.ts";
 import type { ProcessTreeIo } from "../src/harness/process-tree.ts";
 import type { openPeerPush } from "../src/peer-push.ts";
 
@@ -131,6 +132,7 @@ export async function runCli(
     home?: string;
     /** Ancestors the harness may attribute itself to; unset means none. */
     processTree?: Partial<ProcessTreeIo>;
+    upgrade?: UpgradeSeam;
   } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const cli = new Cli<CliContext>({
@@ -181,6 +183,7 @@ export async function runCli(
     // Unset would spawn a real browser on whoever runs the suite.
     openBrowser: options.openBrowser ?? (() => {}),
     openPeerPush: options.openPeerPush,
+    upgrade: options.upgrade,
   });
 
   return {
