@@ -62,7 +62,7 @@ export function TokensSettingsPage() {
     (agent) => agent.disabled_at === null,
   );
   // `strict: false` for the same shim-route reason as the Agents page.
-  const search = useSearch({ strict: false }) as Record<string, unknown>;
+  const { holder } = useSearch({ strict: false }) as { holder?: unknown };
 
   const byFilter: Record<HolderFilter, TokenListItem[]> = {
     user: tokens.filter((token) => token.holder.id === me.id),
@@ -72,9 +72,7 @@ export function TokensSettingsPage() {
   // Without agents the segments could only ever say "Agents 0".
   const hasAgents = agents.length > 0 || byFilter.agents.length > 0;
   const filter: HolderFilter =
-    hasAgents && (search.holder === "agents" || search.holder === "all")
-      ? search.holder
-      : "user";
+    hasAgents && (holder === "agents" || holder === "all") ? holder : "user";
 
   const [issueFor, setIssueFor] = useState(String(me.id));
   const [name, setName] = useState("");
@@ -130,7 +128,9 @@ export function TokensSettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold">Personal access tokens</h1>
-        <p className="text-sm text-muted-foreground">{DESCRIPTIONS[filter]}</p>
+        <p className="text-sm text-muted-foreground">
+          {DESCRIPTIONS[filter] ?? DESCRIPTIONS.user}
+        </p>
       </div>
 
       <form
@@ -177,9 +177,12 @@ export function TokensSettingsPage() {
               search={value === "user" ? {} : { holder: value }}
               // Exact, or User ({}) would match every holder as a subset.
               activeOptions={{ exact: true }}
+              // The router compares against the raw URL, so an unknown
+              // ?holder= would leave no segment current while User is shown.
+              aria-current={filter === value ? "page" : undefined}
               className={seg(filter === value)}
             >
-              {label} {byFilter[value].length}
+              {label} {(byFilter[value] ?? []).length}
             </Link>
           ))}
         </div>
@@ -187,7 +190,7 @@ export function TokensSettingsPage() {
 
       <div className="rounded-lg border">
         <TokenTable
-          tokens={byFilter[filter]}
+          tokens={byFilter[filter] ?? byFilter.user}
           showHolder={filter !== "user"}
           onRevoke={(token) => revoke.mutate(token)}
         />

@@ -144,6 +144,21 @@ describe("personal tokens by holder (T-560)", () => {
     expect(view.getByText(/Tokens act as you over the REST API/)).toBeTruthy();
   });
 
+  it("an unknown ?holder= falls back to User", async () => {
+    mountAt("/settings/tokens?holder=everyone");
+    const view = await page();
+    await waitFor(() =>
+      expect(
+        view.getByRole("link", { name: "User 1" }).getAttribute("aria-current"),
+      ).toBe("page"),
+    );
+    expect(view.queryByRole("columnheader", { name: "Holder" })).toBeNull();
+    const rows = rowNames(view);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("td_11");
+    expect(view.getByText(/Tokens act as you over the REST API/)).toBeTruthy();
+  });
+
   it("each segment is a link to its own address, exactly one current", async () => {
     mountAt("/settings/tokens?holder=agents");
     const view = await page();
