@@ -2,14 +2,20 @@ import { and, isNotNull, lte, or } from "drizzle-orm";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { sessions, tokens } from "../db/system-schema.ts";
+import { S3Storage } from "../storage/s3.ts";
 import { repairBlocks } from "./blocks.ts";
 import { sweepMoves } from "./move/execute.ts";
 import { drainPendingMirrors } from "./pending-mirror.ts";
 import { syncRefPrefixMirror } from "./reference-directory.ts";
+import { gcPendingUploads } from "./storage-admin.ts";
 
 /** Hourly is plenty: dead rows are inert (auth re-checks expiry/revocation
  * on every request) — the sweep only reclaims storage. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Same margin as `storage gc`'s default: a presigned PUT still in flight
+ * when its URL expires gets a day to be completed. */
+const UPLOAD_GC_MIN_AGE_HOURS = 24;
 
 export type SweepResult = { sessions: number; tokens: number };
 
@@ -120,6 +126,33 @@ async function repairBlockEdges(ctx: AppContext): Promise<void> {
 }
 
 /**
+ * Reap direct uploads that expired without being completed (T-569).
+ *
+ * Skipped off s3: only the s3 backend issues direct uploads, so rows found
+ * there are left over from an earlier s3 deployment and name objects in a
+ * bucket this process no longer talks to. Dropping them would throw away
+ * the only inventory of those objects; `storage gc` refuses them likewise.
+ */
+async function reapExpiredUploads(ctx: AppContext): Promise<void> {
+  if (!(ctx.storage instanceof S3Storage)) return;
+  try {
+    const report = await gcPendingUploads(ctx.router, ctx.storage, {
+      dryRun: false,
+      minAgeHours: UPLOAD_GC_MIN_AGE_HOURS,
+      log: (line) => console.log(`housekeeping: ${line}`),
+    });
+    if (report.droppedRows > 0) {
+      console.log(
+        `housekeeping: reaped ${report.droppedRows} pending upload(s), ` +
+          `deleted ${report.deletedObjects} orphan object(s)`,
+      );
+    }
+  } catch (err) {
+    console.error("housekeeping: pending upload gc failed", err);
+  }
+}
+
+/**
  * Everything one periodic tick does. Exported so a test can run a whole tick
  * against a real context instead of asserting on a timer.
  */
@@ -127,6 +160,7 @@ export async function runHousekeepingTick(ctx: AppContext): Promise<void> {
   await recoverMoves(ctx);
   await reconcileMarkedMirrors(ctx);
   await repairBlockEdges(ctx);
+  await reapExpiredUploads(ctx);
   try {
     const swept = await sweepAuthRows(ctx.router.system());
     if (swept.sessions > 0 || swept.tokens > 0) {

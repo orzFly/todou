@@ -244,6 +244,12 @@ class StorageGcCommand extends ConfiguredCommand {
           : `reaped ${report.droppedRows} pending upload(s), ` +
               `deleted ${report.deletedObjects} orphan object(s)\n`,
       );
+      if (report.failedProjects > 0) {
+        this.context.stderr.write(
+          `${report.failedProjects} project(s) failed; see FAIL lines above\n`,
+        );
+        return 1;
+      }
       return 0;
     } finally {
       await router.close();

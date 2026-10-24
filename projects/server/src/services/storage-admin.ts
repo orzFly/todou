@@ -1,4 +1,5 @@
 import { eq, isNotNull, lt } from "drizzle-orm";
+import type { Db } from "../db/driver.ts";
 import { attachments, pendingUploads } from "../db/project-schema.ts";
 import type { DbRouter } from "../db/router.ts";
 import { projects, users } from "../db/system-schema.ts";
@@ -96,6 +97,7 @@ export type GcReport = {
   deletedObjects: number;
   droppedRows: number;
   wouldDelete: number;
+  failedProjects: number;
 };
 
 /**
@@ -103,6 +105,13 @@ export type GcReport = {
  * slow-but-legitimate upload is never reaped mid-flight): uncompleted rows
  * are orphan candidates whose objects get deleted; completed rows just get
  * dropped — their object is a registered attachment now.
+ *
+ * Runs from the hourly housekeeping tick on every instance as well as from
+ * `storage gc`, so several passes may walk the same rows at once. Deleting
+ * an absent object and an absent row are both no-ops, and only the pass
+ * whose DELETE returned the row counts it. The object goes before the row
+ * because the row is the only inventory of that object: a failed object
+ * delete has to leave the row for the next pass to retry.
  */
 export async function gcPendingUploads(
   router: DbRouter,
@@ -113,6 +122,7 @@ export async function gcPendingUploads(
     deletedObjects: 0,
     droppedRows: 0,
     wouldDelete: 0,
+    failedProjects: 0,
   };
   const cutoff = new Date(Date.now() - opts.minAgeHours * 3600 * 1000);
 
@@ -125,36 +135,62 @@ export async function gcPendingUploads(
     })
     .from(projects);
   for (const project of projectRows) {
-    const db = await router.forProject({
-      id: project.id,
-      slug: project.slug,
-      database_url: project.databaseUrl,
-    });
-    const expired = await db
-      .select()
-      .from(pendingUploads)
-      .where(lt(pendingUploads.expiresAt, cutoff));
-    for (const row of expired) {
-      const orphan = row.completedAt === null;
-      if (opts.dryRun) {
-        report.wouldDelete++;
-        opts.log(
-          `would drop ${project.slug} upload ${row.id}` +
-            (orphan ? ` and delete object ${row.storageKey}` : " (completed)"),
-        );
-        continue;
-      }
-      if (orphan) {
-        const head = await storage.head(row.storageKey);
-        if (head) {
-          await storage.delete(row.storageKey);
-          report.deletedObjects++;
-          opts.log(`deleted orphan object ${row.storageKey} (${project.slug})`);
+    // One unreachable project database must not starve every project after
+    // it in the walk, tick after tick.
+    try {
+      const db = await router.forProject({
+        id: project.id,
+        slug: project.slug,
+        database_url: project.databaseUrl,
+      });
+      const expired = await db
+        .select()
+        .from(pendingUploads)
+        .where(lt(pendingUploads.expiresAt, cutoff));
+      for (const row of expired) {
+        const orphan = row.completedAt === null;
+        if (opts.dryRun) {
+          report.wouldDelete++;
+          opts.log(
+            `would drop ${project.slug} upload ${row.id}` +
+              (orphan
+                ? ` and delete object ${row.storageKey}`
+                : " (completed)"),
+          );
+          continue;
         }
+        // A complete that commits after the select above registers the
+        // object while this row still reads as an orphan; the attachment
+        // row is what says the object is no longer ours to delete.
+        if (orphan && !(await isRegistered(db, row.storageKey))) {
+          const head = await storage.head(row.storageKey);
+          if (head) {
+            await storage.delete(row.storageKey);
+            report.deletedObjects++;
+            opts.log(
+              `deleted orphan object ${row.storageKey} (${project.slug})`,
+            );
+          }
+        }
+        const dropped = await db
+          .delete(pendingUploads)
+          .where(eq(pendingUploads.id, row.id))
+          .returning({ id: pendingUploads.id });
+        report.droppedRows += dropped.length;
       }
-      await db.delete(pendingUploads).where(eq(pendingUploads.id, row.id));
-      report.droppedRows++;
+    } catch (cause) {
+      report.failedProjects++;
+      opts.log(`FAIL ${project.slug}: ${String(cause)}`);
     }
   }
   return report;
+}
+
+async function isRegistered(db: Db, storageKey: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: attachments.id })
+    .from(attachments)
+    .where(eq(attachments.storageKey, storageKey))
+    .limit(1);
+  return rows.length > 0;
 }

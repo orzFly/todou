@@ -847,15 +847,22 @@ up anything uploaded to s3 since the switch) plus flipping
 
 A direct upload that is requested but never completed leaves an object
 with no attachment row. Every issued upload is recorded in the database,
-so cleanup is database-driven:
+so cleanup is database-driven, and the server does it on its own: the
+hourly housekeeping tick deletes orphans older than expiry+24h and logs
+each one as `housekeeping: deleted orphan object …`. The tick only runs
+this on the s3 backend; rows left over from an earlier s3 deployment are
+kept, since they name objects in a bucket the server no longer uses.
+
+The same pass is available by hand, to preview it or to reap sooner:
 
 ```sh
 todou-server storage gc --dry-run    # list what would be reaped
 todou-server storage gc              # delete orphans older than expiry+24h
+todou-server storage gc --min-age 0  # anything past its presign expiry
 ```
 
-Run it ad hoc or from a timer; `--min-age <hours>` widens the safety
-margin past the presign expiry.
+It exits 1 if any project database could not be walked; the other
+projects are still reaped.
 
 ### Storing references as links, once
 
