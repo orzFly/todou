@@ -37,6 +37,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: scripts/deno-pins-match.sh
       - run: pnpm typecheck
       - run: pnpm test
         env:
@@ -70,7 +71,7 @@ jobs:
           cache: pnpm
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.8
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:cli
       - uses: actions/upload-artifact@v7
