@@ -90,6 +90,32 @@ describe("token list by holder (T-560)", () => {
     expect(res.status).toBe(422);
   });
 
+  // The Personal tokens page issues and revokes an agent's token through the
+  // agent endpoints; this is the owner check it relies on.
+  it("another human cannot issue or revoke for an agent they do not own", async () => {
+    const [aliceBotToken] = await list(alice, "?holder=agents");
+    expect(aliceBotToken?.holder.login).toBe("alice-bot");
+
+    const revoke = await t.app.request(
+      `/api/agents/${aliceBot.user.id}/tokens/${aliceBotToken?.id}`,
+      { method: "DELETE", headers: bob.headers },
+    );
+    expect(revoke.status).toBe(403);
+    const issue = await t.app.request(
+      `/api/agents/${aliceBot.user.id}/tokens`,
+      {
+        method: "POST",
+        headers: { ...bob.headers, "content-type": "application/json" },
+        body: JSON.stringify({ name: "stolen" }),
+      },
+    );
+    expect(issue.status).toBe(403);
+
+    expect((await list(alice, "?holder=agents")).map((r) => r.id)).toContain(
+      aliceBotToken?.id,
+    );
+  });
+
   it("drops revoked tokens and a disabled agent's tokens", async () => {
     const issued = await t.app.request(
       `/api/agents/${aliceHelper.user.id}/tokens`,

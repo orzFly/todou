@@ -190,6 +190,13 @@ export const agentsQuery = queryOptions({
   queryFn: () => api.listAgents(),
 });
 
+// Always `all`: the User / Agents / All segments each show a count, so the
+// page needs every row whichever segment is open, and filters locally.
+export const myTokensQuery = queryOptions({
+  queryKey: ["my-tokens"],
+  queryFn: () => api.listMyTokens("all"),
+});
+
 // One call covers every agent, so the Projects column shares a single cache
 // entry across all the rows instead of a query per agent.
 export const agentMembershipsQuery = queryOptions({

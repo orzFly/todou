@@ -566,6 +566,11 @@ const tokensSettingsRoute = createRoute({
   getParentRoute: () => userSettingsRoute,
   path: "tokens",
   component: TokensSettingsPage,
+  // User is the default and stays out of the URL, as on the Agents page.
+  validateSearch: (search): { holder?: "agents" | "all" } =>
+    search.holder === "agents" || search.holder === "all"
+      ? { holder: search.holder }
+      : {},
 });
 
 const cliAuthRoute = createRoute({

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { agentsQuery, api } from "@/api/queries.ts";
+import { agentsQuery, api, myTokensQuery } from "@/api/queries.ts";
 import {
   AgentProjectsCell,
   AgentProjectsNotice,
@@ -436,8 +436,11 @@ function AgentTokensDialogState({ agent }: { agent: Agent }) {
     tokens.data !== undefined,
     tokenQueryKey,
   );
-  const invalidate = () =>
+  const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: tokenQueryKey });
+    // Personal tokens lists this agent's tokens as well (T-560).
+    queryClient.invalidateQueries({ queryKey: myTokensQuery.queryKey });
+  };
 
   const issue = useMutation({
     mutationFn: () =>
@@ -509,7 +512,7 @@ function AgentTokensDialogState({ agent }: { agent: Agent }) {
             )}
             <TokenTable
               tokens={tokens.data}
-              onRevoke={(id) => revoke.mutate(id)}
+              onRevoke={(token) => revoke.mutate(token.id)}
             />
           </>
         )}

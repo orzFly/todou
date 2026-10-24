@@ -1,5 +1,6 @@
 import type { TokenListItem } from "@todou/shared";
 import { Trash2Icon } from "lucide-react";
+import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -16,10 +17,12 @@ const when = (iso: string | null) =>
 /** Active-token listing shared by the personal and agent token managers. */
 export function TokenTable({
   tokens,
+  showHolder = false,
   onRevoke,
 }: {
   tokens: TokenListItem[];
-  onRevoke: (id: number) => void;
+  showHolder?: boolean;
+  onRevoke: (token: TokenListItem) => void;
 }) {
   if (tokens.length === 0) {
     return (
@@ -30,6 +33,7 @@ export function TokenTable({
     <Table>
       <TableHeader>
         <TableRow>
+          {showHolder && <TableHead>Holder</TableHead>}
           <TableHead>Name</TableHead>
           <TableHead>Prefix</TableHead>
           <TableHead>Created</TableHead>
@@ -41,6 +45,11 @@ export function TokenTable({
       <TableBody>
         {tokens.map((token) => (
           <TableRow key={token.id}>
+            {showHolder && (
+              <TableCell>
+                <UserChip user={token.holder} />
+              </TableCell>
+            )}
             <TableCell>{token.name}</TableCell>
             <TableCell className="font-mono text-xs">{token.prefix}…</TableCell>
             <TableCell className="text-xs text-muted-foreground">
@@ -56,8 +65,13 @@ export function TokenTable({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label={`revoke ${token.name}`}
-                onClick={() => onRevoke(token.id)}
+                // Two holders may each have a token called "cli".
+                aria-label={
+                  showHolder
+                    ? `revoke ${token.name} of ${token.holder.login}`
+                    : `revoke ${token.name}`
+                }
+                onClick={() => onRevoke(token)}
               >
                 <Trash2Icon className="size-4" />
               </Button>
