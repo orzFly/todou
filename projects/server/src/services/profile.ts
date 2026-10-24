@@ -54,6 +54,7 @@ export async function updateProfile(
   }
   const row = updated[0];
   if (!row) throw new Error("profile update returned no row");
+  ctx.watchers.userChanged(row.id);
   return row;
 }
 
@@ -100,6 +101,7 @@ export async function setAvatar(
     .returning();
   const row = updated[0];
   if (!row) throw new Error("avatar update returned no row");
+  ctx.watchers.userChanged(row.id);
 
   if (target.avatarKey) await ctx.storage.delete(target.avatarKey);
   return row;
@@ -117,6 +119,7 @@ export async function deleteAvatar(
     .returning();
   const row = updated[0];
   if (!row) throw new Error("avatar update returned no row");
+  ctx.watchers.userChanged(row.id);
 
   if (target.avatarKey) await ctx.storage.delete(target.avatarKey);
   return row;

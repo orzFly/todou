@@ -48,39 +48,51 @@ const projectRoute = createRoute({
   },
 });
 
-/** Owner refs resolved once per response, however many watchers share them. */
+/**
+ * Accounts and their owners read once per response, however many watchers
+ * share them, and read now rather than when the watch connected (T-571).
+ */
 async function toWatchers(
   ctx: AppContext,
   lists: WatcherView[][],
 ): Promise<(views: WatcherView[]) => Watcher[]> {
+  const system = ctx.router.system();
+  const userIds = new Set(lists.flat().map((view) => view.userId));
+  const rows =
+    userIds.size === 0
+      ? []
+      : await system
+          .select()
+          .from(users)
+          .where(inArray(users.id, [...userIds]));
+  const userById = new Map(rows.map((row) => [row.id, row]));
   const ownerIds = new Set<number>();
-  for (const list of lists) {
-    for (const view of list) {
-      if (view.user.ownerId !== null) ownerIds.add(view.user.ownerId);
-    }
-  }
+  for (const row of rows) if (row.ownerId !== null) ownerIds.add(row.ownerId);
   const owners =
     ownerIds.size === 0
       ? []
-      : await ctx.router
-          .system()
+      : await system
           .select({ id: users.id, login: users.login })
           .from(users)
           .where(inArray(users.id, [...ownerIds]));
   const ownerById = new Map(owners.map((o) => [o.id, o]));
   return (views) =>
-    views.map((view) => ({
-      user: toUserRef(
-        view.user,
-        view.user.ownerId === null
-          ? null
-          : (ownerById.get(view.user.ownerId) ?? null),
-      ),
-      agent_context: view.agentContext,
-      kind: view.kind,
-      scope: view.scope,
-      since: view.since.toISOString(),
-    }));
+    views.flatMap((view) => {
+      const row = userById.get(view.userId);
+      if (row === undefined) return [];
+      return [
+        {
+          user: toUserRef(
+            row,
+            row.ownerId === null ? null : (ownerById.get(row.ownerId) ?? null),
+          ),
+          agent_context: view.agentContext,
+          kind: view.kind,
+          scope: view.scope,
+          since: view.since.toISOString(),
+        },
+      ];
+    });
 }
 
 export function watcherRoutes() {

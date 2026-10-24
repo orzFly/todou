@@ -1,5 +1,4 @@
 import type { AgentContext, WatcherKind, WatcherScope } from "@todou/shared";
-import type { UserRow } from "../auth/pat.ts";
 import type { EventBus } from "./bus.ts";
 
 /**
@@ -38,7 +37,7 @@ export type WatcherScopes =
   | { projects: readonly number[]; issues: ReadonlyArray<[number, number]> };
 
 export type WatcherRegistration = {
-  user: UserRow;
+  userId: number;
   agentContext: AgentContext;
   kind: WatcherKind;
   /** Stands in for the session when the harness reported none. */
@@ -46,9 +45,14 @@ export type WatcherRegistration = {
   scopes: WatcherScopes;
 };
 
-/** One listed watcher, before the route turns it into the wire DTO. */
+/**
+ * One listed watcher, before the route turns it into the wire DTO. An id
+ * rather than the account row: a watch outlives renames and avatar changes,
+ * and the row the connection authenticated with would go on showing the old
+ * ones for as long as the watch lasts (T-571).
+ */
 export type WatcherView = {
-  user: UserRow;
+  userId: number;
   agentContext: AgentContext;
   kind: WatcherKind;
   scope: WatcherScope;
@@ -63,7 +67,7 @@ export type WatcherHandle = {
 
 type Entry = {
   key: string;
-  user: UserRow;
+  userId: number;
   agentContext: AgentContext;
   kind: WatcherKind;
   scopes: WatcherScopes;
@@ -91,7 +95,7 @@ function touchedBy(scopes: WatcherScopes): Set<number> {
 }
 
 function byAge(a: WatcherView, b: WatcherView): number {
-  return a.since.getTime() - b.since.getTime() || a.user.id - b.user.id;
+  return a.since.getTime() - b.since.getTime() || a.userId - b.userId;
 }
 
 /**
@@ -118,7 +122,7 @@ export class WatcherRegistry {
 
   register(reg: WatcherRegistration): WatcherHandle {
     const key = JSON.stringify([
-      reg.user.id,
+      reg.userId,
       reg.agentContext.agent,
       reg.agentContext.session_id ?? `conn:${reg.connectionId}`,
       reg.kind,
@@ -138,7 +142,7 @@ export class WatcherRegistry {
     } else {
       entry = {
         key,
-        user: reg.user,
+        userId: reg.userId,
         agentContext: reg.agentContext,
         kind: reg.kind,
         scopes: reg.scopes,
@@ -226,9 +230,20 @@ export class WatcherRegistry {
     }
   }
 
+  /**
+   * The account's name, login or avatar changed. Every surface listing one
+   * of its watchers refetches; nothing else would tell them until the watch
+   * ended.
+   */
+  userChanged(userId: number): void {
+    for (const entry of this.#entries.values()) {
+      if (entry.userId === userId) this.#publish(entry, entry.touched);
+    }
+  }
+
   #view(entry: Entry, scope: WatcherScope): WatcherView {
     return {
-      user: entry.user,
+      userId: entry.userId,
       agentContext: entry.agentContext,
       kind: entry.kind,
       scope,

@@ -456,7 +456,13 @@ export function AssigneesAndWatchers({
   issue: Pick<IssueListItem, "assignees">;
   watchers?: readonly Watcher[];
 }) {
-  const watching = new Set(watchers.map((watcher) => watcher.user.id));
+  // The watcher's copy of the account wins: the feed refetches it when the
+  // account is renamed or changes avatar, and nothing refetches the list's
+  // (T-571). Without it the live dot sits on the old avatar while the
+  // toolbar's stack already shows the new one.
+  const watching = new Map(
+    watchers.map((watcher) => [watcher.user.id, watcher.user]),
+  );
   const assigned = new Set(issue.assignees.map((user) => user.id));
   const others = groupWatchers(watchers).filter(
     (group) => !assigned.has(group.user.id),
@@ -466,7 +472,7 @@ export function AssigneesAndWatchers({
       {issue.assignees.map((user) => (
         <UserChip
           key={user.id}
-          user={user}
+          user={watching.get(user.id) ?? user}
           compact
           live={watching.has(user.id)}
         />

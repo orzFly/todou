@@ -400,7 +400,7 @@ function streamChanges(
       if (declared.what.all) {
         if (watcher === null) {
           watcher = ctx.watchers.register({
-            user,
+            userId: user.id,
             agentContext,
             kind: declared.kind,
             connectionId,
@@ -423,7 +423,7 @@ function streamChanges(
         scopes.projects.length + scopes.issues.length === 0
           ? null
           : ctx.watchers.register({
-              user,
+              userId: user.id,
               agentContext,
               kind: declared.kind,
               connectionId,

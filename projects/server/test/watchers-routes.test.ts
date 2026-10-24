@@ -126,6 +126,76 @@ describe("watchers read endpoints (T-540)", () => {
     await until(async () => t.ctx.watchers.size() === 0);
   });
 
+  it("lists a watching account as it is now, and redraws when it changes (T-571)", async () => {
+    const presence = await openFeed(
+      t,
+      "/api/events?presence=1",
+      reader.headers,
+    );
+    const watching = await openFeed(t, "/api/events?watch=project:alpha", {
+      ...owned.headers,
+      ...agent("s-rename"),
+    });
+    const nextWatchers = async () => {
+      for (;;) {
+        const event = await presence.nextChange();
+        if (event.entity === "watchers") return event;
+      }
+    };
+    expect(await nextWatchers()).toMatchObject({ project: "alpha" });
+    const listed = async () => {
+      const level = await get("/api/projects/alpha/watchers", reader.headers);
+      const overview = await get("/api/watchers", reader.headers);
+      return [level.body.project[0].user, overview.body.projects.alpha[0].user];
+    };
+
+    const renamed = await t.app.request(`/api/agents/${owned.user.id}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ display_name: "Renamed Agent" }),
+    });
+    expect(renamed.status).toBe(200);
+    // The read first: it is what a reload sees, with or without the event.
+    for (const user of await listed()) {
+      expect(user).toMatchObject({
+        display_name: "Renamed Agent",
+        avatar_url: null,
+      });
+    }
+    expect(await nextWatchers()).toMatchObject({ project: "alpha" });
+
+    const form = new FormData();
+    form.set(
+      "file",
+      new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "a.png", {
+        type: "image/png",
+      }),
+    );
+    const uploaded = await t.app.request(
+      `/api/agents/${owned.user.id}/avatar`,
+      { method: "POST", headers: { cookie }, body: form },
+    );
+    expect(uploaded.status).toBe(200);
+    const { avatar_url } = await json(uploaded);
+    expect(avatar_url).toMatch(/^\/api\/users\/\d+\/avatar\?v=/);
+    for (const user of await listed()) {
+      expect(user.avatar_url).toBe(avatar_url);
+    }
+    expect(await nextWatchers()).toMatchObject({ project: "alpha" });
+
+    const removed = await t.app.request(`/api/agents/${owned.user.id}/avatar`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    expect(removed.status).toBe(200);
+    for (const user of await listed()) expect(user.avatar_url).toBeNull();
+    expect(await nextWatchers()).toMatchObject({ project: "alpha" });
+
+    watching.abort();
+    presence.abort();
+    await until(async () => t.ctx.watchers.size() === 0);
+  });
+
   it("answers an unreadable project with the usual 404", async () => {
     expect(
       (await get("/api/projects/gamma/watchers", reader.headers)).status,

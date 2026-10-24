@@ -1,6 +1,5 @@
 import type { ChangeEvent } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import type { UserRow } from "../src/auth/pat.ts";
 import { EventBus } from "../src/events/bus.ts";
 import {
   type WatcherClock,
@@ -48,11 +47,9 @@ function setup() {
   return { registry, published, time };
 }
 
-const user = (id: number) => ({ id, ownerId: null }) as unknown as UserRow;
-
 function reg(over: Partial<WatcherRegistration> = {}): WatcherRegistration {
   return {
-    user: user(1),
+    userId: 1,
     agentContext: { agent: "claude-code", session_id: "s1" },
     kind: "watch",
     connectionId: "c1",
@@ -155,7 +152,7 @@ describe("WatcherRegistry (T-540)", () => {
     registry.register(
       reg({ agentContext: { agent: "claude-code", session_id: "s2" } }),
     );
-    registry.register(reg({ user: user(2) }));
+    registry.register(reg({ userId: 2 }));
     registry.register(reg({ scopes: { projects: [10, 11], issues: [] } }));
     expect(registry.projectWatchers(10)).toHaveLength(5);
   });
@@ -170,11 +167,11 @@ describe("WatcherRegistry (T-540)", () => {
 
   it("orders by since, then user id", () => {
     const { registry, time } = setup();
-    registry.register(reg({ user: user(5) }));
-    registry.register(reg({ user: user(3) }));
+    registry.register(reg({ userId: 5 }));
+    registry.register(reg({ userId: 3 }));
     time.advance(1);
-    registry.register(reg({ user: user(1) }));
-    expect(registry.projectWatchers(10).map((w) => w.user.id)).toEqual([
+    registry.register(reg({ userId: 1 }));
+    expect(registry.projectWatchers(10).map((w) => w.userId)).toEqual([
       3, 5, 1,
     ]);
   });
@@ -205,10 +202,41 @@ describe("WatcherRegistry (T-540)", () => {
     expect(published).toEqual([]);
   });
 
+  it("publishes a changed account to every project its watchers touch (T-571)", () => {
+    const { registry, published } = setup();
+    registry.register(reg({ scopes: { projects: [10], issues: [] } }));
+    registry.register(
+      reg({ connectionId: "c2", scopes: { projects: [], issues: [[20, 4]] } }),
+    );
+    registry.register(
+      reg({ userId: 2, scopes: { projects: [30], issues: [] } }),
+    );
+    // A lingering entry is still listed, so it still has to be redrawn.
+    registry
+      .register(
+        reg({ kind: "spec_wait", scopes: { projects: [40], issues: [] } }),
+      )
+      .release();
+    published.length = 0;
+
+    registry.userChanged(1);
+    expect(published.map(([id]) => id).sort()).toEqual([10, 20, 40]);
+    expect(published.find(([id]) => id === 20)?.[1]).toEqual({
+      entity: "watchers",
+      action: "updated",
+      id: 20,
+      issue_number: 4,
+    });
+
+    published.length = 0;
+    registry.userChanged(99);
+    expect(published).toEqual([]);
+  });
+
   it("clears pending lingers on dispose and drops later releases at once", () => {
     const { registry, time } = setup();
     registry.register(reg()).release();
-    const live = registry.register(reg({ user: user(2) }));
+    const live = registry.register(reg({ userId: 2 }));
     expect(time.pending()).toBe(1);
     registry.dispose();
     expect(time.pending()).toBe(0);

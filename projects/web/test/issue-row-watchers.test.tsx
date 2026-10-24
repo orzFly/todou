@@ -104,6 +104,18 @@ describe("IssueRowMeta watchers (T-540)", () => {
     expect(arrangement(view.container)).toEqual(["eye", "bot-one•"]);
   });
 
+  it("draws a watching assignee as the watcher list has it (T-571)", async () => {
+    const renamed: UserRef = {
+      ...CLAUDE,
+      display_name: "Renamed Agent",
+      avatar_url: "/api/users/2/avatar?v=abcdef12",
+    };
+    const view = renderRow([CLAUDE, HUMAN], [watcher(renamed)]);
+    await view.findByLabelText("Renamed Agent · watching");
+    expect(view.queryByLabelText("Claude Agent · watching")).toBeNull();
+    expect(arrangement(view.container)).toEqual(["claude-agent•", "user"]);
+  });
+
   it("is unchanged without watchers", async () => {
     const view = renderRow([HUMAN], []);
     await view.findByLabelText("User");
