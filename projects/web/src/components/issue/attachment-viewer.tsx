@@ -25,6 +25,11 @@ import {
 import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 import { cn } from "@/lib/utils";
 
+// Long enough to cover a pointer crossing the image between two controls,
+// short enough that leaving for good does not read as the viewer lagging.
+const RELEASE_DELAY = 400;
+const RELEASE_NOW = ["keydown", "pointerdown", "wheel"] as const;
+
 /** What the viewer is showing: a post's attachment set and a position. */
 export type ViewerState = {
   items: PreviewTarget[];
@@ -138,17 +143,43 @@ export function AttachmentViewerDialog({
   // controls are portalled in from ImageCanvas, so in React's tree they sit
   // outside this region, while the zoom menu's items, portalled out to the
   // body, sit inside it — and choosing Fit or 100% there should not be held.
+  // Leaving lets go only after RELEASE_DELAY, so a trip from one control to
+  // another the long way round, over the image, is not a leave either
+  // (T-559); a key, a press or a wheel in the meantime lets go at once,
+  // since the pointer is no longer travelling.
   const [holdRegion, setHoldRegion] = useState<HTMLElement | null>(null);
   const [held, setHeld] = useState<number | null>(null);
   useEffect(() => {
     if (holdRegion === null) return;
-    const enter = (e: PointerEvent) => {
-      if (e.pointerType === "mouse") setHeld(imageHeight.current);
+    let pending: number | undefined;
+    const cancel = () => {
+      window.clearTimeout(pending);
+      pending = undefined;
+      for (const type of RELEASE_NOW)
+        window.removeEventListener(type, release, true);
     };
-    const leave = () => setHeld(null);
+    const release = () => {
+      cancel();
+      setHeld(null);
+    };
+    const enter = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") return;
+      if (pending !== undefined) cancel();
+      else setHeld(imageHeight.current);
+    };
+    const leave = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse" || pending !== undefined) return;
+      pending = window.setTimeout(release, RELEASE_DELAY);
+      for (const type of RELEASE_NOW)
+        window.addEventListener(type, release, {
+          capture: true,
+          passive: true,
+        });
+    };
     holdRegion.addEventListener("pointerenter", enter);
     holdRegion.addEventListener("pointerleave", leave);
     return () => {
+      cancel();
       holdRegion.removeEventListener("pointerenter", enter);
       holdRegion.removeEventListener("pointerleave", leave);
     };

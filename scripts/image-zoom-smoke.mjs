@@ -3,7 +3,8 @@
  * Real-input regression for the attachment viewer's image zoom (T-535), its
  * fit / 100% / background / scaling menu (T-537), and the dialog growing
  * with the zoom up to its cap (T-548), tweened, and paging tweened too
- * (T-551), the height held while the pointer rests on ‹ › (T-556).
+ * (T-551), the height held while the pointer rests on ‹ › (T-556) and
+ * for a moment after it leaves (T-559).
  * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
@@ -37,6 +38,9 @@ fresh browser context, so no run inherits another's stored choices.
 Exit codes: 0 pass, 1 assertion, 2 infrastructure error.
 `;
 
+// The viewer's RELEASE_DELAY: how long the height stays held after the
+// pointer leaves the title-bar controls (T-559).
+const RELEASE_DELAY = 400;
 const DESKTOP = { width: 1440, height: 1000, deviceScaleFactor: 1 };
 const PHONE = { width: 390, height: 844, deviceScaleFactor: 2, mobile: true };
 
@@ -303,6 +307,32 @@ async function startSampling(page) {
       requestAnimationFrame(() => requestAnimationFrame(done)),
     );
   });
+}
+
+/**
+ * Log, in page time, the pointer entering and leaving the controls whose
+ * hover holds the height (− 100%▾ + ‹ ›).
+ */
+async function trackHoldRegion(page) {
+  await evaluate(page, () => {
+    const region = document.querySelector(
+      '[role=dialog] button[aria-label="previous attachment"]',
+    ).parentElement;
+    const log = [];
+    for (const type of ["pointerenter", "pointerleave"])
+      region.addEventListener(type, () =>
+        log.push({ type, t: Math.round(performance.now()) }),
+      );
+    window.__holdRegion = log;
+  });
+}
+const readHoldRegion = (page) =>
+  evaluate(page, () => window.__holdRegion.splice(0));
+
+/** When the dialog first left height `from`, relative to `since`, if it did. */
+function firstMove({ samples }, from, since) {
+  const moved = samples.find((x) => !near(x.h, from, 0.5));
+  return moved === undefined ? null : moved.t - since;
 }
 
 async function stopSampling(page) {
@@ -908,13 +938,18 @@ async function growCases(page, { reduced = false } = {}) {
   // controls the dialog holds its height, so the button stays under it;
   // centred growth would slide it up, and the next click would land on the
   // image and toggle back to fit.
-  const plusAt = () =>
-    evaluate(page, () => {
-      const r = document
-        .querySelector('[role=dialog] button[aria-label="zoom in"]')
-        .getBoundingClientRect();
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-    });
+  const centreOf = (label) =>
+    evaluate(
+      page,
+      (l) => {
+        const r = document
+          .querySelector(`[role=dialog] button[aria-label="${l}"]`)
+          ?.getBoundingClientRect();
+        return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
+      },
+      label,
+    );
+  const plusAt = () => centreOf("zoom in");
   const p0 = await plusAt();
   const clicks = [];
   for (let i = 0; i < 6; i++) {
@@ -940,11 +975,26 @@ async function growCases(page, { reduced = false } = {}) {
       .getBoundingClientRect();
     return r.y + r.height / 2;
   });
+
+  await trackHoldRegion(page);
+  // Leaving for good: nothing moves for RELEASE_DELAY, then the tween.
   await startSampling(page);
   await io.move(px, s7.rect.y + s7.rect.h / 2);
+  await sleep(RELEASE_DELAY + 100);
   const grew = await stopSampling(page);
+  const [left] = await readHoldRegion(page);
   const { s: s8, d: d8 } = await sample();
   const grown = tweenVerdict(grew, dHeld.h, d8.h, reduced);
+  const after = left ? firstMove(grew, dHeld.h, left.t) : null;
+  check(
+    "leave-waits-before-resizing",
+    left?.type === "pointerleave" &&
+      after !== null &&
+      after >= RELEASE_DELAY &&
+      // A frame or two late on a slow headless frame, not a second hold.
+      after <= RELEASE_DELAY + 250,
+    { afterLeaveMs: after, delay: RELEASE_DELAY, frameGaps: grew.frameGaps },
+  );
   check(
     reduced ? "pointer-leave-grows-at-once" : "pointer-leave-tweens-height",
     grown.ok,
@@ -980,22 +1030,36 @@ async function growCases(page, { reduced = false } = {}) {
     { z: s9.view.z, h: s9.rect.h },
   );
 
+  // A key pressed while the hold is about to let go acts at once, as it
+  // does with the pointer elsewhere: rest on ‹, leave, and press 0 back to
+  // fit before RELEASE_DELAY is up.
+  const prevKey = await centreOf("previous attachment");
+  await io.move(prevKey.x, prevKey.y);
+  await sleep(100);
+  await readHoldRegion(page);
+  const { d: d9 } = await sample();
+  await startSampling(page);
+  await io.move(px, d9.y + d9.h / 2);
+  await io.key("0", "Digit0", 48);
+  const keyed = await stopSampling(page);
+  const [leftForKey] = await readHoldRegion(page);
+  // Past the delay, so a broken release does not leak into the cases below.
+  await sleep(RELEASE_DELAY);
+  const { s: sFit, d: dFit } = await sample();
+  const keyAfter = leftForKey ? firstMove(keyed, d9.h, leftForKey.t) : null;
+  check(
+    "key-after-leaving-resizes-at-once",
+    leftForKey?.type === "pointerleave" &&
+      near(sFit.view.z, sFit.fit, 1e-4) &&
+      sFit.rect.h < s9.rect.h - 100 &&
+      keyAfter !== null &&
+      keyAfter < RELEASE_DELAY - 150,
+    { afterLeaveMs: keyAfter, delay: RELEASE_DELAY, canvasH: sFit.rect.h },
+  );
+
   // T-556: paging with the pointer resting on ‹ › holds the height the same
   // way, through images of different heights, so the next click lands on the
   // button again. From wide.png: icon, sheet, icon, sheet.
-  await io.key("0", "Digit0", 48);
-  const { s: sFit, d: dFit } = await sample();
-  const centreOf = (label) =>
-    evaluate(
-      page,
-      (l) => {
-        const r = document
-          .querySelector(`[role=dialog] button[aria-label="${l}"]`)
-          ?.getBoundingClientRect();
-        return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
-      },
-      label,
-    );
   const pager = async () => ({
     previous: await centreOf("previous attachment"),
     next: await centreOf("next attachment"),
@@ -1091,8 +1155,61 @@ async function growCases(page, { reduced = false } = {}) {
     { start: pager0, after: pages.map(({ at }) => at) },
   );
 
+  // T-559: from ‹ to + the long way round, down over the image and back up,
+  // and back to ‹ the same way, is still one hold. Paced so frames paint
+  // between moves, as the sweep above is, yet back well inside the delay.
+  const imageY = dFit.y + dFit.h / 2;
+  const trips = [];
+  for (const [start, end] of [
+    [pager0.previous, plus],
+    [plus, pager0.previous],
+  ]) {
+    await readHoldRegion(page);
+    await startSampling(page);
+    for (const [from, to] of [
+      [start, { x: start.x, y: imageY }],
+      [
+        { x: start.x, y: imageY },
+        { x: end.x, y: imageY },
+      ],
+      [{ x: end.x, y: imageY }, end],
+    ])
+      for (let i = 1; i <= 2; i++) {
+        await io.move(
+          from.x + ((to.x - from.x) * i) / 2,
+          from.y + ((to.y - from.y) * i) / 2,
+        );
+        await sleep(20);
+      }
+    await sleep(RELEASE_DELAY + 300);
+    const trip = await stopSampling(page);
+    const crossings = await readHoldRegion(page);
+    trips.push({
+      away:
+        crossings.length === 2 &&
+        crossings[0].type === "pointerleave" &&
+        crossings[1].type === "pointerenter"
+          ? crossings[1].t - crossings[0].t
+          : null,
+      crossings,
+      heights: trip.samples.map((x) => Math.round(x.h * 10) / 10),
+    });
+  }
+  check(
+    "round-trip-over-image-holds-height",
+    trips.every(
+      ({ away, heights }) =>
+        // A trip slower than the delay proves nothing either way.
+        away !== null &&
+        away < RELEASE_DELAY - 50 &&
+        heights.every((h) => near(h, dFit.h, 0.5)),
+    ),
+    { dialogH: dFit.h, trips },
+  );
+
   await startSampling(page);
   await io.move(px, dFit.y + dFit.h / 2);
+  await sleep(RELEASE_DELAY + 100);
   const released = await stopSampling(page);
   const { s: s10, d: d10 } = await sample();
   const landed = tweenVerdict(released, dFit.h, d10.h, reduced);
