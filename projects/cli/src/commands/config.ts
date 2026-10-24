@@ -193,7 +193,10 @@ export function buildConfigReport(input: {
   };
 }
 
-function serverSourceLabel(report: ConfigReport, cwd: string): string | null {
+export function serverSourceLabel(
+  report: ConfigReport,
+  cwd: string,
+): string | null {
   switch (report.context.server_source) {
     case "flag":
       return "--server";
@@ -249,7 +252,7 @@ function withSource(
 }
 
 /** How the identity was chosen — never anything about what it is. */
-function tokenLine(report: ConfigReport): string {
+export function tokenLine(report: ConfigReport): string {
   const { token_source, token_profile, server } = report.context;
   const profile = `profile "${token_profile}"`;
   switch (token_source) {

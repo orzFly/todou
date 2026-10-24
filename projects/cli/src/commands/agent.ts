@@ -1,4 +1,7 @@
+import { homedir } from "node:os";
+import { resolveVersion } from "@todou/shared/version";
 import { Command } from "clipanion";
+import { doctorReport } from "../agent-doctor.ts";
 import type { CliContext } from "../api-command.ts";
 import type { CliConfig, Env } from "../config.ts";
 import {
@@ -9,9 +12,12 @@ import {
   tildePath,
 } from "../config.ts";
 import { reportError } from "../errors.ts";
-import { followAdvice } from "../follow-advice.ts";
+import { type FollowAdvice, followAdvice } from "../follow-advice.ts";
 import { detectHarnessId } from "../harness/index.ts";
-import { harnessMessaging } from "../harness/messaging.ts";
+import {
+  type HarnessMessaging,
+  harnessMessaging,
+} from "../harness/messaging.ts";
 
 /** Absent means advised, so only an explicit `false` opts out. */
 function optedOut(config: CliConfig): boolean {
@@ -49,22 +55,80 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
 
   async execute(): Promise<number | undefined> {
     try {
-      const env = this.context.env;
-      // Threaded the way `watch` threads it: under omp the answer depends on
-      // which ancestor published a record, so a test can only state a
-      // situation by handing this command a process tree of its own.
-      const tree = this.context.processTree;
-      // Read once, read whole: the socket and the tool list come out of the
-      // same lookup, and two lookups could straddle an extension update.
-      const messaging = harnessMessaging(env, tree);
-      const advice = followAdvice({
-        harness: detectHarnessId(env, tree),
-        socket: messaging.socket,
-        codex: messaging.codex,
-        tools: messaging.tools ?? [],
-        optedOut: optedOut(loadCliConfig(env)),
-      });
+      const { advice } = adviseHere(this.context);
       this.context.stdout.write(`${advice.paragraphs.join("\n\n")}\n`);
+      return 0;
+    } catch (error) {
+      return reportError(error, this.context.stderr);
+    }
+  }
+}
+
+/**
+ * The inputs `can-i-follow` decides on and the decision, computed once for it
+ * and for `doctor`, so the report describes the very advice an agent got.
+ */
+function adviseHere(context: CliContext): {
+  advice: FollowAdvice;
+  messaging: HarnessMessaging;
+  optedOut: boolean;
+} {
+  const env = context.env;
+  // Threaded the way `watch` threads it: under omp the answer depends on
+  // which ancestor published a record, so a test can only state a
+  // situation by handing this command a process tree of its own.
+  const tree = context.processTree;
+  // Read once, read whole: the socket and the tool list come out of the
+  // same lookup, and two lookups could straddle an extension update.
+  const messaging = harnessMessaging(env, tree);
+  const opted = optedOut(loadCliConfig(env));
+  const advice = followAdvice({
+    harness: detectHarnessId(env, tree),
+    socket: messaging.socket,
+    codex: messaging.codex,
+    tools: messaging.tools ?? [],
+    optedOut: opted,
+  });
+  return { advice, messaging, optedOut: opted };
+}
+
+export class AgentDoctorCommand extends Command<CliContext> {
+  static paths = [["agent", "doctor"]];
+  static usage = Command.Usage({
+    description:
+      "Report what `can-i-follow` saw, for pasting into a bug report",
+    details:
+      "Prints how the harness was detected, the process tree it was read " +
+      "from, the variables follow depends on, which `todou` is running and " +
+      "which ones PATH finds, the account a bare command would use, the push " +
+      "channel, the installed integrations and the advice `can-i-follow` " +
+      "chose. Run it in the same place the failing watch runs — inside a " +
+      "background job or service, not in a fresh terminal.\n\n" +
+      "No todou token appears in it: secret variables print as " +
+      "`<redacted>`, and every stored, exported or published token, plus " +
+      "anything shaped like a personal access token, is masked in the " +
+      "finished text. Ancestors' variables are named, never shown; their " +
+      "command lines are printed, cut at 120 characters. Like " +
+      "`can-i-follow`, it talks to no server and exits 0.",
+    examples: [["Diagnose follow here", "$0 agent doctor"]],
+  });
+
+  async execute(): Promise<number | undefined> {
+    try {
+      const { advice, messaging, optedOut } = adviseHere(this.context);
+      this.context.stdout.write(
+        doctorReport({
+          env: this.context.env,
+          cwd: this.context.cwd,
+          home: this.context.home ?? homedir(),
+          processTree: this.context.processTree,
+          version: this.cli.binaryVersion ?? resolveVersion(),
+          script: process.argv[1],
+          advice,
+          messaging,
+          optedOut,
+        }),
+      );
       return 0;
     } catch (error) {
       return reportError(error, this.context.stderr);

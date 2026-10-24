@@ -69,7 +69,46 @@ export const HARNESS_LABELS: Record<HarnessId, string> = {
  * already knows which ancestor that is. Absent means the marker boundary
  * decides it, as it always has.
  */
-type Selection = { harness: Harness; hostPid?: number };
+type Selection = { harness: Harness; hostPid?: number; recordPath?: string };
+
+/**
+ * How `select` reached its answer, for `todou agent doctor` to print. Filled
+ * in by `select` itself rather than recomputed beside it, so the report cannot
+ * describe a decision the detector did not make.
+ */
+export type SelectionTrace = {
+  /** Harnesses whose markers this environment carries, in registry order. */
+  candidates: HarnessId[];
+  route:
+    | "none"
+    | "only-candidate"
+    | "nearest-host"
+    | "registry-order"
+    | "published-record";
+  /**
+   * Each candidate's host depth in the process tree, null where none could be
+   * attributed. Walked for a lone candidate too, which `select` alone skips:
+   * that walk is the I/O its ordinary path exists to avoid.
+   */
+  depths: Partial<Record<HarnessId, number | null>>;
+  /** The record that named the harness, on the published-record route. */
+  published?: { pid: number; path: string };
+};
+
+function hostDepth(
+  harness: Harness,
+  chain: readonly Ancestor[],
+): number | undefined {
+  const nativeHost =
+    harness.id === "pi"
+      ? piHostAncestor(chain)
+      : harness.id === "omp"
+        ? ompHostAncestor(chain)
+        : undefined;
+  return nativeHost
+    ? chain.indexOf(nativeHost)
+    : hostIndex((e) => harness.matches(e), chain, isOmpWorker);
+}
 
 /**
  * The harness whose host process sits nearest to us, among those the
@@ -86,28 +125,40 @@ function select(
   env: Env,
   ancestors: () => readonly Ancestor[],
   pids: () => readonly number[],
+  trace?: SelectionTrace,
 ): Selection | null {
   const candidates = HARNESSES.filter((h) => h.matches(env));
-  if (candidates.length === 0) return published(env, pids);
-  if (candidates.length === 1) return { harness: candidates[0] as Harness };
+  if (trace) {
+    trace.candidates = candidates.map((h) => h.id);
+    for (const harness of candidates) {
+      trace.depths[harness.id] = hostDepth(harness, ancestors()) ?? null;
+    }
+  }
+  if (candidates.length === 0) {
+    const found = published(env, pids);
+    if (trace) {
+      trace.route = found ? "published-record" : "none";
+      if (found?.hostPid !== undefined && found.recordPath !== undefined) {
+        trace.published = { pid: found.hostPid, path: found.recordPath };
+      }
+    }
+    return found;
+  }
+  if (candidates.length === 1) {
+    if (trace) trace.route = "only-candidate";
+    return { harness: candidates[0] as Harness };
+  }
 
   const chain = ancestors();
   let best: { harness: Harness; depth: number } | undefined;
   for (const harness of candidates) {
-    const nativeHost =
-      harness.id === "pi"
-        ? piHostAncestor(chain)
-        : harness.id === "omp"
-          ? ompHostAncestor(chain)
-          : undefined;
-    const depth = nativeHost
-      ? chain.indexOf(nativeHost)
-      : hostIndex((e) => harness.matches(e), chain, isOmpWorker);
+    const depth = hostDepth(harness, chain);
     // Strictly nearer, so an equal depth leaves the registry order in charge.
     if (depth !== undefined && (best === undefined || depth < best.depth)) {
       best = { harness, depth };
     }
   }
+  if (trace) trace.route = best ? "nearest-host" : "registry-order";
   // Nothing attributable — markers introduced outside the visible chain.
   return { harness: best?.harness ?? (candidates[0] as Harness) };
 }
@@ -133,7 +184,9 @@ function published(env: Env, pids: () => readonly number[]): Selection | null {
   // mean guessing which one wrote a layout more than one may come to use.
   if (state?.agent === undefined) return null;
   const harness = HARNESSES.find((h) => h.id === state.agent);
-  return harness ? { harness, hostPid: state.pid } : null;
+  return harness
+    ? { harness, hostPid: state.pid, recordPath: state.path }
+    : null;
 }
 
 /**
@@ -302,4 +355,32 @@ export function detectHarnessId(
       () => (pidChain ??= ancestorPids(io)),
     )?.harness.id ?? null
   );
+}
+
+/**
+ * The detected harness with the reasoning behind it and the host it settled
+ * on — everything `todou agent doctor` reports about detection. Never throws,
+ * like every other probe here.
+ */
+export function explainHarness(
+  env: Env,
+  io?: Partial<ProcessTreeIo>,
+): { id: HarnessId | null; trace: SelectionTrace; hostPid?: number } {
+  const trace: SelectionTrace = { candidates: [], route: "none", depths: {} };
+  try {
+    let chain: readonly Ancestor[] | undefined;
+    const ancestors = () => (chain ??= readAncestors(io));
+    let pidChain: readonly number[] | undefined;
+    const pids = () => (pidChain ??= ancestorPids(io));
+    const selection = select(env, ancestors, pids, trace);
+    if (selection === null) return { id: null, trace };
+    const hostPid = hostResolver(selection, ancestors, io)()?.pid;
+    return {
+      id: selection.harness.id,
+      trace,
+      ...(hostPid === undefined ? {} : { hostPid }),
+    };
+  } catch {
+    return { id: null, trace };
+  }
 }

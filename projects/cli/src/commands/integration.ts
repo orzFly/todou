@@ -108,7 +108,11 @@ function uninstall(
   return { line: `${entry.id}: removed ${shown}` };
 }
 
-function status(entry: Integration, env: Env, home: string): Outcome {
+export function integrationStatus(
+  entry: Integration,
+  env: Env,
+  home: string,
+): Outcome {
   const path = entry.targetPath(env, home);
   const shown = tildePath(path, env);
   const existing = installed(path);
@@ -262,7 +266,9 @@ export class IntegrationStatusCommand extends IntegrationCommand {
       const entries =
         this.agents.length === 0 ? [...INTEGRATIONS] : selected(this.agents);
       return this.report(
-        entries.map((entry) => status(entry, this.context.env, this.home)),
+        entries.map((entry) =>
+          integrationStatus(entry, this.context.env, this.home),
+        ),
       );
     } catch (error) {
       return reportError(error, this.context.stderr);

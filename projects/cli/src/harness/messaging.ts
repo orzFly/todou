@@ -46,7 +46,7 @@ export type NativeWatchOwner = {
   token: string;
 };
 
-function ownedStateAttempt(
+export function ownedStateAttempt(
   peer: "omp" | "pi",
   env: Env,
   io?: Partial<ProcessTreeIo>,

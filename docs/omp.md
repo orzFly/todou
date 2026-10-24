@@ -172,6 +172,16 @@ extension's tool is present its answer is the tool. It talks to no server
 and resolves no project, so it answers at any point in a session, including
 one that starts with the tracker down.
 
+When follow does not work, `todou agent doctor` prints what that answer was
+built from: which harness was detected and by which rule, the process tree
+with each ancestor's markers, the variables follow reads, which `todou` is
+running and which ones `PATH` finds, the account a bare command would use, the
+push channel and the published record, and each integration's installed
+version. Run it where the failing watch runs — a service's `PATH` and
+ancestors are not the agent shell's. No todou token appears in it — stored,
+exported or published — but each ancestor's command line is printed, cut at
+120 characters, and anything else a command line carried comes with it.
+
 Give a command that has to outlive a single tool call `timeout: 0` when it
 runs as a bash job — `spec push --wait`, `spec wait`, `question wait`. The
 deadline belongs to omp's bash tool rather than to todou: it defaults to 300
