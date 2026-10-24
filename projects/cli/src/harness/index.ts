@@ -4,7 +4,7 @@ import type { Env } from "../config.ts";
 import { claudeCode } from "./claude-code.ts";
 import { codex } from "./codex.ts";
 import { hermesAgent } from "./hermes-agent.ts";
-import { omp, ompHostAncestor } from "./omp.ts";
+import { isOmpWorker, omp, ompHostAncestor } from "./omp.ts";
 import { publishedState } from "./omp-state.ts";
 import { pi, piHostAncestor } from "./pi.ts";
 import {
@@ -102,7 +102,7 @@ function select(
           : undefined;
     const depth = nativeHost
       ? chain.indexOf(nativeHost)
-      : hostIndex((e) => harness.matches(e), chain);
+      : hostIndex((e) => harness.matches(e), chain, isOmpWorker);
     // Strictly nearer, so an equal depth leaves the registry order in charge.
     if (depth !== undefined && (best === undefined || depth < best.depth)) {
       best = { harness, depth };
@@ -184,7 +184,7 @@ function nearestUnmarked(
     const found = piHostAncestor(chain);
     if (found) return found;
   }
-  const depth = hostIndex((e) => harness.matches(e), chain);
+  const depth = hostIndex((e) => harness.matches(e), chain, isOmpWorker);
   return depth === undefined ? undefined : chain[depth];
 }
 
