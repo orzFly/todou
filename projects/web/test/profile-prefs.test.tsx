@@ -342,3 +342,79 @@ describe("icons without an image (T-555)", () => {
     );
   });
 });
+
+describe("preview under icons without an image (T-558)", () => {
+  /** What the samples beside one setting's select are drawn as. */
+  async function samples(
+    view: ReturnType<typeof renderSettings>,
+    name: string,
+  ) {
+    const row = (await view.findByRole("combobox", { name })).parentElement;
+    const preview = row?.querySelector("[data-fallback-preview]");
+    return [...(preview?.querySelectorAll('[data-slot="avatar"]') ?? [])].map(
+      (avatar) => {
+        const glyph = avatar.querySelector("[data-generator]");
+        return {
+          shape: avatar.getAttribute("data-shape"),
+          generator: glyph?.getAttribute("data-generator"),
+          gradient: (glyph?.querySelectorAll("stop").length ?? 0) > 0,
+        };
+      },
+    );
+  }
+
+  it("draws project and people samples beside their own select", async () => {
+    const view = renderSettings();
+    const projects = await samples(view, "Projects");
+    const people = await samples(view, "People");
+
+    expect(projects.length).toBeGreaterThan(1);
+    expect(people.length).toBeGreaterThan(1);
+    expect(new Set(projects.map((s) => s.shape))).toEqual(new Set(["square"]));
+    expect(new Set(people.map((s) => s.shape))).toEqual(new Set(["circle"]));
+  });
+
+  for (const generator of ["colorful_text", "monochrome_text"] as const) {
+    it(`draws the project samples with ${generator} when it is chosen`, async () => {
+      const view = renderSettings({ project_icon_fallback: generator });
+      const projects = await samples(view, "Projects");
+      expect(projects.length).toBeGreaterThan(1);
+      for (const sample of projects) {
+        expect(sample).toMatchObject({
+          generator,
+          gradient: generator === "colorful_text",
+        });
+      }
+      // People keep their own setting whatever projects are set to.
+      for (const sample of await samples(view, "People")) {
+        expect(sample).toMatchObject({
+          generator: "monochrome_text",
+          gradient: false,
+        });
+      }
+    });
+  }
+
+  it("redraws the samples as soon as the select changes", async () => {
+    let settle: (prefs: MePrefs) => void = () => {};
+    vi.spyOn(api, "patchMyPrefs").mockImplementation(
+      () => new Promise((resolve) => (settle = resolve)),
+    );
+    const view = renderSettings();
+    const before = await samples(view, "Projects");
+    expect(before.length).toBeGreaterThan(1);
+    expect(before.every((s) => s.generator === "colorful_text")).toBe(true);
+
+    fireEvent.keyDown(await view.findByRole("combobox", { name: "Projects" }), {
+      key: "M",
+    });
+
+    // The patch is still unanswered: the redraw comes from the choice itself.
+    await waitFor(async () => {
+      const after = await samples(view, "Projects");
+      expect(after).toHaveLength(before.length);
+      expect(after.every((s) => s.generator === "monochrome_text")).toBe(true);
+    });
+    settle({ ...DEFAULT_PREFS, project_icon_fallback: "monochrome_text" });
+  });
+});

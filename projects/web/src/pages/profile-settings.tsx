@@ -12,7 +12,7 @@ import type {
   RefPlacement,
   UserAvatarFallback,
 } from "@todou/shared";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import {
   prefsQuery,
@@ -27,6 +27,8 @@ import {
 } from "@/api/prefs.ts";
 import { api, meQuery } from "@/api/queries.ts";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
+import { UserAvatar } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -320,6 +322,35 @@ const USER_AVATAR_FALLBACKS: ReadonlyArray<{
   label: string;
 }> = [{ value: "monochrome_text", label: "Monochrome text" }];
 
+const PREVIEW_PROJECTS = [
+  { slug: "design", name: "Design", prefix: "DES" },
+  { slug: "api", name: "API", prefix: "API" },
+  { slug: "growth", name: "Growth", prefix: "GRW" },
+];
+
+const PREVIEW_PEOPLE = [
+  { login: "alice", display_name: "Alice Liddell" },
+  { login: "bot-one", display_name: "bot-one" },
+  { login: "newcomer", display_name: "Wei Wang" },
+];
+
+/**
+ * Samples drawn by the same components as every other surface, so they follow
+ * the cached prefs the moment a select changes them (T-558). Hidden from
+ * assistive tech: they repeat the select's value in pictures.
+ */
+function FallbackPreview({ children }: { children: ReactNode }) {
+  return (
+    <div
+      aria-hidden="true"
+      data-fallback-preview=""
+      className="flex gap-2 pt-1"
+    >
+      {children}
+    </div>
+  );
+}
+
 /** What a project or a person without an uploaded image is drawn as (T-555). */
 function FallbackAvatarsSection() {
   const prefs = useQuery(prefsQuery);
@@ -340,6 +371,17 @@ function FallbackAvatarsSection() {
         options={PROJECT_ICON_FALLBACKS}
         disabled={pending}
         onChange={(value) => patch.mutate({ project_icon_fallback: value })}
+        preview={
+          <FallbackPreview>
+            {PREVIEW_PROJECTS.map((sample) => (
+              <ProjectIcon
+                key={sample.slug}
+                project={sample}
+                className="size-8"
+              />
+            ))}
+          </FallbackPreview>
+        }
       />
       <PlacementRow
         id="user-avatar-fallback"
@@ -348,6 +390,13 @@ function FallbackAvatarsSection() {
         options={USER_AVATAR_FALLBACKS}
         disabled={pending}
         onChange={(value) => patch.mutate({ user_avatar_fallback: value })}
+        preview={
+          <FallbackPreview>
+            {PREVIEW_PEOPLE.map((sample) => (
+              <UserAvatar key={sample.login} user={sample} className="size-8" />
+            ))}
+          </FallbackPreview>
+        }
       />
     </div>
   );
@@ -394,6 +443,7 @@ function PlacementRow<V extends string>({
   options,
   disabled,
   onChange,
+  preview,
 }: {
   id: string;
   label: string;
@@ -402,6 +452,7 @@ function PlacementRow<V extends string>({
   options: ReadonlyArray<{ value: V; label: string }>;
   disabled: boolean;
   onChange: (value: V) => void;
+  preview?: ReactNode;
 }) {
   return (
     <div className="flex items-start justify-between gap-4">
@@ -410,6 +461,7 @@ function PlacementRow<V extends string>({
         {description && (
           <p className="text-sm text-muted-foreground">{description}</p>
         )}
+        {preview}
       </div>
       <Select
         value={value}
