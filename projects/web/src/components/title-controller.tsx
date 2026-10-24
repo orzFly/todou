@@ -32,8 +32,18 @@ function titleFor(
       return `${ctx.projectName} · issues`;
     case "/authed/projects/$slug/board":
       return `${ctx.projectName} · board`;
-    case "/authed/projects/$slug/settings":
+    case "/authed/projects/$slug/settings/":
       return `${ctx.projectName} · settings`;
+    case "/authed/projects/$slug/settings/members":
+      return `${ctx.projectName} · members`;
+    case "/authed/projects/$slug/settings/statuses":
+      return `${ctx.projectName} · statuses`;
+    case "/authed/projects/$slug/settings/labels":
+      return `${ctx.projectName} · labels`;
+    case "/authed/projects/$slug/settings/references":
+      return `${ctx.projectName} · references`;
+    case "/authed/projects/$slug/settings/insights":
+      return `${ctx.projectName} · insights settings`;
     case "/authed/projects/$slug/issues/new":
       return `New issue · ${ctx.projectName}`;
     case "/authed/projects/$slug/issues/$number":
@@ -46,6 +56,10 @@ function titleFor(
       return "Muted · todou";
     case "/authed/settings/profile":
       return "Profile · todou";
+    case "/authed/settings/appearance":
+      return "Appearance · todou";
+    case "/authed/settings/inbox":
+      return "Inbox settings · todou";
     case "/authed/settings/agents":
       return "Agents · todou";
     case "/authed/settings/tokens":

@@ -30,10 +30,10 @@ Usage: node scripts/fallback-avatar-smoke.mjs [--keep] [--help]
 Seeds projects whose fallbacks are the awkward ones — the widest REF a
 20-character prefix leaves, a digit and an underscore, initials with no prefix,
 CJK initials — and an account whose initials are WW. Grades every square
-avatar on the project list (the 40px cards) and on two settings pages (the
-20px breadcrumb and the 40px editor), and every round one on those settings
-pages and the profile page, in every theme the app ships, once per project
-generator:
+avatar on the project list (the 40px cards) and on two projects' settings
+(the 20px breadcrumb and the 40px editor), and every round one on those
+projects' member lists and the profile page, in every theme the app ships, once
+per project generator:
 
   glyph-outside-box               the text's box leaves the avatar's, at the
                                   size the surface draws it or forced to
@@ -50,7 +50,7 @@ generator:
   not-monochrome                  monochrome: anything but the theme's muted
                                   text on its muted box
   live-switch                     choosing the other project generator on the
-                                  profile page does not redraw the project
+                                  appearance page does not redraw the project
                                   list open in another tab without a reload,
                                   or the server does not read the choice back
 
@@ -78,15 +78,16 @@ const PROJECTS = [
 const DISPLAY_NAME = "Wm Wu";
 const LIST = { path: "/projects", square: PROJECTS.length, circle: 0 };
 const PROFILE = { path: "/settings/profile", square: 0, circle: 1 };
+/** Where the generator is chosen; graded by `liveSwitch`, not by `PAGES`. */
+const APPEARANCE = { path: "/settings/appearance", square: 0, circle: 0 };
 const PAGES = [
   LIST,
-  // Breadcrumb and editor: the two faces that do not share a component,
-  // beside the member list's people.
-  ...["icon-wide", "icon-cjk"].map((slug) => ({
-    path: `/projects/${slug}/settings`,
-    square: 2,
-    circle: 1,
-  })),
+  // Breadcrumb and editor: the two faces that do not share a component. The
+  // member list's people sit one category over (T-557).
+  ...["icon-wide", "icon-cjk"].flatMap((slug) => [
+    { path: `/projects/${slug}/settings`, square: 2, circle: 0 },
+    { path: `/projects/${slug}/settings/members`, square: 1, circle: 1 },
+  ]),
   // The person's own editor.
   PROFILE,
 ];
@@ -353,19 +354,29 @@ async function main() {
     };
 
     /**
-     * Picks a project generator on the profile page the way a keyboard user
+     * Picks a project generator on the appearance page the way a keyboard user
      * does, and watches the project list open in another tab redraw.
      */
     const liveSwitch = async (key, generator) => {
       const list = await open(LIST);
-      const profile = await open(PROFILE);
+      const profile = await open(APPEARANCE);
       try {
         await evaluate(list, () => {
           window.__notReloaded = true;
         });
-        await evaluate(profile, () =>
-          document.getElementById("project-icon-fallback")?.focus(),
-        );
+        // `APPEARANCE` waits on no avatar, so the select may still be loading.
+        const selectDeadline = Date.now() + 15_000;
+        while (
+          !(await evaluate(profile, () => {
+            const select = document.getElementById("project-icon-fallback");
+            select?.focus();
+            return select !== null && document.activeElement === select;
+          }))
+        ) {
+          if (Date.now() > selectDeadline)
+            throw new Error(`${APPEARANCE.path}: no project generator select`);
+          await sleep(150);
+        }
         for (const type of ["keyDown", "keyUp"]) {
           await profile.send("Input.dispatchKeyEvent", {
             type,

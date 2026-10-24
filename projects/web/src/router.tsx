@@ -7,6 +7,7 @@ import {
   lazyRouteComponent,
   Navigate,
   Outlet,
+  redirect,
   useNavigate,
 } from "@tanstack/react-router";
 import { useState } from "react";
@@ -50,13 +51,26 @@ import { IssueRouteError, SpecRouteError } from "@/pages/issue-route-error.tsx";
 import { LoginPage } from "@/pages/login.tsx";
 import { MutedPage } from "@/pages/muted.tsx";
 import { NewIssuePage } from "@/pages/new-issue.tsx";
-import { ProfileSettingsPage } from "@/pages/profile-settings.tsx";
+import {
+  AppearanceSettingsPage,
+  InboxSettingsPage,
+  ProfileSettingsPage,
+} from "@/pages/profile-settings.tsx";
 import { ProjectLayout, ProjectRouteError } from "@/pages/project-layout.tsx";
-import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
+import {
+  ProjectGeneralSettingsPage,
+  ProjectInsightsSettingsPage,
+  ProjectLabelsSettingsPage,
+  ProjectMembersSettingsPage,
+  ProjectReferencesSettingsPage,
+  ProjectSettingsLayout,
+  ProjectStatusesSettingsPage,
+} from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
 import { SearchPage } from "@/pages/search.tsx";
 import { TokensSettingsPage } from "@/pages/tokens-settings.tsx";
 import { UserProfilePage } from "@/pages/user-profile.tsx";
+import { UserSettingsLayout } from "@/pages/user-settings-layout.tsx";
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -389,8 +403,44 @@ const specViewRoute = createRoute({
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "settings",
-  component: ProjectSettingsPage,
+  component: ProjectSettingsLayout,
   staticData: { pageSkeleton: "sections", backControl: "projects" },
+});
+
+const projectSettingsIndexRoute = createRoute({
+  getParentRoute: () => projectSettingsRoute,
+  path: "/",
+  component: ProjectGeneralSettingsPage,
+});
+
+const projectMembersSettingsRoute = createRoute({
+  getParentRoute: () => projectSettingsRoute,
+  path: "members",
+  component: ProjectMembersSettingsPage,
+});
+
+const projectStatusesSettingsRoute = createRoute({
+  getParentRoute: () => projectSettingsRoute,
+  path: "statuses",
+  component: ProjectStatusesSettingsPage,
+});
+
+const projectLabelsSettingsRoute = createRoute({
+  getParentRoute: () => projectSettingsRoute,
+  path: "labels",
+  component: ProjectLabelsSettingsPage,
+});
+
+const projectReferencesSettingsRoute = createRoute({
+  getParentRoute: () => projectSettingsRoute,
+  path: "references",
+  component: ProjectReferencesSettingsPage,
+});
+
+const projectInsightsSettingsRoute = createRoute({
+  getParentRoute: () => projectSettingsRoute,
+  path: "insights",
+  component: ProjectInsightsSettingsPage,
 });
 
 const inboxRoute = createRoute({
@@ -469,29 +519,53 @@ function UserPage() {
   );
 }
 
-const profileSettingsRoute = createRoute({
+const userSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
-  path: "/settings/profile",
-  component: ProfileSettingsPage,
+  path: "/settings",
+  component: UserSettingsLayout,
   staticData: { pageSkeleton: "sections" },
 });
 
+const userSettingsIndexRoute = createRoute({
+  getParentRoute: () => userSettingsRoute,
+  path: "/",
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/profile", replace: true });
+  },
+});
+
+const profileSettingsRoute = createRoute({
+  getParentRoute: () => userSettingsRoute,
+  path: "profile",
+  component: ProfileSettingsPage,
+});
+
+const appearanceSettingsRoute = createRoute({
+  getParentRoute: () => userSettingsRoute,
+  path: "appearance",
+  component: AppearanceSettingsPage,
+});
+
+const inboxSettingsRoute = createRoute({
+  getParentRoute: () => userSettingsRoute,
+  path: "inbox",
+  component: InboxSettingsPage,
+});
+
 const agentsSettingsRoute = createRoute({
-  getParentRoute: () => authedRoute,
-  path: "/settings/agents",
+  getParentRoute: () => userSettingsRoute,
+  path: "agents",
   component: AgentsSettingsPage,
   // ?state=deactivated selects the Deactivated segment; Active is the default
   // and stays out of the URL.
   validateSearch: (search): { state?: "deactivated" } =>
     search.state === "deactivated" ? { state: "deactivated" } : {},
-  staticData: { pageSkeleton: "sections" },
 });
 
 const tokensSettingsRoute = createRoute({
-  getParentRoute: () => authedRoute,
-  path: "/settings/tokens",
+  getParentRoute: () => userSettingsRoute,
+  path: "tokens",
   component: TokensSettingsPage,
-  staticData: { pageSkeleton: "sections" },
 });
 
 const cliAuthRoute = createRoute({
@@ -523,11 +597,23 @@ const routeTree = rootRoute.addChildren([
       newIssueRoute,
       issueRoute,
       specViewRoute,
-      projectSettingsRoute,
+      projectSettingsRoute.addChildren([
+        projectSettingsIndexRoute,
+        projectMembersSettingsRoute,
+        projectStatusesSettingsRoute,
+        projectLabelsSettingsRoute,
+        projectReferencesSettingsRoute,
+        projectInsightsSettingsRoute,
+      ]),
     ]),
-    profileSettingsRoute,
-    agentsSettingsRoute,
-    tokensSettingsRoute,
+    userSettingsRoute.addChildren([
+      userSettingsIndexRoute,
+      profileSettingsRoute,
+      appearanceSettingsRoute,
+      inboxSettingsRoute,
+      agentsSettingsRoute,
+      tokensSettingsRoute,
+    ]),
     cliAuthRoute,
     grantAccessRoute,
     userRoute,

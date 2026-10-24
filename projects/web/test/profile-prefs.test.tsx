@@ -6,10 +6,15 @@ import {
   within,
 } from "@testing-library/react";
 import type { Me, MePrefs } from "@todou/shared";
+import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { api, meQuery } from "../src/api/queries.ts";
-import { ProfileSettingsPage } from "../src/pages/profile-settings.tsx";
+import {
+  AppearanceSettingsPage,
+  InboxSettingsPage,
+  ProfileSettingsPage,
+} from "../src/pages/profile-settings.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => vi.restoreAllMocks());
@@ -40,7 +45,14 @@ const DEFAULT_PREFS: MePrefs = {
   user_avatar_fallback: "monochrome_text",
 };
 
-function renderSettings(prefs: Partial<MePrefs> = {}) {
+/**
+ * Appearance by default: it is where nearly every preference here lives since
+ * the settings split into categories (T-557).
+ */
+function renderSettings(
+  prefs: Partial<MePrefs> = {},
+  Page: () => ReactElement = AppearanceSettingsPage,
+) {
   const client = testQueryClient();
   // Seeded, not fetched: useSuspenseQuery would otherwise suspend on a
   // boundary this bare render does not provide.
@@ -49,39 +61,25 @@ function renderSettings(prefs: Partial<MePrefs> = {}) {
     ...DEFAULT_PREFS,
     ...prefs,
   } satisfies MePrefs);
-  const { container } = renderWithProviders(<ProfileSettingsPage />, client);
+  const { container } = renderWithProviders(<Page />, client);
   return within(container);
 }
 
 describe("profile after moving Muted (T-380)", () => {
-  it("preserves identity and preference sections without fetching the muted list", async () => {
+  it("keeps identity on Profile without fetching the muted list", async () => {
     const getMutes = vi
       .spyOn(api, "getMutes")
       .mockResolvedValue({ projects: [], issues: [] });
-    const view = renderSettings();
+    const view = renderSettings({}, ProfileSettingsPage);
     const heading = await view.findByRole("heading", {
       level: 1,
       name: "Profile",
     });
     const page = heading.parentElement?.parentElement;
-    expect(page).not.toBeNull();
-    expect(
-      page?.classList.contains("max-w-lg"),
-      "Profile page keeps its width constraint",
-    ).toBe(true);
-    expect(
-      page?.classList.contains("space-y-6"),
-      "Profile page keeps its vertical spacing",
-    ).toBe(true);
+    expect(page?.classList.contains("max-w-lg")).toBe(true);
     expect(
       view.getAllByRole("heading").map((node) => node.textContent),
-    ).toEqual([
-      "Profile",
-      "Unread indicators",
-      "Issue number placement",
-      "References in text",
-      "Icons without an image",
-    ]);
+    ).toEqual(["Profile"]);
 
     const displayName = view.getByRole<HTMLInputElement>("textbox", {
       name: "Display name",
@@ -100,45 +98,45 @@ describe("profile after moving Muted (T-380)", () => {
     fireEvent.change(displayName, { target: { value: "Updated user" } });
     expect(save.disabled).toBe(false);
 
-    const sections = view.getAllByRole("heading", { level: 2 }).map((node) => {
-      const section = node.closest(".border-t");
-      expect(
-        section?.parentElement,
-        `${node.textContent} keeps its bordered section wrapper`,
-      ).toBe(page);
-      expect(
-        section?.classList.contains("pt-6"),
-        `${node.textContent} keeps its top padding`,
-      ).toBe(true);
-      return section;
-    });
-    expect(displayName.closest("form")?.classList.contains("space-y-4")).toBe(
-      true,
-    );
-    expect(displayName.closest("form")?.nextElementSibling).toBe(sections[0]);
-    expect(sections[0]?.classList.contains("space-y-3")).toBe(true);
-    expect(sections[0]?.nextElementSibling).toBe(sections[1]);
-    expect(sections[1]?.classList.contains("space-y-4")).toBe(true);
-    expect(sections[1]?.nextElementSibling).toBe(sections[2]);
-    expect(sections[2]?.classList.contains("space-y-4")).toBe(true);
-    expect(sections[2]?.nextElementSibling).toBe(sections[3]);
-    expect(sections[3]?.classList.contains("space-y-4")).toBe(true);
-    expect(sections[3]?.nextElementSibling).toBeNull();
-
-    expect(
-      view.getByRole("switch", { name: "Weak unread hints" }),
-    ).toBeTruthy();
-    expect(view.getAllByRole("combobox")).toHaveLength(6);
-    for (const name of [
-      "Bordered references",
-      "Shorten long titles",
-      "Title on every mention",
-    ]) {
-      expect(view.getByRole("switch", { name })).toBeTruthy();
-    }
     expect(view.queryByText(/muted/i)).toBeNull();
-    expect(view.queryByRole("button", { name: "Unmute" })).toBeNull();
     expect(getMutes).not.toHaveBeenCalled();
+  });
+});
+
+describe("preferences split into categories (T-557)", () => {
+  /** Each h2 sits in its own bordered block directly under the page. */
+  async function sectionsOf(
+    view: ReturnType<typeof renderSettings>,
+    title: string,
+  ) {
+    const page = (await view.findByRole("heading", { level: 1, name: title }))
+      .parentElement;
+    return view.getAllByRole("heading", { level: 2 }).map((node) => {
+      const section = node.closest(".border-t");
+      expect(section?.parentElement, `${node.textContent}`).toBe(page);
+      expect(section?.classList.contains("pt-6")).toBe(true);
+      return node.textContent;
+    });
+  }
+
+  it("puts the display preferences on Appearance", async () => {
+    const view = renderSettings();
+    expect(await sectionsOf(view, "Appearance")).toEqual([
+      "Issue number placement",
+      "References in text",
+      "Icons without an image",
+    ]);
+    expect(view.getAllByRole("combobox")).toHaveLength(6);
+    expect(
+      view.queryByRole("switch", { name: "Weak unread hints" }),
+    ).toBeNull();
+  });
+
+  it("puts the weak-unread toggle on Inbox", async () => {
+    const view = renderSettings({}, InboxSettingsPage);
+    expect(await sectionsOf(view, "Inbox")).toEqual(["Unread indicators"]);
+    expect(view.getAllByRole("switch")).toHaveLength(1);
+    expect(view.queryByRole("combobox")).toBeNull();
   });
 });
 
@@ -215,7 +213,7 @@ describe("profile display preferences (T-157)", () => {
   });
 
   it("still carries the weak-unread toggle", async () => {
-    const view = renderSettings();
+    const view = renderSettings({}, InboxSettingsPage);
     expect(
       (await view.findByRole("switch", { name: "Weak unread hints" })).dataset
         .state,

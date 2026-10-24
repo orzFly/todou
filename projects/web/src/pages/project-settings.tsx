@@ -4,7 +4,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import {
   type AccessDenial,
   enumValue,
@@ -22,11 +22,17 @@ import {
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  ChartLineIcon,
   CheckIcon,
+  CircleDotIcon,
+  HashIcon,
   PencilIcon,
   PinIcon,
   PlusIcon,
+  SettingsIcon,
+  TagIcon,
   Trash2Icon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -46,6 +52,11 @@ import { referenceConfigQuery } from "@/api/references.ts";
 import { InsightsSettings } from "@/components/insights/insights-settings.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import {
+  SettingsLayout,
+  SettingsNavGroup,
+  SettingsNavLink,
+} from "@/components/settings-layout.tsx";
 import { AddAgentPicker } from "@/components/shared/add-agent-picker.tsx";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import { projectIconFallback } from "@/components/shared/project-icon.tsx";
@@ -94,20 +105,110 @@ export function normalizeHexColor(input: string): string | null {
   return null;
 }
 
-export function ProjectSettingsPage() {
-  const { slug } = useParams({ from: "/authed/projects/$slug" });
+/** Everything under /projects/$slug/settings, one category per route (T-557). */
+export function ProjectSettingsLayout() {
+  const slug = useSettingsSlug();
+  return (
+    <SettingsLayout
+      label="Project settings"
+      nav={
+        <>
+          <SettingsNavGroup>
+            <SettingsNavLink
+              to="/projects/$slug/settings"
+              params={{ slug }}
+              icon={SettingsIcon}
+              // Every other category lives under this one's address.
+              activeOptions={{ exact: true }}
+            >
+              General
+            </SettingsNavLink>
+          </SettingsNavGroup>
+          <SettingsNavGroup label="Access">
+            <SettingsNavLink
+              to="/projects/$slug/settings/members"
+              params={{ slug }}
+              icon={UsersIcon}
+            >
+              Members
+            </SettingsNavLink>
+          </SettingsNavGroup>
+          <SettingsNavGroup label="Issues">
+            <SettingsNavLink
+              to="/projects/$slug/settings/statuses"
+              params={{ slug }}
+              icon={CircleDotIcon}
+            >
+              Statuses
+            </SettingsNavLink>
+            <SettingsNavLink
+              to="/projects/$slug/settings/labels"
+              params={{ slug }}
+              icon={TagIcon}
+            >
+              Labels
+            </SettingsNavLink>
+            <SettingsNavLink
+              to="/projects/$slug/settings/references"
+              params={{ slug }}
+              icon={HashIcon}
+            >
+              References
+            </SettingsNavLink>
+            <SettingsNavLink
+              to="/projects/$slug/settings/insights"
+              params={{ slug }}
+              icon={ChartLineIcon}
+            >
+              Insights
+            </SettingsNavLink>
+          </SettingsNavGroup>
+        </>
+      }
+    >
+      <Outlet />
+    </SettingsLayout>
+  );
+}
+
+function useSettingsSlug(): string {
+  return useParams({ from: "/authed/projects/$slug" }).slug;
+}
+
+export function ProjectGeneralSettingsPage() {
+  const slug = useSettingsSlug();
   return (
     <div className="space-y-10">
       <ProjectSection slug={slug} />
-      <MembersSection slug={slug} />
-      <AccessDenialsSection slug={slug} />
-      <StatusesSection slug={slug} />
-      <InsightsSettings slug={slug} />
-      <LabelsSection slug={slug} />
-      <ReferencesSection slug={slug} />
       <SlugSection slug={slug} />
     </div>
   );
+}
+
+export function ProjectMembersSettingsPage() {
+  const slug = useSettingsSlug();
+  return (
+    <div className="space-y-10">
+      <MembersSection slug={slug} />
+      <AccessDenialsSection slug={slug} />
+    </div>
+  );
+}
+
+export function ProjectStatusesSettingsPage() {
+  return <StatusesSection slug={useSettingsSlug()} />;
+}
+
+export function ProjectLabelsSettingsPage() {
+  return <LabelsSection slug={useSettingsSlug()} />;
+}
+
+export function ProjectReferencesSettingsPage() {
+  return <ReferencesSection slug={useSettingsSlug()} />;
+}
+
+export function ProjectInsightsSettingsPage() {
+  return <InsightsSettings slug={useSettingsSlug()} />;
 }
 
 export function SlugSection({ slug }: { slug: string }) {

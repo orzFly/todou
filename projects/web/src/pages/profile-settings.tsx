@@ -143,11 +143,27 @@ export function ProfileSettingsPage() {
           Save changes
         </Button>
       </form>
+    </div>
+  );
+}
 
-      <UnreadIndicatorsSection />
+/** How issues, references and icons are drawn for this account (T-557). */
+export function AppearanceSettingsPage() {
+  return (
+    <div className="max-w-lg space-y-6">
+      <h1 className="text-xl font-semibold">Appearance</h1>
       <DisplaySection />
       <BodyReferencesSection />
       <FallbackAvatarsSection />
+    </div>
+  );
+}
+
+export function InboxSettingsPage() {
+  return (
+    <div className="max-w-lg space-y-6">
+      <h1 className="text-xl font-semibold">Inbox</h1>
+      <UnreadIndicatorsSection />
     </div>
   );
 }
