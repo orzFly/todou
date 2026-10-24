@@ -4,6 +4,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type {
+  InboxPage,
   IssueCounts,
   IssueListFilter,
   IssueListItem,
@@ -15,6 +16,7 @@ import type {
 import { enumValue } from "@todou/shared";
 import { toast } from "sonner";
 import { z } from "zod";
+import { inboxQuery } from "@/api/inbox.ts";
 import { issuesEntry } from "@/api/issues-cache.ts";
 import { api } from "@/api/queries.ts";
 import { invalidateSearchRefQueries } from "@/api/search-refs.ts";
@@ -340,6 +342,23 @@ export function patchIssueStatus(
   };
 }
 
+/** The inbox spans projects, so a row is named by slug and number together. */
+export function patchInboxStatus(
+  page: InboxPage,
+  slug: string,
+  issueNumber: number,
+  status: Status,
+): InboxPage {
+  return {
+    ...page,
+    items: page.items.map((item) =>
+      item.project.slug === slug && item.number === issueNumber
+        ? { ...item, status }
+        : item,
+    ),
+  };
+}
+
 /** Pure cache patches for status-scoped pages, exported for tests. */
 export function removeIssue(
   page: IssueListPage,
@@ -442,15 +461,29 @@ export function useIssueStatusMutation() {
           queryClient.setQueryData(key, removeIssue(data, vars.issueNumber));
         }
       }
-      return { snapshots };
+      // The inbox shows the pill too (T-561). The row stays put: whether a
+      // closed card still belongs there is the server's call on refetch.
+      await queryClient.cancelQueries({ queryKey: inboxQuery.queryKey });
+      const inbox = queryClient.getQueryData(inboxQuery.queryKey);
+      if (inbox) {
+        queryClient.setQueryData(
+          inboxQuery.queryKey,
+          patchInboxStatus(inbox, vars.slug, vars.issueNumber, vars.status),
+        );
+      }
+      return { snapshots, inbox };
     },
     onError: (error, _vars, context) => {
       for (const [key, data] of context?.snapshots ?? []) {
         queryClient.setQueryData(key, data);
       }
+      if (context?.inbox) {
+        queryClient.setQueryData(inboxQuery.queryKey, context.inbox);
+      }
       toast.error(`Could not move issue: ${error.message}`);
     },
     onSettled: (_data, _error, vars) => {
+      queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey });
       queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
       queryClient.invalidateQueries({
         queryKey: ["issue", vars.slug, vars.issueNumber],

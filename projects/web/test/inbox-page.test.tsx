@@ -6,14 +6,26 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, fireEvent, waitFor, within } from "@testing-library/react";
-import type { InboxItem, InboxPage as InboxPageData } from "@todou/shared";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import type {
+  InboxItem,
+  InboxPage as InboxPageData,
+  Status,
+  Watcher,
+} from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { inboxQuery } from "../src/api/inbox.ts";
 import { mutesQuery } from "../src/api/mutes.ts";
 import { api } from "../src/api/queries.ts";
 import { InboxPage } from "../src/pages/inbox.tsx";
 import { render, renderWithProviders, testQueryClient } from "./render.tsx";
+import { BOT, CLAUDE, watcher } from "./watcher-fixtures.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -773,5 +785,144 @@ describe("InboxPage · load failure (T-376)", () => {
     fireEvent.click(view.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
     await view.findByText("Inbox all dug out 🥔");
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("InboxPage · row controls (T-561)", () => {
+  const STATUSES: Status[] = [
+    {
+      id: 1,
+      name: "Todo",
+      category: "open",
+      color: "#000000",
+      position: 1,
+      is_default: false,
+    },
+    {
+      id: 2,
+      name: "Done",
+      category: "closed",
+      color: "#22c55e",
+      position: 2,
+      is_default: false,
+    },
+  ];
+
+  /** One `greenhouse` row, the viewer holding `role` there. */
+  function setup(
+    role: "writer" | "reporter",
+    {
+      item = makeItem("greenhouse", 42),
+      watchers = {},
+    }: { item?: InboxItem; watchers?: Record<string, Watcher[]> } = {},
+  ) {
+    mockInbox({ items: [item], truncated: false });
+    vi.spyOn(api, "getProject").mockResolvedValue({
+      id: 7,
+      slug: "greenhouse",
+      name: "Project greenhouse",
+      description: "",
+      created_at: "2026-09-01T00:00:00Z",
+      viewer_role: role,
+    } as Awaited<ReturnType<typeof api.getProject>>);
+    const statuses = vi.spyOn(api, "listStatuses").mockResolvedValue(STATUSES);
+    const projectWatchers = vi
+      .spyOn(api, "projectWatchers")
+      .mockResolvedValue({ project: [], issues: watchers });
+    const view = renderWithProviders(<InboxPage />);
+    return { view, statuses, projectWatchers };
+  }
+
+  const rowOf = async (view: ReturnType<typeof renderWithProviders>) =>
+    (await view.findByText("issue 42")).closest("li") as HTMLElement;
+
+  /** Radix opens on pointerdown, not on click. */
+  async function openStatusMenu(view: ReturnType<typeof renderWithProviders>) {
+    const trigger = await view.findByRole("button", { name: "Todo" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+    return trigger;
+  }
+
+  it("moves the card from its row ahead of the server, outside the title link", async () => {
+    const write = deferred<never>();
+    const update = vi.spyOn(api, "updateIssue").mockReturnValue(write.promise);
+    const { view } = setup("writer");
+
+    // The row stays a link; the control sits beside it, not inside it.
+    expect(await view.findByRole("link", { name: "issue 42" })).toBeTruthy();
+    const trigger = await openStatusMenu(view);
+    expect(trigger.closest("a")).toBeNull();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /Done/ }));
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith("greenhouse", 42, { status_id: 2 }),
+    );
+    // The pill reads Done while the write is still in flight.
+    const row = await rowOf(view);
+    expect(within(row).getByText("Done")).toBeTruthy();
+    expect(within(row).queryByText("Todo")).toBeNull();
+  });
+
+  it("puts the old status back when the server refuses the move", async () => {
+    const write = deferred<never>();
+    vi.spyOn(api, "updateIssue").mockReturnValue(write.promise);
+    const { view } = setup("writer");
+
+    await openStatusMenu(view);
+    // The refetch after the failure never answers, so only the rollback can
+    // put Todo back.
+    vi.mocked(api.getInbox).mockReturnValue(new Promise(() => {}));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Done/ }));
+    const row = await rowOf(view);
+    await waitFor(() => expect(within(row).getByText("Done")).toBeTruthy());
+    await act(async () => write.reject(new Error("nope")));
+    await waitFor(() => expect(within(row).getByText("Todo")).toBeTruthy());
+    expect(within(row).queryByText("Done")).toBeNull();
+  });
+
+  it("gives a reporter the pill without a menu, and never loads the statuses", async () => {
+    const { view, statuses } = setup("reporter");
+
+    const row = await rowOf(view);
+    await waitFor(() => expect(api.getProject).toHaveBeenCalled());
+    expect(within(row).getByText("Todo")).toBeTruthy();
+    expect(within(row).queryByRole("button", { name: "Todo" })).toBeNull();
+    expect(statuses).not.toHaveBeenCalled();
+  });
+
+  it("shows the assignees and the card's live watchers, read once per project", async () => {
+    const assignee = makeItem("greenhouse", 42).author;
+    const { view, projectWatchers } = setup("reporter", {
+      item: makeItem("greenhouse", 42, { assignees: [assignee] }),
+      watchers: { "42": [watcher(CLAUDE)], "7": [watcher(BOT)] },
+    });
+
+    const row = await rowOf(view);
+    await waitFor(() =>
+      expect(
+        within(row).getByRole("link", { name: "Claude Agent · watching" }),
+      ).toBeTruthy(),
+    );
+    const assigned = within(row).getByRole("link", { name: "User" });
+    // On a phone the avatars give way; the status is the one that stays.
+    expect(assigned.closest(".max-sm\\:hidden")).not.toBeNull();
+    expect(
+      within(row).getByText("Todo").closest(".max-sm\\:hidden"),
+    ).toBeNull();
+    // Another card's watcher stays on that card.
+    expect(within(row).queryByRole("link", { name: /Bot One/ })).toBeNull();
+    expect(projectWatchers).toHaveBeenCalledTimes(1);
+    expect(projectWatchers).toHaveBeenCalledWith("greenhouse");
   });
 });

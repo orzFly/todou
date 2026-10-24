@@ -106,7 +106,8 @@ export const ISSUE_LIST_ROW = "col-span-full -mx-3.5";
  * badges — is the same on both pages; only what hangs off it differs, so the
  * differences are slots rather than a variant flag:
  *
- * - `trailing` closes the identity line (inbox: status and last activity).
+ * - `trailing` closes the identity line (inbox: avatars, status menu and
+ *   last activity).
  * - `meta` is a second line indented under the title (list: the status menu,
  *   labels and assignees). Omitted → the row stays one line tall.
  *
@@ -329,8 +330,8 @@ export function IssueRowProjectTrailing({
 
 /**
  * The editable second line: status menu, labels, assignees. Split from the
- * row so pages that only report — the inbox — pay for none of the mutation
- * machinery.
+ * row so pages that only report pay for none of the mutation machinery; the
+ * inbox takes just the status menu and the avatars, on its one line (T-561).
  */
 export function IssueRowMeta({
   issue,
@@ -353,30 +354,17 @@ export function IssueRowMeta({
   onStatus: (status: Status) => void;
   onToggleLabel: (label: Label) => void;
   onCreateLabel?: (name: string) => Promise<Label>;
-  /** This card's card-level watchers (T-540); the inbox and user page pass none. */
+  /** This card's card-level watchers (T-540); the user page passes none. */
   watchers?: readonly Watcher[];
 }) {
   const hasAvatars = issue.assignees.length > 0 || (watchers?.length ?? 0) > 0;
   return (
     <>
-      <DropdownMenu>
-        {/* flex collapses the button's line box to the pill; the default
-            block box is 24px tall and seats the pill on its text baseline,
-            ~1.6px below the neighbouring label chips (T-98). */}
-        <DropdownMenuTrigger className="flex cursor-pointer">
-          <StatusPill status={issue.status} />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent>
-          {statuses.map((s) => (
-            <DropdownMenuItem key={s.id} onSelect={() => onStatus(s)}>
-              <span className="w-4">
-                {s.id === issue.status.id && <CheckIcon className="size-4" />}
-              </span>
-              <StatusPill status={s} className="border-0 px-0" />
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <StatusMenu
+        status={issue.status}
+        statuses={statuses}
+        onStatus={onStatus}
+      />
       {/* The one thing on this line that can give ground: the status pill's
           width comes from the project's status list, the tag icon is 14px,
           and the title sits on the line above with its own truncate. */}
@@ -415,6 +403,43 @@ export function IssueRowMeta({
         <AssigneesAndWatchers issue={issue} watchers={watchers} />
       </span>
     </>
+  );
+}
+
+/**
+ * A row's status pill that opens the project's statuses. Without `onStatus`
+ * it stays the bare pill: below `issue.triage` there is nothing to open that
+ * the server would not refuse.
+ */
+export function StatusMenu({
+  status,
+  statuses,
+  onStatus,
+}: {
+  status: Status;
+  statuses: readonly Status[];
+  onStatus?: (status: Status) => void;
+}) {
+  if (!onStatus) return <StatusPill status={status} />;
+  return (
+    <DropdownMenu>
+      {/* flex collapses the button's line box to the pill; the default
+          block box is 24px tall and seats the pill on its text baseline,
+          ~1.6px below the neighbouring label chips (T-98). */}
+      <DropdownMenuTrigger className="flex cursor-pointer">
+        <StatusPill status={status} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        {statuses.map((s) => (
+          <DropdownMenuItem key={s.id} onSelect={() => onStatus(s)}>
+            <span className="w-4">
+              {s.id === status.id && <CheckIcon className="size-4" />}
+            </span>
+            <StatusPill status={s} className="border-0 px-0" />
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

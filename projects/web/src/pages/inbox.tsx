@@ -1,12 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
-import type { InboxItem } from "@todou/shared";
-import { useMemo, useRef } from "react";
+import type { InboxItem, Status, Watcher } from "@todou/shared";
+import { useCallback, useMemo, useRef } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
+import { useIssueStatusMutation } from "@/api/issues.ts";
 import { mutesQuery } from "@/api/mutes.ts";
-import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
+import {
+  projectWatchersQuery,
+  statusesQuery,
+  useCanIfLoaded,
+} from "@/api/queries.ts";
+import {
+  AssigneesAndWatchers,
+  IssueRow,
+  StatusMenu,
+  useIssueListGrid,
+} from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
-import { StatusPill } from "@/components/issue/status-pill.tsx";
 import {
   LoadFailure,
   RefreshFailure,
@@ -241,6 +251,19 @@ function InboxGroupSection({
   refs: Map<string, ProjectRefOption>;
 }) {
   const grid = useIssueListGrid();
+  const slug = group.project.slug;
+  const canTriage = useCanIfLoaded(slug, "issue.triage");
+  const statuses =
+    useQuery({ ...statusesQuery(slug), enabled: canTriage }).data ??
+    NO_STATUSES;
+  // One read per project, as on its own list; every row of the group shares it.
+  const watchers = useQuery(projectWatchersQuery(slug)).data?.issues;
+  const statusMutate = useIssueStatusMutation().mutate;
+  const onStatus = useCallback(
+    (issueNumber: number, status: Status) =>
+      statusMutate({ slug, issueNumber, status }),
+    [statusMutate, slug],
+  );
   return (
     <section className="overflow-hidden rounded-lg border">
       <header className="flex items-center justify-between gap-2 border-b bg-muted/50 px-3.5 py-2">
@@ -275,19 +298,47 @@ function InboxGroupSection({
       </header>
       <ul className={grid}>
         {group.items.map((item) => (
-          <InboxRow key={item.id} item={item} />
+          <InboxRow
+            key={item.id}
+            item={item}
+            statuses={statuses}
+            watchers={watchers?.[String(item.number)]}
+            onStatus={
+              canTriage && statuses.length > 0
+                ? (status) => onStatus(item.number, status)
+                : undefined
+            }
+          />
         ))}
       </ul>
     </section>
   );
 }
 
+const NO_STATUSES: Status[] = [];
+
 /**
- * The shared issue row (T-118) with the inbox's own trailing pair. No meta
- * line: the row reports rather than edits, and its project — the one thing
- * the list's row never has to name — is already the section it sits in.
+ * The shared issue row (T-118) on one line, the list's second line folded
+ * into its trailing group (T-561): the inbox is scanned, and without labels
+ * and edit icons what is left fits beside the title. Its project — the one
+ * thing the list's row never has to name — is already the section it sits in.
+ *
+ * The status survives the phone; the avatars and the time are hidden there
+ * instead, so the title keeps the room.
  */
-function InboxRow({ item }: { item: InboxItem }) {
+function InboxRow({
+  item,
+  statuses,
+  watchers,
+  onStatus,
+}: {
+  item: InboxItem;
+  statuses: readonly Status[];
+  watchers?: readonly Watcher[];
+  onStatus?: (status: Status) => void;
+}) {
+  // No wrapper when empty: an empty flex item would still take a gap.
+  const hasAvatars = item.assignees.length > 0 || (watchers?.length ?? 0) > 0;
   return (
     <IssueRow
       slug={item.project.slug}
@@ -295,10 +346,19 @@ function InboxRow({ item }: { item: InboxItem }) {
       specAwaitingReview={item.pending_spec_review}
       mentionsYou={item.mentions_you}
       trailing={
-        <span className="ml-auto flex shrink-0 items-center gap-2 max-sm:hidden">
-          <StatusPill status={item.status} />
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          {hasAvatars && (
+            <span className="flex items-center gap-1 max-sm:hidden">
+              <AssigneesAndWatchers issue={item} watchers={watchers} />
+            </span>
+          )}
+          <StatusMenu
+            status={item.status}
+            statuses={statuses}
+            onStatus={onStatus}
+          />
           <span
-            className="text-xs text-muted-foreground"
+            className="text-xs text-muted-foreground max-sm:hidden"
             title={item.last_activity_at}
           >
             {new Date(item.last_activity_at).toLocaleString()}
