@@ -47,7 +47,7 @@ export const INTEGRATIONS: readonly Integration[] = [
   {
     id: "omp",
     label: "omp",
-    version: 5,
+    version: 6,
     tracesOnThisMachine(env, home) {
       const { dir, configRoot } = ompAgentDir(env, home);
       // The config root counts too: a fresh omp that has been configured but
@@ -64,7 +64,7 @@ export const INTEGRATIONS: readonly Integration[] = [
   {
     id: "pi",
     label: "Pi",
-    version: 1,
+    version: 2,
     tracesOnThisMachine(env, home) {
       const { dir, configRoot } = piAgentDir(env, home);
       // A configured Pi may have a root before its first agent session.

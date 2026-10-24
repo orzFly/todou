@@ -278,6 +278,7 @@ describe("native Pi extension", () => {
       "debounce",
       "id",
       "issue",
+      "profile",
       "project",
       "server",
       "since",

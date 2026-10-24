@@ -634,6 +634,7 @@ export default function todou(
     issue?: unknown;
     project?: unknown;
     server?: unknown;
+    profile?: unknown;
     since?: unknown;
     debounce?: unknown;
   }): string[] {
@@ -643,6 +644,7 @@ export default function todou(
     for (const option of [
       ["-p", args.project],
       ["--server", args.server],
+      ["--profile", args.profile],
       ["--since", args.since],
       ["--debounce", args.debounce],
     ] as const) {
@@ -668,13 +670,19 @@ export default function todou(
 
   /** The reuse key: the request itself, plus the cwd it resolves against. */
   function keyFor(
-    args: { issue?: unknown; project?: unknown; server?: unknown },
+    args: {
+      issue?: unknown;
+      project?: unknown;
+      server?: unknown;
+      profile?: unknown;
+    },
     cwd: string,
   ): string {
     return JSON.stringify([
       args.issue ?? null,
       args.project ?? null,
       args.server ?? null,
+      args.profile ?? null,
       cwd,
     ]);
   }
@@ -855,6 +863,7 @@ export default function todou(
       issue?: unknown;
       project?: unknown;
       server?: unknown;
+      profile?: unknown;
       since?: unknown;
       debounce?: unknown;
     },
@@ -1181,6 +1190,8 @@ export default function todou(
       "",
       `\`project\` and \`server\` are optional. Left out, each is resolved from the directory this ${profile.agent} session is running in, exactly as every other todou command resolves it; \`todou config show\` prints what that directory settles. A directory that settles neither fails the call and says so — nothing here guesses. \`project\` also takes a comma-separated list, which follows several projects as one stream.`,
       "",
+      "`profile` is the token profile to watch as, the one your other todou commands pass as `--profile`. Left out, the watch runs as whichever account a bare `todou` in this session's environment picks, which is not that one when you choose an account per command.",
+      "",
       '`since` resumes from a cursor an earlier command printed, and is how a watch started after a `spec push` or a `comment add` catches the answer to it. Without it the watch starts at "now" and anything already on the card is skipped.',
       "",
       "`debounce` is the batching window in seconds. It defaults to 60, and `0` delivers each entry as it lands.",
@@ -1214,6 +1225,11 @@ export default function todou(
           arktype,
           "string",
           "server origin. Left out, it is resolved the same way",
+        ),
+        "profile?": described(
+          arktype,
+          "string",
+          "token profile to watch as, the one your other todou commands pass as --profile",
         ),
         "since?": described(
           arktype,
