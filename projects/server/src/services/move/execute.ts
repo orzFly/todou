@@ -17,6 +17,7 @@ import {
 } from "../../db/system-schema.ts";
 import { IssueMovingError } from "../../errors.ts";
 import { type ProjectRow, routeInfoOf } from "../access.ts";
+import { markDraftAttachments } from "../attachments.ts";
 import { announceBlockChanges, evaluateBlockerStatus } from "../blocks.ts";
 import { getIssue } from "../issues.ts";
 import { lineageOf, recordAliases, registerMove } from "../relocation.ts";
@@ -58,6 +59,12 @@ export async function moveIssue(
       issue: null,
     };
   }
+
+  // Drafts travel with the card (T-568), and the reaper only opens projects
+  // that are marked. Unconditional because the check it would replace races
+  // an upload landing just before the freeze; a mark with no draft behind
+  // it costs the target one visit and then clears itself.
+  await markDraftAttachments(ctx, plan.target.project);
 
   const landed =
     plan.sameProjectDb && plan.systemColocated

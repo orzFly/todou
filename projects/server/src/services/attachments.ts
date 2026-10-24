@@ -12,7 +12,7 @@ import {
   formatRef,
   minRoleOf,
 } from "@todou/shared";
-import { and, asc, eq, inArray, isNull, like } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import { uniqueViolation } from "../auth/provision.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -24,7 +24,7 @@ import {
   issues,
   pendingUploads,
 } from "../db/project-schema.ts";
-import { projects } from "../db/system-schema.ts";
+import { draftAttachmentMarks, projects } from "../db/system-schema.ts";
 import {
   AttachmentMovedError,
   ConflictError,
@@ -120,6 +120,7 @@ export async function uploadAttachment(
   if (!issue) throw new NotFoundError("issue not found");
   assertIssueWritable(issue, actor, role);
 
+  if (draft) await markDraftAttachments(ctx, project);
   const storageKey = newStorageKey();
   await ctx.storage.put(storageKey, new Uint8Array(await file.arrayBuffer()));
 
@@ -176,6 +177,28 @@ async function announceInTx(
     .update(issues)
     .set({ updatedAt: new Date() })
     .where(eq(issues.id, attachment.issueId));
+}
+
+/**
+ * Tell the draft reaper this project may hold drafts (T-568). Called before
+ * the draft's own write, never inside a project transaction: it takes the
+ * system handle, which on PGlite waits on an open transaction's mutex.
+ */
+export async function markDraftAttachments(
+  ctx: AppContext,
+  project: ProjectRow,
+): Promise<void> {
+  await ctx.router
+    .system()
+    .insert(draftAttachmentMarks)
+    .values({ projectId: project.id })
+    .onConflictDoUpdate({
+      target: draftAttachmentMarks.projectId,
+      set: {
+        generation: sql`${draftAttachmentMarks.generation} + 1`,
+        markedAt: sql`now()`,
+      },
+    });
 }
 
 function newStorageKey(): string {
@@ -443,6 +466,7 @@ export async function completeDirectUpload(
   if (!issue) throw new NotFoundError("issue not found");
   assertIssueWritable(issue, actor, role);
 
+  if (pending.draft) await markDraftAttachments(ctx, project);
   let row: AttachmentRow;
   try {
     row = await retryNaming(() =>

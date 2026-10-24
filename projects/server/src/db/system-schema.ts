@@ -299,6 +299,27 @@ export const pendingPrefixMirrors = pgTable(
   (t) => [index("pending_prefix_mirrors_due_idx").on(t.nextAttemptAt)],
 );
 
+// Projects that may hold draft attachments (T-568), so the hourly reaper
+// opens those databases and no others: a tick has to cost the same at four
+// projects as at four hundred. Written before every draft lands, the way
+// `pending_prefix_mirrors` is written before the write it names, so a crash
+// in between leaves a mark with nothing behind it rather than a draft
+// nobody will look for.
+//
+// `generation` is what makes clearing safe. The reaper drops a mark only
+// when the project has no drafts left, the mark is an hour old, and its
+// generation is still the one it read: a draft being uploaded meanwhile has
+// either bumped the generation or refreshed `marked_at`.
+export const draftAttachmentMarks = pgTable("draft_attachment_marks", {
+  projectId: bigint("project_id", { mode: "number" })
+    .primaryKey()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  generation: bigint("generation", { mode: "number" }).notNull().default(1),
+  markedAt: timestamp("marked_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 // Who held which slug, when (T-156). Same append-only shape as ref_prefixes
 // above, and read the same way: a row's holding interval runs to the same
 // project's next row. Unlike ref_prefixes this is not a mirror — it lives

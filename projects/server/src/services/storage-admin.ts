@@ -2,7 +2,7 @@ import { and, eq, isNotNull, lt } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { attachments, pendingUploads } from "../db/project-schema.ts";
 import type { DbRouter } from "../db/router.ts";
-import { projects, users } from "../db/system-schema.ts";
+import { draftAttachmentMarks, projects, users } from "../db/system-schema.ts";
 import type { StorageBackend } from "../storage/types.ts";
 
 export type BlobKey = { key: string; origin: string };
@@ -215,7 +215,20 @@ export type DraftReapReport = {
  * object whose delete fails has no row left to retry from; it is logged.
  *
  * Every backend, not only s3: drafts come from the multipart route too.
+ *
+ * Only projects in `draft_attachment_marks` are opened, so a tick where no
+ * project holds a draft costs one system read and touches no project
+ * database (the hourly tick's N-independence, which the prefix-mirror tests
+ * pin). A mark is dropped once its project has no drafts left and nothing
+ * has refreshed it for `MARK_QUIET_MS`; see the table for why that is safe.
  */
+/**
+ * How long a mark must sit unrefreshed before it may be dropped: far longer
+ * than any request takes between marking and writing its draft, which is
+ * the window a cleared mark would otherwise leave a draft unwatched in.
+ */
+const MARK_QUIET_MS = 60 * 60 * 1000;
+
 export async function reapDraftAttachments(
   router: DbRouter,
   storage: StorageBackend,
@@ -229,14 +242,19 @@ export async function reapDraftAttachments(
   };
   const cutoff = new Date(Date.now() - opts.minAgeHours * 3600 * 1000);
 
+  const quietSince = new Date(Date.now() - MARK_QUIET_MS);
+
   const projectRows = await router
     .system()
     .select({
       id: projects.id,
       slug: projects.slug,
       databaseUrl: projects.databaseUrl,
+      generation: draftAttachmentMarks.generation,
+      markedAt: draftAttachmentMarks.markedAt,
     })
-    .from(projects);
+    .from(draftAttachmentMarks)
+    .innerJoin(projects, eq(projects.id, draftAttachmentMarks.projectId));
   for (const project of projectRows) {
     try {
       const db = await router.forProject({
@@ -280,6 +298,27 @@ export async function reapDraftAttachments(
           );
         }
       }
+      if (project.markedAt >= quietSince) continue;
+      const left = await db
+        .select({ id: attachments.id })
+        .from(attachments)
+        .where(
+          and(
+            eq(attachments.projectId, project.id),
+            eq(attachments.draft, true),
+          ),
+        )
+        .limit(1);
+      if (left.length > 0) continue;
+      await router
+        .system()
+        .delete(draftAttachmentMarks)
+        .where(
+          and(
+            eq(draftAttachmentMarks.projectId, project.id),
+            eq(draftAttachmentMarks.generation, project.generation),
+          ),
+        );
     } catch (cause) {
       report.failedProjects++;
       opts.log(`FAIL ${project.slug}: ${String(cause)}`);

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/driver.ts";
 import { attachments } from "../src/db/project-schema.ts";
-import { projects } from "../src/db/system-schema.ts";
+import { draftAttachmentMarks, projects } from "../src/db/system-schema.ts";
 import { runHousekeepingTick } from "../src/services/housekeeping.ts";
 import { reapDraftAttachments } from "../src/services/storage-admin.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
@@ -470,6 +470,77 @@ describe("deleting attachments (T-567) and drafts (T-568)", () => {
       expect(report.wouldDelete).toBe(1);
       expect(lines.join("\n")).toContain(`draft attachment ${stale.id}`);
       expect(await storageKeyOf(stale.id)).toBeTruthy();
+    });
+  });
+
+  // The reaper opens only marked projects, so the hourly tick costs the same
+  // whatever the number of projects (the prefix-mirror tests pin that cost).
+  describe("draft marks", () => {
+    const system = () => t.ctx.router.system();
+    const markOf = async () =>
+      (
+        await system()
+          .select()
+          .from(draftAttachmentMarks)
+          .where(eq(draftAttachmentMarks.projectId, projectId))
+      )[0];
+    const ageMark = (hours: number) =>
+      system()
+        .update(draftAttachmentMarks)
+        .set({ markedAt: new Date(Date.now() - hours * 3600 * 1000) })
+        .where(eq(draftAttachmentMarks.projectId, projectId));
+    const dropDrafts = () =>
+      db.delete(attachments).where(eq(attachments.draft, true));
+
+    it("marks the project when a draft lands, and not for a plain upload", async () => {
+      await dropDrafts();
+      await system().delete(draftAttachmentMarks);
+      await upload(people.uploader.headers, "plain.txt");
+      expect(await markOf()).toBeUndefined();
+      await upload(people.uploader.headers, "marked.txt", { draft: true });
+      expect(await markOf()).toBeDefined();
+    });
+
+    it("leaves a stale draft in an unmarked project alone", async () => {
+      const stale = await upload(people.uploader.headers, "unwatched.txt", {
+        draft: true,
+      });
+      await db
+        .update(attachments)
+        .set({ createdAt: new Date(Date.now() - 48 * 3600 * 1000) })
+        .where(eq(attachments.id, stale.id));
+      await system().delete(draftAttachmentMarks);
+
+      await runHousekeepingTick(t.ctx);
+
+      expect(await storageKeyOf(stale.id)).toBeTruthy();
+    });
+
+    it("keeps a mark that is fresh or still has drafts, and drops it after", async () => {
+      await dropDrafts();
+      await system().delete(draftAttachmentMarks);
+      const draft = await upload(people.uploader.headers, "pending.txt", {
+        draft: true,
+      });
+
+      await runHousekeepingTick(t.ctx);
+      expect(await markOf()).toBeDefined();
+
+      // Old, but a draft is still there.
+      await ageMark(2);
+      await runHousekeepingTick(t.ctx);
+      expect(await markOf()).toBeDefined();
+
+      // No draft left, but refreshed within the hour: an upload may be
+      // between marking and writing its row.
+      await remove(people.uploader.headers, draft.id);
+      await ageMark(0);
+      await runHousekeepingTick(t.ctx);
+      expect(await markOf()).toBeDefined();
+
+      await ageMark(2);
+      await runHousekeepingTick(t.ctx);
+      expect(await markOf()).toBeUndefined();
     });
   });
 });
