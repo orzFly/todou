@@ -80,6 +80,8 @@ export function EntryActionsMenu({
   bodyRef,
   label,
   triggerRef,
+  triggerClassName,
+  onCloseAutoFocus,
   children,
 }: {
   slug: string;
@@ -93,6 +95,9 @@ export function EntryActionsMenu({
   label: string;
   /** For callers whose own dialogs have to hand focus back here on close. */
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  triggerClassName?: string;
+  /** For an entry that opens an editor, which has to keep the focus. */
+  onCloseAutoFocus?: (event: Event) => void;
   /** Capability-gated entries; omit them and the rule goes too. */
   children?: ReactNode;
 }) {
@@ -159,6 +164,7 @@ export function EntryActionsMenu({
           size="icon-sm"
           variant="ghost"
           aria-label={label}
+          className={triggerClassName}
           onPointerDown={() => {
             selected.current = readSelection();
           }}
@@ -167,7 +173,11 @@ export function EntryActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       {/* The entries need more room than the trigger's 28px. */}
-      <DropdownMenuContent className="w-auto" align="end">
+      <DropdownMenuContent
+        className="w-auto"
+        align="end"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <DropdownMenuItem
           onSelect={() => void copyToClipboard(permalink, "Link copied")}
         >
