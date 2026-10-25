@@ -293,7 +293,9 @@ fi
 deployed=""
 deployed="$(ssh "$HOST" "git -C $(rq "$CHECKOUT") describe --tags --always")" || deployed=""
 served=""
-served="$(ssh "$HOST" "for _ in \$(seq 30); do curl -fsS localhost:$PORT/api/cli && exit 0; sleep 1; done; exit 1" \
+# Connections are refused until the restarted server listens; only the last
+# attempt's error says anything.
+served="$(ssh "$HOST" "for _ in \$(seq 30); do out=\$(curl -fsS --max-time 5 localhost:$PORT/api/cli 2>&1) && { printf '%s' \"\$out\"; exit 0; }; sleep 1; done; printf '%s\n' \"\$out\" >&2; exit 1" \
   | node -p "$MANIFEST_VERSION_JS" 2>/dev/null)" || served=""
 
 if [ -z "$served" ] || [ "$served" != "$deployed" ]; then

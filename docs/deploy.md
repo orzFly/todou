@@ -434,12 +434,18 @@ systemctl --user restart todou
 if [ "$CLI" = 1 ]; then
   DEPLOYED="$(git describe --tags --always)"
   SERVED=""
+  # The server needs a few seconds to listen after the restart, so refused
+  # connections are expected here; only the last attempt's error is worth showing.
+  BODY=""
   for _ in $(seq 30); do
-    if SERVED="$(curl -fsS "localhost:$PORT/api/cli" \
-      | node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).version')"; then break; fi
+    if BODY="$(curl -fsS --max-time 5 "localhost:$PORT/api/cli" 2>&1)"; then
+      SERVED="$(printf '%s' "$BODY" | node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).version')" || SERVED=""
+      break
+    fi
     sleep 1
   done
   if [ "$SERVED" != "$DEPLOYED" ]; then
+    [ -n "$SERVED" ] || echo "last probe: $BODY" >&2
     echo "ALARM: /api/cli serves ${SERVED:-nothing}, the checkout is at $DEPLOYED" >&2
     echo "       $DATA/cli-dist.old is kept — put it back if the server refused to boot" >&2
     exit 1
