@@ -11,6 +11,7 @@ import type {
   UserRef,
 } from "@todou/shared";
 import {
+  ActivityScope,
   decodeMultiCursor,
   encodeMultiCursor,
   MalformedMultiCursorError,
@@ -158,7 +159,26 @@ type Filters = {
   types?: string;
   exclude_actor?: number;
   exclude_agent_session?: string;
+  scope?: string;
+  /** Whose scope `scope` means: the caller, never a query parameter. */
+  viewer?: number;
 };
+
+/** Comma-separated `scope` → validated, sorted list (null = unscoped). */
+export function parseScope(raw: string | undefined): ActivityScope[] | null {
+  if (raw === undefined || raw === "") return null;
+  const set = new Set<ActivityScope>();
+  for (const part of raw.split(",")) {
+    const parsed = ActivityScope.safeParse(part.trim());
+    if (!parsed.success) {
+      throw new ValidationFailedError(
+        `unknown activity scope "${part.trim()}" (expected one of: ${ActivityScope.options.join(", ")})`,
+      );
+    }
+    set.add(parsed.data);
+  }
+  return [...set].sort();
+}
 
 /**
  * What an event naming another project may say to this reader — moves, and
@@ -283,6 +303,131 @@ function notSelfConditions(
   return conditions;
 }
 
+/**
+ * Whether `viewer` held the card at the moment of the row (`createdAt`,
+ * `id`) — point in time, so one cursor range replays to the same entries
+ * whenever it is read, however the card's assignees moved since.
+ *
+ * Read off the card's own assignment events, which every later change
+ * writes. The latest one at or before the row decides. With none before it,
+ * the earliest after it does, inverted: an `unassigned` first means the
+ * account was there from the start, because assignees given at creation or
+ * carried in by a move write no event of their own. With none at all the
+ * card has had the same assignees all its life, and the current row
+ * answers.
+ *
+ * Comments sort before events at an equal timestamp, so for a comment "at
+ * or before" stops short of its own microsecond.
+ */
+function assignedAtRow(
+  issueId: AnyPgColumn,
+  createdAt: AnyPgColumn,
+  id: AnyPgColumn,
+  tableKind: 0 | 1,
+  viewer: number,
+): SQL {
+  const before =
+    tableKind === KIND_COMMENT
+      ? sql`"ae"."created_at" < ${createdAt}`
+      : sql`("ae"."created_at", "ae"."id") <= (${createdAt}, ${id})`;
+  const after =
+    tableKind === KIND_COMMENT
+      ? sql`"ae"."created_at" >= ${createdAt}`
+      : sql`("ae"."created_at", "ae"."id") > (${createdAt}, ${id})`;
+  const ofViewer = sql`"ae"."issue_id" = ${issueId}
+    and "ae"."type" in ('assigned', 'unassigned')
+    and "ae"."payload" -> 'user' ->> 'id' = ${String(viewer)}::text`;
+  return sql`coalesce(
+    (select "ae"."type" = 'assigned' from "issue_events" "ae"
+      where ${ofViewer} and ${before}
+      order by "ae"."created_at" desc, "ae"."id" desc limit 1),
+    (select "ae"."type" = 'unassigned' from "issue_events" "ae"
+      where ${ofViewer} and ${after}
+      order by "ae"."created_at" asc, "ae"."id" asc limit 1),
+    exists (select 1 from "issue_assignees" "aa"
+      where "aa"."issue_id" = ${issueId} and "aa"."user_id" = ${viewer}::bigint)
+  )`;
+}
+
+/**
+ * A mention of `viewer` written together with the entry. The entry's own
+ * timestamp bounds it: a mention lands in the transaction that wrote the
+ * text, while one added by a later edit is stamped later — that edit has no
+ * entry of its own, and the old entry it touched does not become news.
+ */
+function mentionedWith(
+  issueId: AnyPgColumn,
+  createdAt: AnyPgColumn,
+  commentId: AnyPgColumn | null,
+  viewer: number,
+): SQL {
+  const which =
+    commentId === null
+      ? sql`"im"."comment_id" is null`
+      : sql`"im"."comment_id" = ${commentId}`;
+  return sql`exists (select 1 from "issue_mentions" "im"
+    where "im"."issue_id" = ${issueId} and ${which}
+      and "im"."user_id" = ${viewer}::bigint
+      and "im"."created_at" <= ${createdAt})`;
+}
+
+/**
+ * The echo a client checks: a server that predates `scope` ignored it and
+ * delivered everything, and only the echo's absence can tell it so.
+ */
+function appliedScope(query: { scope?: string }): { scope?: ActivityScope[] } {
+  const scope = parseScope(query.scope);
+  return scope === null ? {} : { scope };
+}
+
+/** `scope` as one condition per table; null = unscoped, nothing added. */
+function scopeConditions(query: Filters): { comment: SQL; event: SQL } | null {
+  const scope = parseScope(query.scope);
+  if (scope === null) return null;
+  const viewer = query.viewer;
+  if (viewer === undefined) throw new Error("a scoped read needs a viewer");
+  const comment: SQL[] = [];
+  const event: SQL[] = [];
+  if (scope.includes("assigned")) {
+    comment.push(
+      assignedAtRow(
+        comments.issueId,
+        comments.createdAt,
+        comments.id,
+        KIND_COMMENT,
+        viewer,
+      ),
+    );
+    event.push(
+      // Said even as the card leaves: the unassignment is how the account
+      // learns it no longer holds it.
+      sql`(${issueEvents.type} in ('assigned', 'unassigned') and ${issueEvents.payload} -> 'user' ->> 'id' = ${String(viewer)}::text)`,
+      // A tombstone keeps no events and no assignees, only this one row, so
+      // the row says who held the card; ones written before T-576 cannot.
+      sql`(${issueEvents.type} = 'moved_out' and ${issueEvents.payload} -> 'assignee_ids' @> ${JSON.stringify([viewer])}::jsonb)`,
+      assignedAtRow(
+        issueEvents.issueId,
+        issueEvents.createdAt,
+        issueEvents.id,
+        KIND_EVENT,
+        viewer,
+      ),
+    );
+  }
+  if (scope.includes("mentioned")) {
+    comment.push(
+      mentionedWith(comments.issueId, comments.createdAt, comments.id, viewer),
+    );
+    event.push(
+      sql`(${issueEvents.type} = 'opened' and ${mentionedWith(issueEvents.issueId, issueEvents.createdAt, null, viewer)})`,
+    );
+  }
+  return {
+    comment: sql`(${sql.join(comment, sql` or `)})`,
+    event: sql`(${sql.join(event, sql` or `)})`,
+  };
+}
+
 /** The parsed `types`/self/visibility filters as per-table SQL conditions. */
 function filterConditions(
   query: Filters,
@@ -311,6 +456,11 @@ function filterConditions(
     ...notSelfConditions(issueEvents.actorId, issueEvents.agentContext, query),
     crossRefVisibleCondition(visible.slugs, visible.ids),
   );
+  const scoped = scopeConditions(query);
+  if (scoped !== null) {
+    commentConditions.push(scoped.comment);
+    eventConditions.push(scoped.event);
+  }
   return {
     wantComments,
     wantEvents: eventTypes === null || eventTypes.length > 0,
@@ -829,7 +979,7 @@ export async function getProjectActivity(
   const merged = await fetchActivityRows({
     db,
     entries: [{ projectId: project.id, cursor }],
-    filters: query,
+    filters: { ...query, viewer: actor.id },
     visible,
     backward,
     fetchCount: query.limit + 1,
@@ -850,7 +1000,7 @@ export async function getProjectActivity(
 
   const last = page.at(-1);
   const next_cursor = last ? encodeCursor(cursorOf(last)) : null;
-  return { items, next_cursor, has_more: hasMore };
+  return { items, next_cursor, has_more: hasMore, ...appliedScope(query) };
 }
 
 type WatchedProject = {
@@ -1015,6 +1165,7 @@ export async function getCrossActivity(
       items: [],
       next_cursor: await encodeMultiCursor(positions),
       has_more: false,
+      ...appliedScope(query),
     };
   }
 
@@ -1051,7 +1202,7 @@ export async function getCrossActivity(
       projectId: w.project.id,
       cursor: w.position === null ? null : decodeCursor(w.position),
     }),
-    query,
+    { ...query, viewer: actor.id },
     false,
     query.limit + 1,
   );
@@ -1082,5 +1233,5 @@ export async function getCrossActivity(
   );
   const next_cursor =
     page.length > 0 ? await encodeMultiCursor(positions) : null;
-  return { items, next_cursor, has_more: hasMore };
+  return { items, next_cursor, has_more: hasMore, ...appliedScope(query) };
 }

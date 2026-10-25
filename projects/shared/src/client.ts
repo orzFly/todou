@@ -980,6 +980,7 @@ export class TodouClient {
       types?: string;
       exclude_actor?: number;
       exclude_agent_session?: string;
+      scope?: string;
       include_hidden?: boolean;
     },
   ) =>
@@ -994,6 +995,7 @@ export class TodouClient {
     types?: string;
     exclude_actor?: number;
     exclude_agent_session?: string;
+    scope?: string;
     include_hidden?: boolean;
   }) =>
     this.request<CrossActivityPage>("GET", "/activity", {

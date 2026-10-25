@@ -9,7 +9,12 @@ import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { UserRow } from "../../auth/pat.ts";
 import type { AppContext } from "../../bootstrap.ts";
 import type { Db } from "../../db/driver.ts";
-import { issueEvents, issues, projectMeta } from "../../db/project-schema.ts";
+import {
+  issueAssignees,
+  issueEvents,
+  issues,
+  projectMeta,
+} from "../../db/project-schema.ts";
 import {
   issueAddresses,
   issueMoves,
@@ -155,6 +160,7 @@ async function moveWithinDb(
       lineage,
     );
 
+    const heldBy = await sourceAssigneeIds(tx, plan.row.id);
     await clearIssueChildren(tx, plan.row.id);
     await raiseTombstone(tx, plan);
     const movedOutEventId = await writeMovedOut(
@@ -164,6 +170,7 @@ async function moveWithinDb(
       moveToken,
       actor,
       agentContext,
+      heldBy,
     );
 
     await recordAllAliases(tx, plan, idMap);
@@ -387,6 +394,9 @@ async function retireSource(
   agentContext: AgentContext | null,
 ): Promise<void> {
   await plan.source.db.transaction(async (tx) => {
+    // Read here rather than taken from the plan: a recovered plan carries
+    // no assignees, while the source still holds them until the clear below.
+    const heldBy = await sourceAssigneeIds(tx, plan.row.id);
     await clearIssueChildren(tx, plan.row.id);
     await raiseTombstone(tx, plan);
     // `move_token` carries no unique index, and this step is replayed, so
@@ -402,6 +412,7 @@ async function retireSource(
                to_project_id: plan.target.project.id,
                to_project: plan.target.project.slug,
                to_number: copied.number,
+               assignee_ids: heldBy,
              })}::jsonb,
              ${agentContext === null ? null : JSON.stringify(agentContext)}::jsonb,
              ${plan.movedAt.toISOString()}::timestamptz
@@ -699,6 +710,20 @@ async function writeMovedIn(
   return inserted[0]?.id;
 }
 
+/**
+ * Who held the card before the move, every one of them — the plan's list is
+ * already narrowed to the target's members. The tombstone keeps no assignee
+ * rows and no assignment events, so `moved_out` is the only place left to
+ * say whose card left (T-576: a scoped watch reads it from there).
+ */
+async function sourceAssigneeIds(tx: Db, issueId: number): Promise<number[]> {
+  const rows = await tx
+    .select({ userId: issueAssignees.userId })
+    .from(issueAssignees)
+    .where(eq(issueAssignees.issueId, issueId));
+  return rows.map((row) => row.userId).sort((a, b) => a - b);
+}
+
 async function writeMovedOut(
   tx: Db,
   plan: MovePlan,
@@ -706,6 +731,7 @@ async function writeMovedOut(
   moveToken: string,
   actor: UserRow,
   agentContext: AgentContext | null,
+  heldBy: number[],
 ): Promise<number | undefined> {
   const inserted = await tx
     .insert(issueEvents)
@@ -721,6 +747,7 @@ async function writeMovedOut(
         to_project_id: plan.target.project.id,
         to_project: plan.target.project.slug,
         to_number: number,
+        assignee_ids: heldBy,
       },
       // biome-ignore lint/suspicious/noExplicitAny: explicit created_at
     } as any)

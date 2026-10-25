@@ -100,6 +100,7 @@ would pick are still a comment. What this keeps out of a body is inference, not 
 todou agent can-i-follow                                               # ask first, then do what it prints
 todou issue watch 16 -p <proj> --since <cursor> --forever              # one issue
 todou watch -p <proj> --since <cursor> --debounce 60 --forever         # whole project, other people's entries
+todou watch -p <proj> --mine --since <cursor> --forever                # only this account's cards and @-mentions
 todou question wait 16 <commentId> -p <proj> --forever                 # answers to one question comment
 todou spec push 16 <dir> -p <proj> --message "v2" --wait               # push, then wait for the verdict
 todou spec wait 16 -p <proj> [--since <cursor>]                        # re-enter that wait
@@ -111,6 +112,9 @@ todou spec wait 16 -p <proj> [--since <cursor>]                        # re-ente
 - A wait killed from outside (the harness stopping a background task) is your wake-up, not an error:
   restart it with the same cursor, every time.
 - Resume from the closing `cursor:` line.
+- `--mine` is scoped to the account, and a shared machine account holds every card its fleet took:
+  it suits an orchestrator owning those cards, while a worker watching its own card wants
+  `issue watch`.
 - `issue watch`, `todou watch` and `spec wait` skip entries from your own agent session rather than
   your whole account.
 

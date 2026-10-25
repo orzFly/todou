@@ -76,6 +76,12 @@ export const MovedOutPayload = z.object({
   to_project_id: Id.nullable(),
   to_project: ProjectSlug.nullable(),
   to_number: Id.nullable(),
+  /**
+   * Who held the card as it left (T-576): the tombstone keeps neither
+   * assignee rows nor assignment events, so a scoped watch reads it here.
+   * Absent from events written before.
+   */
+  assignee_ids: z.array(Id).optional(),
 });
 export type MovedOutPayload = z.infer<typeof MovedOutPayload>;
 
@@ -308,6 +314,24 @@ export const TimelineQuery = z.object({
 });
 export type TimelineQuery = z.infer<typeof TimelineQuery>;
 
+/**
+ * Narrow the stream to entries that concern the caller's account (T-576):
+ * a comma-separated list of `assigned` (every entry on a card assigned to
+ * the account when the entry happened, plus the assignment events naming
+ * it, plus a `moved_out` whose card it held) and `mentioned` (the comment
+ * or `opened` entry that @-mentioned it as written). Several values are a
+ * union. Validated server-side, like `types`, so the error names the entry.
+ *
+ * The account, not the agent session: assignees and mentions only ever
+ * name accounts, so every session sharing a machine account shares one
+ * scope.
+ */
+const activityScope = z.string().optional();
+
+/** What an activity `scope` may name; see the `scope` query parameter. */
+export const ActivityScope = z.enum(["assigned", "mentioned"]);
+export type ActivityScope = z.infer<typeof ActivityScope>;
+
 /** Timeline entries annotated with their issue, for project-wide polling. */
 export const ActivityItem = z.discriminatedUnion("type", [
   TimelineComment.extend({ issue_number: Id }),
@@ -320,6 +344,14 @@ export const ActivityPage = z.object({
   next_cursor: Cursor.nullable(),
   /** Same contract as TimelinePage.has_more (forward and `last` only). */
   has_more: z.boolean().optional(),
+  /**
+   * The `scope` the server applied, echoed back (T-576). Absent from a
+   * server that predates it — which ignored the parameter and delivered
+   * the unscoped stream — and absent when no scope was asked for. Plain
+   * strings: a client checks membership, so a value it has never heard of
+   * cannot fail the parse.
+   */
+  scope: z.array(z.string()).optional(),
 });
 export type ActivityPage = z.infer<typeof ActivityPage>;
 
@@ -334,6 +366,7 @@ export const ActivityQuery = z.object({
   types: z.string().optional(),
   exclude_actor: z.coerce.number().int().positive().optional(),
   exclude_agent_session: excludeAgentSession,
+  scope: activityScope,
   include_hidden: z.preprocess(
     (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
     z.boolean().default(false),
@@ -354,6 +387,14 @@ export const CrossActivityPage = z.object({
   next_cursor: Cursor.nullable(),
   /** Same contract as TimelinePage.has_more (forward and `last` only). */
   has_more: z.boolean().optional(),
+  /**
+   * The `scope` the server applied, echoed back (T-576). Absent from a
+   * server that predates it — which ignored the parameter and delivered
+   * the unscoped stream — and absent when no scope was asked for. Plain
+   * strings: a client checks membership, so a value it has never heard of
+   * cannot fail the parse.
+   */
+  scope: z.array(z.string()).optional(),
 });
 export type CrossActivityPage = z.infer<typeof CrossActivityPage>;
 
@@ -375,6 +416,7 @@ export const CrossActivityQuery = z.object({
   types: z.string().optional(),
   exclude_actor: z.coerce.number().int().positive().optional(),
   exclude_agent_session: excludeAgentSession,
+  scope: activityScope,
   include_hidden: z.preprocess(
     (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
     z.boolean().default(false),

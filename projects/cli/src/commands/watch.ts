@@ -71,6 +71,26 @@ export class WatchCommand extends ProjectCommand {
       account, as before. A server predating T-121 ignores the session and
       filters the whole account — the old blind spot, but never an error.
 
+      \`--mine\` narrows the stream to what concerns this account: every
+      entry on a card that was assigned to it when the entry happened, the
+      assignment and unassignment naming it (the last thing a card that
+      leaves says), the \`moved_out\` of a card it held, and comments or
+      card bodies that @-mentioned it — that one entry, not the card's
+      later replies. Judged when each entry happened, so a resume replays
+      the same entries however the assignees moved since.
+
+      It is the account, not the agent session: assignees and mentions
+      only ever name accounts, so on a machine account shared by a fleet
+      \`--mine\` means every card the fleet holds — an orchestrator's
+      portfolio, not one worker's card (\`issue watch <n>\` is that). An
+      @ of the account wakes every \`--mine\` watcher on it, and since an
+      author's own @ is never recorded, a sibling session mentioning the
+      shared account does not count. Not delivered: an @ added by editing
+      an existing comment or body, which writes no new entry. Cursors are
+      unchanged and resume without gaps; a server predating T-576 ignores
+      the filter, and the watch then says so once on stderr and delivers
+      everything.
+
       Cursors of a single-project watch are interchangeable with \`issue
       view\`/\`issue watch\` cursors of the same project, unchanged. A
       multi-project watch prints a composite cursor instead — an opaque
@@ -270,6 +290,10 @@ export class WatchCommand extends ProjectCommand {
         'todou watch -p todou --since "$CURSOR" --debounce 60 --forever',
       ],
       [
+        "Only this account's cards and its @-mentions, across every project",
+        "todou watch --all-projects --mine --follow=uds",
+      ],
+      [
         "Stay resident and push each batch into this Claude Code session",
         "todou watch -p todou --follow=uds",
       ],
@@ -320,6 +344,10 @@ export class WatchCommand extends ProjectCommand {
   summary = Option.String("--summary", {
     tolerateBoolean: true,
     description: `Truncate bodies to this many chars, one line per entry (bare --summary = ${BARE_SUMMARY_CHARS}; default 0 = the whole body; --summary=<n> only, not --summary <n>)`,
+  });
+  mine = Option.Boolean("--mine", false, {
+    description:
+      "Only entries that concern this account: its cards, and entries that @-mention it",
   });
   printCursor = Option.Boolean("--print-cursor", false, {
     description: "With --poll: print the next cursor alone and exit 0",
@@ -459,6 +487,8 @@ export class WatchCommand extends ProjectCommand {
       self,
       paint,
     } = opts;
+    const scope = this.mine ? MINE_SCOPE : undefined;
+    const scopeApplied = scopeEchoCheck(scope, (line) => this.note(line));
     const onQuiet = (_cursor: string | undefined, totalMs: number) =>
       this.note(quietNote("still watching", timeoutSec, totalMs));
     // A batch nobody will read as prose pays for no card titles. `--json`
@@ -574,6 +604,8 @@ export class WatchCommand extends ProjectCommand {
             const page = await drainActivity(client, project, {
               after,
               types,
+              scope,
+              onPage: scopeApplied,
               ...self.params(),
             });
             if (wantsCards) {
@@ -734,6 +766,8 @@ export class WatchCommand extends ProjectCommand {
           const page = await drainCrossActivity(client, projects, {
             after,
             types,
+            scope,
+            onPage: scopeApplied,
             ...self.params(),
           });
           await ensureSpellings(page.items);
@@ -836,39 +870,75 @@ function rethrow404AsHint(error: unknown): never {
   throw error;
 }
 
+/** `--mine`: every axis of "concerns this account" the server knows. */
+const MINE_SCOPE = "assigned,mentioned";
+
+/**
+ * A server that predates `scope` ignores it and hands back the whole
+ * stream, which still resumes correctly — so the watch carries on, but says
+ * once that it is not narrowed, rather than letting a reader take the noise
+ * for news that concerns it.
+ */
+function scopeEchoCheck(
+  scope: string | undefined,
+  note: (line: string) => void,
+): (page: { scope?: string[] }) => void {
+  let warned = false;
+  return (page) => {
+    if (scope === undefined || warned || page.scope !== undefined) return;
+    warned = true;
+    note(
+      "warning: this server predates --mine (T-576) and ignored it — every entry in the watch set is being delivered",
+    );
+  };
+}
+
+type DrainOpts = {
+  after?: string;
+  types?: string;
+  scope?: string;
+  onPage: (page: { scope?: string[] }) => void;
+} & SelfFilter;
+
 /** Forward-drains the project activity stream (same shape as drainTimeline). */
 async function drainActivity(
   client: TodouClient,
   project: string,
-  opts: { after?: string; types?: string } & SelfFilter,
+  opts: DrainOpts,
 ): Promise<{ items: ActivityItem[]; cursor: string | undefined }> {
-  return drainPaged("activity", opts.after, (after) =>
-    client.getActivity(project, {
+  return drainPaged("activity", opts.after, async (after) => {
+    const page = await client.getActivity(project, {
       after,
       types: opts.types,
+      scope: opts.scope,
       exclude_actor: opts.excludeActor,
       exclude_agent_session: opts.excludeAgentSession,
       limit: 100,
-    }),
-  );
+    });
+    opts.onPage(page);
+    return page;
+  });
 }
 
 /** Forward-drains GET /activity across the watch set (undefined = all). */
 async function drainCrossActivity(
   client: TodouClient,
   projects: string | undefined,
-  opts: { after?: string; types?: string } & SelfFilter,
+  opts: DrainOpts,
 ): Promise<{ items: CrossActivityItem[]; cursor: string | undefined }> {
-  return drainPaged("activity", opts.after, (after) =>
-    client
+  return drainPaged("activity", opts.after, async (after) => {
+    const page = await client
       .getCrossActivity({
         projects,
         after,
         types: opts.types,
+        scope: opts.scope,
         exclude_actor: opts.excludeActor,
         exclude_agent_session: opts.excludeAgentSession,
         limit: 100,
       })
-      .catch(rethrow404AsHint),
-  );
+      .catch(rethrow404AsHint);
+    opts.onPage(page);
+    return page;
+  });
 }
