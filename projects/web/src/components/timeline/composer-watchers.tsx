@@ -1,4 +1,5 @@
 import { formatRef, type Watcher } from "@todou/shared";
+import { useState } from "react";
 import { useRefPrefix } from "@/api/references.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { WatcherPopover } from "@/components/shared/watcher-detail.tsx";
@@ -37,12 +38,20 @@ export function ComposerWatchersLine({
   className?: string;
 }) {
   const ref = formatRef(useRefPrefix(slug), issueNumber);
+  // Inside the composer's DOM, which an empty box keys its folding off
+  // (T-532): opening the list moves focus into it (T-580).
+  const [host, setHost] = useState<HTMLElement | null>(null);
   if (watchers.length === 0) return null;
   return (
-    <div className={cn("flex", className)} data-composer-watchers="">
+    <div
+      ref={setHost}
+      className={cn("flex", className)}
+      data-composer-watchers=""
+    >
       <WatcherPopover
         heading={`Watching ${ref}`}
         watchers={watchers}
+        container={host}
         // Opaque to clicks over the see-through dock a folded phone composer
         // leaves behind, like the failed-send rows.
         className="pointer-events-auto min-w-0 gap-2 px-0.5 py-0.5 text-xs text-muted-foreground"

@@ -338,13 +338,17 @@ const NO_WATCHERS: readonly Watcher[] = [];
  * Whether the reader is working in `root` (T-532). Focus arriving anywhere in
  * it engages; leaving disengages only once focus has gone somewhere outside.
  *
- * Three ways focus goes missing without the reader having left:
+ * Four ways focus goes missing without the reader having left:
  * - Safari never focuses a clicked button, so pressing the attach button
  *   blurs the editor to nowhere. A press that started inside holds on.
  * - Switching tab or app blurs the editor too, and hands focus straight back
  *   on return.
- * - After that Safari click, nothing inside holds focus, so a later press
- *   outside will not produce a blur. The press itself has to disengage.
+ * - Chromium blurs a focused element on its way out of the DOM, as when
+ *   Escape closes a popover inside the box. Whatever the popover hands focus
+ *   back to has to still be there to take it.
+ * - After that Safari click, or a removal nothing hands focus back from,
+ *   nothing inside holds focus, so a later press outside will not produce a
+ *   blur. The press itself has to disengage.
  *
  * A press outside while focus is still inside is left to the blur that
  * follows: a touch that starts a scroll moves no focus, and the box with the
@@ -379,7 +383,12 @@ function useEngaged(root: RefObject<HTMLElement | null>): boolean {
     const focusOut = (event: FocusEvent) => {
       if (within(event.relatedTarget)) return;
       if (pressing || !document.hasFocus()) return;
-      setEngaged(false);
+      const left = event.target;
+      // A removal blurs mid-commit; by the microtask the node is gone.
+      queueMicrotask(() => {
+        if (left instanceof Node && !left.isConnected) return;
+        setEngaged(false);
+      });
     };
 
     const controller = new AbortController();

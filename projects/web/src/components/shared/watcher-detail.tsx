@@ -78,6 +78,7 @@ export function WatcherPopover({
   heading,
   watchers,
   label,
+  container,
   className,
   children,
   ...props
@@ -86,9 +87,14 @@ export function WatcherPopover({
   watchers: readonly Watcher[];
   /** Absent when the content already reads as the label. */
   label?: string;
+  /** Where the list is portalled; `<body>` when absent. */
+  container?: HTMLElement | null;
   children: ReactNode;
 } & Omit<ComponentProps<"button">, "children">) {
   const [open, setOpen] = useState(false);
+  // A list the pointer merely passed over must leave focus where it was: the
+  // comment box's line sits under the cursor of someone typing (T-580).
+  const hovered = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clear = () => {
     if (timer.current !== null) clearTimeout(timer.current);
@@ -119,12 +125,16 @@ export function WatcherPopover({
             "inline-flex cursor-pointer items-center rounded-md",
             className,
           )}
-          onPointerEnter={hoverOnly(() => later(true, OPEN_DELAY_MS))}
+          onPointerEnter={hoverOnly(() => {
+            if (!open) hovered.current = true;
+            later(true, OPEN_DELAY_MS);
+          })}
           onPointerLeave={hoverOnly(() => later(false, CLOSE_DELAY_MS))}
           onClick={(event: MouseEvent) => {
             event.preventDefault();
             event.stopPropagation();
             clear();
+            hovered.current = false;
             setOpen((was) => !was);
           }}
           {...props}
@@ -133,6 +143,13 @@ export function WatcherPopover({
         </button>
       </PopoverTrigger>
       <PopoverContent
+        container={container}
+        onOpenAutoFocus={(event) => {
+          if (hovered.current) event.preventDefault();
+        }}
+        onCloseAutoFocus={(event) => {
+          if (hovered.current) event.preventDefault();
+        }}
         className="w-auto max-w-[min(26rem,calc(100vw-1rem))] min-w-64"
         onPointerEnter={hoverOnly(clear)}
         onPointerLeave={hoverOnly(() => later(false, CLOSE_DELAY_MS))}

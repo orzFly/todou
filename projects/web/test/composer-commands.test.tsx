@@ -877,6 +877,63 @@ describe("Composer folding", () => {
     await waitFor(() => expect(folded(view)).toBe(true));
   });
 
+  it("keeps the shortcut help open, and folds once focus leaves it (T-580)", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(folded(view)).toBe(false));
+    const help = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Keyboard shortcuts"]',
+    ) as HTMLButtonElement;
+    fireEvent.pointerDown(help);
+    leaveFor(view, help);
+    fireEvent.pointerUp(help);
+    // Radix hands focus to the popover the moment it opens.
+    act(() => help.click());
+    const content = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>(
+        '[data-slot="popover-content"]',
+      );
+      expect(found).not.toBeNull();
+      expect(found?.contains(document.activeElement)).toBe(true);
+      return found as HTMLElement;
+    });
+    expect(folded(view)).toBe(false);
+
+    // A press on the popover is a press on the composer, even where the
+    // press focuses nothing.
+    const row = content.querySelector("tr") as HTMLElement;
+    fireEvent.pointerDown(row);
+    fireEvent.pointerUp(row);
+    expect(folded(view)).toBe(false);
+    expect(content.isConnected).toBe(true);
+
+    fireEvent.pointerDown(outside);
+    outside.focus();
+    fireEvent.focusOut(content, { relatedTarget: outside });
+    fireEvent.pointerUp(outside);
+    await waitFor(() => expect(folded(view)).toBe(true));
+  });
+
+  it("stays open when a focused control leaves the DOM (T-580)", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(folded(view)).toBe(false));
+    const help = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Keyboard shortcuts"]',
+    ) as HTMLButtonElement;
+    leaveFor(view, help);
+    // Chromium blurs a node on its way out, as a popover closed by Escape is;
+    // what it hands focus back to must still be there.
+    fireEvent.focusOut(help, { relatedTarget: null });
+    help.remove();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(folded(view)).toBe(false);
+
+    // Nothing inside holds focus now, so the next press outside is the leave.
+    fireEvent.pointerDown(outside);
+    await waitFor(() => expect(folded(view)).toBe(true));
+  });
+
   it("opens from the opener's click, not from the press that focuses it", async () => {
     const view = mount();
     const button = opener(view) as HTMLButtonElement;

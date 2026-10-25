@@ -33,12 +33,14 @@ function PopoverContent({
   onOpenAutoFocus,
   onCloseAutoFocus,
   onInteractOutside,
+  container,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+}: React.ComponentProps<typeof PopoverPrimitive.Content> &
+  Pick<React.ComponentProps<typeof PopoverPrimitive.Portal>, "container">) {
   const trigger = useRef<HTMLElement | null>(null);
   const interactedOutside = useRef(false);
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Content
         data-slot="popover-content"
         align={align}
