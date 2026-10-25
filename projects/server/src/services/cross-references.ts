@@ -92,7 +92,14 @@ export async function visibleProjects(
   ctx: AppContext,
   user: UserRow,
 ): Promise<VisibleProjects> {
-  const rows = await accessibleProjectRows(ctx, user);
+  return visibleProjectsOf(ctx, await accessibleProjectRows(ctx, user));
+}
+
+/** The same, for a caller already holding the `accessibleProjectRows` walk. */
+export async function visibleProjectsOf(
+  ctx: AppContext,
+  rows: { id: number; slug: string }[],
+): Promise<VisibleProjects> {
   const ids = new Set(rows.map((row) => row.id));
   const currentSlugs = new Map(rows.map((row) => [row.id, row.slug]));
   if (rows.length === 0) return { slugs: [], ids, currentSlugs };

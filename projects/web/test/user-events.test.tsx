@@ -1020,6 +1020,45 @@ describe("useUserEvents", () => {
     );
   });
 
+  it("refetches the mute list only when activity lands on a card it holds as snoozed (T-573)", async () => {
+    const { queryClient } = setup();
+    const mutes = (number: number, mode: string) => ({
+      project: { slug: "todou", name: "todou" },
+      number,
+      title: "card",
+      mode,
+      muted_at: AT,
+    });
+    queryClient.setQueryData(["mutes"], {
+      issues: [mutes(3, "forever"), mutes(5, "until_activity")],
+      projects: [],
+    });
+    queryClient.setQueryData(["timeline", "todou", 3], { cached: true });
+    const comment = (issue_number: number) =>
+      MockEventSource.instances[0]?.emit("change", {
+        entity: "comment",
+        id: issue_number,
+        action: "created",
+        issue_number,
+        project: "todou",
+      });
+
+    // A muted card's activity ends nothing: the frame is handled (its
+    // timeline goes stale) and the list is left alone.
+    comment(3);
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryState(["timeline", "todou", 3])?.isInvalidated,
+      ).toBe(true),
+    );
+    expect(queryClient.getQueryState(["mutes"])?.isInvalidated).toBe(false);
+
+    comment(5);
+    await waitFor(() =>
+      expect(queryClient.getQueryState(["mutes"])?.isInvalidated).toBe(true),
+    );
+  });
+
   it("marks the overview and every project's watchers stale on a watchers event (T-540)", async () => {
     const { queryClient } = setup();
     queryClient.setQueryData(["watchers"], { projects: {} });
@@ -1507,6 +1546,8 @@ describe("useUserEvents", () => {
       ["activity-project", "todou"],
       ["activity-user"],
       ["inbox"],
+      // One pass for both projects' cards (T-573).
+      ["mutes"],
       ["timeline", "other", 3],
       ["issue-references", "other", 3],
       ["questions", "other", 3],

@@ -63,8 +63,8 @@ describe("server enum fallbacks", () => {
       'unknown mute mode ("future_mute_mode")',
     );
     expect(roleDotOf("future_role")).toBe("bg-muted-foreground");
-    expect(muteLabelOf("forever")).toBe("Quiet until unmuted");
-    expect(muteLabelOf("until_activity")).toBe("Quiet until new activity");
+    expect(muteLabelOf("forever")).toBe("Muted");
+    expect(muteLabelOf("until_activity")).toBe("Snoozed");
     expect(specReviewVerdictLabel("approve")).toBe("Approved");
     expect(specReviewVerdictLabel("request_changes")).toBe(
       "Requested changes on",

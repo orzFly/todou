@@ -16,7 +16,9 @@ describe("UnreadMarker muted states (T-372)", () => {
       expect(badge?.getAttribute("title")).toContain(
         muted === "project"
           ? "the whole project is muted"
-          : "this card is muted",
+          : muted === "until_activity"
+            ? "this card is snoozed"
+            : "this card is muted",
       );
     },
   );

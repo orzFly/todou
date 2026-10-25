@@ -23,7 +23,8 @@ const muteIssueRoute = createRoute({
   path: "/projects/{slug}/issues/{number}/mute",
   summary:
     "Mute this card for me. Repeating pushes muted_at to now — for " +
-    "`until_activity` that is how the reader re-buries what relit.",
+    "`until_activity` that is how the reader snoozes a card again after " +
+    "someone else's activity ended the last snooze.",
   request: {
     params: z.object({
       slug: ProjectRef,
@@ -69,9 +70,9 @@ const mutesRoute = createRoute({
   method: "get",
   path: "/me/mutes",
   summary:
-    "The mute settings I have stored — not today's verdicts: an " +
-    "`until_activity` card that relit is still listed. Scoped to the " +
-    "projects I can read.",
+    "The mute settings in force for me. An `until_activity` snooze ends at " +
+    "the first activity someone else leaves after muted_at, and is no " +
+    "longer listed. Scoped to the projects I can read.",
   responses: {
     200: {
       description: "Muted issues and projects",

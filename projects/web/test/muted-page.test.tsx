@@ -226,8 +226,10 @@ describe("muted page (T-380)", () => {
     });
     await screen.findByRole("heading", { name: "Projects" });
     expect(screen.getByRole("heading", { name: "Issues" })).toBeTruthy();
-    expect(screen.getByText("Quiet until unmuted")).toBeTruthy();
-    expect(screen.getByText("Quiet until new activity")).toBeTruthy();
+    const rowOf = (title: RegExp) =>
+      screen.getByRole("link", { name: title }).parentElement as HTMLElement;
+    expect(within(rowOf(/noisy card/)).getByText("Muted")).toBeTruthy();
+    expect(within(rowOf(/temporary quiet/)).getByText("Snoozed")).toBeTruthy();
     const project = screen.getByRole("link", { name: "Quiet Project" });
     expect(project.getAttribute("href")).toBe("/projects/q");
     for (const link of [

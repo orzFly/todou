@@ -574,13 +574,9 @@ describe("the new-issue sidebar's staged edges and mute", () => {
       await screen.findByRole("button", { name: "Notifying" }),
       { button: 0, pointerType: "mouse" },
     );
-    fireEvent.click(
-      await screen.findByRole("menuitem", { name: "Quiet until unmuted" }),
-    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Mute" }));
     await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Quiet until unmuted" }),
-      ).not.toBeNull(),
+      expect(screen.queryByRole("button", { name: "Muted" })).not.toBeNull(),
     );
 
     submitButtonFor().click();
@@ -669,13 +665,13 @@ async function toggleUser() {
 async function pickNotifications(quiet: boolean) {
   fireEvent.pointerDown(
     screen.getByRole("button", {
-      name: quiet ? "Notifying" : "Quiet until unmuted",
+      name: quiet ? "Notifying" : "Muted",
     }),
     { button: 0, pointerType: "mouse" },
   );
   fireEvent.click(
     await screen.findByRole("menuitem", {
-      name: quiet ? "Quiet until unmuted" : "Notify on new activity",
+      name: quiet ? "Mute" : "Notify",
     }),
   );
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
@@ -1149,8 +1145,7 @@ describe("the new-issue page's sidebar-only navigation guard (T-478)", () => {
       name: "Notifications",
       pick: () => pickNotifications(true),
       undo: () => pickNotifications(false),
-      selected: () =>
-        expect(sidebarText("Notifications")).toContain("Quiet until unmuted"),
+      selected: () => expect(sidebarText("Notifications")).toContain("Muted"),
       cleared: () =>
         expect(sidebarText("Notifications")).toContain("Notifying"),
     },

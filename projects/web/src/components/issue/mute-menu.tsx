@@ -3,7 +3,6 @@ import { Link } from "@tanstack/react-router";
 import type { IssueMuteMode } from "@todou/shared";
 import { BellOffIcon, BellRingIcon, CheckIcon } from "lucide-react";
 import {
-  issueMuteLabels,
   muteLabelOf,
   muteOf,
   mutesQuery,
@@ -21,8 +20,8 @@ import {
 
 /**
  * The notification control itself (T-372): one dropdown, three settings —
- * always notifying, quiet until new activity relights the card, or quiet
- * until unmuted by hand.
+ * notifying, snoozed until someone else's next activity ends it (T-573), or
+ * muted until unmuted by hand.
  *
  * It only reads and reports a setting, because the two callers store it in
  * different places: the card page writes straight through to the server,
@@ -47,18 +46,21 @@ export function MuteControl({
   const { data } = useQuery(mutesQuery);
   const projectMuted = (data?.projects ?? []).some((p) => p.slug === slug);
 
+  // Verbs, where the trigger shows the state they lead to. No prose under
+  // them (T-573): what snoozing quiets shows the moment the card leaves the
+  // inbox, and the snooze ending shows on this very control.
   const items: {
     key: IssueMuteMode | null;
     icon: typeof BellRingIcon;
     text: string;
   }[] = [
-    { key: null, icon: BellRingIcon, text: "Notify on new activity" },
+    { key: null, icon: BellRingIcon, text: "Notify" },
     {
       key: "until_activity",
       icon: BellOffIcon,
-      text: issueMuteLabels.until_activity,
+      text: "Snooze until new activity",
     },
-    { key: "forever", icon: BellOffIcon, text: issueMuteLabels.forever },
+    { key: "forever", icon: BellOffIcon, text: "Mute" },
   ];
 
   return (
@@ -109,10 +111,9 @@ export function MuteControl({
  * The card's notification section.
  *
  * Reads its current value from the stored settings (mutesQuery), not from
- * `issue.muted`: that field is today's verdict, so an `until_activity` card
- * that relit would show "not muted" here while the setting still says
- * muted — and picking "notify" off that display would be a no-op click on
- * a state the reader believes they are leaving.
+ * `issue.muted`: only list responses compute that field, and it is today's
+ * verdict — "project" for a card quiet only because its project is muted,
+ * a reason this control cannot set or clear.
  *
  * Not part of IssueMoreActions: that section renders behind `canDelete`,
  * and muting is every reader's, not a maintainer's.

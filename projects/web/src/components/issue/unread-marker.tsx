@@ -3,7 +3,7 @@ import { enumLookup, type MuteReason } from "@todou/shared";
 const muteSuffixes = {
   project: " — the whole project is muted",
   forever: " — this card is muted",
-  until_activity: " — this card is muted",
+  until_activity: " — this card is snoozed",
 } satisfies Record<MuteReason, string>;
 
 /**

@@ -14,6 +14,7 @@ import {
   type MeEvent,
   MeEvent as MeEventSchema,
   type MetadataChange,
+  type MuteList,
   SSE_CHANGE_EVENT,
   SSE_ME_EVENT,
   SSE_PING_EVENT,
@@ -98,12 +99,16 @@ export type IssueRefChange =
   | { kind: "issue"; id: number; project: string; number?: number }
   | { kind: "status"; id: number };
 
+/** A card someone touched, asked of the stored mute list (T-573). */
+export type SnoozedCard = { project: string; number: number };
+
 export type InvalidationScope =
   | "refetch"
   | { inboxRows: InboxRowVerdict[] }
   | { issueRows: IssueListVerdict[] }
   | { metadataRows: MetadataChange[] }
-  | { issueRefs: IssueRefChange[] };
+  | { issueRefs: IssueRefChange[] }
+  | { snoozedCards: SnoozedCard[] };
 export type Invalidation = { key: QueryKeyLike; scope: InvalidationScope };
 
 const refetch = (key: QueryKeyLike): Invalidation => ({
@@ -378,6 +383,48 @@ export function inboxInvalidations(event: CrossChangeEvent): Invalidation[] {
       },
     },
   ];
+}
+
+/**
+ * Activity on a card can end the reader's snooze on it (T-573), which takes
+ * the card off the stored mute list the Notifications control reads. Whose
+ * activity it was is not in the pointer, so the list is refetched whenever
+ * it holds this card as snoozed — and only then, which leaves every reader
+ * without a snooze on it paying nothing. Own activity costs one refetch
+ * that comes back unchanged. Exported pure for tests.
+ */
+export function snoozeInvalidations(event: CrossChangeEvent): Invalidation[] {
+  switch (event.entity) {
+    case "issue":
+    case "comment":
+    case "timeline":
+    case "spec":
+      break;
+    default:
+      return [];
+  }
+  if (event.issue_number === undefined) return [];
+  return [
+    {
+      key: ["mutes"],
+      scope: {
+        snoozedCards: [{ project: event.project, number: event.issue_number }],
+      },
+    },
+  ];
+}
+
+function holdsSnooze(data: unknown, card: SnoozedCard): boolean {
+  const issues = (data as Partial<MuteList> | undefined)?.issues;
+  return (
+    Array.isArray(issues) &&
+    issues.some(
+      (i) =>
+        i.mode === "until_activity" &&
+        i.project.slug === card.project &&
+        i.number === card.number,
+    )
+  );
 }
 
 /**
@@ -824,6 +871,16 @@ export function applyInvalidation(
     });
     return;
   }
+  if ("snoozedCards" in scope) {
+    const cards = scope.snoozedCards;
+    queryClient.invalidateQueries({
+      queryKey: key,
+      refetchType: maxRefetch,
+      predicate: (query) =>
+        cards.some((card) => holdsSnooze(query.state.data, card)),
+    });
+    return;
+  }
   // One pass, and no broad stale-marking one beside it. The pass that used
   // to precede `contains` marked every page under the key stale on the
   // grounds that a row may have moved — but a `contains` verdict comes from
@@ -898,7 +955,9 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
           ? "issueRows"
           : "issueRefs" in scope
             ? "issueRefs"
-            : "metadataRows";
+            : "snoozedCards" in scope
+              ? "snoozedCards"
+              : "metadataRows";
     const mergeId = `${kind}:${idOf(inv.key)}`;
     const into = merged.get(mergeId);
     if (into === undefined) {
@@ -912,7 +971,9 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
               ? { issueRows: [...scope.issueRows] }
               : "issueRefs" in scope
                 ? { issueRefs: [...scope.issueRefs] }
-                : { metadataRows: [...scope.metadataRows] },
+                : "snoozedCards" in scope
+                  ? { snoozedCards: [...scope.snoozedCards] }
+                  : { metadataRows: [...scope.metadataRows] },
       });
       out.push(merged.get(mergeId) as Invalidation);
       continue;
@@ -946,6 +1007,12 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
       // One pass over the reference cache, so a burst about several cards
       // lands in the same batched lookup instead of cancelling it.
       target.issueRefs.push(...scope.issueRefs);
+    } else if (
+      "snoozedCards" in scope &&
+      typeof target === "object" &&
+      "snoozedCards" in target
+    ) {
+      target.snoozedCards.push(...scope.snoozedCards);
     }
   }
   return out;
@@ -1156,6 +1223,7 @@ export function useUserEvents(userId?: number) {
       enqueue([
         ...invalidationsFor(event, event.project),
         ...inboxInvalidations(event),
+        ...snoozeInvalidations(event),
       ]);
     };
 

@@ -60,43 +60,49 @@ describe("MuteMenu (T-372)", () => {
 
   it("checks the stored setting, whichever of the three it is", async () => {
     await mount(list("forever"));
+    expect(entry(/^Mute$/).querySelector("svg.ml-auto")).toBeTruthy();
     expect(
-      entry(/Quiet until unmuted/).querySelector("svg.ml-auto"),
-    ).toBeTruthy();
-    expect(
-      entry(/Quiet until new activity/).querySelector("svg.ml-auto"),
+      entry(/^Snooze until new activity$/).querySelector("svg.ml-auto"),
     ).toBeNull();
   });
 
-  it("checks quiet-until-new-activity when that is the setting", async () => {
+  it("checks snooze when that is the setting", async () => {
     await mount(list("until_activity"));
     expect(
-      entry(/Quiet until new activity/).querySelector("svg.ml-auto"),
+      entry(/^Snooze until new activity$/).querySelector("svg.ml-auto"),
     ).toBeTruthy();
-    expect(
-      entry(/Quiet until unmuted/).querySelector("svg.ml-auto"),
-    ).toBeNull();
+    expect(entry(/^Mute$/).querySelector("svg.ml-auto")).toBeNull();
   });
+
+  it.each([
+    [null, "Notifying"],
+    ["until_activity", "Snoozed"],
+    ["forever", "Muted"],
+  ] as const)(
+    "the trigger names the %s setting as a state (T-573)",
+    async (mode, face) => {
+      const trigger = await mount(list(mode));
+      expect(trigger.textContent).toBe(face);
+    },
+  );
 
   it("checks notify when nothing is set", async () => {
     await mount(list(null));
-    expect(
-      entry(/Notify on new activity/).querySelector("svg.ml-auto"),
-    ).toBeTruthy();
+    expect(entry(/^Notify$/).querySelector("svg.ml-auto")).toBeTruthy();
   });
-  it("picks until_activity when quiet-until-new-activity is chosen", async () => {
+  it("picks until_activity when snooze is chosen", async () => {
     const mute = vi.spyOn(api, "muteIssue").mockResolvedValue(undefined);
     await mount(list(null));
-    fireEvent.click(entry(/Quiet until new activity/));
+    fireEvent.click(entry(/^Snooze until new activity$/));
     await waitFor(() =>
       expect(mute).toHaveBeenCalledWith("p", 7, { mode: "until_activity" }),
     );
   });
 
-  it("picks forever when quiet-until-unmuted is chosen", async () => {
+  it("picks forever when mute is chosen", async () => {
     const mute = vi.spyOn(api, "muteIssue").mockResolvedValue(undefined);
     await mount(list(null));
-    fireEvent.click(entry(/Quiet until unmuted/));
+    fireEvent.click(entry(/^Mute$/));
     await waitFor(() =>
       expect(mute).toHaveBeenCalledWith("p", 7, { mode: "forever" }),
     );
@@ -105,7 +111,7 @@ describe("MuteMenu (T-372)", () => {
   it("clears the row when notify is chosen", async () => {
     const unmute = vi.spyOn(api, "unmuteIssue").mockResolvedValue(undefined);
     await mount(list("forever"));
-    fireEvent.click(entry(/Notify on new activity/));
+    fireEvent.click(entry(/^Notify$/));
     await waitFor(() => expect(unmute).toHaveBeenCalledWith("p", 7));
   });
 

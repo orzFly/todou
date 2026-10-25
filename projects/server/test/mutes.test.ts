@@ -125,6 +125,15 @@ describe("mutes T-372", () => {
     return json(res);
   };
 
+  const markRead = async (slug: string, number: number): Promise<void> => {
+    const res = await t.app.request(
+      `/api/projects/${slug}/issues/${number}/read`,
+      { method: "PUT", headers: headers(), body: "{}" },
+    );
+    expect(res.status).toBe(204);
+    await settle();
+  };
+
   const pushSpec = async (
     slug: string,
     number: number,
@@ -280,20 +289,108 @@ describe("mutes T-372", () => {
     await settle();
     expect(await inInbox(PA, s)).toBe(true);
 
-    // Reading the relit part quiets the card again (design.md): the v2
-    // event is now below the reader's position, so the gate re-engages —
-    // an event-only relight must not stick an until_activity card in the
-    // inbox forever.
-    const read = await t.app.request(`/api/projects/${PA}/issues/${s}/read`, {
-      method: "PUT",
-      headers: headers(),
-      body: "{}",
-    });
-    expect(read.status).toBe(204);
+    // An event-only wake ends the snooze just as a comment does (T-573):
+    // reading v2 leaves v2 still waiting for review, so the card stays.
+    await markRead(PA, s);
+    const woken = await listItem(PA, s);
+    expect(woken?.muted).toBeNull();
+    expect(await inInbox(PA, s)).toBe(true);
+  });
+
+  it("a snooze ends at the first foreign activity and stays ended after reading (T-573)", async () => {
+    const n = await createIssueAs(PA, headers(), "snoozed question");
     await settle();
-    const quiet = await listItem(PA, s);
-    expect(quiet?.muted).toBe("until_activity");
-    expect(await inInbox(PA, s)).toBe(false);
+    await comment(PA, n, bob.headers, "which one?", {
+      type: "questions",
+      questions: [
+        { question: "Pick one", options: [{ label: "a" }, { label: "b" }] },
+      ],
+    });
+    await settle();
+    await markRead(PA, n);
+    expect(await inInbox(PA, n)).toBe(true);
+    const listed = async () =>
+      (await mutesOf()).issues.some(
+        (i: { project: { slug: string }; number: number }) =>
+          i.project.slug === PA && i.number === n,
+      );
+
+    await mute(PA, n, "until_activity");
+    await settle();
+    expect(await listItem(PA, n)).toMatchObject({ muted: "until_activity" });
+    expect(await inInbox(PA, n)).toBe(false);
+    expect(await listed()).toBe(true);
+
+    await comment(PA, n, bob.headers, "any thoughts?");
+    await settle();
+    expect(await listItem(PA, n)).toMatchObject({ muted: null });
+    expect(await listed()).toBe(false);
+
+    // The pre-T-573 rule re-quieted the card here, taking the still
+    // unanswered question back out of the inbox.
+    await markRead(PA, n);
+    expect(await listItem(PA, n)).toMatchObject({
+      muted: null,
+      unread: false,
+    });
+    expect(await inInbox(PA, n)).toBe(true);
+    expect(await listed()).toBe(false);
+
+    // A fresh snooze starts over from now.
+    await mute(PA, n, "until_activity");
+    await settle();
+    expect(await listItem(PA, n)).toMatchObject({ muted: "until_activity" });
+    expect(await listed()).toBe(true);
+  });
+
+  it("a reference from a project the reader cannot see does not end a snooze", async () => {
+    // Bob snoozes here: the default user is instance admin and can read
+    // every project, so only a plain member has a project out of sight.
+    const n = await createIssueAs(PA, headers(), "referenced from afar");
+    await settle();
+    await mute(PA, n, "until_activity", {
+      "content-type": "application/json",
+      ...bob.headers,
+    });
+    await settle();
+
+    const hidden = "mute-private";
+    const made = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug: hidden, name: "Not Bob's" }),
+    });
+    expect(made.status).toBe(201);
+    const src = await createIssueAs(hidden, headers(), "source");
+    const edit = await t.app.request(`/api/projects/${hidden}/issues/${src}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ body: `relates to ${PA}#${n}` }),
+    });
+    expect(edit.status).toBe(200);
+    await settle();
+
+    // The event exists for a reader who can see its source…
+    const timeline = await json(
+      await t.app.request(
+        `/api/projects/${PA}/issues/${n}/timeline?limit=100`,
+        { headers: { cookie } },
+      ),
+    );
+    expect(
+      timeline.items.some((i: { event_type?: string }) =>
+        ["referenced", "cross_referenced"].includes(i.event_type ?? ""),
+      ),
+    ).toBe(true);
+    // …and bob, who cannot, is still snoozed.
+    expect(await listItem(PA, n, bob.headers)).toMatchObject({
+      muted: "until_activity",
+    });
+    expect(
+      (await mutesOf(bob.headers)).issues.some(
+        (i: { number: number }) => i.number === n,
+      ),
+    ).toBe(true);
   });
 
   it("project mute silences every card of the project and nobody else's", async () => {
@@ -533,27 +630,16 @@ describe("mutes T-372", () => {
 
   it("the silenced() truth table", () => {
     const at = new Date("2026-01-02T00:00:00Z");
-    const before = new Date("2026-01-01T00:00:00Z");
-    const after = new Date("2026-01-03T00:00:00Z");
 
-    expect(silenced(undefined, false, undefined)).toBeNull();
-    expect(silenced(undefined, false, after)).toBeNull();
-    expect(silenced(undefined, true, after)).toBe("project");
-    expect(silenced({ mode: "forever", mutedAt: at }, false, after)).toBe(
-      "forever",
+    expect(silenced(undefined, false)).toBeNull();
+    expect(silenced(undefined, true)).toBe("project");
+    expect(silenced({ mode: "forever", mutedAt: at }, false)).toBe("forever");
+    expect(silenced({ mode: "until_activity", mutedAt: at }, false)).toBe(
+      "until_activity",
     );
-    expect(
-      silenced({ mode: "until_activity", mutedAt: at }, false, undefined),
-    ).toBe("until_activity");
-    expect(
-      silenced({ mode: "until_activity", mutedAt: at }, false, before),
-    ).toBe("until_activity");
-    expect(
-      silenced({ mode: "until_activity", mutedAt: at }, false, after),
-    ).toBeNull();
     // Project mute wins over everything: no per-card exception exists.
-    expect(
-      silenced({ mode: "until_activity", mutedAt: at }, true, before),
-    ).toBe("project");
+    expect(silenced({ mode: "until_activity", mutedAt: at }, true)).toBe(
+      "project",
+    );
   });
 });

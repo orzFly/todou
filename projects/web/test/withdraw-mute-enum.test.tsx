@@ -200,7 +200,7 @@ describe("UnreadMarker mute reason compatibility", () => {
   it.each([
     ["project", " — the whole project is muted"],
     ["forever", " — this card is muted"],
-    ["until_activity", " — this card is muted"],
+    ["until_activity", " — this card is snoozed"],
   ] as const)("keeps known mute text for %s", (muted, suffix) => {
     const view = render(
       <UnreadMarker unread unreadComments={1} muted={muted} />,

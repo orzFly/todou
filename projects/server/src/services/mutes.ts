@@ -1,9 +1,14 @@
 import type { MuteList, MuteReason } from "@todou/shared";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, exists, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
-import { issueMutes, issues } from "../db/project-schema.ts";
+import {
+  comments,
+  issueEvents,
+  issueMutes,
+  issues,
+} from "../db/project-schema.ts";
 import { projectMutes } from "../db/system-schema.ts";
 import { NotFoundError } from "../errors.ts";
 import {
@@ -12,6 +17,11 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
+import {
+  crossRefVisibleCondition,
+  type VisibleProjects,
+  visibleProjectsOf,
+} from "./cross-references.ts";
 import { projectIconUrlOf } from "./projects.ts";
 import { live } from "./trash.ts";
 
@@ -102,15 +112,66 @@ export async function loadMutedProjects(
 }
 
 /**
- * The read-side gate, in one place (T-372). `until_activity` is a persistent
- * rule, not a one-shot snooze: everything at or before `mutedAt` stays
- * suppressed forever, and every later foreign activity relights the card.
- * Reading the relit part quiets it again — but then it has no unread left,
- * so nothing is being hidden.
+ * The cards among `issueIds` whose `until_activity` snooze has ended: someone
+ * else commented, or left an event the reader can see, after `muted_at`
+ * (T-573). An ended snooze is no setting at all — the card notifies, the
+ * control reads "Notifying", `/me/mutes` drops it — and stays that way after
+ * the reader catches up; only a fresh PUT starts another one. The row is
+ * left in place rather than deleted by whichever of the many write paths
+ * woke it: the next PUT upserts over it, and a read-side check is one place
+ * instead of one per write.
  *
- * `latestForeign` is the latest activity someone *else* left on the card
- * above the reader's unread threshold: a comment, a visible event, or the
- * top post when someone else opened it. Undefined means none was measured.
+ * The comparison runs against the stored `muted_at` in SQL, never a bound JS
+ * Date, so µs-precision activity cannot tie with a ms-truncated boundary.
+ * Own activity never wakes, and the event filter is the one the unread scan
+ * uses, so a reference from a project the reader cannot see does not either.
+ */
+export async function endedSnoozes(
+  db: Db,
+  userId: number,
+  issueIds: number[],
+  visible: VisibleProjects,
+): Promise<Set<number>> {
+  if (issueIds.length === 0) return new Set();
+  const foreignComment = db
+    .select({ one: sql`1` })
+    .from(comments)
+    .where(
+      and(
+        eq(comments.issueId, issueMutes.issueId),
+        ne(comments.authorId, userId),
+        gt(comments.createdAt, issueMutes.mutedAt),
+      ),
+    );
+  const foreignEvent = db
+    .select({ one: sql`1` })
+    .from(issueEvents)
+    .where(
+      and(
+        eq(issueEvents.issueId, issueMutes.issueId),
+        ne(issueEvents.actorId, userId),
+        gt(issueEvents.createdAt, issueMutes.mutedAt),
+        crossRefVisibleCondition(visible.slugs, visible.ids),
+      ),
+    );
+  const rows = await db
+    .select({ issueId: issueMutes.issueId })
+    .from(issueMutes)
+    .where(
+      and(
+        eq(issueMutes.userId, userId),
+        eq(issueMutes.mode, "until_activity"),
+        inArray(issueMutes.issueId, issueIds),
+        or(exists(foreignComment), exists(foreignEvent)),
+      ),
+    );
+  return new Set(rows.map((r) => r.issueId));
+}
+
+/**
+ * The read-side gate, in one place (T-372). By the time a mute reaches here
+ * an ended snooze has already been dropped (`endedSnoozes`), so every row
+ * that remains is in force.
  *
  * This is the seam T-373 ("a mention overrides a mute") extends: one more
  * parameter, one more early return — not a second spelling of the verdict.
@@ -118,17 +179,9 @@ export async function loadMutedProjects(
 export function silenced(
   mute: IssueMute | undefined,
   projectMuted: boolean,
-  latestForeign: Date | undefined,
 ): MuteReason | null {
   if (projectMuted) return "project";
-  if (mute?.mode === "forever") return "forever";
-  if (
-    mute?.mode === "until_activity" &&
-    (latestForeign === undefined || latestForeign <= mute.mutedAt)
-  ) {
-    return "until_activity";
-  }
-  return null;
+  return mute?.mode ?? null;
 }
 
 /**
@@ -155,7 +208,7 @@ async function liveIssueId(
 /**
  * Idempotent by construction: a repeat PUT lands on the same unique row and
  * pushes `muted_at` to now — "quiet it again" is a real action, and for
- * `until_activity` it is how the reader re-buries what relit.
+ * `until_activity` it is how the reader snoozes again once a snooze has ended.
  */
 export async function setIssueMute(
   ctx: AppContext,
@@ -237,9 +290,11 @@ export async function clearProjectMute(
 }
 
 /**
- * The stored settings, not today's verdicts: a card whose `until_activity`
- * mute has relit is still listed, because the control on the card and the
- * `/inbox/muted` list both describe what the reader set.
+ * The settings in force, not today's verdicts: a card that is unread while
+ * muted is still listed, because the control on the card and the
+ * `/inbox/muted` list both describe what the reader set. A snooze someone
+ * else's activity has ended is no setting any more (T-573), so it is not
+ * listed and the control falls back to "Notifying".
  *
  * Scope is `accessibleProjectRows`, like an unscoped /me/inbox: a mute on a
  * project the caller can no longer read does not appear. Issue mutes are
@@ -257,6 +312,9 @@ export async function listMutes(
     scope.map((p) => p.id),
   );
   const projectById = new Map(scope.map((p) => [p.id, p]));
+  // Only a snooze needs the visibility set, so a reader without one pays
+  // nothing for it; one shared promise when several groups hold snoozes.
+  let visible: Promise<VisibleProjects> | undefined;
 
   const projectRows =
     mutedProjects.size === 0
@@ -278,8 +336,8 @@ export async function listMutes(
   const groupRows = await ctx.router.perDatabase(
     scope,
     routeInfoOf,
-    async (db, group) =>
-      await db
+    async (db, group) => {
+      const rows = await db
         .select({
           issueId: issueMutes.issueId,
           mode: issueMutes.mode,
@@ -303,7 +361,15 @@ export async function listMutes(
             // with a restore.
             isNull(issues.deletedAt),
           ),
-        ),
+        );
+      const snoozed = rows
+        .filter((r) => r.mode === "until_activity")
+        .map((r) => r.issueId);
+      if (snoozed.length === 0) return rows;
+      visible ??= visibleProjectsOf(ctx, scope);
+      const ended = await endedSnoozes(db, actor.id, snoozed, await visible);
+      return rows.filter((r) => !ended.has(r.issueId));
+    },
   );
   const issueOut: MuteList["issues"] = [];
   for (const r of groupRows.flat()) {

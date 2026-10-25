@@ -103,8 +103,9 @@ export const Issue = z.object({
   unread_comments: z.number().int().nonnegative().default(0),
   /**
    * 此刻这张卡对该读者是否被静音，以及静音从哪来（T-372）。
-   * `until_activity` 的卡一旦有了 mute 之后的新动静就报 null——它已经
-   * 重新响了。与 `unread` 一样只有列表响应会算它，别的路径取默认值。
+   * `until_activity` 的卡一旦有了别人在 mute 之后的新动静就报 null，读完
+   * 也不会回到静音——这次 snooze 已经结束（T-573）。与 `unread` 一样只有
+   * 列表响应会算它，别的路径取默认值。
    * 有默认值，所以旧服务器的响应照样解析得动。
    */
   muted: MuteReason.nullable().default(null),

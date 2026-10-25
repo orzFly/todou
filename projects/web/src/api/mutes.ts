@@ -19,9 +19,10 @@ export const mutesQuery = {
   queryFn: () => api.getMutes(),
 } as const;
 
+/** The setting as a state — the control's face and the Muted page's rows. */
 export const issueMuteLabels: Record<IssueMuteMode, string> = {
-  forever: "Quiet until unmuted",
-  until_activity: "Quiet until new activity",
+  forever: "Muted",
+  until_activity: "Snoozed",
 };
 
 export function muteLabelOf(mode: string): string {
