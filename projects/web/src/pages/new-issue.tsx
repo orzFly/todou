@@ -44,6 +44,7 @@ import {
 } from "@/components/issue/staged-files.tsx";
 import { PageSkeleton } from "@/components/page-skeleton.tsx";
 import { CommandErrors } from "@/components/shared/command-errors.tsx";
+import { EditorShortcutsHelp } from "@/components/shared/editor-shortcuts-help.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -418,12 +419,14 @@ function NewIssueForm({
           />
         </div>
         <div className="flex justify-end gap-2">
-          <StagedFileUploadButton
-            onFiles={staging.stage}
-            disabled={submitting}
-            label="Attach files"
-            className="mr-auto"
-          />
+          <div className="mr-auto flex items-center gap-1">
+            <StagedFileUploadButton
+              onFiles={staging.stage}
+              disabled={submitting}
+              label="Attach files"
+            />
+            <EditorShortcutsHelp />
+          </div>
           <Button
             type="button"
             variant="ghost"

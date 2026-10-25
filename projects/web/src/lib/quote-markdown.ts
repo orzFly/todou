@@ -16,6 +16,17 @@ export function blockquote(body: string): string {
     .join("\n");
 }
 
+/** A line already inside a quote, by CommonMark's reading of one. */
+export const QUOTED_LINE = /^ {0,3}>/;
+
+/** One level off every quoted line; any other line is left as it is. */
+export function unquote(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^( {0,3})> ?/, "$1"))
+    .join("\n");
+}
+
 /** 1-based inclusive source lines, clamped to both ends of the body. */
 export function sourceLines(body: string, start: number, end: number): string {
   const lines = body.split("\n");

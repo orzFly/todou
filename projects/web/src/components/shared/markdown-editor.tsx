@@ -16,13 +16,16 @@ import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { parser as commonmarkParser, GFM } from "@lezer/markdown";
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 
 import {
   CodeEditor,
   type CodeEditorHandle,
 } from "@/components/shared/code-editor.tsx";
+import { handlePaste, pasteAs } from "@/lib/editor/paste-as.ts";
+import { toggleQuote } from "@/lib/editor/quote-toggle.ts";
 import { trimTrailingSpaceOnEnter } from "@/lib/editor/trim-trailing-space.ts";
+import { prefetchPasteConverter } from "@/lib/paste/load.ts";
 
 /**
  * GFM markdown, assembled straight from the Lezer parser rather than through
@@ -107,6 +110,15 @@ const lineKeymap = [
 ];
 
 /**
+ * CodeMirror matches Shift+. by keyCode as `Mod-Shift-.`, but a layout whose
+ * Shift+. is `>` can arrive under that name instead.
+ */
+const quoteKeymap = [
+  { key: "Mod-Shift-.", run: toggleQuote },
+  { key: "Mod->", run: toggleQuote },
+];
+
+/**
  * Restrained markdown highlighting: enough structure to see the shape of a
  * comment, never a rainbow. Colors come from theme variables only, so every
  * palette — and .dark — follows without a rebuild.
@@ -169,6 +181,16 @@ export const MarkdownEditor = forwardRef<
 
   const innerRef = useRef<CodeEditorHandle | null>(null);
 
+  useEffect(() => {
+    const prefetch = () => void prefetchPasteConverter().catch(() => {});
+    if (typeof requestIdleCallback === "function") {
+      const handle = requestIdleCallback(prefetch);
+      return () => cancelIdleCallback(handle);
+    }
+    const handle = setTimeout(prefetch, 0);
+    return () => clearTimeout(handle);
+  }, []);
+
   return (
     <CodeEditor
       slot="markdown-editor"
@@ -208,15 +230,21 @@ export const MarkdownEditor = forwardRef<
           shift: trimTrailingSpaceOnEnter,
         },
         ...lineKeymap,
+        ...quoteKeymap,
       ]}
       language={markdownLanguage}
       highlightStyle={highlightStyle}
       onChange={onChange}
       extensions={[
+        pasteAs(),
         EditorView.domEventHandlers({
-          paste: (event) => {
+          // Staged files first: a paste they take as files is
+          // default-prevented, and handlePaste then leaves it alone. Both
+          // live in this one handler because the order of two separate
+          // handlers is decided by extension precedence, not by position.
+          paste: (event, view) => {
             handlers.current.onPaste?.(event);
-            return false;
+            return handlePaste(view, event);
           },
           drop: (event) => {
             handlers.current.onDrop?.(event);

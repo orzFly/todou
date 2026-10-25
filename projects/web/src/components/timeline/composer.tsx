@@ -26,6 +26,7 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { CommandErrors } from "@/components/shared/command-errors.tsx";
+import { EditorShortcutsHelp } from "@/components/shared/editor-shortcuts-help.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -753,10 +754,13 @@ export function Composer({
             so an invisible button cannot sit in the tab order. */}
         {expanded && (
           <div className="composer-actions-in mt-2 flex h-7 items-start justify-between gap-2">
-            <StagedFileUploadButton
-              onFiles={staging.stage}
-              disabled={uploading}
-            />
+            <div className="flex items-center gap-1">
+              <StagedFileUploadButton
+                onFiles={staging.stage}
+                disabled={uploading}
+              />
+              <EditorShortcutsHelp />
+            </div>
             <Button
               type="submit"
               size="sm"
