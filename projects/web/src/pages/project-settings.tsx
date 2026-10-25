@@ -1153,7 +1153,9 @@ export function AccessDenialsSection({ slug }: { slug: string }) {
                   <UserChip user={denial.denied_by} />
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {new Date(denial.created_at).toLocaleString()}
+                  <time dateTime={denial.created_at}>
+                    {new Date(denial.created_at).toLocaleString()}
+                  </time>
                 </TableCell>
                 <TableCell>
                   <Button

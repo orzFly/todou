@@ -57,7 +57,9 @@ export function BucketInspector({
           {bucket ? `Bucket ${index + 1}` : "Bucket inspector"}
         </h2>
         {bucket && (
-          <p className="text-sm text-muted-foreground">{bucketLabel(bucket)}</p>
+          <p className="text-sm text-muted-foreground tabular-nums">
+            {bucketLabel(bucket)}
+          </p>
         )}
       </div>
       {!bucket ? (

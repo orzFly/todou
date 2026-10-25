@@ -352,7 +352,9 @@ function ListGroup({
               : `${first.created_at} – ${last.created_at}`
           }
         >
-          {new Date(first.created_at).toLocaleString()}
+          <time dateTime={first.created_at}>
+            {new Date(first.created_at).toLocaleString()}
+          </time>
         </Link>
       </div>
       <ul className="ml-7 text-sm text-muted-foreground">
@@ -644,7 +646,9 @@ function CollapsedGroup({
           className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
           title={`${first.created_at} – ${last.created_at}`}
         >
-          {new Date(first.created_at).toLocaleString()}
+          <time dateTime={first.created_at}>
+            {new Date(first.created_at).toLocaleString()}
+          </time>
         </Link>
       </div>
       {open && (

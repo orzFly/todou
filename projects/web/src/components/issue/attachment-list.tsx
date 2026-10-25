@@ -182,7 +182,9 @@ export function AttachmentList({
                   className="hidden shrink-0 text-xs text-muted-foreground sm:inline"
                   title={attachment.created_at}
                 >
-                  {new Date(attachment.created_at).toLocaleString()}
+                  <time dateTime={attachment.created_at}>
+                    {new Date(attachment.created_at).toLocaleString()}
+                  </time>
                 </span>
               </a>
               <a

@@ -802,6 +802,12 @@ diffs-container {
   html {
     @apply font-sans;
     }
+  /* A rendered date or time is a <time> (T-579), so stacked timestamps line
+     up digit for digit. The insights bucket ranges and the chart's axis
+     labels are not one instant and carry tabular-nums themselves. */
+  time {
+    @apply tabular-nums;
+    }
 }
 
 /* T-40 agent badge: deterministic per-session blurred-blob background.

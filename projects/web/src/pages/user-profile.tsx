@@ -235,7 +235,10 @@ export function UserProfilePage({
             )}
             <p className="flex items-center gap-1.5 text-muted-foreground">
               <CalendarIcon aria-hidden className="size-4" />
-              joined {new Date(me.created_at).toLocaleDateString()}
+              joined{" "}
+              <time dateTime={me.created_at}>
+                {new Date(me.created_at).toLocaleDateString()}
+              </time>
             </p>
           </div>
 

@@ -167,7 +167,9 @@ function KeyedRevisionHistory({
                       className="ml-auto shrink-0 text-xs text-muted-foreground/70"
                       title={revision.created_at}
                     >
-                      {new Date(revision.created_at).toLocaleString()}
+                      <time dateTime={revision.created_at}>
+                        {new Date(revision.created_at).toLocaleString()}
+                      </time>
                     </span>
                   </button>
                 ))

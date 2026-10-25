@@ -461,7 +461,10 @@ export function TrashView({
                       className="text-xs whitespace-nowrap text-muted-foreground"
                       title={issue.deleted_at}
                     >
-                      deleted {new Date(issue.deleted_at).toLocaleDateString()}
+                      deleted{" "}
+                      <time dateTime={issue.deleted_at}>
+                        {new Date(issue.deleted_at).toLocaleDateString()}
+                      </time>
                     </span>
                   )}
                   <Button

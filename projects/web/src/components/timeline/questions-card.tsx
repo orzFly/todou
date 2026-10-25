@@ -265,7 +265,9 @@ function AnsweredCard({
           <CheckIcon className="size-3.5 shrink-0 text-green-600" />
           answered by <UserChip user={answer.actor} compact />
           <span className="whitespace-nowrap" title={answer.created_at}>
-            {new Date(answer.created_at).toLocaleString()}
+            <time dateTime={answer.created_at}>
+              {new Date(answer.created_at).toLocaleString()}
+            </time>
           </span>
         </span>
         {hasDescriptions && (

@@ -866,14 +866,18 @@ export function EventRow({
           className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
           title={event.created_at}
         >
-          {new Date(event.created_at).toLocaleString()}
+          <time dateTime={event.created_at}>
+            {new Date(event.created_at).toLocaleString()}
+          </time>
         </Link>
       ) : (
         <span
           className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70"
           title={event.created_at}
         >
-          {new Date(event.created_at).toLocaleString()}
+          <time dateTime={event.created_at}>
+            {new Date(event.created_at).toLocaleString()}
+          </time>
         </span>
       )}
     </div>

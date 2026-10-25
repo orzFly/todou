@@ -72,12 +72,8 @@ function fileLabel(file: FileDiffMetadata): string {
 const HEADER_ROW = "flex min-w-0 items-center gap-2 px-3 text-sm";
 
 function CommitHeader({ commit }: { commit: PatchCommit }) {
-  const byline = [
-    commit.author,
-    commit.date === undefined ? undefined : formatCommitDate(commit.date),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const date =
+    commit.date === undefined ? undefined : formatCommitDate(commit.date);
   return (
     <div className={HEADER_ROW} style={{ height: PATCH_HEADER_HEIGHT }}>
       <GitCommitHorizontalIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -90,7 +86,9 @@ function CommitHeader({ commit }: { commit: PatchCommit }) {
         {commit.subject === "" ? "Message" : commit.subject}
       </span>
       <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-        {byline}
+        {commit.author}
+        {commit.author && date ? " · " : null}
+        {date && <time>{date}</time>}
         {commit.hash !== undefined && (
           <span className="ml-2 font-mono">{commit.hash.slice(0, 7)}</span>
         )}

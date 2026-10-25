@@ -361,7 +361,9 @@ function InboxRow({
             className="text-xs text-muted-foreground max-sm:hidden"
             title={item.last_activity_at}
           >
-            {new Date(item.last_activity_at).toLocaleString()}
+            <time dateTime={item.last_activity_at}>
+              {new Date(item.last_activity_at).toLocaleString()}
+            </time>
           </span>
         </span>
       }

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 
 const when = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString() : "—";
+  iso ? <time dateTime={iso}>{new Date(iso).toLocaleString()}</time> : "—";
 
 /** Active-token listing shared by the personal and agent token managers. */
 export function TokenTable({

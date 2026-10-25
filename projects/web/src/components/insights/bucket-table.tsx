@@ -61,7 +61,7 @@ export function BucketTable({
                   aria-label={`Select bucket ${bucketIndex + 1}: ${bucketLabel(bucket)}`}
                   aria-pressed={bucketIndex === index}
                   onClick={() => onSelect(bucketIndex)}
-                  className="whitespace-nowrap rounded px-2 py-1 text-left underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                  className="whitespace-nowrap rounded px-2 tabular-nums py-1 text-left underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
                 >
                   {bucketLabel(bucket)}
                 </button>

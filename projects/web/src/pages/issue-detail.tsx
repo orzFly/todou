@@ -322,7 +322,10 @@ function TrashBanner({ slug, issue }: { slug: string; issue: Issue }) {
         {issue.deleted_at && (
           <span title={issue.deleted_at}>
             {" "}
-            on {new Date(issue.deleted_at).toLocaleString()}
+            on{" "}
+            <time dateTime={issue.deleted_at}>
+              {new Date(issue.deleted_at).toLocaleString()}
+            </time>
           </span>
         )}
         .

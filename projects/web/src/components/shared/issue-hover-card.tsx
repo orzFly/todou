@@ -59,7 +59,9 @@ export function IssueHoverCard({
               <span className="shrink-0">{spelled}</span>
               <span className="truncate" title={item.created_at}>
                 opened by {displayNameOf(item.author)} ·{" "}
-                {new Date(item.created_at).toLocaleDateString()}
+                <time dateTime={item.created_at}>
+                  {new Date(item.created_at).toLocaleDateString()}
+                </time>
               </span>
             </div>
             {/* In full: the link's own title may have been cut to the chip's

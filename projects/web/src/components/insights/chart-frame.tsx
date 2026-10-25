@@ -516,7 +516,7 @@ export function ChartFrame({
             <g
               data-axis="time"
               fill="currentColor"
-              className="text-[16px] text-muted-foreground sm:text-[10px]"
+              className="text-[16px] text-muted-foreground tabular-nums sm:text-[10px]"
             >
               {Array.from({ length: 5 }, (_, tick) => {
                 const time = start + ((end - start) * tick) / 4;
@@ -541,7 +541,9 @@ export function ChartFrame({
             role="tooltip"
             className="pointer-events-none absolute top-0 right-0 z-10 max-w-full rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md"
           >
-            <div className="text-muted-foreground">{bucketLabel(selected)}</div>
+            <div className="text-muted-foreground tabular-nums">
+              {bucketLabel(selected)}
+            </div>
             <div className="mt-1">{bucketRead(selected, index)}</div>
           </div>
         )}
