@@ -223,11 +223,16 @@ describe("mentions T-373", () => {
     expect(await rowsOf(n)).toHaveLength(afterAdd.length);
   });
 
-  it("never records the author mentioning themselves, but links them", async () => {
+  it("records the author mentioning themselves, and links them", async () => {
+    // A sibling session on a shared account calls the others this way
+    // (T-576); mentions-unread.test.ts holds that it lights nothing.
     const n = await createIssue("self card");
     const saved = await comment(bob.headers, n, "note for @m311-bob");
     expect(saved.body).toBe(`note for [@m311-bob](/users/${bob.user.id})`);
-    expect(await rowsOf(n)).toHaveLength(0);
+    const rows = await rowsOf(n);
+    expect(rows.map((r) => [r.userId, r.actorId])).toEqual([
+      [bob.user.id, bob.user.id],
+    ]);
   });
 
   it("expands spec-file mentions into links but records no row", async () => {

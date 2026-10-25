@@ -567,6 +567,22 @@ describe("cross-project inbox T-97", () => {
       expect(row?.unread_comments).toBe(0);
     });
 
+    it("never flags a self-mention, though the row is recorded (T-576)", async () => {
+      // Bob's own card, read, then bob edits @bob into it: with weak unread
+      // off, the mention row is the only thing that could bring it back.
+      const n = await createIssueAs(PM, bob.headers, "self mention");
+      await settle();
+      await markReadAs(PM, n, bob.headers);
+      const res = await t.app.request(`/api/projects/${PM}/issues/${n}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify({ body: "note to @inbox-bob" }),
+      });
+      expect(res.status).toBe(200);
+      await settle();
+      expect(rowOf(await items("", bob.headers), PM, n)).toBeUndefined();
+    });
+
     it("keeps the row after the card closes, where questions do not", async () => {
       const n = await createIssueAs(PM, bob.headers, "closed with mention");
       const asked = await createIssueAs(

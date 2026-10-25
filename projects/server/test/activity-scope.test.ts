@@ -246,6 +246,50 @@ describe.each(BACKENDS)("activity scope T-576 (%s)", (backend, systemUrl) => {
     ]);
   });
 
+  it("lets one session of a shared account call the others", async () => {
+    const before = (
+      await json(
+        await t.app.request(`/api/projects/${slug}/activity?last=1&limit=1`, {
+          headers: { cookie },
+        }),
+      )
+    ).next_cursor as string;
+    const s = await create("s");
+    const as = (session?: string) => ({
+      ...mine(),
+      ...(session === undefined
+        ? {}
+        : {
+            "x-todou-agent-context": JSON.stringify({
+              agent: "claude-code",
+              session_id: session,
+            }),
+          }),
+    });
+    for (const [headers, body] of [
+      [as("session-caller"), `s-call @${meLogin}`],
+      [as(), `s-web @${meLogin}`],
+    ] as const) {
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${s}/comments`,
+        { method: "POST", headers, body: JSON.stringify({ body }) },
+      );
+      expect(res.status).toBe(201);
+    }
+    // What a watching session sends: its own session, and the account for
+    // entries that carry none.
+    const seenBy = async (session: string) => {
+      const res = await t.app.request(
+        `/api/projects/${slug}/activity?after=${encodeURIComponent(before)}&limit=100&scope=mentioned&exclude_actor=${meId}&exclude_agent_session=${session}`,
+        { headers: { cookie } },
+      );
+      expect(res.status).toBe(200);
+      return ((await json(res)).items as Item[]).map(keyOf);
+    };
+    expect(await seenBy("session-sibling")).toEqual(["s:s-call"]);
+    expect(await seenBy("session-caller")).toEqual([]);
+  });
+
   it("tells the holder when its card moves away", async () => {
     const before = (
       await json(

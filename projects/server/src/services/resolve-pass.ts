@@ -64,9 +64,12 @@ export type ResolveResult = {
   /** Cards elsewhere: recorded after the commit, best effort. */
   cross: ReferenceTarget[];
   /**
-   * Users this content @-mentioned, minus the author. The rows land in the
-   * writing transaction alongside `local`'s events; an author mentioning
-   * themselves is a link, never a notification.
+   * Users this content @-mentioned, the author included. The rows land in
+   * the writing transaction alongside `local`'s events. A self-mention is
+   * recorded because on a machine account shared by a fleet it is how one
+   * session calls the others, which `watch --mine` reads (T-576); inbox and
+   * unread drop the reader's own rows at read time, so it never lights
+   * them.
    */
   mentions: number[];
 };
@@ -383,8 +386,12 @@ export async function resolveContent(args: {
     if (card.projectId === project.id) local.push(card.number);
     else cross.push(card);
   }
-  const mentions = resolved.mentions.filter((id) => id !== actor.id);
-  return { storedText: resolved.storedText, local, cross, mentions };
+  return {
+    storedText: resolved.storedText,
+    local,
+    cross,
+    mentions: resolved.mentions,
+  };
 }
 
 /** What a candidate turned out to name, and the card an event owes. */

@@ -83,9 +83,11 @@ export class WatchCommand extends ProjectCommand {
       only ever name accounts, so on a machine account shared by a fleet
       \`--mine\` means every card the fleet holds — an orchestrator's
       portfolio, not one worker's card (\`issue watch <n>\` is that). An
-      @ of the account wakes every \`--mine\` watcher on it, and since an
-      author's own @ is never recorded, a sibling session mentioning the
-      shared account does not count. Not delivered: an @ added by editing
+      @ of the account wakes every \`--mine\` watcher on it — so one session
+      calls its siblings by mentioning the shared account, and only the
+      session that wrote it stays asleep (a write carrying no session, as
+      from the web, is every watcher's own on that account, as above). Not
+      delivered: an @ added by editing
       an existing comment or body, which writes no new entry. Cursors are
       unchanged and resume without gaps; a server predating T-576 ignores
       the filter, and the watch then says so once on stderr and delivers
