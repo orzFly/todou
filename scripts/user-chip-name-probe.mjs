@@ -16,7 +16,7 @@ export function findUserChipName(chip, expectedText) {
     return fail("name owner is not a chip");
   }
   const clips = [...chip.children].filter((child) =>
-    child.matches("span.block.overflow-clip.text-ellipsis"),
+    child.matches("span.block.overflow-x-clip.text-ellipsis"),
   );
   if (clips.length !== 1) return fail("expected one direct name clipping box");
   const clip = clips[0];
@@ -139,8 +139,8 @@ export async function probeUserChipNameLookup(options = {}) {
   avatar.textContent = "A";
   branch.append(avatar);
   const clip = document.createElement("span");
-  clip.className = "block overflow-clip text-ellipsis";
-  clip.style.cssText = "display:block;overflow:clip;text-overflow:ellipsis";
+  clip.className = "block overflow-x-clip text-ellipsis";
+  clip.style.cssText = "display:block;overflow-x:clip;text-overflow:ellipsis";
   const name = document.createElement("span");
   name.className = "ml-1.5";
   name.textContent = "Alice";

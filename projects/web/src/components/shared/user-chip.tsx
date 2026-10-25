@@ -194,7 +194,13 @@ export function UserChip({
         // badge against the event row's summary span by walking out from it to
         // the first box that clips. Nothing hangs out of this one, so it needs
         // no clip margin either.
-        <span className="block overflow-clip text-ellipsis">
+        //
+        // Only the inline axis clips. Safari skips a line box inside a block
+        // that clips vertically when it looks for an inline-block's baseline,
+        // so the chip fell back to its bottom edge and, where it sits in a
+        // sentence (the event row below `sm`), carried the name 5px above the
+        // words beside it (T-574). The ellipsis only ever needed this axis.
+        <span className="block overflow-x-clip text-ellipsis">
           <span className={cn("ml-1.5 text-sm", nameClassName)}>
             {displayNameOf(user)}
           </span>

@@ -100,10 +100,10 @@ describe("UserChip names (T-149)", () => {
     // avatar whose badge hangs outside its box on purpose. Moved up to the
     // chip, T-416's badge check stops at the chip instead of at the event
     // row's summary and loses every sample it grades.
-    const truncating = root?.querySelector(":scope > span.overflow-clip");
+    const truncating = root?.querySelector(":scope > span.overflow-x-clip");
     expect(truncating?.className).toContain("text-ellipsis");
     expect(truncating?.textContent).toBe("Spud Farmer");
-    expect(root?.className).not.toContain("overflow-clip");
+    expect(root?.className).not.toContain("overflow-x-clip");
 
     const avatarBox = container.querySelector("[data-slot=avatar]");
     expect(avatarBox?.className).toContain("align-middle");
@@ -118,10 +118,15 @@ describe("UserChip names (T-149)", () => {
     );
     const root = (await findByText("SF")).closest("a");
     expect(root?.className).toContain("shrink-0");
-    for (const rule of ["min-w-5", "overflow-clip", "text-ellipsis", "ps-5"]) {
+    for (const rule of [
+      "min-w-5",
+      "overflow-x-clip",
+      "text-ellipsis",
+      "ps-5",
+    ]) {
       expect(root?.className).not.toContain(rule);
     }
-    expect(root?.querySelector(".overflow-clip")).toBeNull();
+    expect(root?.querySelector(".overflow-x-clip")).toBeNull();
   });
 
   // A second name beside the first still shares the truncating box: making
@@ -133,7 +138,7 @@ describe("UserChip names (T-149)", () => {
     const name = await findByText("Spud Farmer");
     const login = await findByText("@spud");
     expect(name.parentElement).toBe(login.parentElement);
-    expect(name.parentElement?.className).toContain("overflow-clip");
+    expect(name.parentElement?.className).toContain("overflow-x-clip");
   });
 });
 

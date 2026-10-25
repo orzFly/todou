@@ -1,0 +1,44 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index f1d7845929c970496a2b60b4d7200ffce8e69fa8..ea290b383da3bebfe5bf59b381b5b72ef1521c70 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -10429,8 +10429,15 @@ const tooltipPlugin = ViewPlugin.fromClass(class {
+                 // Safari always sets offsetParent to null, even if a fixed
+                 // element is positioned relative to a transformed parent. So
+                 // we use this kludge to try and detect this.
+-                let rect = dom.getBoundingClientRect();
+-                makeAbsolute = Math.abs(rect.top + 10000) > 1 || Math.abs(rect.left) > 1;
++                // todou patch (T-574): the probe only means something while
++                // the tooltip is still parked where it was created. Once
++                // placed, its rect is its real position, and reading that as
++                // a transform flipped every Safari tooltip to absolute on the
++                // second measure. 6.38.6 and earlier had this guard.
++                if (dom.style.top == Outside && dom.style.left == "0px") {
++                    let rect = dom.getBoundingClientRect();
++                    makeAbsolute = Math.abs(rect.top + 10000) > 1 || Math.abs(rect.left) > 1;
++                }
+             }
+             else {
+                 // More conforming browsers will set offsetParent to the
+diff --git a/dist/index.js b/dist/index.js
+index c2513c71f4a9df0e1391c9c320ba91b2b2b73338..9d0e7b65a77a3471714990f52f659a91fba72156 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -10424,8 +10424,15 @@ const tooltipPlugin = /*@__PURE__*/ViewPlugin.fromClass(class {
+                 // Safari always sets offsetParent to null, even if a fixed
+                 // element is positioned relative to a transformed parent. So
+                 // we use this kludge to try and detect this.
+-                let rect = dom.getBoundingClientRect();
+-                makeAbsolute = Math.abs(rect.top + 10000) > 1 || Math.abs(rect.left) > 1;
++                // todou patch (T-574): the probe only means something while
++                // the tooltip is still parked where it was created. Once
++                // placed, its rect is its real position, and reading that as
++                // a transform flipped every Safari tooltip to absolute on the
++                // second measure. 6.38.6 and earlier had this guard.
++                if (dom.style.top == Outside && dom.style.left == "0px") {
++                    let rect = dom.getBoundingClientRect();
++                    makeAbsolute = Math.abs(rect.top + 10000) > 1 || Math.abs(rect.left) > 1;
++                }
+             }
+             else {
+                 // More conforming browsers will set offsetParent to the
