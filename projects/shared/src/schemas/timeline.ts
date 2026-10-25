@@ -129,11 +129,50 @@ export const BlockClearedPayload = z.object({
 });
 export type BlockClearedPayload = z.infer<typeof BlockClearedPayload>;
 
+/**
+ * What a comment is (T-575). An `action` is an IRC-style `/me` line: its body
+ * is the text that follows the author's name. A plain string on the wire so a
+ * client meeting a kind it does not know yet can still draw the comment as a
+ * comment, which is what every kind degrades to.
+ */
+export const CommentKind = z.enum(["comment", "action"]);
+export type CommentKind = z.infer<typeof CommentKind>;
+
+/** Longest `/me` text, in code points. A status line, not a message. */
+export const ACTION_MAX_LENGTH = 500;
+
+/**
+ * Why `text` cannot be an action, or null when it can. One rule for the
+ * server, the composer and the CLI, so each refuses the same drafts with the
+ * same words. Judged on the trimmed text, which is what gets stored.
+ */
+export function actionTextProblem(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return "an action needs some text after /me";
+  if (/[\r\n]/.test(trimmed)) return "an action is a single line";
+  const length = [...trimmed].length;
+  if (length > ACTION_MAX_LENGTH) {
+    return `an action is at most ${ACTION_MAX_LENGTH} characters (this one is ${length})`;
+  }
+  return null;
+}
+
+/** `kind` read with the default every server before T-575 implies. */
+export function isAction(comment: { kind?: string }): boolean {
+  return comment.kind === "action";
+}
+
 export const TimelineComment = z.object({
   type: z.literal("comment"),
   id: Id,
   author: UserRef,
   body: z.string(),
+  /**
+   * `comment` or `action` (T-575). Optional rather than defaulted because
+   * responses are cast, not parsed: a server predating T-575 sends no key,
+   * and absent has to read as an ordinary comment either way.
+   */
+  kind: z.string().optional(),
   /**
    * Structured payload rendered after the body; immutable once created.
    * Defaults on parse so clients tolerate servers predating T-19.
@@ -347,11 +386,33 @@ export type CrossActivityQuery = z.infer<typeof CrossActivityQuery>;
 // has no `component` key — with a loose schema a PATCH carrying one would
 // be silently dropped, which reads as "my edit worked". Unknown keys must
 // error and name themselves instead.
-export const CommentCreateInput = z.strictObject({
-  body: z.string().min(1).max(65536),
-  component: CommentComponentInput.optional(),
-});
+export const CommentCreateInput = z
+  .strictObject({
+    body: z.string().min(1).max(65536),
+    component: CommentComponentInput.optional(),
+    kind: CommentKind.optional(),
+  })
+  .superRefine((v, ctx) => refineAction(v, ctx));
 export type CommentCreateInput = z.infer<typeof CommentCreateInput>;
+
+/** `actionTextProblem` as a schema refinement, for the two create inputs. */
+export function refineAction(
+  v: { body: string; kind?: CommentKind; component?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  if (v.kind !== "action") return;
+  if (v.component !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["component"],
+      message: "an action carries no component",
+    });
+  }
+  const problem = actionTextProblem(v.body);
+  if (problem !== null) {
+    ctx.addIssue({ code: "custom", path: ["body"], message: problem });
+  }
+}
 
 export const CommentUpdateInput = z.strictObject({
   body: z.string().min(1).max(65536),

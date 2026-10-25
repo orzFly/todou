@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CommandInput,
   CommandSubmitResult,
+  CommentKind,
   Me,
   TimelineComment,
   TimelineItem,
@@ -29,6 +30,7 @@ import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
+import { UserChip } from "@/components/shared/user-chip.tsx";
 import { WatcherStack } from "@/components/shared/watcher-stack.tsx";
 import {
   ComposerWatchersLine,
@@ -107,8 +109,12 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
   useDirtySource(() => pending.length > 0);
 
   const mutation = useMutation({
-    mutationFn: (vars: Target & { key: number; body: string }) =>
-      api.createComment(vars.slug, vars.issueNumber, vars.body),
+    mutationFn: (
+      vars: Target & { key: number; body: string; kind: CommentKind },
+    ) =>
+      vars.kind === "action"
+        ? api.createAction(vars.slug, vars.issueNumber, vars.body)
+        : api.createComment(vars.slug, vars.issueNumber, vars.body),
     onSuccess: async (_created, vars) => {
       await queryClient.invalidateQueries({
         queryKey: ["timeline", vars.slug, vars.issueNumber],
@@ -122,7 +128,7 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
     },
   });
 
-  function send(body: string, target: Target) {
+  function send(body: string, target: Target, kind: CommentKind = "comment") {
     const key = pendingKey++;
     setPending((prev) => [
       ...prev,
@@ -133,6 +139,7 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
           id: -1 - key,
           author: me,
           body,
+          kind,
           component: null,
           created_at: new Date().toISOString(),
           edited_at: null,
@@ -142,7 +149,7 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
         },
       },
     ]);
-    mutation.mutate({ ...target, key, body });
+    mutation.mutate({ ...target, key, body, kind });
   }
 
   function retry(key: number) {
@@ -154,7 +161,13 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
     // This hook's own card, because it is the only one a retry can be for:
     // `pendingFor` above clears the list on a card change, so no failed row
     // survives the jump to be retried (T-317).
-    mutation.mutate({ slug, issueNumber, key, body: entry.comment.body });
+    mutation.mutate({
+      slug,
+      issueNumber,
+      key,
+      body: entry.comment.body,
+      kind: entry.comment.kind === "action" ? "action" : "comment",
+    });
   }
 
   /**
@@ -164,10 +177,19 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
    * rejects on failure so the composer can keep the draft.
    */
   const commands = useMutation({
-    mutationFn: (vars: Target & { body: string; commands: CommandInput[] }) =>
+    mutationFn: (
+      vars: Target & {
+        body: string;
+        commands: CommandInput[];
+        kind: CommentKind;
+      },
+    ) =>
       api.submitCommands(vars.slug, vars.issueNumber, {
         body: vars.body,
         commands: vars.commands,
+        // Left off for a plain comment, so the request is the one a server
+        // predating T-575 already takes.
+        ...(vars.kind === "action" ? { kind: vars.kind } : {}),
       }),
     onSuccess: async (_result, vars) => {
       await Promise.all([
@@ -186,8 +208,12 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
     pending,
     send,
     retry,
-    sendWithCommands: (body: string, input: CommandInput[], target: Target) =>
-      commands.mutateAsync({ ...target, body, commands: input }),
+    sendWithCommands: (
+      body: string,
+      input: CommandInput[],
+      target: Target,
+      kind: CommentKind = "comment",
+    ) => commands.mutateAsync({ ...target, body, commands: input, kind }),
   };
 }
 
@@ -210,20 +236,23 @@ export function submitLabel(state: {
   summaries: string[];
   /** Whether a comment will be created alongside the commands. */
   withComment: boolean;
+  /** Whether that comment is a `/me` action (T-575). */
+  action?: boolean;
 }): string {
   if (state.uploading) return "Uploading…";
   if (state.running) return "Running…";
   if (state.broken > 0) {
     return `Fix ${state.broken === 1 ? "the command" : `${state.broken} commands`}`;
   }
-  if (state.summaries.length === 0) return "Comment";
+  const verb = state.action ? "Post action" : "Comment";
+  if (state.summaries.length === 0) return verb;
   const summary = summarizeCommands(state.summaries);
-  if (!state.withComment) return `Run: ${summary}`;
+  if (!state.withComment && !state.action) return `Run: ${summary}`;
   // A comma once the summary carries its own "and", so the label never
   // reads "and … and …".
   return state.summaries.length === 1
-    ? `Comment and ${summary}`
-    : `Comment, ${summary}`;
+    ? `${verb} and ${summary}`
+    : `${verb}, ${summary}`;
 }
 
 /** The registry behind the `/` panel, from the three lists it names. */
@@ -295,6 +324,9 @@ export function settledToast(result: CommandSubmitResult): string | null {
   ].filter((part): part is string => part !== null);
   return parts.length === 0 ? null : `Hiding also ${parts.join(" and ")}.`;
 }
+
+const ACTION_WITH_FILES =
+  "/me cannot carry files — post them in a comment of their own";
 
 /** The folded phone composer's button, which opens the box (T-532). */
 const OPENER = "[data-composer-opener]";
@@ -374,11 +406,12 @@ export function Composer({
 }: {
   slug: string;
   issueNumber: number;
-  onSend: (body: string, target: Target) => void;
+  onSend: (body: string, target: Target, kind?: CommentKind) => void;
   onSendWithCommands: (
     body: string,
     commands: CommandInput[],
     target: Target,
+    kind?: CommentKind,
   ) => Promise<unknown>;
   failed: PendingComment[];
   onRetry: (key: number) => void;
@@ -399,6 +432,7 @@ export function Composer({
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const registry = useCommandRegistry(slug, "comment");
+  const me = useQuery(meQuery);
 
   useQuoteSink((markdown) => {
     const handle = editor.current;
@@ -438,6 +472,7 @@ export function Composer({
     [draft, registry],
   );
   const commands = parsed?.commands ?? [];
+  const action = parsed?.action ?? null;
   const hideDraft = firstHideAll(commands);
 
   // Never `useSuspenseQuery`: the composer is mounted bare in tests with
@@ -455,6 +490,9 @@ export function Composer({
 
   const broken = [
     ...(parsed?.invalid ?? []),
+    ...(action !== null && staging.staged.length > 0
+      ? [{ line: `/me ${action}`, reason: ACTION_WITH_FILES }]
+      : []),
     // Only once the drain has landed: while it is in flight the line is
     // fine, and disabling the submit for "nothing to hide" would be a
     // verdict on a card nobody has read yet.
@@ -473,7 +511,8 @@ export function Composer({
   const empty =
     (parsed?.body ?? draft).trim() === "" &&
     staging.staged.length === 0 &&
-    commands.length === 0;
+    commands.length === 0 &&
+    action === null;
   // Folding an empty box is what keeps it from taking the screen (T-532); one
   // holding anything stays open, because the draft is the only copy of it.
   //
@@ -491,6 +530,7 @@ export function Composer({
     broken: broken.length,
     summaries: parsed?.summaries ?? [],
     withComment: (parsed?.body ?? "") !== "" || staging.staged.length > 0,
+    action: action !== null,
   });
 
   async function submit() {
@@ -506,18 +546,27 @@ export function Composer({
     // the text at submit time is what gets executed.
     const current =
       registry === null
-        ? { body: raw.trim(), commands: [], invalid: [], summaries: [] }
+        ? {
+            body: raw.trim(),
+            commands: [],
+            action: null,
+            invalid: [],
+            summaries: [],
+          }
         : parseCommandLines(raw, registry);
     if (current.invalid.length > 0) return;
+    if (current.action !== null && staging.staged.length > 0) return;
     if (
       current.body === "" &&
       current.commands.length === 0 &&
+      current.action === null &&
       staging.staged.length === 0
     ) {
       return;
     }
+    const kind: CommentKind = current.action === null ? "comment" : "action";
 
-    let full = current.body;
+    let full = current.action ?? current.body;
     if (staging.staged.length > 0) {
       setUploading(true);
       try {
@@ -549,9 +598,12 @@ export function Composer({
               );
         const resolved = resolveDraftCommands(current.commands, items);
         if (resolved.length === 0) return;
-        const result = (await onSendWithCommands(full, resolved, target)) as
-          | CommandSubmitResult
-          | undefined;
+        const result = (await onSendWithCommands(
+          full,
+          resolved,
+          target,
+          kind,
+        )) as CommandSubmitResult | undefined;
         const settled = result === undefined ? null : settledToast(result);
         if (settled !== null) toast.success(settled);
       } catch (error) {
@@ -563,7 +615,7 @@ export function Composer({
         setRunning(false);
       }
     } else {
-      onSend(full, target);
+      onSend(full, target, kind);
     }
     editor.current?.setValue("");
     setDraft("");
@@ -600,6 +652,16 @@ export function Composer({
         disabled={uploading}
       />
       <CommandErrors broken={broken} />
+      {action !== null && me.data !== undefined && (
+        <div
+          role="status"
+          aria-label="action preview"
+          className="flex flex-wrap items-baseline gap-x-2 rounded-md border border-border px-3 py-1.5 text-sm"
+        >
+          <UserChip user={me.data} nameClassName="font-medium" link={false} />
+          <span className="min-w-0 wrap-anywhere">{action}</span>
+        </div>
+      )}
       {preview !== null && preview.selection.pick.length > 0 && (
         <div
           role="status"

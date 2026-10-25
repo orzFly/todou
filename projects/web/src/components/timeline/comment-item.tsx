@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { MemberRole, TimelineComment } from "@todou/shared";
-import { can, isHidden } from "@todou/shared";
+import { can, isAction, isHidden } from "@todou/shared";
 import { EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -30,6 +30,7 @@ import {
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
+import { ActionItem } from "@/components/timeline/action-item.tsx";
 import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
 import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
@@ -76,31 +77,36 @@ export function canHideComment(viewer: Viewer | null | undefined): boolean {
   return can(viewer?.role ?? null, "comment.hide");
 }
 
-export function CommentItem({
-  slug,
-  issueNumber,
-  comment,
-  viewer = null,
-  pending = false,
-}: {
+export type CommentItemProps = {
   slug: string;
   issueNumber: number;
   comment: TimelineComment;
   viewer?: Viewer | null;
   pending?: boolean;
+};
+
+/** A timeline comment, drawn as what its kind says it is (T-575). */
+export function CommentItem(props: CommentItemProps) {
+  return isAction(props.comment) ? (
+    <ActionItem {...props} />
+  ) : (
+    <PlainCommentItem {...props} />
+  );
+}
+
+/**
+ * The three writes every timeline comment offers, with the invalidation they
+ * share. Callbacks rather than state, because what a successful save closes
+ * is the caller's own editor.
+ */
+export function useCommentWrites({
+  onSaved,
+  onDeleted,
+}: {
+  onSaved: () => void;
+  onDeleted: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const menuTrigger = useRef<HTMLButtonElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const editor = useRef<MarkdownEditorHandle>(null);
-  const [uploading, setUploading] = useState(false);
-  const staging = useStagedFiles();
   const queryClient = useQueryClient();
-  const refCompletion = useRefCompletion(slug);
-  const target: Target = { slug, issueNumber, commentId: comment.id };
-  const mayHide = canHideComment(viewer) && !isHidden(comment);
-  const mayDelete = canEditComment(viewer, comment.author.id);
   const invalidateComment = (target: Target) => {
     queryClient.invalidateQueries({
       queryKey: ["timeline", target.slug, target.issueNumber],
@@ -114,8 +120,7 @@ export function CommentItem({
       api.updateComment(vars.slug, vars.issueNumber, vars.commentId, vars.body),
     onSuccess: (_updated, vars) => {
       invalidateComment(vars);
-      setEditing(false);
-      staging.clear();
+      onSaved();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -132,10 +137,38 @@ export function CommentItem({
     mutationFn: (vars: Target) =>
       api.deleteComment(vars.slug, vars.issueNumber, vars.commentId),
     onSuccess: (_result, vars) => {
-      setConfirmingDelete(false);
+      onDeleted();
       return invalidateComment(vars);
     },
     onError: (error) => toast.error(error.message),
+  });
+  return { save, setHidden, remove };
+}
+
+function PlainCommentItem({
+  slug,
+  issueNumber,
+  comment,
+  viewer = null,
+  pending = false,
+}: CommentItemProps) {
+  const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const editor = useRef<MarkdownEditorHandle>(null);
+  const [uploading, setUploading] = useState(false);
+  const staging = useStagedFiles();
+  const refCompletion = useRefCompletion(slug);
+  const target: Target = { slug, issueNumber, commentId: comment.id };
+  const mayHide = canHideComment(viewer) && !isHidden(comment);
+  const mayDelete = canEditComment(viewer, comment.author.id);
+  const { save, setHidden, remove } = useCommentWrites({
+    onSaved: () => {
+      setEditing(false);
+      staging.clear();
+    },
+    onDeleted: () => setConfirmingDelete(false),
   });
 
   async function handleSave() {

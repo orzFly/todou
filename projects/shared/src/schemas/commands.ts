@@ -3,6 +3,8 @@ import { Id } from "./common.ts";
 import { Issue } from "./issue.ts";
 import {
   COMMENT_HIDE_MAX_IDS,
+  CommentKind,
+  refineAction,
   SettledByHide,
   TimelineComment,
 } from "./timeline.ts";
@@ -39,10 +41,13 @@ export const CommandSubmitInput = z
     /** Body with the command lines already stripped; empty = no comment. */
     body: z.string().max(65536).default(""),
     commands: z.array(CommandInput).max(COMMAND_SUBMIT_MAX_COMMANDS),
+    /** What the comment is, when the body makes one (T-575). */
+    kind: CommentKind.optional(),
   })
   .refine((v) => v.body.trim() !== "" || v.commands.length > 0, {
     error: "body and commands cannot both be empty",
-  });
+  })
+  .superRefine((v, ctx) => refineAction(v, ctx));
 export type CommandSubmitInput = z.infer<typeof CommandSubmitInput>;
 
 export const CommandSubmitResult = z.object({

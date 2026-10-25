@@ -1010,6 +1010,13 @@ export class TodouClient {
       `/projects/${slug}/issues/${number}/comments`,
       { json: component === undefined ? { body } : { body, component } },
     );
+  /** An IRC-style `/me` line (T-575); `text` follows the author's name. */
+  createAction = (slug: string, number: number, text: string) =>
+    this.request<CommentCreateResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/comments`,
+      { json: { body: text, kind: "action" } },
+    );
   /** Comment plus incremental commands, one transaction (T-161). */
   submitCommands = (slug: string, number: number, input: CommandSubmitInput) =>
     this.request<CommandSubmitResult>(

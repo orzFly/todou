@@ -91,7 +91,14 @@ export function commandCompletionSource(
     const second = SECOND_LEVEL.exec(text);
     if (second === null) return null;
     const command = registry.byName.get(second[1] as string);
-    if (command === undefined || command.argument === "none") return null;
+    // `/me` takes free text: there is nothing to offer for it.
+    if (
+      command === undefined ||
+      command.argument === "none" ||
+      command.argument === "text"
+    ) {
+      return null;
+    }
     const typed = second[2] as string;
     const names =
       command.argument === "label"

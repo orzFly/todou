@@ -187,7 +187,12 @@ export async function executeCommands(
   ]);
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
 
-  const body = input.body.trim() === "" ? null : input.body;
+  const body =
+    input.body.trim() === ""
+      ? null
+      : input.kind === "action"
+        ? input.body.trim()
+        : input.body;
   const resolved =
     body === null
       ? null
@@ -261,6 +266,7 @@ export async function executeCommands(
         body: resolved.storedText,
         localRefs: resolved.local,
         mentions: resolved.mentions,
+        kind: input.kind,
         agentContext,
       });
       comment = result.comment;

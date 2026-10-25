@@ -276,7 +276,11 @@ describe("Composer with slash commands", () => {
     await waitFor(() => expect(submitButton(view).disabled).toBe(false));
     submitButton(view).click();
     await waitFor(() =>
-      expect(view.onSend).toHaveBeenCalledWith("no commands here", ON_CARD_7),
+      expect(view.onSend).toHaveBeenCalledWith(
+        "no commands here",
+        ON_CARD_7,
+        "comment",
+      ),
     );
     expect(view.onSendWithCommands).not.toHaveBeenCalled();
   });
@@ -294,6 +298,7 @@ describe("Composer with slash commands", () => {
           { type: "label_add", label_id: 10 },
         ],
         ON_CARD_7,
+        "comment",
       ),
     );
     expect(view.onSend).not.toHaveBeenCalled();
@@ -309,7 +314,56 @@ describe("Composer with slash commands", () => {
         "",
         [{ type: "status", status_id: 3 }],
         ON_CARD_7,
+        "comment",
       ),
+    );
+  });
+
+  it("posts a /me line as an action, with a preview of how it reads", async () => {
+    const view = mount();
+    cmSetValue(view.container, "/me is reviewing.");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    expect(submitButton(view).textContent).toContain("Post action");
+    const preview = view.getByRole("status", { name: "action preview" });
+    // The avatar's initial leads the name.
+    expect(preview.textContent).toBe("AAliceis reviewing.");
+    submitButton(view).click();
+    await waitFor(() =>
+      expect(view.onSend).toHaveBeenCalledWith(
+        "is reviewing.",
+        ON_CARD_7,
+        "action",
+      ),
+    );
+    expect(view.onSendWithCommands).not.toHaveBeenCalled();
+  });
+
+  it("posts a /me line and its commands in one submission", async () => {
+    const view = mount();
+    cmSetValue(view.container, "/me is reviewing.\n/in-progress");
+    await waitFor(() =>
+      expect(submitButton(view).textContent).toContain(
+        "Post action and move to In Progress",
+      ),
+    );
+    submitButton(view).click();
+    await waitFor(() =>
+      expect(view.onSendWithCommands).toHaveBeenCalledWith(
+        "is reviewing.",
+        [{ type: "status", status_id: 2 }],
+        ON_CARD_7,
+        "action",
+      ),
+    );
+    expect(view.onSend).not.toHaveBeenCalled();
+  });
+
+  it("blocks a /me line with prose beside it", async () => {
+    const view = mount();
+    cmSetValue(view.container, "/me is reviewing.\nalso this");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(true));
+    expect(view.container.textContent).toContain(
+      "/me is the whole message — post the rest as a comment",
     );
   });
 
@@ -402,6 +456,7 @@ describe("Composer hiding every comment", () => {
         "",
         [{ type: "comments_hide", hidden: true, comment_ids: [101, 102] }],
         ON_CARD_7,
+        "comment",
       ),
     );
   });
@@ -431,6 +486,7 @@ describe("Composer hiding every comment", () => {
           },
         ],
         ON_CARD_7,
+        "comment",
       ),
     );
   });
@@ -454,6 +510,7 @@ describe("Composer hiding every comment", () => {
         "",
         [{ type: "comments_hide", hidden: false, comment_ids: [101, 103] }],
         ON_CARD_7,
+        "comment",
       ),
     );
   });
@@ -475,6 +532,7 @@ describe("Composer hiding every comment", () => {
           { type: "status", status_id: 3 },
         ],
         ON_CARD_7,
+        "comment",
       ),
     );
   });

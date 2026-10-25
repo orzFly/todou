@@ -8,6 +8,7 @@ import type {
   TimelineItem,
 } from "@todou/shared";
 import {
+  actionTextProblem,
   canonicalizeLabelName,
   SKIP_REASON_LABEL,
   selectHidable,
@@ -24,7 +25,13 @@ import {
  * panel) and the composer (button label, submit) read the same verdict.
  */
 
-export type CommandArgument = "none" | "status" | "label" | "member" | "force";
+export type CommandArgument =
+  | "none"
+  | "status"
+  | "label"
+  | "member"
+  | "force"
+  | "text";
 
 /**
  * What the parse layer emits. `/hide-all` cannot compile to a `CommandInput`
@@ -41,6 +48,13 @@ export type DraftCommand =
   | CommandInput
   | { type: "hide_all"; hidden: boolean; force: boolean };
 
+/**
+ * `/me` (T-575), which is not a command at all but a statement about the
+ * body: the submission's comment is an action. Kept out of `DraftCommand` so
+ * nothing that folds commands into fields has to know it exists.
+ */
+export type ActionDraft = { type: "action"; text: string };
+
 export type CommandDef = {
   /** The word after the slash. */
   name: string;
@@ -51,7 +65,7 @@ export type CommandDef = {
   detail: string;
   /** Summary for the submit button, e.g. "close" or "label area:web". */
   summarize: (argument: string) => string;
-  compile: (argument: string) => DraftCommand | null;
+  compile: (argument: string) => DraftCommand | ActionDraft | null;
   /** Why this argument compiled to nothing, when the kind cannot say. */
   invalidReason?: (argument: string) => string;
 };
@@ -95,6 +109,7 @@ const RESERVED = new Set([
   "unassign",
   "hide-all",
   "unhide-all",
+  "me",
 ]);
 
 /** Which page the registry is for; not every command exists on both. */
@@ -235,6 +250,17 @@ export function buildCommandRegistry({
       summarize: () => "unhide every comment",
       compile: () => ({ type: "hide_all", hidden: false, force: false }),
     });
+    commands.push({
+      name: "me",
+      argument: "text",
+      detail: "say what you are doing, after your name",
+      summarize: () => "post as an action",
+      compile: (argument) =>
+        actionTextProblem(argument) === null
+          ? { type: "action", text: argument }
+          : null,
+      invalidReason: (argument) => actionTextProblem(argument) ?? "",
+    });
   }
 
   for (const status of statuses) {
@@ -261,7 +287,7 @@ export type RecognizedLine = {
   /** Everything after the command word, trimmed; "" for no-argument commands. */
   argument: string;
   /** Null when the argument names nothing that exists. */
-  compiled: DraftCommand | null;
+  compiled: DraftCommand | ActionDraft | null;
 };
 
 /**
@@ -296,6 +322,8 @@ export type ParsedDraft = {
   /** The draft with every recognized command line removed. */
   body: string;
   commands: DraftCommand[];
+  /** The `/me` text when the draft is an action (T-575), else null. */
+  action: string | null;
   /** Recognized but unresolvable — a label or member that does not exist. */
   invalid: { line: string; reason: string }[];
   /** Submit-button material: one summary per recognized command, in order. */
@@ -356,6 +384,7 @@ export function parseCommandLines(
   const invalid: { line: string; reason: string }[] = [];
   const summaries: string[] = [];
   const kept: string[] = [];
+  let action: string | null = null;
 
   for (const [i, line] of lines.entries()) {
     const recognized = found.get(i);
@@ -379,11 +408,28 @@ export function parseCommandLines(
       });
       continue;
     }
+    if (recognized.compiled.type === "action") {
+      if (action !== null) {
+        invalid.push({ line: line.trim(), reason: "one /me per message" });
+      } else {
+        action = recognized.compiled.text;
+      }
+      continue;
+    }
     commands.push(recognized.compiled);
     summaries.push(recognized.command.summarize(recognized.argument));
   }
 
-  return { body: kept.join("\n").trim(), commands, invalid, summaries };
+  const body = kept.join("\n").trim();
+  // The action is the whole message: prose beside it would have to be either
+  // dropped or glued onto a status line, and neither is what was typed.
+  if (action !== null && body !== "") {
+    invalid.push({
+      line: `/me ${action}`,
+      reason: "/me is the whole message — post the rest as a comment",
+    });
+  }
+  return { body, commands, action, invalid, summaries };
 }
 
 /** "close" / "close and label bug" — the tail of the submit button's label. */

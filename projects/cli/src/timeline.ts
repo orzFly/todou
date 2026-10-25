@@ -10,6 +10,7 @@ import {
   BlockEdgePayload,
   enumValue,
   formatRef,
+  isAction,
   isHidden,
   ProjectSlug,
   SpecPushedPayload,
@@ -269,6 +270,10 @@ export function renderTimelineItem(
     // and `--only-hidden` — so it reads as "this one is put away", not as an
     // apology for a missing body (T-281).
     const away = isHidden(item) ? ` ${paint("dim", "(hidden)")}` : "";
+    // A `/me` line reads as one sentence with its author's name (T-575).
+    if (isAction(item)) {
+      return `${id}* ${who(item.author)} ${item.body}${edited}${away} ${when}`;
+    }
     const questions =
       item.component?.type === "questions"
         ? `\n${renderQuestions(item.component, paint).join("\n")}\n  ${paint(
@@ -364,6 +369,10 @@ export function renderActivityLine(
     personLabel(user, item.agent_context, paint);
   if (item.type === "comment") {
     const edited = item.edited_at ? " (edited)" : "";
+    if (isAction(item)) {
+      const said = isHidden(item) ? paint("dim", "(hidden)") : item.body;
+      return `${ref} ${paint("dim", commentRef(item.id))} * ${who(item.author)} ${said}${edited} ${when}`;
+    }
     const where =
       item.component?.type === "spec_comment"
         ? ` on ${item.component.anchor.path}:${anchorLines(item.component.anchor)} (v${item.component.anchor.version}, ${item.resolved_at === null ? "unresolved" : "resolved"})`

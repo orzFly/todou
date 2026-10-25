@@ -11,13 +11,21 @@ import type {
   SettledByHide,
   TimelineComment,
 } from "@todou/shared";
-import { formatRef, QuestionAnsweredPayload } from "@todou/shared";
+import {
+  actionTextProblem,
+  formatRef,
+  QuestionAnsweredPayload,
+} from "@todou/shared";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
-import { ForbiddenError, NotFoundError } from "../errors.ts";
+import {
+  ForbiddenError,
+  NotFoundError,
+  ValidationFailedError,
+} from "../errors.ts";
 import {
   type ProjectRow,
   projectForRead,
@@ -70,6 +78,7 @@ export async function toTimelineComment(
     id: row.id,
     author,
     body: opts.elideHidden && row.hiddenAt !== null ? "" : row.body,
+    kind: row.kind,
     component: row.component ?? null,
     created_at: row.createdAt.toISOString(),
     edited_at: row.editedAt?.toISOString() ?? null,
@@ -113,6 +122,7 @@ export async function insertCommentInTx(
     /** Users this comment @-mentions; one row each, in this transaction. */
     mentions: number[];
     component?: CommentComponent | null;
+    kind?: CommentRow["kind"];
     agentContext: AgentContext | null;
   },
 ): Promise<{
@@ -132,6 +142,7 @@ export async function insertCommentInTx(
       issueId: issue.id,
       authorId: actorId,
       body,
+      kind: args.kind ?? "comment",
       component,
       agentContext,
     })
@@ -227,7 +238,7 @@ export async function createComment(
     project,
     actor,
     inputs: refInputs,
-    text: input.body,
+    text: input.kind === "action" ? input.body.trim() : input.body,
     self: { projectId: project.id, number: issueNumber },
   });
   const events: ChangeEvent[] = [];
@@ -240,6 +251,7 @@ export async function createComment(
       localRefs: resolved.local,
       mentions: resolved.mentions,
       component,
+      kind: input.kind,
       agentContext,
     });
     events.push(...result.timeline);
@@ -421,9 +433,16 @@ export async function updateComment(
     issueNumber,
     commentId,
   );
+  // An action stays one short line through every edit (T-575).
+  let body = input.body;
+  if (row.kind === "action") {
+    const problem = actionTextProblem(body);
+    if (problem !== null) throw new ValidationFailedError(problem);
+    body = body.trim();
+  }
   // No-op saves succeed but record nothing: no revision, no edited_at
   // bump, no SSE, no reference re-scan.
-  if (input.body === row.body)
+  if (body === row.body)
     return toTimelineComment(ctx, row, { elideHidden: false });
 
   const projectId = project.id;
@@ -434,7 +453,7 @@ export async function updateComment(
     project,
     actor,
     inputs: refInputs,
-    text: input.body,
+    text: body,
     self: { projectId, number: issueNumber },
   });
   // Storing the resolved text is what makes this a no-op the second time

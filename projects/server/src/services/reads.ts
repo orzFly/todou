@@ -192,11 +192,36 @@ export async function unreadIssueState(
       and(
         inArray(comments.issueId, issueIds),
         ne(comments.authorId, userId),
+        // An action is a status line (T-575): unread the way an event is,
+        // never a comment the reader owes a read.
+        eq(comments.kind, "comment"),
         sql`${comments.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
       ),
     )
     .groupBy(comments.issueId);
   const counts = new Map(commentCounts.map((r) => [r.issueId, Number(r.n)]));
+
+  // Those actions, as weak unread: same threshold as the count above, so an
+  // action and a comment posted in the same instant agree on being past it.
+  const weakComments = await db
+    .selectDistinct({ issueId: comments.issueId })
+    .from(comments)
+    .leftJoin(
+      issueReads,
+      and(
+        eq(issueReads.issueId, comments.issueId),
+        eq(issueReads.userId, userId),
+      ),
+    )
+    .leftJoin(readFrontiers, frontierJoin(userId, comments.projectId))
+    .where(
+      and(
+        inArray(comments.issueId, issueIds),
+        ne(comments.authorId, userId),
+        ne(comments.kind, "comment"),
+        sql`${comments.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
+      ),
+    );
 
   // The top post, on the same threshold and by the same reasoning — a card
   // is one row, not a group, so it contributes at most 1. Only `created_at`
@@ -245,7 +270,10 @@ export async function unreadIssueState(
     )
     .groupBy(issueEvents.issueId, issueEvents.projectId);
 
-  const unread = new Set(counts.keys());
+  const unread = new Set([
+    ...counts.keys(),
+    ...weakComments.map((r) => r.issueId),
+  ]);
 
   const eventLatest = new Map<number, Date>();
   const eventProject = new Map<number, number>();

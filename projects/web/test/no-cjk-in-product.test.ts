@@ -90,6 +90,11 @@ const UNPARSED: Array<{ file: string; reason: string }> = [
     reason: "the markdown fence regex matches a run of backticks",
   },
   {
+    file: "web/src/lib/action-text.ts",
+    reason:
+      "the block-marker regex matches a backtick fence that opens an action",
+  },
+  {
     file: "web/src/lib/slash-commands.ts",
     reason: "the markdown fence regex matches a run of backticks",
   },

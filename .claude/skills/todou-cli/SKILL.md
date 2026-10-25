@@ -28,6 +28,7 @@ todou issue close 16 --comment "done"
 todou issue block 16 --by 12[,15]             # 16 waits for these; --blocks is the other direction
 todou issue unblock 16 --by 12 [--blocks 23]  # same refs as block; it finds the edge itself
 todou comment add -p <proj> 16 --body-file -
+todou me 16 is reviewing.                     # ACK a message you start on; the result is still a comment
 todou comment list 16 [--author @me] [-q text] [--last 5]
 todou comment view 16 123
 todou comment delete 16 123 -y                # take back a misfire; not reversible, no trash

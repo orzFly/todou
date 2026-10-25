@@ -82,6 +82,7 @@ describe("buildCommandRegistry", () => {
       "unassign",
       "hide-all",
       "unhide-all",
+      "me",
       "todo",
       "in-progress",
       "done",
@@ -99,6 +100,7 @@ describe("buildCommandRegistry", () => {
     });
     expect(page.byName.has("hide-all")).toBe(false);
     expect(page.byName.has("unhide-all")).toBe(false);
+    expect(page.byName.has("me")).toBe(false);
     // …and the line stays prose rather than becoming a broken command.
     expect(recognizeCommandLine("/hide-all", page)).toBeNull();
     expect(page.byName.has("label")).toBe(true);
@@ -368,6 +370,7 @@ describe("commandCompletionSource (the panel)", () => {
       "/unassign",
       "/hide-all",
       "/unhide-all",
+      "/me",
       "/todo",
       "/in-progress",
       "/done",
@@ -474,5 +477,70 @@ describe("commandLinesOf (what the editor highlights)", () => {
     const found = commandLinesOf("/label nope", registry);
     expect(found.get(0)?.compiled).toBeNull();
     expect([...found.keys()]).toEqual([0]);
+  });
+});
+
+describe("/me (T-575)", () => {
+  const panel = commandCompletionSource(() => registry);
+  const at = (doc: string) =>
+    panel(
+      new CompletionContext(EditorState.create({ doc }), doc.length, false),
+    );
+
+  it("turns the whole draft into an action and sends no command", () => {
+    const parsed = parseCommandLines("/me is reviewing.", registry);
+    expect(parsed).toMatchObject({
+      action: "is reviewing.",
+      body: "",
+      commands: [],
+      invalid: [],
+    });
+  });
+
+  it("goes along with other command lines", () => {
+    const parsed = parseCommandLines(
+      "/me is reviewing.\n/in-progress",
+      registry,
+    );
+    expect(parsed.action).toBe("is reviewing.");
+    expect(parsed.commands).toEqual([{ type: "status", status_id: 2 }]);
+    expect(parsed.invalid).toEqual([]);
+  });
+
+  it("refuses prose beside it rather than dropping or gluing it", () => {
+    const parsed = parseCommandLines("/me is reviewing.\nand more", registry);
+    expect(parsed.invalid).toEqual([
+      {
+        line: "/me is reviewing.",
+        reason: "/me is the whole message — post the rest as a comment",
+      },
+    ]);
+  });
+
+  it("takes one /me per message", () => {
+    const parsed = parseCommandLines("/me waves\n/me bows", registry);
+    expect(parsed.action).toBe("waves");
+    expect(parsed.invalid).toEqual([
+      { line: "/me bows", reason: "one /me per message" },
+    ]);
+  });
+
+  it("says why an over-long line is refused", () => {
+    const parsed = parseCommandLines(`/me ${"x".repeat(501)}`, registry);
+    expect(parsed.action).toBeNull();
+    expect(parsed.invalid[0]?.reason).toBe(
+      "an action is at most 500 characters (this one is 501)",
+    );
+  });
+
+  it("is prose without text, mid-sentence, or inside a fence", () => {
+    for (const draft of ["/me", "I said /me waves", "```\n/me waves\n```"]) {
+      expect(parseCommandLines(draft, registry).action).toBeNull();
+    }
+  });
+
+  it("is in the panel and offers nothing for its free text", () => {
+    expect(at("/")?.options.map((o) => o.label)).toContain("/me");
+    expect(at("/me ")).toBeNull();
   });
 });

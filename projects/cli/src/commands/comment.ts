@@ -1,5 +1,11 @@
 import type { HidePolicy, TimelineComment, TodouClient } from "@todou/shared";
-import { formatRef, isHidden, MovedError } from "@todou/shared";
+import {
+  ACTION_MAX_LENGTH,
+  actionTextProblem,
+  formatRef,
+  isHidden,
+  MovedError,
+} from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
@@ -184,6 +190,82 @@ export class CommentAddCommand extends ProjectCommand {
             ` · ${bodyShape(body)}`
           : `asked ${component.questions.length} question(s) on ${posted.issue_ref} — ` +
             `wait for answers with \`todou question wait ${number} ${comment.id}\``,
+    );
+  }
+}
+
+export class MeCommand extends ProjectCommand {
+  static paths = [["me"]];
+  static usage = Command.Usage({
+    description: "Post an IRC-style /me line: a short status after your name",
+    details: `
+      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL.
+      Every word after it is the text, joined with spaces, so it needs no
+      quoting unless the shell would eat a character: \`todou me 16 is
+      reviewing.\` reads on the card as "<your name> is reviewing.".
+
+      One line of at most ${ACTION_MAX_LENGTH} characters. It marks the card
+      unread the way a status change does, without adding to its count of
+      unread comments, so it suits an acknowledgement — the result still
+      goes in a comment.
+
+      Prints the cursor like \`comment add\`, with the same \`--print-cursor\`,
+      \`--since\` and \`--json\`.
+    `,
+    examples: [
+      [
+        "Acknowledge a message and say what you are doing",
+        "todou me 16 is reviewing.",
+      ],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  words = Option.Rest({ required: 1 });
+  printCursor = Option.Boolean("--print-cursor", false, {
+    description:
+      "Print the waiting-start cursor alone on stdout, summary to stderr",
+  });
+  since = Option.String("--since", {
+    description:
+      "Report what landed since this cursor (echoed back as the cursor)",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    assertWriteCursorFlags(this);
+    const text = this.words.join(" ").trim();
+    // Refused before resolving anything: a bad line is the writer's to fix,
+    // and the server would say the same thing a round trip later.
+    const problem = actionTextProblem(text);
+    if (problem !== null) throw new CliError(problem);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const action = await client.createAction(project, number, text);
+    const refPrefix = await fetchRefPrefix(client, project);
+    const posted = withIssueRef({ ...action, issue_number: number }, refPrefix);
+    const outcome = await collectWriteCursor({
+      client,
+      project,
+      number,
+      served: action.cursor,
+      since: this.since,
+      session: this.sessionSource(),
+      note: (line) => this.note(line),
+      clock: this.clock,
+    });
+    emitWriteResult(
+      {
+        json: this.json,
+        printCursor: this.printCursor,
+        paint: makePainter(this.context.stdout, this.context.env),
+        issueNumber: number,
+        write: (out) => this.context.stdout.write(`${out}\n`),
+        note: (line) => this.note(line),
+      },
+      outcome,
+      posted,
+      () =>
+        `${commentRef(action.id)} on ${posted.issue_ref} · ` +
+        `* ${personName(action.author)} ${action.body}`,
     );
   }
 }

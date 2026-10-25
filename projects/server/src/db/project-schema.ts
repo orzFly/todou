@@ -280,6 +280,11 @@ export const comments = pgTable(
       .references(() => issues.id, { onDelete: "cascade" }),
     authorId: bigint("author_id", { mode: "number" }).notNull(),
     body: text("body").notNull(),
+    // An `action` is a `/me` line (T-575). Fixed at creation like
+    // `component`: an edit changes the text, never what the entry is.
+    kind: text("kind", { enum: ["comment", "action"] })
+      .notNull()
+      .default("comment"),
     // Structured slot rendered after the body ({type:"questions",…}, T-19).
     // Immutable once written — updateComment never touches it.
     component: jsonb("component").$type<CommentComponent | null>(),

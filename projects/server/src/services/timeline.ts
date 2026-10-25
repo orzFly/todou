@@ -135,6 +135,7 @@ function toItem(
         id: m.row.id,
         author: refs.get(m.row.authorId) ?? ghost(m.row.authorId),
         body: elideHidden && m.row.hiddenAt !== null ? "" : m.row.body,
+        kind: m.row.kind,
         component: m.row.component ?? null,
         created_at: m.row.createdAt.toISOString(),
         edited_at: m.row.editedAt?.toISOString() ?? null,
