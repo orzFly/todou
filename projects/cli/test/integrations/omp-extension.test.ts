@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -644,9 +645,12 @@ describe("the todou_watch tool (T-357)", () => {
     const bin = join(dir, "todou");
     writeFileSync(
       bin,
-      `#!/bin/sh\necho $$ > "${pids}/$$"\n${body}\nrm -f "${pids}/$$"\n`,
+      `#!/bin/sh\n[ "$1" = --warm ] && exit 0\necho $$ > "${pids}/$$"\n${body}\nrm -f "${pids}/$$"\n`,
       { mode: 0o755 },
     );
+    // macOS vets a new executable on its first exec, and that costs about as
+    // much as the whole grace (T-589). Paying it here keeps it off the clock.
+    execFileSync(bin, ["--warm"]);
     return { bin, pids };
   }
 
