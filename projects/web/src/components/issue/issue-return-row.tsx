@@ -1,5 +1,11 @@
 import type { Issue } from "@todou/shared";
-import { type ReactNode, type RefObject, useEffect, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useState,
+} from "react";
 import {
   CompactIssueIdentity,
   IssueReturnLink,
@@ -63,7 +69,13 @@ export function IssueReturnRow({
     // Zero-height at every width since T-461 moved the back control out: with
     // nothing left that is visible before the heading scrolls, a reserved row
     // was 2.5rem of blank pushing the card down on arrival.
-    <div className="sticky z-30 -mx-2 h-0" style={{ top: headerHeight }}>
+    // Under the header wherever the header is: it follows the visual
+    // viewport's top and, on a phone, slides away on scroll (T-585).
+    <div
+      data-header-follow=""
+      className="sticky top-[calc(var(--row-top)+var(--vv-top,0px)-var(--header-hide,0px))] z-30 -mx-2 h-0"
+      style={{ "--row-top": `${headerHeight}px` } as CSSProperties}
+    >
       <div
         ref={rowRef}
         data-testid="issue-return-row"

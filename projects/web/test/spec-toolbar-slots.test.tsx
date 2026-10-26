@@ -51,7 +51,10 @@ afterEach(() => {
  */
 function shellHeader(height = 57): void {
   const header = document.createElement("header");
-  header.getBoundingClientRect = () => ({ height }) as DOMRect;
+  // At the top of the page, where the shell pins it: the insets read its
+  // bottom edge (T-585).
+  header.getBoundingClientRect = () =>
+    ({ height, top: 0, bottom: height }) as DOMRect;
   document.body.append(header);
 }
 

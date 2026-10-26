@@ -810,6 +810,13 @@ diffs-container {
     }
 }
 
+/* T-585: once scrolling stops, the auto-hiding header (and whatever rides
+   under it) settles fully in or out. Only then — while a finger drives it,
+   a transition would trail the finger. */
+html[data-header-settling] [data-header-follow] {
+    transition: top 150ms ease-out;
+}
+
 /* T-40 agent badge: deterministic per-session blurred-blob background.
    Hues and blob anchors arrive as inline --agent-* custom properties
    (hash of session_id, see agent-badge.tsx); L/C are clamped per theme so

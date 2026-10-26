@@ -5,6 +5,10 @@ import {
   useLayoutEffect,
   useRef,
 } from "react";
+import {
+  VIEWPORT_CHROME_EVENT,
+  visualViewportInsets,
+} from "@/lib/viewport-chrome.ts";
 
 /** Page coordinates of the thing to be revealed. */
 export type ScrollBlock = { top: number; height: number };
@@ -190,9 +194,16 @@ export function holdRevealed(
   });
 }
 
-/** Bottom of the document, which sits below a sticky composer's in-flow spot. */
+/**
+ * Bottom of the document, which sits below a sticky composer's in-flow spot.
+ *
+ * The largest offset there is, not `scrollHeight`: iOS Safari takes the
+ * overshoot literally for a frame, parking the visual viewport a whole screen
+ * past the end — one blank white frame on every landing (T-585).
+ */
 function scrollToEnd() {
-  window.scrollTo(0, document.documentElement.scrollHeight);
+  const root = document.documentElement;
+  window.scrollTo(0, Math.max(0, root.scrollHeight - root.clientHeight));
 }
 
 /** Go to the end of the document and stay there; see `hold`. */
@@ -264,9 +275,20 @@ export function useScrollInsets({
         focused !== null && el.contains(focused)
           ? 0
           : el.getBoundingClientRect().height;
-      let topInset = BREATHING_ROOM;
-      let bottomInset = 0;
-      for (const el of [shell, ...sources.current.top.map((r) => r.current)]) {
+      // A keyboard covers the layout viewport's bottom and can pan its top
+      // out of view; the sticky edges follow it (T-585), and so must the
+      // padding, or a reveal would centre its target behind the keyboard.
+      const edges = visualViewportInsets();
+      // What the header covers runs to its bottom edge, not its height: it
+      // rides the visual viewport's top and may have slid partly away.
+      let topInset =
+        BREATHING_ROOM +
+        (shell === null || extent(shell) === 0
+          ? edges.top
+          : Math.max(edges.top, shell.getBoundingClientRect().bottom));
+      if (shell !== null) watch(shell);
+      let bottomInset = edges.bottom;
+      for (const el of sources.current.top.map((r) => r.current)) {
         if (el === null) continue;
         topInset += extent(el);
         watch(el);
@@ -287,10 +309,12 @@ export function useScrollInsets({
     remeasure.current = measure;
     measure();
     window.addEventListener("resize", measure);
+    window.addEventListener(VIEWPORT_CHROME_EVENT, measure);
     document.addEventListener("focusin", measure);
     document.addEventListener("focusout", measure);
     return () => {
       window.removeEventListener("resize", measure);
+      window.removeEventListener(VIEWPORT_CHROME_EVENT, measure);
       document.removeEventListener("focusin", measure);
       document.removeEventListener("focusout", measure);
       observer?.disconnect();

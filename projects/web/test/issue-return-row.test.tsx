@@ -169,7 +169,10 @@ const setIntersecting = (isIntersecting: boolean) =>
  */
 function headerOf(height: number): HTMLElement {
   const header = document.createElement("header");
-  header.getBoundingClientRect = () => ({ height }) as DOMRect;
+  // At the top of the page, where the shell pins it: its bottom edge is
+  // what the scroll insets read, its height what the row sits under.
+  header.getBoundingClientRect = () =>
+    ({ height, top: 0, bottom: height }) as DOMRect;
   document.body.append(header);
   return header;
 }
@@ -210,7 +213,11 @@ describe("IssueReturnRow (T-154)", () => {
     // observer is rebuilt with the measurement.
     await waitFor(() => {
       expect(observerOptions?.rootMargin).toBe("-97px 0px 0px 0px");
-      expect(bar.closest<HTMLElement>(".sticky")?.style.top).toBe("97px");
+      expect(
+        bar
+          .closest<HTMLElement>(".sticky")
+          ?.style.getPropertyValue("--row-top"),
+      ).toBe("97px");
     });
   });
 

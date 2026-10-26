@@ -36,6 +36,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MD_UP, SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { cn } from "@/lib/utils";
+import { useVisualViewportInsets } from "@/lib/viewport-chrome.ts";
 
 export function AppShell({
   me,
@@ -118,6 +119,7 @@ export function AppShell({
   // searches this project, so it sits with the project's own controls rather
   // than up among the account ones.
   const hasProjectRow = !useMediaQuery(SM_UP);
+  useVisualViewportInsets();
   const project = useQuery({
     ...projectQuery(slug ?? ""),
     enabled: slug != null,
@@ -146,7 +148,16 @@ export function AppShell({
           )}
         >
           <UnsavedChangesGuard />
-          <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
+          {/* Pinned to the visual viewport's top rather than the layout's, so a
+              keyboard-panned page keeps it on screen; `--header-hide` is
+              the share a page that opted in has slid away (T-585). */}
+          <header
+            data-header-follow=""
+            className="sticky z-40 border-b bg-background/95 backdrop-blur"
+            style={{
+              top: "calc(var(--vv-top, 0px) - var(--header-hide, 0px))",
+            }}
+          >
             {/* `relative` is the anchor the collapsed search expands against. */}
             <div className="relative mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
               {/* Sized by its own content (`flex-auto`, not `flex-1`), which

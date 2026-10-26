@@ -97,6 +97,7 @@ import { useScrollInsets } from "@/lib/scroll-insets.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
 import { cn } from "@/lib/utils";
+import { useAutoHideHeader } from "@/lib/viewport-chrome.ts";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -130,6 +131,7 @@ export function IssueDetailPage() {
   // keeps it below `sm`; from there it travels with the heading, inside the
   // column until the viewport leaves a gutter to hang it in.
   const headingCarriesBack = useMediaQuery(SM_UP);
+  useAutoHideHeader(!headingCarriesBack);
   const backFloats = useMediaQuery(XL_UP);
   const membership = members.data.find((m) => m.user.id === me.data.id);
   const isAdmin = membership?.role === "admin";
@@ -244,9 +246,12 @@ export function IssueDetailPage() {
                   // A folded composer (T-532) is one line on a wide screen and
                   // only a floating button on a phone, whose strip lets the
                   // page show and take touches around it. Its bottom keeps
-                  // clear of where a phone's edge swipes start.
+                  // clear of where a phone's edge swipes start, and rides the
+                  // visual viewport's edge rather than the layout's, so the
+                  // box an on-screen keyboard opened stays above it (T-585).
+                  style={{ bottom: "var(--vv-bottom, 0px)" }}
                   className={cn(
-                    "sticky bottom-0 z-10 border-t bg-background pt-3 pb-4",
+                    "sticky z-10 border-t bg-background pt-3 pb-4",
                     "has-[[data-collapsed]]:py-2 max-sm:has-[[data-collapsed]]:pb-4",
                     "max-sm:has-[[data-composer-opener]]:pointer-events-none max-sm:has-[[data-composer-opener]]:border-transparent max-sm:has-[[data-composer-opener]]:bg-transparent max-sm:has-[[data-composer-opener]]:pt-0",
                   )}

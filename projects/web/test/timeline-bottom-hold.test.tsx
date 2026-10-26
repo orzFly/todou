@@ -72,9 +72,14 @@ async function open(hash = "") {
   vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
     HEIGHT,
   );
+  vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(
+    VIEWPORT,
+  );
   let bottoms = 0;
   vi.spyOn(window, "scrollTo").mockImplementation((...args: unknown[]) => {
-    if (args[1] === HEIGHT) {
+    // The largest offset there is, never `scrollHeight` itself: iOS takes
+    // the overshoot literally for a frame and shows a blank screen (T-585).
+    if (args[1] === HEIGHT - VIEWPORT) {
       bottoms += 1;
       state.y = HEIGHT - VIEWPORT;
     }

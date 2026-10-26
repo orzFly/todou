@@ -130,7 +130,7 @@ function stubHeights() {
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
     function (this: Element) {
       const height = Number((this as HTMLElement).dataset?.h ?? 0);
-      return { height, width: 0, top: 0, left: 0 } as DOMRect;
+      return { height, width: 0, top: 0, left: 0, bottom: height } as DOMRect;
     },
   );
 }
@@ -162,6 +162,7 @@ const insets = () => ({
 describe("useScrollInsets (T-299)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     for (const header of document.querySelectorAll("header")) header.remove();
   });
 
@@ -176,6 +177,22 @@ describe("useScrollInsets (T-299)", () => {
 
     view.unmount();
     expect(insets()).toEqual({ top: "", bottom: "" });
+  });
+
+  it("keeps reveals clear of an on-screen keyboard (T-585)", () => {
+    stubHeights();
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(714);
+    // The keyboard is up and the page has been panned 100px down the layout
+    // viewport: the top 100 and the bottom 237 are both out of sight.
+    const vv = new EventTarget();
+    Object.defineProperties(vv, {
+      offsetTop: { value: 100 },
+      height: { value: 377 },
+      scale: { value: 1 },
+    });
+    vi.stubGlobal("visualViewport", vv);
+    render(createElement(Harness, { composer: "mounted" }));
+    expect(insets()).toEqual({ top: "148px", bottom: "330px" });
   });
 
   it("counts a ref pointing at nothing as no overlay", () => {
