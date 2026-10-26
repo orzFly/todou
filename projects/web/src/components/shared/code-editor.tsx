@@ -11,6 +11,7 @@ import {
 } from "@codemirror/view";
 import { useEffect, useImperativeHandle, useRef } from "react";
 
+import { compositionSafeMeasure } from "@/lib/editor/composition-safe-measure.ts";
 import { parkedTooltip } from "@/lib/editor/parked-tooltip.ts";
 import { tooltipSpace } from "@/lib/editor/tooltip-space.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
@@ -261,6 +262,7 @@ export function CodeEditor({
         extensions: [
           history(),
           drawSelection(),
+          compositionSafeMeasure,
           // Without this CM silently collapses every extra range, which is
           // what makes Mod-D look like a no-op.
           EditorState.allowMultipleSelections.of(true),
