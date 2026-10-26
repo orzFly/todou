@@ -1,0 +1,9 @@
+todou v0.6.6
+
+/me actions from the composer and todou me, deleting attachments, pasting
+formatted text as Markdown, todou upgrade, todou watch --mine, and a phone
+layout that gives the screen back to the reading.
+
+Three additive migrations run on first start; nothing breaking. Quieting a
+card is now a one-shot snooze. Upgrade the server first: an older CLI works
+against it, and a 0.6.6 CLI's new commands need a 0.6.6 server.
