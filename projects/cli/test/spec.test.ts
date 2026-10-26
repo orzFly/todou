@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SPEC_MAX_FILE_CHARS, SPEC_MAX_FILES } from "@todou/shared";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { specVerdict } from "../src/commands/spec.ts";
 import * as specWait from "../src/spec-wait.ts";
 import { fakeFetch, type Route, runCli } from "./harness.ts";
@@ -20,8 +20,13 @@ const ENV = {
   TODOU_PROJECT: "proj",
 };
 
+/* Every spec dir below is made inside this, so one removal covers them all,
+ * whether or not the test that made it reached a `finally`. */
+const root = mkdtempSync(join(tmpdir(), "todou-spec-"));
+afterAll(() => rmSync(root, { recursive: true, force: true }));
+
 function specDir(files: Record<string, string>): string {
-  const dir = mkdtempSync(join(tmpdir(), "todou-spec-"));
+  const dir = mkdtempSync(join(root, "set-"));
   for (const [path, body] of Object.entries(files)) {
     mkdirSync(join(dir, path, ".."), { recursive: true });
     writeFileSync(join(dir, path), body);

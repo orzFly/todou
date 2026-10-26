@@ -809,6 +809,7 @@ describe("pi detection", () => {
 
   it("reads a flat --session-dir, filtering foreign projects by header cwd", () => {
     const flat = mkdtempSync(join(tmpdir(), "todou-pi-flat-"));
+    procRoots.push(flat);
     // Under --session-dir every project lands in one directory, so the newest
     // file there is often somebody else's.
     writeSession({

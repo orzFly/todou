@@ -9,6 +9,11 @@ import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
 const home = mkdtempSync(join(tmpdir(), "todou-codex-home-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
+/* Every fresh $CODEX_HOME below is made inside this, so one removal covers
+ * them all — including the ones built inside an `it.each` row. */
+const states = mkdtempSync(join(tmpdir(), "todou-codex-state-"));
+afterAll(() => rmSync(states, { recursive: true, force: true }));
+
 const TID = "01900000-0000-7000-8000-000000000001";
 
 /* An unreadable process tree, so a tie is decided by the registry order
@@ -44,7 +49,7 @@ const responseLine = JSON.stringify({
  */
 function codexHome(
   lines?: string[],
-  base = mkdtempSync(join(tmpdir(), "todou-codex-state-")),
+  base = mkdtempSync(join(states, "home-")),
 ): string {
   if (lines) {
     const dir = join(base, "sessions", "2026", "01", "02");

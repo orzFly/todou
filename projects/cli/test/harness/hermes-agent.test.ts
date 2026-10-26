@@ -9,6 +9,11 @@ import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
 const home = mkdtempSync(join(tmpdir(), "todou-hermes-home-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
+/* Every fresh $HERMES_HOME below is made inside this, so one removal covers
+ * them all — including the ones built inside an `it.each` row. */
+const states = mkdtempSync(join(tmpdir(), "todou-hermes-state-"));
+afterAll(() => rmSync(states, { recursive: true, force: true }));
+
 const KEY = "agent:main:telegram:dm:1000001";
 const SID = "20260101_000000_abcd1234";
 
@@ -28,7 +33,7 @@ function hermesHome(rows?: {
   routing?: [key: string, entryJson: string, updatedAt: number][];
   bare?: boolean;
 }): string {
-  const dir = mkdtempSync(join(tmpdir(), "todou-hermes-state-"));
+  const dir = mkdtempSync(join(states, "home-"));
   mkdirSync(dir, { recursive: true });
   if (rows) {
     const db = new sqlite.DatabaseSync(join(dir, "state.db"));
