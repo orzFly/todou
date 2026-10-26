@@ -275,6 +275,39 @@ describe("list row assignee picker (T-533)", () => {
     expect(onToggle).toHaveBeenCalledWith(3);
   });
 
+  // A scroll starts with a finger landing on whatever is under it, and the
+  // browser only follows with a click when the finger lifted without moving.
+  it("waits for a touch to become a tap before opening (T-596)", async () => {
+    const view = renderMeta(() => {});
+    const button = await view.findByRole("button", { name: "Edit assignees" });
+    fireEvent.pointerDown(button, { button: 0, pointerType: "touch" });
+    await act(async () => {});
+    expect(view.queryByRole("menu")).toBeNull();
+    fireEvent.click(button);
+    await view.findByRole("menuitem", { name: /newcomer/ });
+  });
+
+  it("opens the status menu on a tap, not a touch (T-596)", async () => {
+    const view = renderMeta(() => {});
+    const pill = await view.findByRole("button", { name: "Todo" });
+    fireEvent.pointerDown(pill, { button: 0, pointerType: "touch" });
+    await act(async () => {});
+    expect(view.queryByRole("menu")).toBeNull();
+    fireEvent.click(pill);
+    await view.findByRole("menuitem", { name: /Todo/ });
+  });
+
+  it("closes again on a second tap of the trigger (T-596)", async () => {
+    const view = renderMeta(() => {});
+    const button = await view.findByRole("button", { name: "Edit assignees" });
+    fireEvent.pointerDown(button, { button: 0, pointerType: "touch" });
+    fireEvent.click(button);
+    await view.findByRole("menu");
+    fireEvent.pointerDown(button, { button: 0, pointerType: "touch" });
+    fireEvent.click(button);
+    await waitFor(() => expect(view.queryByRole("menu")).toBeNull());
+  });
+
   it("has no assignee picker without a handler", async () => {
     const view = renderMeta(undefined);
     await view.findByText("issue 1");
