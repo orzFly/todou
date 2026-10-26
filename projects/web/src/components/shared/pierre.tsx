@@ -12,6 +12,7 @@ import {
   type Ref,
   Suspense,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -29,6 +30,55 @@ const LazyCodeView = lazy(() =>
       CodeViewProps & { ref?: Ref<CodeViewHandle<undefined>> }
     >,
   })),
+);
+
+/**
+ * CodeView with its tokenizing moved into pierre's worker pool (T-584). pierre
+ * tokenizes the whole file even when only a screenful of lines is drawn: 1 MiB
+ * of log held the tab for 9.3 s on the main thread, 0.2 s with the worker.
+ * The lines show as plain text at once, and their colours follow.
+ *
+ * The pool is a page-wide singleton that the last provider to unmount
+ * terminates, so it only exists while an attachment is on screen.
+ */
+const LazyWorkerCodeView = lazy(() =>
+  Promise.all([
+    import("@pierre/diffs/react"),
+    import("@pierre/diffs/worker/worker.js?worker"),
+  ]).then(([m, { default: PierreWorker }]) => {
+    const CodeView = m.CodeView as ComponentType<CodeViewProps>;
+    // The pool keeps the theme it was created with and overrides each
+    // view's own; a theme switch while it lives has to reach it here.
+    function ThemeSync({ theme }: { theme: SyntaxTheme }) {
+      const pool = m.useWorkerPool();
+      useEffect(() => {
+        pool?.setRenderOptions({ theme }).catch(() => {});
+      }, [pool, theme]);
+      return null;
+    }
+    function WorkerCodeView(props: CodeViewProps) {
+      const theme = useSyntaxTheme();
+      const [poolOptions] = useState(() => ({
+        workerFactory: () => new PierreWorker(),
+        // One file is open at a time; each worker loads its own highlighter.
+        poolSize: 2,
+      }));
+      const [highlighterOptions] = useState(() => ({
+        theme,
+        preferredHighlighter: PIERRE_HIGHLIGHTER,
+      }));
+      return (
+        <m.WorkerPoolContextProvider
+          poolOptions={poolOptions}
+          highlighterOptions={highlighterOptions}
+        >
+          <ThemeSync theme={theme} />
+          <CodeView {...props} />
+        </m.WorkerPoolContextProvider>
+      );
+    }
+    return { default: WorkerCodeView };
+  }),
 );
 
 export const LazyMultiFileDiff = lazy(() =>
@@ -341,6 +391,7 @@ export function CodeBlock({
   contents,
   lineNumbers = false,
   plain = false,
+  offThread = false,
   className,
 }: {
   filename: string;
@@ -353,6 +404,12 @@ export function CodeBlock({
    * log where plain text took 0.16 s (T-582).
    */
   plain?: boolean;
+  /**
+   * Tokenize in pierre's worker pool. Only pays off with `className` capping
+   * the height: uncapped, laying out every line of 1 MiB still held the main
+   * thread for 2.2 s (T-584).
+   */
+  offThread?: boolean;
   /** Caps the height for a long file: CodeView virtualizes against its box. */
   className?: string;
 }) {
@@ -398,12 +455,14 @@ export function CodeBlock({
   // Highlighting fails per grammar rather than per input, so a block that has
   // gone plain stays plain: re-arming it would only repeat the same failure.
   if (degraded) return <PlainCodeFallback contents={contents} />;
+  // Plain text has nothing to tokenize, so no worker to start for it.
+  const View = offThread && !plain ? LazyWorkerCodeView : LazyCodeView;
   return (
     <CodeViewBoundary contents={contents}>
       {!ready && <PlainCodeFallback contents={contents} />}
       <div style={ready ? undefined : { visibility: "hidden" }}>
         <Suspense fallback={null}>
-          <LazyCodeView
+          <View
             items={items}
             options={options}
             className={className}

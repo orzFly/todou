@@ -1,4 +1,5 @@
 import {
+  CodeIcon,
   DownloadIcon,
   FileCode2Icon,
   FileDiffIcon,
@@ -8,6 +9,7 @@ import {
   MinimizeIcon,
 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { PatchView } from "@/components/shared/patch-view.tsx";
 import { CodeBlock } from "@/components/shared/pierre.tsx";
@@ -18,7 +20,10 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { documentKind } from "@/lib/attachment-preview.ts";
+import {
+  documentKind,
+  MARKDOWN_RENDER_MAX_CHARS,
+} from "@/lib/attachment-preview.ts";
 import { cn } from "@/lib/utils";
 
 /** "plain": the text as it is, for a file too large to render (T-582). */
@@ -63,9 +68,14 @@ export function DocumentView({
 }) {
   if (render === "markdown") {
     return (
-      <MarkdownView slug={slug} issueNumber={issueNumber} embedded>
-        {text}
-      </MarkdownView>
+      <MarkdownDocument
+        filename={filename}
+        text={text}
+        slug={slug}
+        issueNumber={issueNumber}
+        clipped={clipped}
+        toolbar={toolbar}
+      />
     );
   }
   if (render === "patch") {
@@ -80,20 +90,98 @@ export function DocumentView({
       />
     );
   }
-  if (render === "plain") {
-    return (
+  return (
+    <CodeBlock
+      filename={filename}
+      contents={text}
+      lineNumbers
+      plain={render === "plain"}
+      offThread
+      className={capped(clipped)}
+    />
+  );
+}
+
+/** CodeView virtualizes against its own box, so a whole file needs one. */
+function capped(clipped: boolean): string {
+  return clipped ? "max-h-80 overflow-hidden" : "max-h-[70vh] overflow-auto";
+}
+
+/**
+ * Rendered, or the markdown as written; a large one opens as written
+ * (T-584), since the worker pool can take highlighting off the main thread
+ * but not react-markdown.
+ */
+function MarkdownDocument({
+  filename,
+  text,
+  slug,
+  issueNumber,
+  clipped,
+  toolbar,
+}: {
+  filename: string;
+  text: string;
+  slug?: string;
+  issueNumber?: number;
+  clipped: boolean;
+  toolbar?: HTMLElement | null;
+}) {
+  const large = text.length > MARKDOWN_RENDER_MAX_CHARS;
+  const [source, setSource] = useState(large);
+  const control = (
+    <Button
+      type="button"
+      size="xs"
+      variant="ghost"
+      aria-pressed={source}
+      title={
+        source ? "Back to the rendered document" : "The markdown as written"
+      }
+      className={cn(
+        "font-normal text-muted-foreground",
+        source && "bg-muted text-foreground",
+      )}
+      onClick={() => setSource((shown) => !shown)}
+    >
+      <CodeIcon />
+      source
+    </Button>
+  );
+  const body = source ? (
+    <>
+      {large && (
+        <p className="mb-2 text-xs text-muted-foreground">
+          Too large to render automatically.
+        </p>
+      )}
       <CodeBlock
         filename={filename}
         contents={text}
         lineNumbers
-        plain
-        className={
-          clipped ? "max-h-80 overflow-hidden" : "max-h-[70vh] overflow-auto"
-        }
+        offThread
+        className={capped(clipped)}
       />
+    </>
+  ) : (
+    <MarkdownView slug={slug} issueNumber={issueNumber} embedded>
+      {text}
+    </MarkdownView>
+  );
+  if (toolbar === undefined) {
+    return (
+      <>
+        <div className="mb-1 flex justify-end">{control}</div>
+        {body}
+      </>
     );
   }
-  return <CodeBlock filename={filename} contents={text} lineNumbers />;
+  return (
+    <>
+      {toolbar !== null && createPortal(control, toolbar)}
+      {body}
+    </>
+  );
 }
 
 /**

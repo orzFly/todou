@@ -35,6 +35,14 @@ export const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
  */
 export const TEXT_PREVIEW_HARD_MAX_BYTES = 10 * 1024 * 1024;
 
+/**
+ * Past this a markdown document opens as its source, and renders on request
+ * (T-584). The worker pool spares highlighting, not react-markdown's tree:
+ * 64 KiB of dense markdown blocked the tab for 1.0 s and 256 KiB for 3.4 s.
+ * Counted in characters, since the text is already decoded by then.
+ */
+export const MARKDOWN_RENDER_MAX_CHARS = 128 * 1024;
+
 // Text formats the CLI/browser labels with an application/* type.
 const TEXT_APPLICATION_TYPES = new Set([
   "application/json",
