@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
+  useLocation,
   useMatches,
   useNavigate,
   useParams,
@@ -36,7 +37,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MD_UP, SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { cn } from "@/lib/utils";
-import { useVisualViewportInsets } from "@/lib/viewport-chrome.ts";
+import {
+  useAutoHideHeader,
+  useVisualViewportInsets,
+} from "@/lib/viewport-chrome.ts";
 
 export function AppShell({
   me,
@@ -120,6 +124,10 @@ export function AppShell({
   // than up among the account ones.
   const hasProjectRow = !useMediaQuery(SM_UP);
   useVisualViewportInsets();
+  // Below `sm` on every page, the one-row ones too, so whether the header
+  // slides away never depends on which page the reader is on (T-594).
+  const pathname = useLocation({ select: (location) => location.pathname });
+  useAutoHideHeader(hasProjectRow, pathname);
   const project = useQuery({
     ...projectQuery(slug ?? ""),
     enabled: slug != null,
@@ -150,7 +158,7 @@ export function AppShell({
           <UnsavedChangesGuard />
           {/* Pinned to the visual viewport's top rather than the layout's, so a
               keyboard-panned page keeps it on screen; `--header-hide` is
-              the share a page that opted in has slid away (T-585). */}
+              the share it has slid away on a phone (T-585, T-594). */}
           <header
             data-header-follow=""
             className="sticky z-40 border-b bg-background/95 backdrop-blur"

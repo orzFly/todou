@@ -94,13 +94,12 @@ describe("auto-hiding header (T-585)", () => {
     document.body.append(header);
   });
 
+  function Probe({ enabled, page }: { enabled: boolean; page?: string }) {
+    useAutoHideHeader(enabled, page);
+    return null;
+  }
   function mount(enabled = true) {
-    return render(
-      createElement(() => {
-        useAutoHideHeader(enabled);
-        return null;
-      }),
-    );
+    return render(createElement(Probe, { enabled }));
   }
   const hidden = () => root.style.getPropertyValue("--header-hide");
   const scrollTo = (next: number) => {
@@ -184,5 +183,18 @@ describe("auto-hiding header (T-585)", () => {
     expect(hidden()).not.toBe("");
     on.unmount();
     expect(hidden()).toBe("");
+  });
+
+  it("comes back in view on the next page (T-594)", () => {
+    const view = render(createElement(Probe, { enabled: true, page: "/a" }));
+    touch("touchstart");
+    scrollTo(2150);
+    expect(hidden()).toBe(`${HEADER}px`);
+    view.rerender(createElement(Probe, { enabled: true, page: "/b" }));
+    expect(hidden()).toBe("");
+    // And still follows the reader there.
+    touch("touchstart");
+    scrollTo(2180);
+    expect(hidden()).toBe("30px");
   });
 });

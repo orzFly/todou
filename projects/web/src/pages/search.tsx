@@ -41,7 +41,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
-import { useHeaderHeight } from "@/lib/use-header-height.ts";
+import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
 import { SM_UP } from "@/lib/use-media-query.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
@@ -179,7 +179,7 @@ export function SearchResults({
     rows: () => returnRows(rootRef.current),
     inset: () =>
       resultsStickyTop(
-        headerHeight,
+        headerBottom(),
         headingRef.current?.getBoundingClientRect().height ?? 0,
         // `SM_UP` is the same breakpoint the heading's `sm:sticky` names.
         window.matchMedia(SM_UP).matches,

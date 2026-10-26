@@ -97,7 +97,6 @@ import { useScrollInsets } from "@/lib/scroll-insets.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
 import { cn } from "@/lib/utils";
-import { useAutoHideHeader } from "@/lib/viewport-chrome.ts";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -131,7 +130,6 @@ export function IssueDetailPage() {
   // keeps it below `sm`; from there it travels with the heading, inside the
   // column until the viewport leaves a gutter to hang it in.
   const headingCarriesBack = useMediaQuery(SM_UP);
-  useAutoHideHeader(!headingCarriesBack);
   const backFloats = useMediaQuery(XL_UP);
   const membership = members.data.find((m) => m.user.id === me.data.id);
   const isAdmin = membership?.role === "admin";

@@ -42,6 +42,29 @@ export function useHeaderHeight(): number {
 }
 
 /**
+ * A sticky `top` for a layer pinned `offset` pixels under the header's top:
+ * the header follows the visual viewport (`--vv-top`) and slides away on a
+ * phone (`--header-hide`, T-594), and a layer that did not do the same would
+ * open a strip between the two. Pair it with `data-header-follow`, so the
+ * layer also settles on the header's own transition.
+ */
+export function belowHeader(offset: number): string {
+  return `calc(${offset}px + var(--vv-top, 0px) - var(--header-hide, 0px))`;
+}
+
+/**
+ * Where the header ends in the viewport right now, which is less than its
+ * height while it is sliding away. For insets read at the moment they are
+ * used, rather than rendered.
+ */
+export function headerBottom(): number {
+  const appbar = document.querySelector("header");
+  return appbar === null
+    ? 0
+    : Math.max(0, appbar.getBoundingClientRect().bottom);
+}
+
+/**
  * The live height of one element, for stacking a second sticky layer under
  * the header. `fallback` stands in until the first measurement, and while
  * `ResizeObserver` is missing (happy-dom, older engines).

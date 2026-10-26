@@ -70,9 +70,14 @@ const READER_WINDOW_MS = 600;
 /**
  * Slide the shell header away while the reader scrolls down, and back as they
  * scroll up, the way Safari's own toolbar does — published as
- * `--header-hide`, the number of pixels currently out of view. Opt-in per
- * page, and only while `enabled` (a phone, where the header's two rows are a
- * sixth of the screen).
+ * `--header-hide`, the number of pixels currently out of view. Mounted once,
+ * by the shell, and only `enabled` below `sm`, where the header grows a second
+ * row on a screen that has the least room for it (T-594).
+ * Every layer pinned beneath the header subtracts the same variable, which is
+ * what keeps the seam between them shut while it moves.
+ *
+ * `page` resets it: the header arrives in view on every new page, the same
+ * as it would after a full load.
  *
  * Only the reader's own scrolling moves it: a landing at the end of the
  * timeline or an anchor jump is the page placing itself, and arriving to a
@@ -82,7 +87,8 @@ const READER_WINDOW_MS = 600;
  * Once scrolling stops the header settles fully in or fully out, as Safari's
  * does; a header left half-cut reads as broken.
  */
-export function useAutoHideHeader(enabled: boolean): void {
+export function useAutoHideHeader(enabled: boolean, page?: string): void {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `page` only restarts it
   useEffect(() => {
     const header = document.querySelector<HTMLElement>("header");
     if (!enabled || header === null) return;
@@ -169,5 +175,5 @@ export function useAutoHideHeader(enabled: boolean): void {
       root.removeAttribute("data-header-settling");
       announce();
     };
-  }, [enabled]);
+  }, [enabled, page]);
 }

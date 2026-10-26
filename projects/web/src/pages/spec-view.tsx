@@ -129,9 +129,14 @@ import {
   computeVersionStats,
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
-import { useElementHeight, useHeaderHeight } from "@/lib/use-header-height.ts";
+import {
+  belowHeader,
+  useElementHeight,
+  useHeaderHeight,
+} from "@/lib/use-header-height.ts";
 import { LG_UP, SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
 import { cn } from "@/lib/utils.ts";
+import { VIEWPORT_CHROME_EVENT } from "@/lib/viewport-chrome.ts";
 
 /** What ↑↓ stops on: both kinds of "changed since the baseline" mark (T-158). */
 const CHANGED_SELECTOR = ".spec-changed, .spec-ins-block";
@@ -508,9 +513,13 @@ function SpecViewBody({
     measure();
     window.addEventListener("scroll", measure, { passive: true });
     window.addEventListener("resize", measure);
+    // The row also moves with no scroll at all, when the header settles in or
+    // out after the finger lifts (T-594).
+    window.addEventListener(VIEWPORT_CHROME_EVENT, measure);
     return () => {
       window.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
+      window.removeEventListener(VIEWPORT_CHROME_EVENT, measure);
     };
   }, [wide]);
   // Back at the top the controls are in view anyway, and a pin left set would
@@ -1444,7 +1453,8 @@ function SpecViewBody({
           wrapped rows pinned there took 205 of a phone's 844px (T-593). */}
       <div
         ref={toolbarRef}
-        style={{ top: headerHeight }}
+        data-header-follow=""
+        style={{ top: belowHeader(headerHeight) }}
         className={cn(
           "sticky z-30 -mx-2 border-b bg-background/95 px-2 py-2 backdrop-blur",
           wide
@@ -1543,7 +1553,8 @@ function SpecViewBody({
         <div
           id={controlsId}
           ref={controlsRef}
-          style={controlsPinned ? { top: headerHeight + toolbarHeight } : {}}
+          data-header-follow=""
+          style={controlsPinned ? { top: belowHeader(stickyTop) } : {}}
           className={cn(
             "-mx-2 space-y-1.5 border-b px-2 pb-2",
             controlsPinned && "sticky z-30 bg-background/95 backdrop-blur",
@@ -2231,7 +2242,8 @@ function SpecStackFrame({
   return (
     <div className="overflow-clip rounded-lg border">
       <div
-        style={{ top: stickyTop }}
+        data-header-follow=""
+        style={{ top: belowHeader(stickyTop) }}
         className="sticky z-20 border-b bg-background/95 px-3 py-1.5 font-mono text-xs backdrop-blur"
       >
         {header}

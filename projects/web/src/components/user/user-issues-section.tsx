@@ -23,7 +23,7 @@ import {
 } from "@/components/shared/return-context.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
-import { useHeaderHeight } from "@/lib/use-header-height.ts";
+import { headerBottom } from "@/lib/use-header-height.ts";
 import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
@@ -122,7 +122,6 @@ export function UserIssuesSection({
   const first = useQuery(query);
   const grid = useIssueListGrid();
   const queryClient = useQueryClient();
-  const headerHeight = useHeaderHeight();
   const rootRef = useRef<HTMLElement>(null);
   const cancelRestore = useCancelReturnRestore();
 
@@ -190,7 +189,7 @@ export function UserIssuesSection({
     region: WINDOW_REGION,
     element: () => null,
     rows: () => returnRows(rootRef.current),
-    inset: () => headerHeight,
+    inset: headerBottom,
     axis: "y",
   });
 

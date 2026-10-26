@@ -30,7 +30,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ProjectRefOption } from "@/lib/project-spellings.ts";
 import { INBOX_TABS, type InboxTab, WINDOW_REGION } from "@/lib/return-view.ts";
-import { useHeaderHeight } from "@/lib/use-header-height.ts";
+import { headerBottom } from "@/lib/use-header-height.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
@@ -103,7 +103,6 @@ export function InboxPage() {
     inboxQuery.queryKey,
   );
   const rootRef = useRef<HTMLDivElement>(null);
-  const headerHeight = useHeaderHeight();
   const cancelRestore = useCancelReturnRestore();
 
   // Declared rather than left out, so that the inbox having no Load more is a
@@ -118,7 +117,7 @@ export function InboxPage() {
     region: WINDOW_REGION,
     element: () => null,
     rows: () => returnRows(rootRef.current),
-    inset: () => headerHeight,
+    inset: headerBottom,
     axis: "y",
   });
   // The URL selects the tab. Keep it in the snapshot too so the detail page

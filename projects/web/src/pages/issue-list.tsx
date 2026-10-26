@@ -92,7 +92,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
-import { useHeaderHeight } from "@/lib/use-header-height.ts";
+import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
 import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
@@ -211,6 +211,11 @@ export function ProjectIssueListPage({
   const headerHeight = useHeaderHeight();
   const rootRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  // The page is its own skeleton until the counts land, with no toolbar to
+  // measure; without this the effect never ran again, and the group headers
+  // pinned at the 56px fallback, under the phone's 93px header (T-594).
+  const toolbarMounted = counts.data !== undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: toolbarMounted re-runs it once the refs exist
   useLayoutEffect(() => {
     const root = rootRef.current;
     const toolbar = toolbarRef.current;
@@ -232,7 +237,7 @@ export function ProjectIssueListPage({
       window.removeEventListener("resize", measure);
       observer.disconnect();
     };
-  }, [headerHeight]);
+  }, [headerHeight, toolbarMounted]);
 
   // One region for the whole page: both bodies scroll with the window, and a
   // group is not a scrolling element of its own — only its header pins.
@@ -250,7 +255,7 @@ export function ProjectIssueListPage({
     rows: () => returnRows(rootRef.current),
     inset: () =>
       groupStickyTop(
-        headerHeight,
+        headerBottom(),
         toolbarRef.current?.getBoundingClientRect().height ?? 0,
         window.matchMedia("(min-width: 640px)").matches,
       ),
@@ -406,7 +411,6 @@ export function TrashView({
   const issues = useSuspenseQuery(issuesQuery(slug, search));
   const restore = useRestoreIssueMutation();
   const grid = useIssueListGrid();
-  const headerHeight = useHeaderHeight();
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Declared rather than left out, so that the trash having no Load more is a
@@ -418,7 +422,7 @@ export function TrashView({
     region: WINDOW_REGION,
     element: () => null,
     rows: () => returnRows(rootRef.current),
-    inset: () => headerHeight,
+    inset: headerBottom,
     axis: "y",
   });
   // The rows are in this very render's output, `useSuspenseQuery` having
@@ -858,8 +862,11 @@ function IssueGroup({
           those notches always fall back to the page colour, the same backdrop
           the gaps between groups have (T-167). */}
       <div
+        data-header-follow=""
         className="sticky z-20 bg-background"
-        style={{ top: "var(--group-sticky-top, 56px)" }}
+        style={{
+          top: "calc(var(--group-sticky-top, 56px) + var(--vv-top, 0px) - var(--header-hide, 0px))",
+        }}
       >
         <div className="flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm">
           <span

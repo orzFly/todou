@@ -31,7 +31,7 @@ import {
   Suspense,
   useSyncExternalStore,
 } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boardColumnQuery } from "../src/api/board.ts";
 import {
   issueCountsQuery,
@@ -1507,6 +1507,20 @@ function mountUser(
 }
 
 describe("the user page", () => {
+  // The inset is read off the shell header's live bottom edge, which slides
+  // away on a phone (T-594); this one stands still at the desktop height.
+  let header: HTMLElement;
+  beforeEach(() => {
+    header = document.createElement("header");
+    vi.spyOn(header, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 56,
+      height: 56,
+    } as DOMRect);
+    document.body.prepend(header);
+  });
+  afterEach(() => header.remove());
+
   it("replays its one flat lane under the filters the URL carries", async () => {
     const view = mountUser(
       "/users/alice?role=assignee&state=all",
@@ -1675,9 +1689,8 @@ describe("the user page", () => {
         });
         await settleUntil(settled(view.router));
         expect(entryOf(view.router).pending).toBeUndefined();
-        // Final row top minus the real fallback shell inset (56, less the
-        // border overlap) and saved offset.
-        expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 55 - 25 }]);
+        // Final row top minus the shell header's bottom edge and saved offset.
+        expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
       } finally {
         userCalendarModule.wait = null;
         moduleGate.resolve();
@@ -1728,7 +1741,7 @@ describe("the user page", () => {
           region: "window",
           x: 0,
           y: 400,
-          candidates: [{ id: "11", offset: 145 }],
+          candidates: [{ id: "11", offset: 144 }],
         },
       ]);
       refreshing = true;
@@ -1873,7 +1886,7 @@ describe("the user page", () => {
           expect(legendLevels(view.container)).toBeGreaterThan(1);
           await settleUntil(settled(view.router));
           expect(entryOf(view.router).pending).toBeUndefined();
-          expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 55 - 25 }]);
+          expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
         }
         await act(async () => {
           refetch.resolve();
@@ -1885,7 +1898,7 @@ describe("the user page", () => {
         expect(entryOf(view.router).pending).toBeUndefined();
         expect(rowIds(view.container)).toEqual(["11", "12"]);
         expect(view.router.state.location.search).toEqual(search);
-        expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 55 - 25 }]);
+        expect(restoreScrolls(scrollTo)).toEqual([{ top: 950 - 56 - 25 }]);
       } finally {
         replay.resolve(USER_PAGES.u1!);
         refetch.resolve();
