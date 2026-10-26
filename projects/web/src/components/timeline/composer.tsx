@@ -332,6 +332,13 @@ const ACTION_WITH_FILES =
 /** The folded phone composer's button, which opens the box (T-532). */
 const OPENER = "[data-composer-opener]";
 
+/**
+ * The watchers line and the list it opens (T-540). Reading who is watching
+ * is not starting a comment: unfolding the box under the list would move the
+ * list's own anchor while it opens (T-586).
+ */
+const WATCHERS = "[data-composer-watchers]";
+
 const NO_WATCHERS: readonly Watcher[] = [];
 
 /**
@@ -374,8 +381,12 @@ function useEngaged(root: RefObject<HTMLElement | null>): boolean {
     const focusIn = (event: FocusEvent) => {
       // The opener is focused by the very press that opens it, and unfolding
       // then would pull it out from under that press before its click
-      // arrives. Its click focuses the editor instead.
-      if (event.target instanceof Element && event.target.closest(OPENER)) {
+      // arrives. Its click focuses the editor instead. The watchers list
+      // leaves a folded box folded and an open one open.
+      if (
+        event.target instanceof Element &&
+        event.target.closest(`${OPENER}, ${WATCHERS}`)
+      ) {
         return;
       }
       setEngaged(true);

@@ -948,6 +948,43 @@ describe("Composer folding", () => {
     await waitFor(() => expect(folded(view)).toBe(false));
     expect(document.activeElement).toBe(cmView(view.container).contentDOM);
   });
+
+  it("leaves the box as it was when the watchers list opens (T-586)", async () => {
+    const view = mount({ atEnd: true, watchers: [watcher(CLAUDE)] });
+    const line = view.container.querySelector(
+      "[data-composer-watchers] button",
+    ) as HTMLButtonElement;
+    const openList = async () => {
+      fireEvent.pointerDown(line);
+      fireEvent.pointerUp(line);
+      // Radix hands focus to the list the moment it opens.
+      act(() => line.click());
+      return waitFor(() => {
+        const found = document.querySelector<HTMLElement>(
+          '[data-slot="popover-content"]',
+        );
+        expect(found?.contains(document.activeElement)).toBe(true);
+        return found as HTMLElement;
+      });
+    };
+
+    // Unfolding under the list would move the line it hangs from.
+    await openList();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(folded(view)).toBe(true);
+    act(() => line.click());
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-slot="popover-content"]'),
+      ).toBeNull(),
+    );
+
+    cmFocus(view.container);
+    await waitFor(() => expect(folded(view)).toBe(false));
+    leaveFor(view, line);
+    await openList();
+    expect(folded(view)).toBe(false);
+  });
 });
 
 /**
