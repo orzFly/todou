@@ -243,17 +243,18 @@ export function IssueDetailPage() {
               {!trashed && (
                 <div
                   ref={composerRef}
-                  // A folded composer (T-532) is one line on a wide screen and
-                  // only a floating button on a phone, whose strip lets the
-                  // page show and take touches around it. Its bottom keeps
-                  // clear of where a phone's edge swipes start, and rides the
-                  // visual viewport's edge rather than the layout's, so the
-                  // box an on-screen keyboard opened stays above it (T-585).
+                  // A folded composer (T-532) is one line on a wide screen. On
+                  // a phone it does not float at all: it waits at the end of
+                  // the timeline as ordinary content, and a floating button
+                  // of its own stands in for it everywhere else (T-585). Its
+                  // bottom keeps clear of where a phone's edge swipes start,
+                  // and rides the visual viewport's edge rather than the
+                  // layout's, so the box an on-screen keyboard opened stays
+                  // above it.
                   style={{ bottom: "var(--vv-bottom, 0px)" }}
                   className={cn(
                     "sticky z-10 border-t bg-background pt-3 pb-4",
-                    "has-[[data-collapsed]]:py-2 max-sm:has-[[data-collapsed]]:pb-4",
-                    "max-sm:has-[[data-composer-opener]]:pointer-events-none max-sm:has-[[data-composer-opener]]:border-transparent max-sm:has-[[data-composer-opener]]:bg-transparent max-sm:has-[[data-composer-opener]]:pt-0",
+                    "has-[[data-collapsed]]:py-2 max-sm:has-[[data-collapsed]]:static max-sm:has-[[data-collapsed]]:pb-4",
                   )}
                 >
                   <Composer

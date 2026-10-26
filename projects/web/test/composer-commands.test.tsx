@@ -763,16 +763,23 @@ describe("Composer folding", () => {
     expect(maybeSubmit(view)).toBeNull();
   });
 
-  it("shows the folded box instead of the opener at the page end (T-538)", () => {
+  it("never swaps the folded box for the opener, only fades the opener (T-538, T-585)", () => {
     const hidden = (view: { container: HTMLElement }) =>
       view.container.querySelector('[class*="sr-only"]') !== null;
+    const layer = (view: { container: HTMLElement }) =>
+      opener(view)?.closest<HTMLElement>("[data-state]");
     const view = mount({ atEnd: true });
     expect(folded(view)).toBe(true);
-    expect(opener(view)).toBeNull();
+    // At the page end the box is on screen, so the opener stands aside —
+    // still mounted, so nothing appears or vanishes in the box's place.
+    expect(layer(view)?.dataset.state).toBe("hidden");
+    expect(layer(view)?.hasAttribute("inert")).toBe(true);
     expect(hidden(view)).toBe(false);
     view.rerender(view.tree(7, false));
-    expect(opener(view)).not.toBeNull();
-    expect(hidden(view)).toBe(true);
+    expect(layer(view)?.dataset.state).toBe("shown");
+    expect(layer(view)?.hasAttribute("inert")).toBe(false);
+    // The box itself looks the same either way: it is ordinary content.
+    expect(hidden(view)).toBe(false);
   });
 
   it("unfolds on entry and folds again once focus leaves an empty box", async () => {
@@ -949,6 +956,22 @@ describe("Composer folding", () => {
     expect(document.activeElement).toBe(cmView(view.container).contentDOM);
   });
 
+  it("unfolds before it focuses, and folds back if the focus never lands (T-585)", async () => {
+    const view = mount();
+    const content = cmView(view.container).contentDOM;
+    // Folded on a phone the box is static at the page end: a focus that
+    // reached it there would scroll the page down to it.
+    let foldedAtFocus: boolean | null = null;
+    const focus = vi.spyOn(content, "focus").mockImplementation(() => {
+      foldedAtFocus = folded(view);
+    });
+    (opener(view) as HTMLButtonElement).click();
+    expect(focus).toHaveBeenCalled();
+    expect(foldedAtFocus).toBe(false);
+    // The mocked focus went nowhere, so nothing engaged the box.
+    await waitFor(() => expect(folded(view)).toBe(true));
+  });
+
   it("leaves the box as it was when the watchers list opens (T-586)", async () => {
     const view = mount({ atEnd: true, watchers: [watcher(CLAUDE)] });
     const line = view.container.querySelector(
@@ -1056,9 +1079,11 @@ describe("Composer watchers", () => {
     );
   });
 
-  it("shows the line at the page end, where there is no opener", () => {
+  it("shows the line at the page end, where the opener stands aside", () => {
     const view = mount({ atEnd: true, watchers: [watcher(BOT)] });
-    expect(opener(view)).toBeNull();
+    expect(
+      opener(view)?.closest("[data-state]")?.getAttribute("data-state"),
+    ).toBe("hidden");
     expect(line(view)?.textContent).toContain("Bot One is watching this card");
   });
 

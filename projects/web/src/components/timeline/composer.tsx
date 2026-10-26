@@ -11,6 +11,7 @@ import type {
 import { COMMENT_HIDE_MAX_IDS } from "@todou/shared";
 import { MessageSquarePlusIcon, SendIcon } from "lucide-react";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import {
   api,
@@ -437,8 +438,9 @@ export function Composer({
   failed: PendingComment[];
   onRetry: (key: number) => void;
   /**
-   * The page is scrolled to where the dock sits in flow. A folded phone
-   * composer is a box there rather than a button (T-538): it covers nothing.
+   * The page is scrolled to where the dock sits in flow. On a phone that is
+   * where the folded box is, as ordinary content, and the floating button
+   * stands aside for it (T-538, T-585).
    */
   atEnd?: boolean;
   /** This card's card-level watchers (T-540). */
@@ -543,8 +545,11 @@ export function Composer({
   // then the one thing that can outlive the buttons explaining what to do
   // about it — and the next card drops it along with the draft it came from,
   // because `issue-detail.tsx` keys this component by card number (T-317).
-  const expanded = engaged || !empty || broken.length > 0;
-  const opener = !expanded && !atEnd;
+  //
+  // `opening` is the floating button's press, from the moment it lands until
+  // the focus it hands over does: see `open`.
+  const [opening, setOpening] = useState(false);
+  const expanded = engaged || opening || !empty || broken.length > 0;
   const label = submitLabel({
     uploading,
     running,
@@ -553,6 +558,21 @@ export function Composer({
     withComment: (parsed?.body ?? "") !== "" || staging.staged.length > 0,
     action: action !== null,
   });
+
+  /**
+   * Unfold, then focus, inside the button's own tap: iOS raises the keyboard
+   * only for a focus the tap itself makes. The unfold has to reach the DOM
+   * first — folded on a phone the box is static at the end of the page, and
+   * focusing it there would scroll the page down to it. Unfolded, the dock is
+   * sticky and the box is already at the bottom of the screen. `opening`
+   * stands down in the same render the focus engages the box in, so a focus
+   * that never lands folds it back.
+   */
+  function open() {
+    flushSync(() => setOpening(true));
+    editor.current?.focus();
+    setOpening(false);
+  }
 
   async function submit() {
     if (uploading || running) return;
@@ -653,9 +673,7 @@ export function Composer({
       {failed.map((entry) => (
         <div
           key={entry.key}
-          // Opaque and clickable over the see-through dock a folded phone
-          // composer leaves behind.
-          className="pointer-events-auto flex items-center justify-between rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-sm text-destructive"
+          className="flex items-center justify-between rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-sm text-destructive"
         >
           <span className="truncate">Failed to send: {entry.comment.body}</span>
           <Button
@@ -697,13 +715,10 @@ export function Composer({
           ))}
         </div>
       )}
-      {/* On a phone mid-timeline the floating button carries the watchers
-          instead, so the line would only cover the timeline twice. */}
       <ComposerWatchersLine
         slug={slug}
         issueNumber={issueNumber}
         watchers={watchers}
-        className={cn(opener && "max-sm:hidden")}
       />
       <form
         className="flex flex-col"
@@ -721,15 +736,8 @@ export function Composer({
               : "Write a comment…"
           }
           // Sticky at the viewport bottom: an auto-growing draft must not
-          // swallow the page, especially on small/mobile viewports. Folded on
-          // a phone away from the page end it leaves only the button below; `sr-only` rather than
-          // unmounted, because that button has to focus it inside the tap
-          // for iOS to raise the keyboard.
-          className={cn(
-            "max-h-[40dvh]",
-            expanded && "min-h-16",
-            opener && "max-sm:sr-only",
-          )}
+          // swallow the page, especially on small/mobile viewports.
+          className={cn("max-h-[40dvh]", expanded && "min-h-16")}
           extensions={extensions}
           onChange={setDraft}
           onPaste={staging.onPaste}
@@ -737,15 +745,31 @@ export function Composer({
           onDragOver={staging.onDragOver}
           onSubmit={() => void submit()}
         />
-        {/* Centred, not in a corner: the bottom corners are where a phone's
-            edge swipes start. */}
-        {opener && (
-          <div className="flex justify-center sm:hidden">
+        {/* A phone's way into a folded box it cannot see (T-532). A layer of
+            its own over the page rather than a state of the box: the box is
+            ordinary content at the end of the timeline, and the button fades
+            out while that box is on screen instead of turning into it — two
+            looks swapped in one spot flickered as the page scrolled past the
+            spot (T-585). Centred, not in a corner: the bottom corners are
+            where a phone's edge swipes start. */}
+        {!expanded && (
+          <div
+            inert={atEnd}
+            data-state={atEnd ? "hidden" : "shown"}
+            className={cn(
+              "pointer-events-none fixed inset-x-0 z-20 flex justify-center transition-opacity duration-150 sm:hidden",
+              atEnd && "opacity-0",
+            )}
+            style={{ bottom: "calc(var(--vv-bottom, 0px) + 1rem)" }}
+          >
             <Button
               type="button"
               data-composer-opener=""
-              className="pointer-events-auto rounded-full shadow-lg"
-              onClick={() => editor.current?.focus()}
+              className={cn(
+                "rounded-full shadow-lg",
+                !atEnd && "pointer-events-auto",
+              )}
+              onClick={open}
               aria-label={
                 watchers.length > 0 ? openerLabel(watchers) : undefined
               }
