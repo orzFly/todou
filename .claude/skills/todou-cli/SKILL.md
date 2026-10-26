@@ -112,9 +112,6 @@ todou spec wait 16 -p <proj> [--since <cursor>]                        # re-ente
 - A wait killed from outside (the harness stopping a background task) is your wake-up, not an error:
   restart it with the same cursor, every time.
 - Resume from the closing `cursor:` line.
-- `--mine` is scoped to the account, and a shared machine account holds every card its fleet took:
-  it suits an orchestrator owning those cards, while a worker watching its own card wants
-  `issue watch`. @-mentioning the shared account wakes every sibling's `--mine`, never your own.
 - `issue watch`, `todou watch` and `spec wait` skip entries from your own agent session rather than
   your whole account.
 
