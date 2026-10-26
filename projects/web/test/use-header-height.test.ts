@@ -24,20 +24,27 @@ describe("useHeaderHeight", () => {
     // The whole point of T-233: 56 is a fallback, not an answer. A header
     // that measures anything else has to come back as that.
     headerOf(97);
-    expect(renderHook(() => useHeaderHeight()).result.current).toBe(97);
+    expect(renderHook(() => useHeaderHeight()).result.current).toBe(96);
+  });
+
+  it("tucks the layer below one pixel under the header's border", () => {
+    // Pinned exactly at the measured edge, a fractional zoom in Firefox can
+    // leave a device-pixel row of page between the two (T-595).
+    headerOf(92.5);
+    expect(renderHook(() => useHeaderHeight()).result.current).toBe(91.5);
   });
 
   it("follows the header when it gains or loses a row", () => {
     const header = headerOf(97);
     const { result } = renderHook(() => useHeaderHeight());
-    expect(result.current).toBe(97);
+    expect(result.current).toBe(96);
 
     header.getBoundingClientRect = () => ({ height: 57 }) as DOMRect;
     act(() => window.dispatchEvent(new Event("resize")));
-    expect(result.current).toBe(57);
+    expect(result.current).toBe(56);
   });
 
   it("stands on the fallback until there is a header to measure", () => {
-    expect(renderHook(() => useHeaderHeight()).result.current).toBe(56);
+    expect(renderHook(() => useHeaderHeight()).result.current).toBe(55);
   });
 });

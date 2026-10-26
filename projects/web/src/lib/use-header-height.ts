@@ -4,10 +4,20 @@ import { useEffect, useState } from "react";
 const FALLBACK_HEADER_HEIGHT = 56;
 
 /**
- * The live height of the shell header, for anything that has to sit
- * directly beneath it. The header carries a second row of nav below sm, so
- * its height is a runtime value no CSS offset can name — measure it, as the
- * issue list's group headers do.
+ * How far a layer pinned beneath the header tucks up under its bottom border.
+ * Firefox at a fractional zoom (175%) can snap the header and the layer under
+ * it to different device-pixel rows, leaving one row of page showing between
+ * them; headless Firefox and Chromium never do, so no automated check here
+ * sees it (T-480, T-595). The header paints above every such layer, so the
+ * overlap is hidden behind the border.
+ */
+const BORDER_OVERLAP = 1;
+
+/**
+ * The live height of the shell header, less `BORDER_OVERLAP`, for anything
+ * that has to sit directly beneath it. The header carries a second row of nav
+ * below sm, so its height is a runtime value no CSS offset can name — measure
+ * it, as the issue list's group headers do.
  */
 export function useHeaderHeight(): number {
   const [headerHeight, setHeaderHeight] = useState(FALLBACK_HEADER_HEIGHT);
@@ -28,7 +38,7 @@ export function useHeaderHeight(): number {
     };
   }, []);
 
-  return headerHeight;
+  return headerHeight - BORDER_OVERLAP;
 }
 
 /**

@@ -212,18 +212,18 @@ describe("IssueReturnRow (T-154)", () => {
     // it exists to catch (T-237). `waitFor` flushes that effect, and the
     // observer is rebuilt with the measurement.
     await waitFor(() => {
-      expect(observerOptions?.rootMargin).toBe("-97px 0px 0px 0px");
+      expect(observerOptions?.rootMargin).toBe("-96px 0px 0px 0px");
       expect(
         bar
           .closest<HTMLElement>(".sticky")
           ?.style.getPropertyValue("--row-top"),
-      ).toBe("97px");
+      ).toBe("96px");
     });
   });
 
-  it("stands on a 56px offset until there is a header to measure", async () => {
+  it("stands on the 56px fallback until there is a header to measure", async () => {
     await renderBar();
-    expect(observerOptions?.rootMargin).toBe("-56px 0px 0px 0px");
+    expect(observerOptions?.rootMargin).toBe("-55px 0px 0px 0px");
   });
 
   it("stays hidden from assistive tech in both states", async () => {

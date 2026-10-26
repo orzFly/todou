@@ -985,7 +985,7 @@ describe("the pinned results heading (T-454)", () => {
     // The breakpoint `resultsStickyTop` is told about below.
     expect(heading.className).toContain("sm:sticky");
     // Measured, because the header is two rows tall below `sm`.
-    expect(heading.style.top).toBe("56px");
+    expect(heading.style.top).toBe("55px");
     // The chips scroll away with the results; only the heading pins.
     const chips = container.querySelector(
       "button[aria-pressed]",
