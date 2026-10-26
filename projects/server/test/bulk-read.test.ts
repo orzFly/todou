@@ -366,16 +366,17 @@ describe.each(PLACEMENTS)("bulk mark-as-read T-100 (%s)", (placement) => {
 
     // Read back as text: drizzle hands a timestamp column to JS as a Date,
     // which is where the microseconds would disappear even if the database
-    // still held them.
+    // still held them. Pinned to UTC because a bare timestamptz::text renders
+    // in the session's TimeZone, which PGlite takes from the host.
     const row = await getProjectByRef(t.ctx, slug);
     const db = await t.ctx.router.forProject(routeInfoOf(row));
     const got = await db.execute(
-      sql`select frontier_at::text as t from read_frontiers
+      sql`select (frontier_at at time zone 'UTC')::text as t from read_frontiers
           where project_id = ${row.id} and user_id = ${me.id}`,
     );
     // biome-ignore lint/suspicious/noExplicitAny: driver-agnostic result shape
     const rows = (got as any).rows ?? got;
     expect(rows).toHaveLength(1);
-    expect(rows[0].t).toMatch(/\.123456\+00$/);
+    expect(rows[0].t).toBe("2027-04-04 10:00:00.123456");
   });
 });
