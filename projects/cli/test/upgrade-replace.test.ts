@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -93,7 +94,9 @@ describe("detectInstall", () => {
   });
 
   it("a symlinked install replaces the file the link points at", () => {
-    const dir = mkdtempSync(join(tmpdir(), "todou-install-"));
+    // Resolved up front: `detectInstall` reports the real path, and on macOS
+    // the default TMPDIR sits behind the `/var` -> `/private/var` link.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "todou-install-")));
     try {
       mkdirSync(join(dir, "opt"));
       writeFileSync(join(dir, "opt", "todou.cjs"), "x");

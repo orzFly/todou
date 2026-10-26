@@ -9,10 +9,10 @@ import {
 } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { socketTmpdir } from "./socket-dir.ts";
 
 const cli = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const ownerFixture = fileURLToPath(
@@ -62,7 +62,7 @@ async function fixture(
     reparent?: boolean;
   } = {},
 ) {
-  const root = mkdtempSync(join(tmpdir(), "todou-watch-lifetime-"));
+  const root = mkdtempSync(join(socketTmpdir(), "todou-watch-lifetime-"));
   const sockets = new Set<Socket>();
   let drains = 0;
   let requests = 0;

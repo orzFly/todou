@@ -1,15 +1,15 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect, createServer, type Server } from "node:net";
-import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { openPeerPush, wrapEnvelope } from "../src/peer-push.ts";
 import { virtualClock } from "./harness.ts";
+import { socketTmpdir } from "./socket-dir.ts";
 
-// Short path, far from the ~108-byte sun_path limit that a repo-relative
-// socket directory would spend most of on its own.
-const root = mkdtempSync(join(tmpdir(), "todou-sock-"));
+// Short path, far from the sun_path limit that a repo-relative socket
+// directory — or macOS's default TMPDIR — would spend most of on its own.
+const root = mkdtempSync(join(socketTmpdir(), "todou-sock-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 type Frame = {

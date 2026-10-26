@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -31,7 +32,9 @@ const poll = { timeout: 5000, interval: 20 };
 
 beforeEach(() => {
   savedEnv = { ...process.env };
-  dir = mkdtempSync(join(tmpdir(), "todou-pi-"));
+  // Resolved up front: a child reports its cwd as the real path, and on macOS
+  // the default TMPDIR sits behind the `/var` -> `/private/var` link.
+  dir = realpathSync(mkdtempSync(join(tmpdir(), "todou-pi-")));
   mkdirSync(join(dir, "pids"));
   mkdirSync(join(dir, "children"));
   mkdirSync(join(dir, "cwd"));

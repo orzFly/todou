@@ -17,6 +17,7 @@ import { OMP_WATCH_TOOL } from "../../src/follow-advice.ts";
 import { OMP_EXTENSION_SOURCE } from "../../src/integrations/omp/extension.generated.ts";
 import todou from "../../src/integrations/omp/extension.ts";
 import { MAX_PAYLOAD_CHARS } from "../../src/peer-push.ts";
+import { socketTmpdir } from "../socket-dir.ts";
 
 /** The literal as the extension spells it, underscores and all. */
 function declared(name: string): number | undefined {
@@ -123,7 +124,7 @@ type Booted = {
  * below failing to connect instead of as one wrong answer.
  */
 async function boot(name: string): Promise<Booted> {
-  const runtime = mkdtempSync(join(tmpdir(), `todou-omp-${name}-`));
+  const runtime = mkdtempSync(join(socketTmpdir(), `todou-omp-${name}-`));
   dirs.push(runtime);
   process.env.XDG_RUNTIME_DIR = runtime;
   // A record for this pid left over from an earlier case reads as our own and
@@ -478,7 +479,7 @@ describe("what a refused push is told", () => {
    */
   it("writes no receipt to an address outside its own directory", async () => {
     const { socket } = await boot("receipt-elsewhere");
-    const outside = mkdtempSync(join(tmpdir(), "todou-omp-elsewhere-"));
+    const outside = mkdtempSync(join(socketTmpdir(), "todou-omp-elsewhere-"));
     dirs.push(outside);
     const elsewhere = await receiptListener(
       outside,
@@ -544,7 +545,7 @@ describe("the todou_watch tool (T-357)", () => {
     name: string,
     sessionCtx: unknown = {},
   ): Promise<WatchBooted> {
-    const runtime = mkdtempSync(join(tmpdir(), `todou-omp-${name}-`));
+    const runtime = mkdtempSync(join(socketTmpdir(), `todou-omp-${name}-`));
     dirs.push(runtime);
     process.env.XDG_RUNTIME_DIR = runtime;
     delete process.env.TODOU_OMP_STATE;
