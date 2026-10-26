@@ -11,7 +11,9 @@ import {
   isVideoFile,
   opensInBrowserTab,
   previewKind,
+  TEXT_PREVIEW_HARD_MAX_BYTES,
   TEXT_PREVIEW_MAX_BYTES,
+  textPreviewGate,
 } from "@/lib/attachment-preview.ts";
 import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 
@@ -276,14 +278,11 @@ describe("previewKind", () => {
     ).toBe(null);
   });
 
-  it("keeps oversized text download-only (T-31: no page-freezing renders)", () => {
+  it("opens the viewer for oversized text too, which says why (T-582)", () => {
     expect(
       previewKind(
-        attachment("huge.log", "text/plain", TEXT_PREVIEW_MAX_BYTES + 1),
+        attachment("huge.log", "text/plain", TEXT_PREVIEW_HARD_MAX_BYTES + 1),
       ),
-    ).toBe(null);
-    expect(
-      previewKind(attachment("edge.log", "text/plain", TEXT_PREVIEW_MAX_BYTES)),
     ).toBe("text");
   });
 
@@ -295,5 +294,45 @@ describe("previewKind", () => {
 
   it("prefers the image lightbox for files that are both (svg)", () => {
     expect(previewKind(attachment("logo.svg", "image/svg+xml"))).toBe("image");
+  });
+});
+
+describe("textPreviewGate", () => {
+  const gate = (filename: string, type: string, size: number) =>
+    textPreviewGate(attachment(filename, type, size));
+
+  it("previews up to the limit, asks past it (T-31: no page-freezing renders)", () => {
+    expect(gate("edge.log", "text/plain", TEXT_PREVIEW_MAX_BYTES)).toBe("auto");
+    expect(gate("huge.log", "text/plain", TEXT_PREVIEW_MAX_BYTES + 1)).toBe(
+      "ask",
+    );
+    expect(gate("notes.md", "text/markdown", TEXT_PREVIEW_MAX_BYTES + 1)).toBe(
+      "ask",
+    );
+  });
+
+  it("never previews past the hard limit", () => {
+    expect(gate("edge.log", "text/plain", TEXT_PREVIEW_HARD_MAX_BYTES)).toBe(
+      "ask",
+    );
+    expect(
+      gate("huge.log", "text/plain", TEXT_PREVIEW_HARD_MAX_BYTES + 1),
+    ).toBe("refuse");
+    expect(
+      gate("huge.patch", "text/x-patch", TEXT_PREVIEW_HARD_MAX_BYTES + 1),
+    ).toBe("refuse");
+  });
+
+  it("lets a patch through without asking, up to the hard limit", () => {
+    expect(gate("big.patch", "text/x-patch", TEXT_PREVIEW_HARD_MAX_BYTES)).toBe(
+      "auto",
+    );
+    expect(
+      gate("big.diff", "application/octet-stream", TEXT_PREVIEW_MAX_BYTES + 1),
+    ).toBe("auto");
+    // Declared plain text asked for the plain view (isPatchDocument).
+    expect(gate("big.patch", "text/plain", TEXT_PREVIEW_MAX_BYTES + 1)).toBe(
+      "ask",
+    );
   });
 });

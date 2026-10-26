@@ -21,7 +21,8 @@ import {
 import { documentKind } from "@/lib/attachment-preview.ts";
 import { cn } from "@/lib/utils";
 
-export type DocumentRender = "markdown" | "patch" | "code";
+/** "plain": the text as it is, for a file too large to render (T-582). */
+export type DocumentRender = "markdown" | "patch" | "code" | "plain";
 
 export function documentRenderKind(filename: string): DocumentRender {
   return documentKind({ filename });
@@ -76,6 +77,19 @@ export function DocumentView({
         invalidNote
         clipped={clipped}
         toolbar={toolbar}
+      />
+    );
+  }
+  if (render === "plain") {
+    return (
+      <CodeBlock
+        filename={filename}
+        contents={text}
+        lineNumbers
+        plain
+        className={
+          clipped ? "max-h-80 overflow-hidden" : "max-h-[70vh] overflow-auto"
+        }
       />
     );
   }
@@ -140,10 +154,13 @@ export function DocumentCard({
   }, []);
 
   const resolvedRender = render ?? documentRenderKind(filename);
+  // Plain text is how a large file is drawn, not what kind of file it is.
+  const iconKind =
+    resolvedRender === "plain" ? documentRenderKind(filename) : resolvedRender;
   const Icon =
-    resolvedRender === "markdown"
+    iconKind === "markdown"
       ? FileTextIcon
-      : resolvedRender === "patch"
+      : iconKind === "patch"
         ? FileDiffIcon
         : FileCode2Icon;
 

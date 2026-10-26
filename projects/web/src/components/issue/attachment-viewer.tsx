@@ -11,7 +11,10 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { attachmentTextQuery } from "@/api/attachments.ts";
 import { ImageCanvas } from "@/components/issue/image-canvas.tsx";
-import { DocumentView } from "@/components/shared/document-card.tsx";
+import {
+  type DocumentRender,
+  DocumentView,
+} from "@/components/shared/document-card.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +29,8 @@ import {
   opensInBrowserTab,
   type PreviewTarget,
   previewKind,
+  TEXT_PREVIEW_HARD_MAX_BYTES,
+  textPreviewGate,
 } from "@/lib/attachment-preview.ts";
 import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 import { cn } from "@/lib/utils";
@@ -41,17 +46,61 @@ export type ViewerState = {
   index: number;
 };
 
-function TextPane({
-  target,
-  slug,
-  issueNumber,
-  toolbar,
-}: {
+type TextPaneProps = {
   target: PreviewTarget;
   slug: string;
   issueNumber: number;
   toolbar: HTMLElement | null;
-}) {
+};
+
+/**
+ * A text attachment past the auto-preview size waits to be asked, and then
+ * shows as plain text; past the hard limit it never previews (T-582). The
+ * answer holds for this opening only: the pane is keyed by URL.
+ */
+function TextPane(props: TextPaneProps) {
+  const { target } = props;
+  const [asked, setAsked] = useState(false);
+  const gate = textPreviewGate({ ...target, size: target.size ?? 0 });
+  if (gate === "refuse") {
+    return (
+      <div className="flex flex-col items-center gap-2 py-16 text-sm text-muted-foreground">
+        <FileIcon className="size-8" />
+        <span className="font-medium text-foreground">
+          This file is too large to preview.
+        </span>
+        <span>Previews stop at {formatSize(TEXT_PREVIEW_HARD_MAX_BYTES)}.</span>
+      </div>
+    );
+  }
+  if (gate === "ask" && !asked) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-sm text-muted-foreground">
+        <FileIcon className="size-8" />
+        <span className="font-medium text-foreground">
+          Large files aren't previewed automatically.
+        </span>
+        <Button variant="outline" size="sm" onClick={() => setAsked(true)}>
+          Preview anyway
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <LoadedTextPane
+      {...props}
+      render={gate === "ask" ? "plain" : documentKind(target)}
+    />
+  );
+}
+
+function LoadedTextPane({
+  target,
+  slug,
+  issueNumber,
+  toolbar,
+  render,
+}: TextPaneProps & { render: DocumentRender }) {
   const text = useQuery(attachmentTextQuery(target.url));
   if (text.isPending) {
     return (
@@ -77,7 +126,7 @@ function TextPane({
     <DocumentView
       filename={target.filename}
       text={text.data}
-      render={documentKind(target)}
+      render={render}
       slug={slug}
       issueNumber={issueNumber}
       toolbar={toolbar}
@@ -308,6 +357,7 @@ export function AttachmentViewerDialog({
                 />
               ) : kind === "text" ? (
                 <TextPane
+                  key={target.url}
                   target={target}
                   slug={slug}
                   issueNumber={issueNumber}

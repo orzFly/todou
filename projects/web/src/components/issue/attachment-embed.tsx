@@ -1,16 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
 import { FileTextIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { attachmentsQuery, attachmentTextQuery } from "@/api/attachments.ts";
 import { AttachmentRichLink } from "@/components/issue/attachment-list.tsx";
-import { DocumentCard } from "@/components/shared/document-card.tsx";
+import {
+  DocumentCard,
+  type DocumentRender,
+} from "@/components/shared/document-card.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import {
   documentKind,
   formatSize,
   isTextDocument,
-  TEXT_PREVIEW_MAX_BYTES,
+  textPreviewGate,
 } from "@/lib/attachment-preview.ts";
 import { attachmentAnchorHref } from "@/lib/attachment-refs.ts";
 import { cn } from "@/lib/utils";
@@ -54,11 +57,13 @@ function LoadedEmbed({
   slug,
   issueNumber,
   className,
+  render,
 }: {
   attachment: Attachment;
   slug: string;
   issueNumber: number;
   className?: string;
+  render: DocumentRender;
 }) {
   const text = useQuery(attachmentTextQuery(attachment.url));
   if (text.isPending) {
@@ -94,7 +99,7 @@ function LoadedEmbed({
     <DocumentCard
       filename={attachment.filename}
       text={text.data}
-      render={documentKind(attachment)}
+      render={render}
       slug={slug}
       issueNumber={issueNumber}
       className={className}
@@ -108,8 +113,9 @@ function LoadedEmbed({
  * Inline document embed for markdown bodies: `![…](…/download/name.md)` —
  * image syntax pointed at a text attachment. Same mental model as embedded
  * images, but the body is a height-capped DocumentCard that expands to the
- * full document. Attachments over the preview limit (or that turn out not
- * to be text) stay a download-only card.
+ * full document. Past the preview size it waits to be asked and then shows
+ * plain text, like the viewer (T-582); past the hard limit, or not text after
+ * all, it stays a download-only card.
  */
 export function AttachmentDocumentEmbed({
   slug,
@@ -128,6 +134,7 @@ export function AttachmentDocumentEmbed({
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
+  const [asked, setAsked] = useState(false);
 
   if (attachment === undefined) {
     if (attachments.isPending) {
@@ -150,7 +157,8 @@ export function AttachmentDocumentEmbed({
       />
     );
   }
-  if (!isTextDocument(attachment) || attachment.size > TEXT_PREVIEW_MAX_BYTES) {
+  const gate = isTextDocument(attachment) ? textPreviewGate(attachment) : null;
+  if (gate === null || gate === "refuse" || (gate === "ask" && !asked)) {
     return (
       <EmbedShell
         filename={attachment.filename}
@@ -158,7 +166,22 @@ export function AttachmentDocumentEmbed({
         meta={formatSize(attachment.size)}
         className={className}
       >
-        Too large to preview — download to view.
+        {gate === null ? (
+          "No inline preview for this file type."
+        ) : gate === "refuse" ? (
+          "This file is too large to preview."
+        ) : (
+          <>
+            Large files aren't previewed automatically.{" "}
+            <button
+              type="button"
+              onClick={() => setAsked(true)}
+              className="cursor-pointer font-medium text-foreground hover:underline"
+            >
+              Preview anyway
+            </button>
+          </>
+        )}
       </EmbedShell>
     );
   }
@@ -168,6 +191,7 @@ export function AttachmentDocumentEmbed({
       slug={slug}
       issueNumber={issueNumber}
       className={className}
+      render={gate === "ask" ? "plain" : documentKind(attachment)}
     />
   );
 }

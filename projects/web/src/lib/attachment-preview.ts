@@ -24,9 +24,16 @@ const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
 
 /**
  * Highlighting a multi-megabyte file would freeze the tab (T-31), so bigger
- * text attachments are download-only everywhere.
+ * text attachments only preview when asked, and then as plain text.
  */
 export const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Past this nothing previews (T-582). Measured under load 13–18 in Chromium:
+ * plain text at 10 MiB blocked the tab for 1.5 s in its longest task, at
+ * 20 MiB for 2.9 s, at 50 MiB for 6.9 s.
+ */
+export const TEXT_PREVIEW_HARD_MAX_BYTES = 10 * 1024 * 1024;
 
 // Text formats the CLI/browser labels with an application/* type.
 const TEXT_APPLICATION_TYPES = new Set([
@@ -127,6 +134,24 @@ export function documentKind(attachment: {
   return "code";
 }
 
+/**
+ * Whether a text attachment of this size previews on its own, waits to be
+ * asked, or never previews. A patch skips the asking: its view is virtualized
+ * per file, and a 20 MiB one blocked the tab for 0.6 s at most where the code
+ * view took 10 s or more over 1 MiB of highlighted text (T-582).
+ */
+export function textPreviewGate(target: {
+  filename: string;
+  content_type?: string;
+  size: number;
+}): "auto" | "ask" | "refuse" {
+  if (target.size > TEXT_PREVIEW_HARD_MAX_BYTES) return "refuse";
+  if (target.size <= TEXT_PREVIEW_MAX_BYTES || isPatchDocument(target)) {
+    return "auto";
+  }
+  return "ask";
+}
+
 /** HTML gets the sandboxed reader (T-58) instead of a source view. */
 export function isHtmlDocument(attachment: {
   filename: string;
@@ -198,10 +223,11 @@ export function isVideoFile(attachment: {
 /**
  * What a plain click on this attachment opens: an image lightbox, the
  * sandboxed HTML reader, a text preview, or nothing (native download).
- * Text needs a known in-limit size — an unresolved markdown reference
- * stays a download link until the attachments query fills in the numbers.
- * HTML has no size cap: the browser streams it into the iframe instead of
- * this tab highlighting it.
+ * Text needs a known size — an unresolved markdown reference stays a
+ * download link until the attachments query fills in the numbers; a size
+ * past the limits still opens the viewer, which says why it shows nothing
+ * (`textPreviewGate`). HTML has no size cap: the browser streams it into the
+ * iframe instead of this tab highlighting it.
  */
 export function previewKind(target: {
   filename: string;
@@ -210,13 +236,7 @@ export function previewKind(target: {
 }): "image" | "html" | "text" | null {
   if (isPreviewableImage(target)) return "image";
   if (isHtmlDocument(target)) return "html";
-  if (
-    isTextDocument(target) &&
-    target.size !== undefined &&
-    target.size <= TEXT_PREVIEW_MAX_BYTES
-  ) {
-    return "text";
-  }
+  if (isTextDocument(target) && target.size !== undefined) return "text";
   return null;
 }
 

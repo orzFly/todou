@@ -3,12 +3,20 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { DocumentCard } from "../src/components/shared/document-card.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
-import { PatchView } from "../src/components/shared/patch-view.tsx";
+import {
+  LARGE_DIFF_LINES,
+  PatchView,
+} from "../src/components/shared/patch-view.tsx";
 import { renderWithProviders } from "./render.tsx";
 
 type Item =
   | { id: string; type: "file"; file: { name: string; contents: string } }
-  | { id: string; type: "diff"; fileDiff: { name: string } };
+  | {
+      id: string;
+      type: "diff";
+      fileDiff: { name: string };
+      collapsed?: boolean;
+    };
 
 // The real parser runs (it is plain string work); only the renderer is a
 // stand-in that says what it was handed, header rows included.
@@ -27,7 +35,12 @@ vi.mock("@pierre/diffs/react", () => ({
         <section key={item.id} data-item={item.id}>
           <header>{renderCustomHeader?.(item)}</header>
           {item.type === "diff" ? (
-            <div data-diff={item.fileDiff.name}>{item.id}</div>
+            <div
+              data-diff={item.fileDiff.name}
+              data-collapsed={item.collapsed ? "" : undefined}
+            >
+              {item.id}
+            </div>
           ) : (
             <pre data-file={item.file.name}>{item.file.contents}</pre>
           )}
@@ -90,6 +103,21 @@ const titleBar = (filename: string) => {
   if (bar === null) throw new Error("no title bar");
   return bar;
 };
+
+/** A new file with `lines` added lines. */
+const newFile = (name: string, lines: number) => `diff --git a/${name} b/${name}
+new file mode 100644
+index 0000000..4444444
+--- /dev/null
++++ b/${name}
+@@ -0,0 +1,${lines} @@
+${Array.from({ length: lines }, (_, i) => `+line ${i}`).join("\n")}
+`;
+
+const collapsedDiffs = () =>
+  [...document.querySelectorAll("[data-diff][data-collapsed]")].map((el) =>
+    el.getAttribute("data-diff"),
+  );
 
 describe("PatchView (T-528)", () => {
   it("draws one diff per file, behind a height cap", async () => {
@@ -247,5 +275,47 @@ describe("```diff fences (T-528)", () => {
     );
     expect(diffs()).toEqual([]);
     expect(screen.queryByText(/Not a valid patch/)).toBeNull();
+  });
+});
+
+describe("PatchView large files (T-582)", () => {
+  it("holds back a file past the line limit until asked", async () => {
+    renderWithProviders(
+      <PatchView
+        filename="x.patch"
+        text={`${TWO_FILES}${newFile("state.json", LARGE_DIFF_LINES + 1)}`}
+      />,
+    );
+    await waitFor(() =>
+      expect(diffs()).toEqual(["src/a.ts", "src/b.ts", "state.json"]),
+    );
+    expect(collapsedDiffs()).toEqual(["state.json"]);
+    fireEvent.click(screen.getByRole("button", { name: "Load diff" }));
+    expect(collapsedDiffs()).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Load diff" })).toBeNull();
+  });
+
+  it("draws a file at the limit in full", async () => {
+    renderWithProviders(
+      <PatchView
+        filename="x.patch"
+        text={`${TWO_FILES}${newFile("state.json", LARGE_DIFF_LINES)}`}
+      />,
+    );
+    await waitFor(() =>
+      expect(diffs()).toEqual(["src/a.ts", "src/b.ts", "state.json"]),
+    );
+    expect(collapsedDiffs()).toEqual([]);
+  });
+
+  it("never holds back the only file", async () => {
+    renderWithProviders(
+      <PatchView
+        filename="x.patch"
+        text={newFile("state.json", LARGE_DIFF_LINES + 1)}
+      />,
+    );
+    await waitFor(() => expect(diffs()).toEqual(["state.json"]));
+    expect(collapsedDiffs()).toEqual([]);
   });
 });

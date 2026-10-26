@@ -340,12 +340,20 @@ export function CodeBlock({
   filename,
   contents,
   lineNumbers = false,
+  plain = false,
   className,
 }: {
   filename: string;
   contents: string;
   /** Line numbers suit whole files; snippets read better without. */
   lineNumbers?: boolean;
+  /**
+   * No highlighting. Tokenizing is what costs: virtualized lines spare the
+   * DOM, but pierre tokenizes the whole file regardless, 11 s for 1 MiB of
+   * log where plain text took 0.16 s (T-582).
+   */
+  plain?: boolean;
+  /** Caps the height for a long file: CodeView virtualizes against its box. */
   className?: string;
 }) {
   const items = useMemo(
@@ -353,10 +361,12 @@ export function CodeBlock({
       {
         id: filename,
         type: "file" as const,
-        file: { name: filename, contents },
+        file: plain
+          ? { name: filename, contents, lang: "text" as const }
+          : { name: filename, contents },
       },
     ],
-    [filename, contents],
+    [filename, contents, plain],
   );
   const syntaxTheme = useSyntaxTheme();
   const options = useMemo(
@@ -531,6 +541,7 @@ export function PatchFiles({
   className,
   viewRef,
   commits,
+  collapsedFiles,
   renderHeader,
 }: {
   patches: ParsedPatch[];
@@ -544,6 +555,8 @@ export function PatchFiles({
    * commit gets an item of its own, carrying its message; null gets none.
    */
   commits: (PatchCommit | null)[];
+  /** Files, by position across the patch, drawn as their header row only. */
+  collapsedFiles?: ReadonlySet<number>;
   /**
    * Every item's header row, `PATCH_HEADER_HEIGHT` tall: pierre reserves that
    * height for it without measuring.
@@ -555,13 +568,17 @@ export function PatchFiles({
   const items = useMemo(() => {
     let position = 0;
     return patches.flatMap((patch, commit): CodeViewItem[] => {
-      const files = patch.files.map(
-        (fileDiff): CodeViewItem => ({
+      const files = patch.files.map((fileDiff): CodeViewItem => {
+        const collapsed = collapsedFiles?.has(position) ?? false;
+        return {
           id: patchFileId(position++),
           type: "diff",
           fileDiff,
-        }),
-      );
+          collapsed,
+          // CodeView only takes a changed item from a changed version.
+          version: collapsed ? 0 : 1,
+        };
+      });
       const parsed = commits[commit];
       if (parsed == null) return files;
       return [
@@ -579,7 +596,7 @@ export function PatchFiles({
         ...files,
       ];
     });
-  }, [patches, commits]);
+  }, [patches, commits, collapsedFiles]);
   const [degraded, setDegraded] = useState(false);
   const warned = useRef(false);
   const containerRef = useCallback((node: HTMLDivElement | null) => {
