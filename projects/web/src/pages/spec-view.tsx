@@ -30,6 +30,7 @@ import {
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   FileTextIcon,
   FoldVerticalIcon,
   WrapTextIcon,
@@ -38,6 +39,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -128,7 +130,7 @@ import {
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
 import { useElementHeight, useHeaderHeight } from "@/lib/use-header-height.ts";
-import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
+import { LG_UP, SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
 import { cn } from "@/lib/utils.ts";
 
 /** What ↑↓ stops on: both kinds of "changed since the baseline" mark (T-158). */
@@ -408,6 +410,9 @@ function SpecViewBody({
   // hangs in the gutter the centred column leaves (T-461).
   const toolbarCarriesBack = useMediaQuery(SM_UP);
   const backFloats = useMediaQuery(XL_UP);
+  // Where the file rail joins the layout, and the toolbar's two rows can stay
+  // pinned without costing a third of the screen (T-593).
+  const wide = useMediaQuery(LG_UP);
   // Back and the ref are the same destination here, so they are one button —
   // but only while the ref leads. Placed after the title the two are not
   // adjacent, and one button reaching across would put the whole title inside
@@ -457,7 +462,9 @@ function SpecViewBody({
       ? null
       : (spec.versions.find((v) => v.number === n)?.message ?? null);
   // The two triggers are sized against each other, which no CSS can express.
+  // `wide` too: crossing lg puts row B in a new element.
   useLinkedTriggerWidths(rowBRef, [
+    wide,
     version,
     baseline,
     messageOf(version),
@@ -471,10 +478,54 @@ function SpecViewBody({
   const headerHeight = useHeaderHeight();
   const toolbarHeight = useElementHeight(toolbarRef, TOOLBAR_FALLBACK_HEIGHT);
   const stickyTop = headerHeight + toolbarHeight;
+
+  // Below lg only the toolbar's first row is sticky (T-593). `collapsed`:
+  // some of the controls after it have slid under it. `controlsPinned`: the
+  // reader asked for them back.
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const controlsId = useId();
+  const [collapsed, setCollapsed] = useState(false);
+  const [controlsPinned, setControlsPinned] = useState(false);
+  useEffect(() => {
+    if (wide) return;
+    const measure = () => {
+      const bar = toolbarRef.current;
+      const controls = controlsRef.current;
+      const layout = layoutRef.current;
+      if (bar === null || controls === null || layout === null) return;
+      // Read off what follows the controls, not off the controls: pinned,
+      // they sit wherever sticky puts them, while the space they hold in the
+      // flow keeps moving with the page.
+      const gap = Number.parseFloat(getComputedStyle(controls).marginBottom);
+      const naturalTop =
+        layout.getBoundingClientRect().top -
+        (Number.isFinite(gap) ? gap : 0) -
+        controls.getBoundingClientRect().height;
+      // A pixel of slack: at rest the two edges coincide, in fractions.
+      setCollapsed(naturalTop < bar.getBoundingClientRect().bottom - 1);
+    };
+    measure();
+    window.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+    };
+  }, [wide]);
+  // Back at the top the controls are in view anyway, and a pin left set would
+  // spring them out again on the next scroll down.
+  useEffect(() => {
+    if (!collapsed) setControlsPinned(false);
+  }, [collapsed]);
+
   // Kept apart from `stickyTop`, which serves CSS offsets that want the
   // toolbar's own edge rather than a strip to land things in (T-299).
   const composerRef = useRef<HTMLDivElement>(null);
-  useScrollInsets({ top: [toolbarRef], bottom: [composerRef] });
+  useScrollInsets({
+    top: controlsPinned ? [toolbarRef, controlsRef] : [toolbarRef],
+    bottom: [composerRef],
+  });
 
   const issue = useQuery(issueQuery(slug, issueNumber));
   const navigate = useNavigate();
@@ -1042,392 +1093,484 @@ function SpecViewBody({
     return counts;
   }, [comments.data]);
 
+  const backControl = mergedBack ? (
+    <SpecIssueReturnLink
+      slug={slug}
+      number={issueNumber}
+      slot="back"
+      floating={backFloats}
+    />
+  ) : (
+    toolbarCarriesBack && (
+      <SpecReturnLink
+        slug={slug}
+        number={issueNumber}
+        slot="back"
+        scale="compact"
+        floating={backFloats}
+      />
+    )
+  );
+  /* The row's one shrinkable item, and it must remain the only one:
+     shrink-only (the flex default), not flex-1, so a short title lets the
+     badge sit right beside it rather than stranding it — a grown title eats
+     the free space the elastic gap is there to hold.
+
+     Shown at every width since T-407 moved the ref off the back control:
+     hidden below lg, nothing on a narrow screen would say which card this spec
+     belongs to. It truncates there instead, and the clip is on this box as
+     well as on the title inside it — `min-w-0` lets the box shrink past its
+     own minimum, and at 360px what it shrinks past is the ref, which would
+     otherwise spill across the row rather than be cut. */
+  const identity = (
+    <CompactIssueIdentity
+      slug={slug}
+      number={issueNumber}
+      title={issue.data?.title}
+      slot="title"
+      className="truncate"
+      omitRef={mergedBack}
+    />
+  );
+  const reviewStatus = (
+    <ToolbarSlot name="review-status">
+      <SpecStatusBadge status={spec.review_status} />
+    </ToolbarSlot>
+  );
+  /* Below lg the file rail is gone from the flow; this is where it went. In
+     source mode it lists the files that differ, and its links carry the
+     baseline so they land on that file's diff. */
+  const filesControl = (
+    <Popover open={filesOpen} onOpenChange={setFilesOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          data-toolbar-slot="files"
+        >
+          <span className="tabular-nums">Files ({railEntries.length})</span>
+          <ChevronDownIcon className="size-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="max-h-[55vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto"
+      >
+        <SpecFileList
+          entries={railEntries}
+          selectedPath={selectedPath}
+          params={params}
+          searchFor={fileSearch}
+          unresolvedByPath={unresolvedByPath}
+          sidebarStats={sidebarStats}
+          onNavigate={() => setFilesOpen(false)}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+  const commentFile = (
+    <ToolbarSlot name="comment-file" title={commentFileReason}>
+      <Button
+        size="sm"
+        variant="outline"
+        className="shrink-0"
+        disabled={commentFileReason !== undefined}
+        aria-label={
+          commentFileReason === undefined
+            ? "Comment file"
+            : `Comment file — ${commentFileReason}`
+        }
+        onClick={() => {
+          if (selected === undefined) return;
+          stage({
+            path: selected.path,
+            version,
+            lineStart: null,
+            lineEnd: null,
+            colStart: null,
+            colEnd: null,
+            quote: "",
+          });
+        }}
+      >
+        Comment file
+      </Button>
+    </ToolbarSlot>
+  );
+  const finishReview = (
+    <Button
+      size="sm"
+      data-toolbar-slot="finish-review"
+      className="shrink-0"
+      aria-label={
+        drafts.drafts.length > 0
+          ? `Finish review (${drafts.drafts.length} staged)`
+          : "Finish review"
+      }
+      onClick={() =>
+        session.setFinishOpen(
+          true,
+          spec.current_version,
+          drafts.drafts.length > 0,
+        )
+      }
+    >
+      Finish review
+      {/* T-190 reserved this box so staging the first draft would not
+          widen the button — at the cost of 24px of hollow beside
+          `Finish review` on every page with no drafts, which is every
+          page most of the time. T-200 takes the one-off shift. */}
+      {drafts.drafts.length > 0 && (
+        <span
+          aria-hidden
+          className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
+        >
+          {drafts.drafts.length}
+        </span>
+      )}
+    </Button>
+  );
+  const viewToggle = (
+    <ToolbarSlot name="view-toggle">
+      <SpecViewToggle
+        slug={slug}
+        issueNumber={issueNumber}
+        view={view}
+        {...(comparing ? { searchFor: viewSearch } : { onSelect: setOffView })}
+      />
+    </ToolbarSlot>
+  );
+  /* shrink, not shrink-0: the message span's capped max-width is what a long
+     push message truncates against, and this is what lets that happen rather
+     than push the right-anchored cluster off the row. */
+  const versionPicker = (
+    <ToolbarSlot name="version" className="min-w-0 shrink">
+      <SpecVersionPicker
+        slug={slug}
+        issueNumber={issueNumber}
+        versions={spec.versions}
+        version={version}
+        searchFor={versionSearch}
+      />
+    </ToolbarSlot>
+  );
+  const compareToggle = (
+    <ToolbarSlot name="compare" title={compareReason}>
+      <SpecCompareToggle
+        comparing={comparing}
+        baseline={baseline}
+        disabledReason={compareReason}
+        onToggle={toggleComparing}
+      />
+    </ToolbarSlot>
+  );
+  const baselinePicker = baseline !== null && (
+    <ToolbarSlot name="baseline" className="min-w-0 shrink">
+      <SpecBaselinePicker
+        slug={slug}
+        issueNumber={issueNumber}
+        versions={spec.versions}
+        version={version}
+        baseline={baseline}
+        searchFor={baselineSearch}
+      />
+    </ToolbarSlot>
+  );
+  const displayToggle = (
+    <ToolbarSlot
+      name="display-toggle"
+      title={showsFold ? foldReason : undefined}
+    >
+      {renderedCompare && isNewFile ? (
+        // Nothing is highlighted on a file the baseline never had, and
+        // saying why beats leaving the reader to wonder. A renamed one
+        // does have a baseline — under its old name (T-203).
+        <span
+          className={cn(DISPLAY_SLOT, DISPLAY_SLOT_ON)}
+          title={
+            renamedSource === undefined
+              ? `This file does not exist in v${baseline}`
+              : `In v${baseline} this file was ${renamedSource}`
+          }
+        >
+          {renamedSource === undefined
+            ? `new in v${version}`
+            : `renamed from ${renamedSource}`}
+        </span>
+      ) : showsFold ? (
+        <button
+          type="button"
+          aria-pressed={fold}
+          disabled={foldReason !== undefined}
+          aria-label={
+            foldReason === undefined
+              ? "fold unchanged blocks"
+              : `fold — ${foldReason}`
+          }
+          onClick={() => {
+            setFold(!fold);
+            writeSpecFold(!fold);
+          }}
+          className={cn(
+            DISPLAY_SLOT,
+            foldReason === undefined
+              ? cn("cursor-pointer", fold ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF)
+              : DISPLAY_SLOT_DISABLED,
+          )}
+          title={
+            foldReason !== undefined
+              ? undefined
+              : fold
+                ? "Show every block again"
+                : "Fold the blocks that did not change"
+          }
+        >
+          <FoldVerticalIcon className="size-3.5" />
+          fold
+        </button>
+      ) : (
+        <button
+          type="button"
+          aria-pressed={wrap}
+          aria-label="wrap long lines"
+          onClick={() => {
+            setWrap(!wrap);
+            writeDiffWrap(!wrap);
+          }}
+          className={cn(
+            DISPLAY_SLOT,
+            "cursor-pointer",
+            wrap ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
+          )}
+          title="Wrap long lines instead of scrolling horizontally"
+        >
+          <WrapTextIcon className="size-3.5" />
+          wrap
+        </button>
+      )}
+    </ToolbarSlot>
+  );
+  /* One wrapping unit: two more controls landed in this row, and a narrow
+     viewport was breaking the pair apart, stranding ↓ on a line of its own. */
+  const changeNavigation = (
+    <span className="inline-flex shrink-0 items-center gap-2">
+      <ToolbarSlot name="prev-change" title={changeNav.reason}>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          disabled={changeNav.reason !== undefined}
+          aria-label={
+            changeNav.reason === undefined
+              ? `previous ${changeNav.unit}`
+              : `previous ${changeNav.unit} — ${changeNav.reason}`
+          }
+          aria-keyshortcuts="p"
+          // A disabled button fires no pointer events, so the reason on
+          // the slot around it is what shows through in that state.
+          title={
+            changeNav.reason === undefined
+              ? `previous ${changeNav.unit} (p)`
+              : undefined
+          }
+          onClick={() => (sourceDiff ? jumpFileDiff(-1) : jumpChange(-1))}
+        >
+          <ArrowUpIcon className="size-4" />
+        </Button>
+      </ToolbarSlot>
+      <ToolbarSlot
+        name="change-count"
+        title={
+          changeNav.reason ??
+          (position === null
+            ? undefined
+            : `${changeNav.unit} ${position.index} of ${position.total}`)
+        }
+      >
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {position === null ? (
+            "–"
+          ) : (
+            <>
+              {/* Reserved by the total's width, not the index's: the
+                  index grows a digit going from 9 to 10, and that
+                  happens while the reader is scrolling — ↓ would step
+                  sideways under the cursor. */}
+              <span
+                className="inline-block text-right"
+                style={{ minWidth: `${String(position.total).length}ch` }}
+              >
+                {position.index}
+              </span>
+              /{position.total}
+            </>
+          )}
+        </span>
+      </ToolbarSlot>
+      <ToolbarSlot name="next-change" title={changeNav.reason}>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          disabled={changeNav.reason !== undefined}
+          aria-label={
+            changeNav.reason === undefined
+              ? `next ${changeNav.unit}`
+              : `next ${changeNav.unit} — ${changeNav.reason}`
+          }
+          aria-keyshortcuts="n"
+          title={
+            changeNav.reason === undefined
+              ? `next ${changeNav.unit} (n)`
+              : undefined
+          }
+          onClick={() => (sourceDiff ? jumpFileDiff(1) : jumpChange(1))}
+        >
+          <ArrowDownIcon className="size-4" />
+        </Button>
+      </ToolbarSlot>
+    </span>
+  );
+
   return (
     <div className="space-y-4">
       {/* Sticky rather than in-flow: version switching, the change toggles
           and Finish review are all mid-read actions, and a document long
           enough to need them is long enough to have scrolled them away
-          (T-178). Same surface as the issue page's floating title bar. */}
+          (T-178). Same surface as the issue page's floating title bar.
+
+          One element in both layouts, so the height observers measuring it
+          keep their target across the lg boundary. Below lg it holds a
+          single row and the rest of the controls follow it in flow — five
+          wrapped rows pinned there took 205 of a phone's 844px (T-593). */}
       <div
         ref={toolbarRef}
         style={{ top: headerHeight }}
-        className="sticky z-30 -mx-2 space-y-1.5 border-b bg-background/95 px-2 py-2 backdrop-blur"
+        className={cn(
+          "sticky z-30 -mx-2 border-b bg-background/95 px-2 py-2 backdrop-blur",
+          wide
+            ? "space-y-1.5"
+            : // Against `space-y-4`, whose margin would open a gap between
+              // this row and the controls that continue it. The border only
+              // shows once something has slid under the row: before that it
+              // would cut the toolbar in two.
+              cn(
+                "mb-0",
+                !(collapsed && !controlsPinned) && "border-transparent",
+              ),
+        )}
       >
-        {/* Row A — who and what, then the actions. The row's one elastic gap
-            sits after the review badge, so the title truncates instead of
-            pushing the action cluster around: nothing to the right of the
-            gap moves, in any state (T-190).
+        {wide ? (
+          <>
+            {/* Row A — who and what, then the actions. The row's one elastic
+                gap sits after the review badge, so the title truncates
+                instead of pushing the action cluster around: nothing to the
+                right of the gap moves, in any state (T-190).
 
-            `lg:flex-nowrap` is what lets the truncation T-190 asked for
-            actually happen: line breaking runs before flex shrinking and
-            measures each item unshrunk, so a title wide enough to need an
-            ellipsis pushed Finish review onto a second line instead — the row
-            "fit" by wrapping, which left the title nothing to shrink for
-            (T-206). Wrapping stays on below lg, where every item but the
-            identity is shrink-0: one shrinkable item cannot absorb a narrow
-            viewport on its own, so a wrap is the only graceful answer left. */}
-        {/* `relative` so the gutter arrow measures from the text column
-            (T-470). The toolbar around this row would be the containing block
-            otherwise — `backdrop-blur` makes one of it — and it is `-mx-2`,
-            which put the arrow 8px further out here than on the issue page
-            for the same `mr-2`. */}
-        <div className="relative flex flex-wrap items-center gap-2 lg:flex-nowrap">
-          {mergedBack ? (
-            <SpecIssueReturnLink
-              slug={slug}
-              number={issueNumber}
-              slot="back"
-              floating={backFloats}
-            />
-          ) : (
-            toolbarCarriesBack && (
-              <SpecReturnLink
-                slug={slug}
-                number={issueNumber}
-                slot="back"
-                scale="compact"
-                floating={backFloats}
-              />
-            )
-          )}
-          {/* The row's one shrinkable item, and it must remain the only one:
-              shrink-only (the flex default), not flex-1, so a short title lets
-              the badge sit right beside it rather than stranding it. `flex-1
-              basis-0` would stop the row wrapping too — a zero flex basis is
-              a zero hypothetical size, so line breaking never sees the title
-              — but at the price of that adjacency, since a grown title eats
-              the free space the elastic gap is there to hold.
+                No wrapping is what lets the truncation T-190 asked for
+                actually happen: line breaking runs before flex shrinking and
+                measures each item unshrunk, so a title wide enough to need an
+                ellipsis pushed Finish review onto a second line instead — the
+                row "fit" by wrapping, which left the title nothing to shrink
+                for (T-206). */}
+            {/* `relative` so the gutter arrow measures from the text column
+                (T-470). The toolbar around this row would be the containing
+                block otherwise — `backdrop-blur` makes one of it — and it is
+                `-mx-2`, which put the arrow 8px further out here than on the
+                issue page for the same `mr-2`. */}
+            <div className="relative flex items-center gap-2">
+              {backControl}
+              {identity}
+              {reviewStatus}
+              <span className="ml-auto" />
+              {commentFile}
+              {finishReview}
+            </div>
 
-              Shown at every width since T-407 moved the ref off the back
-              control: hidden below lg, nothing on a narrow screen would say
-              which card this spec belongs to. It truncates there instead, and
-              the clip is on this box as well as on the title inside it —
-              `min-w-0` lets the box shrink past its own minimum, and at 360px
-              what it shrinks past is the ref, which would otherwise spill
-              across the row rather than be cut. */}
-          <CompactIssueIdentity
-            slug={slug}
-            number={issueNumber}
-            title={issue.data?.title}
-            slot="title"
-            className="truncate"
-            omitRef={mergedBack}
-          />
-          <ToolbarSlot name="review-status">
-            <SpecStatusBadge status={spec.review_status} />
-          </ToolbarSlot>
-          <span className="ml-auto" />
-          {/* Below lg the file rail is gone from the flow; this is where it
-              went. In source mode it lists the files that differ, and its
-              links carry the baseline so they land on that file's diff. */}
-          <Popover open={filesOpen} onOpenChange={setFilesOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                size="sm"
-                variant="outline"
-                className="shrink-0 lg:hidden"
-                data-toolbar-slot="files"
-              >
-                <span className="tabular-nums">
-                  Files ({railEntries.length})
-                </span>
-                <ChevronDownIcon className="size-3.5" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              className="max-h-[55vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto"
-            >
-              <SpecFileList
-                entries={railEntries}
-                selectedPath={selectedPath}
-                params={params}
-                searchFor={fileSearch}
-                unresolvedByPath={unresolvedByPath}
-                sidebarStats={sidebarStats}
-                onNavigate={() => setFilesOpen(false)}
-              />
-            </PopoverContent>
-          </Popover>
-          {/* One wrapping unit, as row B does for ↑↓: below lg the row may
-              still wrap, and between roughly 415 and 520px it was breaking
-              the pair apart and stranding Finish review on a line of its own
-              — the same shape T-206 reported at desktop width. Held together,
-              the only break left falls on the elastic gap above, which is the
-              row's own seam: identity and navigation, then actions. */}
-          <span className="inline-flex shrink-0 items-center gap-2">
-            <ToolbarSlot name="comment-file" title={commentFileReason}>
-              <Button
-                size="sm"
-                variant="outline"
-                className="shrink-0"
-                disabled={commentFileReason !== undefined}
-                aria-label={
-                  commentFileReason === undefined
-                    ? "Comment file"
-                    : `Comment file — ${commentFileReason}`
-                }
-                onClick={() => {
-                  if (selected === undefined) return;
-                  stage({
-                    path: selected.path,
-                    version,
-                    lineStart: null,
-                    lineEnd: null,
-                    colStart: null,
-                    colEnd: null,
-                    quote: "",
-                  });
-                }}
-              >
-                Comment file
-              </Button>
-            </ToolbarSlot>
+            {/* Row B — how the document is drawn, then what is being read
+                against what. The presentation switch, the version range and
+                the compare toggle sit left of the row's one elastic gap, each
+                sized to its own content; the display slot and ↑↓ are anchored
+                right (T-192, reordered by T-200). */}
+            <div ref={rowBRef} className="flex flex-wrap items-center gap-2">
+              {viewToggle}
+              {versionPicker}
+              {compareToggle}
+              {baselinePicker}
+              <span className="ml-auto" />
+              {displayToggle}
+              {changeNavigation}
+            </div>
+          </>
+        ) : (
+          // What a reader reaches for mid-read: which card, the next change,
+          // and the way out. No wrapping, so the identity is what gives.
+          <div className="relative flex items-center gap-2">
+            {backControl}
+            {identity}
+            <span className="ml-auto" />
+            {changeNavigation}
+            {/* Rendered at the top of the page too, disabled, so ↑↓ do not
+                step sideways the moment the reader starts scrolling (T-190). */}
             <Button
-              size="sm"
-              data-toolbar-slot="finish-review"
+              size="icon-sm"
+              variant="ghost"
               className="shrink-0"
+              data-toolbar-slot="more-controls"
+              disabled={!collapsed}
+              aria-expanded={controlsPinned}
+              aria-controls={controlsId}
               aria-label={
-                drafts.drafts.length > 0
-                  ? `Finish review (${drafts.drafts.length} staged)`
-                  : "Finish review"
+                controlsPinned
+                  ? "Hide toolbar controls"
+                  : "Show toolbar controls"
               }
-              onClick={() =>
-                session.setFinishOpen(
-                  true,
-                  spec.current_version,
-                  drafts.drafts.length > 0,
-                )
-              }
+              onClick={() => setControlsPinned(!controlsPinned)}
             >
-              Finish review
-              {/* T-190 reserved this box so staging the first draft would not
-                  widen the button — at the cost of 24px of hollow beside
-                  `Finish review` on every page with no drafts, which is every
-                  page most of the time. T-200 takes the one-off shift. */}
-              {drafts.drafts.length > 0 && (
-                <span
-                  aria-hidden
-                  className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
-                >
-                  {drafts.drafts.length}
-                </span>
+              {controlsPinned ? (
+                <ChevronUpIcon className="size-4" />
+              ) : (
+                <ChevronDownIcon className="size-4" />
               )}
             </Button>
-          </span>
-        </div>
-
-        {/* Row B — how the document is drawn, then what is being read
-            against what. The presentation switch, the version range and the
-            compare toggle sit left of the row's one elastic gap, each sized
-            to its own content; the display slot and ↑↓ are anchored right
-            (T-192, reordered by T-200). */}
-        <div ref={rowBRef} className="flex flex-wrap items-center gap-2">
-          <ToolbarSlot name="view-toggle">
-            <SpecViewToggle
-              slug={slug}
-              issueNumber={issueNumber}
-              view={view}
-              {...(comparing
-                ? { searchFor: viewSearch }
-                : { onSelect: setOffView })}
-            />
-          </ToolbarSlot>
-          {/* shrink, not shrink-0: the message span's capped max-width is
-              what a long push message truncates against, and this is what
-              lets that happen rather than push the right-anchored cluster
-              off the row. */}
-          <ToolbarSlot name="version" className="min-w-0 shrink">
-            <SpecVersionPicker
-              slug={slug}
-              issueNumber={issueNumber}
-              versions={spec.versions}
-              version={version}
-              searchFor={versionSearch}
-            />
-          </ToolbarSlot>
-          <ToolbarSlot name="compare" title={compareReason}>
-            <SpecCompareToggle
-              comparing={comparing}
-              baseline={baseline}
-              disabledReason={compareReason}
-              onToggle={toggleComparing}
-            />
-          </ToolbarSlot>
-          {baseline !== null && (
-            <ToolbarSlot name="baseline" className="min-w-0 shrink">
-              <SpecBaselinePicker
-                slug={slug}
-                issueNumber={issueNumber}
-                versions={spec.versions}
-                version={version}
-                baseline={baseline}
-                searchFor={baselineSearch}
-              />
-            </ToolbarSlot>
-          )}
-          <span className="ml-auto" />
-          <ToolbarSlot
-            name="display-toggle"
-            title={showsFold ? foldReason : undefined}
-          >
-            {renderedCompare && isNewFile ? (
-              // Nothing is highlighted on a file the baseline never had, and
-              // saying why beats leaving the reader to wonder. A renamed one
-              // does have a baseline — under its old name (T-203).
-              <span
-                className={cn(DISPLAY_SLOT, DISPLAY_SLOT_ON)}
-                title={
-                  renamedSource === undefined
-                    ? `This file does not exist in v${baseline}`
-                    : `In v${baseline} this file was ${renamedSource}`
-                }
-              >
-                {renamedSource === undefined
-                  ? `new in v${version}`
-                  : `renamed from ${renamedSource}`}
-              </span>
-            ) : showsFold ? (
-              <button
-                type="button"
-                aria-pressed={fold}
-                disabled={foldReason !== undefined}
-                aria-label={
-                  foldReason === undefined
-                    ? "fold unchanged blocks"
-                    : `fold — ${foldReason}`
-                }
-                onClick={() => {
-                  setFold(!fold);
-                  writeSpecFold(!fold);
-                }}
-                className={cn(
-                  DISPLAY_SLOT,
-                  foldReason === undefined
-                    ? cn(
-                        "cursor-pointer",
-                        fold ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
-                      )
-                    : DISPLAY_SLOT_DISABLED,
-                )}
-                title={
-                  foldReason !== undefined
-                    ? undefined
-                    : fold
-                      ? "Show every block again"
-                      : "Fold the blocks that did not change"
-                }
-              >
-                <FoldVerticalIcon className="size-3.5" />
-                fold
-              </button>
-            ) : (
-              <button
-                type="button"
-                aria-pressed={wrap}
-                aria-label="wrap long lines"
-                onClick={() => {
-                  setWrap(!wrap);
-                  writeDiffWrap(!wrap);
-                }}
-                className={cn(
-                  DISPLAY_SLOT,
-                  "cursor-pointer",
-                  wrap ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
-                )}
-                title="Wrap long lines instead of scrolling horizontally"
-              >
-                <WrapTextIcon className="size-3.5" />
-                wrap
-              </button>
-            )}
-          </ToolbarSlot>
-          {/* One wrapping unit: two more controls landed in this row, and a
-              narrow viewport was breaking the pair apart, stranding ↓ on a
-              line of its own. */}
-          <span className="inline-flex shrink-0 items-center gap-2">
-            <ToolbarSlot name="prev-change" title={changeNav.reason}>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                disabled={changeNav.reason !== undefined}
-                aria-label={
-                  changeNav.reason === undefined
-                    ? `previous ${changeNav.unit}`
-                    : `previous ${changeNav.unit} — ${changeNav.reason}`
-                }
-                aria-keyshortcuts="p"
-                // A disabled button fires no pointer events, so the reason on
-                // the slot around it is what shows through in that state.
-                title={
-                  changeNav.reason === undefined
-                    ? `previous ${changeNav.unit} (p)`
-                    : undefined
-                }
-                onClick={() => (sourceDiff ? jumpFileDiff(-1) : jumpChange(-1))}
-              >
-                <ArrowUpIcon className="size-4" />
-              </Button>
-            </ToolbarSlot>
-            <ToolbarSlot
-              name="change-count"
-              title={
-                changeNav.reason ??
-                (position === null
-                  ? undefined
-                  : `${changeNav.unit} ${position.index} of ${position.total}`)
-              }
-            >
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {position === null ? (
-                  "–"
-                ) : (
-                  <>
-                    {/* Reserved by the total's width, not the index's: the
-                        index grows a digit going from 9 to 10, and that
-                        happens while the reader is scrolling — ↓ would step
-                        sideways under the cursor. */}
-                    <span
-                      className="inline-block text-right"
-                      style={{ minWidth: `${String(position.total).length}ch` }}
-                    >
-                      {position.index}
-                    </span>
-                    /{position.total}
-                  </>
-                )}
-              </span>
-            </ToolbarSlot>
-            <ToolbarSlot name="next-change" title={changeNav.reason}>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                disabled={changeNav.reason !== undefined}
-                aria-label={
-                  changeNav.reason === undefined
-                    ? `next ${changeNav.unit}`
-                    : `next ${changeNav.unit} — ${changeNav.reason}`
-                }
-                aria-keyshortcuts="n"
-                title={
-                  changeNav.reason === undefined
-                    ? `next ${changeNav.unit} (n)`
-                    : undefined
-                }
-                onClick={() => (sourceDiff ? jumpFileDiff(1) : jumpChange(1))}
-              >
-                <ArrowDownIcon className="size-4" />
-              </Button>
-            </ToolbarSlot>
-          </span>
-        </div>
+            {finishReview}
+          </div>
+        )}
       </div>
+      {!wide && (
+        // Scrolls away under the row above, unless the reader asks for it
+        // back — and then it pins right beneath that row, out of the flow it
+        // already holds a place in, so nothing below it moves.
+        <div
+          id={controlsId}
+          ref={controlsRef}
+          style={controlsPinned ? { top: headerHeight + toolbarHeight } : {}}
+          className={cn(
+            "-mx-2 space-y-1.5 border-b px-2 pb-2",
+            controlsPinned && "sticky z-30 bg-background/95 backdrop-blur",
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            {reviewStatus}
+            <span className="ml-auto" />
+            {filesControl}
+            {commentFile}
+          </div>
+          <div ref={rowBRef} className="flex flex-wrap items-center gap-2">
+            {viewToggle}
+            {versionPicker}
+            {compareToggle}
+            {baselinePicker}
+            <span className="ml-auto" />
+            {displayToggle}
+          </div>
+        </div>
+      )}
 
       {/* One skeleton behind both presentations: the rail stays put across a
           rendered↔source switch, only its contents narrow (T-192). That also
           keeps the Files popover's "below lg only" rule true in every state,
           which is what T-190 §5 wanted from the rail. */}
-      <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+      <div ref={layoutRef} className="grid gap-6 lg:grid-cols-[260px_1fr]">
         {/* self-start, or the grid would stretch the rail to the row's
             height and leave sticky nothing to travel through. */}
         <aside

@@ -188,45 +188,52 @@ function DetailSkeleton() {
 
 type SpecToolbarSlot = { id: string; className: string };
 
+type SpecToolbarRow = {
+  id: string;
+  className: string;
+  left: SpecToolbarSlot[];
+  right: SpecToolbarSlot[];
+};
+
+// Gone below `sm`, where the header's nav carries the way back instead. From
+// there it is the arrow and the card's ref as one control, which past 1440px
+// hangs its arrow in the gutter and leaves only the ref in the row — hence the
+// narrower box there (T-461). Drawn in its merged shape because
+// `ref_placement_detail` defaults to `before`; a reader who moved the ref
+// after the title meets a wrap point a few pixels off for as long as the spec
+// is in flight.
+const SPEC_TOOLBAR_BACK: SpecToolbarSlot = {
+  id: "back",
+  className: "hidden w-[62px] sm:block min-[1440px]:w-[38px]",
+};
+
+const SPEC_TOOLBAR_CHANGE_NAV: SpecToolbarSlot[] = [
+  { id: "prev", className: "w-7" },
+  { id: "count", className: "w-[21px]" },
+  { id: "next", className: "w-7" },
+];
+
 /**
- * The spec toolbar's two rows, each split at its one elastic gap, every
+ * The spec toolbar's rows from lg up, each split at its one elastic gap, every
  * placeholder as wide as the control it stands in for. The widths are here to
  * put the wrap points where the real row puts them: a placeholder is not a
  * control, so a pixel either way costs nothing, but a row that wraps one line
  * sooner than the real bar moves the whole page down when it arrives.
  */
-const SPEC_TOOLBAR_ROWS: {
-  id: string;
-  className: string;
-  left: SpecToolbarSlot[];
-  right: SpecToolbarSlot[];
-}[] = [
+const SPEC_TOOLBAR_ROWS: SpecToolbarRow[] = [
   {
     id: "a",
-    // Row A's own classes, copied rather than approximated: `lg:flex-nowrap`
-    // is what makes a long title truncate instead of pushing the actions onto
-    // a second line (T-206), so it is also what decides this row's height.
-    className: "flex flex-wrap items-center gap-2 lg:flex-nowrap",
+    // No wrapping, as on the real row: that is what makes a long title
+    // truncate instead of pushing the actions onto a second line (T-206), so
+    // it is also what decides this row's height.
+    className: "flex items-center gap-2",
     left: [
-      {
-        // Gone below `sm`, where the header's nav carries the way back
-        // instead. From there it is the arrow and the card's ref as one
-        // control, which past 1440px hangs its arrow in the gutter and leaves
-        // only the ref in the row — hence the narrower box there (T-461).
-        // Drawn in its merged shape because `ref_placement_detail` defaults to
-        // `before`; a reader who moved the ref after the title meets a wrap
-        // point a few pixels off for as long as the spec is in flight.
-        id: "back",
-        className: "hidden w-[62px] sm:block min-[1440px]:w-[38px]",
-      },
-      // Elastic, and gone below lg, like the real title.
-      { id: "title", className: "hidden min-w-0 flex-1 lg:block" },
+      SPEC_TOOLBAR_BACK,
+      // Elastic, like the real title.
+      { id: "title", className: "min-w-0 flex-1" },
       { id: "review-status", className: "w-[103px]" },
     ],
     right: [
-      // Where the file rail goes below lg, so it appears exactly where the
-      // rail does not.
-      { id: "files", className: "w-[87px] lg:hidden" },
       { id: "comment-file", className: "w-[102px]" },
       { id: "finish-review", className: "w-[100px]" },
     ],
@@ -248,12 +255,67 @@ const SPEC_TOOLBAR_ROWS: {
     ],
     right: [
       { id: "display-toggle", className: "w-[61px]" },
-      { id: "prev", className: "w-7" },
-      { id: "count", className: "w-[21px]" },
-      { id: "next", className: "w-7" },
+      ...SPEC_TOOLBAR_CHANGE_NAV,
     ],
   },
 ];
+
+/**
+ * The same toolbar below lg (T-593): the one row the reader keeps, then the
+ * rows that scroll away beneath it. Below lg the version and baseline
+ * triggers are chip and arrow only, which is what their widths here stand in
+ * for.
+ */
+const SPEC_TOOLBAR_KEPT_ROW: SpecToolbarRow = {
+  id: "kept",
+  className: "flex items-center gap-2",
+  left: [SPEC_TOOLBAR_BACK, { id: "title", className: "min-w-0 flex-1" }],
+  right: [
+    ...SPEC_TOOLBAR_CHANGE_NAV,
+    { id: "more-controls", className: "w-7" },
+    { id: "finish-review", className: "w-[100px]" },
+  ],
+};
+const SPEC_TOOLBAR_SCROLLED_ROWS: SpecToolbarRow[] = [
+  {
+    id: "status",
+    className: "flex flex-wrap items-center gap-2",
+    left: [{ id: "review-status", className: "w-[103px]" }],
+    right: [
+      { id: "files", className: "w-[87px]" },
+      { id: "comment-file", className: "w-[102px]" },
+    ],
+  },
+  {
+    id: "view",
+    className: "flex flex-wrap items-center gap-2",
+    left: [
+      { id: "view-toggle", className: "w-[125px]" },
+      { id: "version", className: "w-[70px]" },
+      { id: "compare", className: "w-7" },
+      { id: "baseline", className: "w-[70px]" },
+    ],
+    right: [{ id: "display-toggle", className: "w-[61px]" }],
+  },
+];
+
+function SpecToolbarRows({ rows }: { rows: SpecToolbarRow[] }) {
+  return rows.map((row) => (
+    <div
+      key={row.id}
+      className={row.className}
+      data-testid="spec-skeleton-toolbar-row"
+    >
+      {row.left.map((slot) => (
+        <Skeleton key={slot.id} className={cn("h-7", slot.className)} />
+      ))}
+      <span className="ml-auto" />
+      {row.right.map((slot) => (
+        <Skeleton key={slot.id} className={cn("h-7", slot.className)} />
+      ))}
+    </div>
+  ));
+}
 
 /**
  * A fixed four, for the reason `BOARD_COLUMNS` is a fixed four: the real count
@@ -281,24 +343,19 @@ function SpecSkeleton() {
           the real bar's `top` is a measured header height that this display-only
           component would otherwise have to go and measure. */}
       <div
-        className="relative -mx-2 space-y-1.5 border-b px-2 py-2"
+        className="relative -mx-2 border-b px-2 py-2"
         data-testid="spec-skeleton-toolbar"
       >
-        {SPEC_TOOLBAR_ROWS.map((row) => (
-          <div
-            key={row.id}
-            className={row.className}
-            data-testid="spec-skeleton-toolbar-row"
-          >
-            {row.left.map((slot) => (
-              <Skeleton key={slot.id} className={cn("h-7", slot.className)} />
-            ))}
-            <span className="ml-auto" />
-            {row.right.map((slot) => (
-              <Skeleton key={slot.id} className={cn("h-7", slot.className)} />
-            ))}
+        <div className="hidden space-y-1.5 lg:block">
+          <SpecToolbarRows rows={SPEC_TOOLBAR_ROWS} />
+        </div>
+        <div className="lg:hidden">
+          <SpecToolbarRows rows={[SPEC_TOOLBAR_KEPT_ROW]} />
+          {/* The kept row's own bottom padding stands between it and these. */}
+          <div className="mt-2 space-y-1.5">
+            <SpecToolbarRows rows={SPEC_TOOLBAR_SCROLLED_ROWS} />
           </div>
-        ))}
+        </div>
       </div>
       <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
         <aside className="hidden space-y-1 lg:block">

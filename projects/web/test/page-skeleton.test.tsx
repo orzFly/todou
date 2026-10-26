@@ -44,7 +44,8 @@ describe("PageSkeleton", () => {
   it("draws the spec page's own envelope: toolbar band, file rail, one document", () => {
     const view = render(<PageSkeleton kind="spec" />);
     expect(view.getByTestId("spec-skeleton-toolbar")).toBeTruthy();
-    expect(view.getAllByTestId("spec-skeleton-toolbar-row")).toHaveLength(2);
+    // Two rows from lg up, three below it (T-593); CSS picks one set.
+    expect(view.getAllByTestId("spec-skeleton-toolbar-row")).toHaveLength(5);
     expect(view.getAllByTestId("spec-skeleton-rail-file")).toHaveLength(4);
     expect(view.getAllByTestId("spec-skeleton-doc")).toHaveLength(1);
   });

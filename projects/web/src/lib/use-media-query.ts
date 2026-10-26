@@ -1,6 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 
-/** Tailwind's `md` and `sm`. The one place these breakpoints are written outside CSS. */
+/** Tailwind's `lg`, `md` and `sm`. The one place these breakpoints are written outside CSS. */
+export const LG_UP = "(min-width: 1024px)";
 export const MD_UP = "(min-width: 768px)";
 export const SM_UP = "(min-width: 640px)";
 

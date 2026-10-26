@@ -21,7 +21,7 @@ import type {
   SpecInfo,
 } from "@todou/shared";
 import { MePrefs, TodouError } from "@todou/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
@@ -277,7 +277,6 @@ const SLOTS_COMPARING = [
   "back",
   "title",
   "review-status",
-  "files",
   "comment-file",
   "finish-review",
   "view-toggle",
@@ -438,34 +437,19 @@ describe("spec toolbar fixed slots (T-190)", () => {
     const rowA = view.container.querySelector(
       '[data-toolbar-slot="back"]',
     )?.parentElement;
-    expect(rowA?.className).toContain("lg:flex-nowrap");
-    // Below lg the identity is the row's one shrinkable item and every other
-    // item is shrink-0, so wrapping stays the graceful answer there. Since
-    // T-407 the identity is no longer display:none at that width — it
-    // truncates — which is why the assertion below matters at every width and
-    // not only from lg up.
-    expect(rowA?.className).toContain("flex-wrap");
+    expect(rowA?.className).not.toMatch(/(^|\s)flex-wrap\b/);
+    expect(slot(view, "finish-review")?.parentElement).toBe(rowA);
     // The ellipsis needs both halves, and neither may become a fixed width
     // (T-194) or a grown flex child, which would strand the review badge.
     expect(cls('[data-toolbar-slot="title"]')).toContain("min-w-0");
     expect(cls('[data-toolbar-slot="title"]')).toContain("truncate");
     expect(cls('[data-toolbar-slot="title"]')).not.toMatch(/\bflex-1\b|basis-/);
     expect(cls('[data-toolbar-slot="title"]')).not.toMatch(/(^|\s)(w-|max-w-)/);
-    // And it has to be able to shrink at all. With `lg:flex-nowrap` on the
-    // row, a `shrink-0` identity meets a long title by pushing the row past
-    // the viewport instead of truncating — the overflow T-206 removed, back
+    // And it has to be able to shrink at all. With the row not wrapping, a
+    // `shrink-0` identity meets a long title by pushing the row past the
+    // viewport instead of truncating — the overflow T-206 removed, back
     // through the one item that is allowed to give.
     expect(cls('[data-toolbar-slot="title"]')).not.toMatch(/(^|\s)shrink-0\b/);
-    // One wrapping unit, so the wrap left below lg cannot stage the same
-    // stranding it was just fixed for.
-    const commentFile = view.container.querySelector(
-      '[data-toolbar-slot="comment-file"]',
-    );
-    const finish = view.container.querySelector(
-      '[data-toolbar-slot="finish-review"]',
-    );
-    expect(finish?.parentElement).toBe(commentFile?.parentElement);
-    expect(finish?.parentElement).not.toBe(rowA);
   });
 
   it("shows fold on the rendered views and wrap on the source ones", async () => {
@@ -775,11 +759,14 @@ describe("spec toolbar fixed slots (T-190)", () => {
   });
 
   it("lists the whole file set in source-diff mode, carrying the baseline", async () => {
+    // Below lg, where the popover stands in for the rail.
+    setViewportWidth(390);
+    onTestFinished(() => setViewportWidth(1024));
     const view = await toolbar("?v=2&compare=1");
     // design.md changed, fresh.md is new, stable.md did not move (T-203).
     expect(view.getByRole("button", { name: /Files \(3\)/ })).toBeTruthy();
-    // The rail renders the same list from lg up, so scope to the popover
-    // rather than picking one of two identical links (T-192).
+    // Scoped to the popover: the rail renders the same list, hidden by CSS
+    // that happy-dom does not run (T-192).
     fireEvent.click(view.getByRole("button", { name: /Files \(3\)/ }));
     const popover = await screen.findByRole("dialog");
     const link = within(popover).getByRole("link", { name: /fresh\.md/ });
@@ -983,5 +970,101 @@ describe("the way back and the identity beside it (T-407)", () => {
     expect(back.textContent).toMatch(/^Back to [#T]/);
     // There is no toolbar here to belong to, so it claims no slot on one.
     expect(back.hasAttribute("data-toolbar-slot")).toBe(false);
+  });
+});
+
+describe("the toolbar below lg (T-593)", () => {
+  async function narrowToolbar() {
+    setViewportWidth(390);
+    onTestFinished(() => setViewportWidth(1024));
+    const view = await toolbar("?v=2&file=design.md");
+    const more = view.getByRole("button", { name: /toolbar controls$/ });
+    const bar = more.closest<HTMLElement>(".sticky");
+    const controls = document.getElementById(
+      more.getAttribute("aria-controls") ?? "",
+    );
+    if (bar === null || controls === null) throw new Error("no toolbar");
+    return { view, more, bar, controls };
+  }
+
+  /**
+   * happy-dom lays nothing out, so the page is placed by hand: the kept row
+   * ends at 102px, the controls after it are 100px tall, and `naturalTop` is
+   * where they would start in the flow.
+   */
+  function placeControls(
+    bar: HTMLElement,
+    controls: HTMLElement,
+    naturalTop: number,
+  ) {
+    const layout = controls.nextElementSibling as HTMLElement;
+    bar.getBoundingClientRect = () =>
+      ({ top: 57, bottom: 102, height: 45 }) as DOMRect;
+    controls.getBoundingClientRect = () => ({ height: 100 }) as DOMRect;
+    layout.getBoundingClientRect = () => ({ top: naturalTop + 100 }) as DOMRect;
+    fireEvent.scroll(window);
+  }
+
+  const names = (el: HTMLElement) =>
+    [...el.querySelectorAll("[data-toolbar-slot]")].map((s) =>
+      s.getAttribute("data-toolbar-slot"),
+    );
+
+  it("keeps only the mid-read controls in the sticky row", async () => {
+    const { bar, controls } = await narrowToolbar();
+    expect(names(bar)).toEqual([
+      "title",
+      "prev-change",
+      "change-count",
+      "next-change",
+      "more-controls",
+      "finish-review",
+    ]);
+    expect(names(controls)).toEqual([
+      "review-status",
+      "files",
+      "comment-file",
+      "view-toggle",
+      "version",
+      "compare",
+      "baseline",
+      "display-toggle",
+    ]);
+    expect(controls.className).not.toMatch(/(^|\s)sticky\b/);
+  });
+
+  it("offers the controls back only once they have slid under the row", async () => {
+    const { more, bar, controls } = await narrowToolbar();
+    placeControls(bar, controls, 102);
+    // Present but disabled at the top of the page, so ↑↓ beside it never
+    // move when it becomes usable.
+    await waitFor(() => expect(more.hasAttribute("disabled")).toBe(true));
+    placeControls(bar, controls, 60);
+    await waitFor(() => expect(more.hasAttribute("disabled")).toBe(false));
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(more);
+    await waitFor(() =>
+      expect(more.getAttribute("aria-expanded")).toBe("true"),
+    );
+    expect(controls.className).toMatch(/(^|\s)sticky\b/);
+
+    // Back at the top the pin drops, or the next scroll down would bring the
+    // controls out again unasked.
+    placeControls(bar, controls, 102);
+    await waitFor(() =>
+      expect(more.getAttribute("aria-expanded")).toBe("false"),
+    );
+    expect(controls.className).not.toMatch(/(^|\s)sticky\b/);
+  });
+
+  it("borders the kept row only while something is under it", async () => {
+    const { bar, controls } = await narrowToolbar();
+    placeControls(bar, controls, 102);
+    await waitFor(() => expect(bar.className).toContain("border-transparent"));
+    placeControls(bar, controls, 60);
+    await waitFor(() =>
+      expect(bar.className).not.toContain("border-transparent"),
+    );
   });
 });
