@@ -353,7 +353,7 @@ importers:
         version: 6.7.1
       '@codemirror/view':
         specifier: ^6.43.9
-        version: 6.43.9(patch_hash=668e27b875730a11900ef43ab4868246b4b3138d2382ed5398759e1c5193dfe3)
+        version: 6.43.9
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -5471,20 +5471,20 @@ snapshots:
     dependencies:
       '@codemirror/language': 6.12.4
       '@codemirror/state': 6.7.1
-      '@codemirror/view': 6.43.9(patch_hash=668e27b875730a11900ef43ab4868246b4b3138d2382ed5398759e1c5193dfe3)
+      '@codemirror/view': 6.43.9
       '@lezer/common': 1.5.2
 
   '@codemirror/commands@6.11.0':
     dependencies:
       '@codemirror/language': 6.12.4
       '@codemirror/state': 6.7.1
-      '@codemirror/view': 6.43.9(patch_hash=668e27b875730a11900ef43ab4868246b4b3138d2382ed5398759e1c5193dfe3)
+      '@codemirror/view': 6.43.9
       '@lezer/common': 1.5.2
 
   '@codemirror/language@6.12.4':
     dependencies:
       '@codemirror/state': 6.7.1
-      '@codemirror/view': 6.43.9(patch_hash=668e27b875730a11900ef43ab4868246b4b3138d2382ed5398759e1c5193dfe3)
+      '@codemirror/view': 6.43.9
       '@lezer/common': 1.5.2
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
@@ -5493,14 +5493,14 @@ snapshots:
   '@codemirror/search@6.7.1':
     dependencies:
       '@codemirror/state': 6.7.1
-      '@codemirror/view': 6.43.9(patch_hash=668e27b875730a11900ef43ab4868246b4b3138d2382ed5398759e1c5193dfe3)
+      '@codemirror/view': 6.43.9
       crelt: 1.0.7
 
   '@codemirror/state@6.7.1':
     dependencies:
       '@marijn/find-cluster-break': 1.0.4
 
-  '@codemirror/view@6.43.9(patch_hash=668e27b875730a11900ef43ab4868246b4b3138d2382ed5398759e1c5193dfe3)':
+  '@codemirror/view@6.43.9':
     dependencies:
       '@codemirror/state': 6.7.1
       crelt: 1.0.7

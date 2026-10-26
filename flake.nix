@@ -45,9 +45,6 @@
               ./package.json
               ./pnpm-lock.yaml
               ./pnpm-workspace.yaml
-              # pnpm opens every patch the workspace declares, even for a
-              # package the --filter leaves out, and fails without the file.
-              ./patches
               ./tsconfig.base.json
               ./projects/cli
               ./projects/shared

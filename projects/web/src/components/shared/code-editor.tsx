@@ -11,6 +11,7 @@ import {
 } from "@codemirror/view";
 import { useEffect, useImperativeHandle, useRef } from "react";
 
+import { parkedTooltip } from "@/lib/editor/parked-tooltip.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { cn } from "@/lib/utils";
 
@@ -267,6 +268,7 @@ export function CodeEditor({
           ...(language ? [language] : []),
           ...(highlightStyle ? [syntaxHighlighting(highlightStyle)] : []),
           editorTheme,
+          parkedTooltip,
           EditorView.contentAttributes.of({
             // CodeMirror's contenteditable opts out of the niceties a
             // <textarea> gets for free.

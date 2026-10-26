@@ -1,4 +1,4 @@
-import { EditorView } from "@codemirror/view";
+import { EditorView, showTooltip, type Tooltip } from "@codemirror/view";
 import { render } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -181,6 +181,27 @@ describe("MarkdownEditor", () => {
     expect(cm.state.facet(EditorView.editable)).toBe(false);
     view.rerender(<MarkdownEditor extensions={[]} />);
     expect(cm.state.facet(EditorView.editable)).toBe(true);
+  });
+
+  /**
+   * Safari's transform probe in @codemirror/view measures only the first
+   * tooltip, and reads a placed one as "inside a transformed parent" — so a
+   * real tooltip must never be first. A caller's tooltip (completion, paste
+   * options) is present here, and must not take the lead.
+   */
+  it("keeps a parked tooltip ahead of every other one", () => {
+    const callers: Tooltip = {
+      pos: 0,
+      create: () => ({ dom: document.createElement("div") }),
+    };
+    const view = render(
+      <MarkdownEditor extensions={showTooltip.of(callers)} />,
+    );
+    const cm = cmView(view.container);
+    const [first, ...rest] = cm.state.facet(showTooltip);
+    expect(rest).toContain(callers);
+    const parked = first?.create(cm);
+    expect(parked?.getCoords?.(0).bottom).toBeLessThan(0);
   });
 
   /**
