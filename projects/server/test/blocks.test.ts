@@ -1,7 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { issueBlocks } from "../src/db/system-schema.ts";
+import { accessibleProjectRows, routeInfoOf } from "../src/services/access.ts";
 import { repairBlocks } from "../src/services/blocks.ts";
+import { visibleProjects } from "../src/services/cross-references.ts";
+import { inboxRowState } from "../src/services/inbox.ts";
+import { readPrefs } from "../src/services/prefs.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -845,12 +849,36 @@ describe("issue block edges T-377", () => {
     expect((await setClearLine(PA, "Shipped")).status).toBe(200);
     // Bob is the reader; the owner does the blocking and the shipping, so
     // every entry below is somebody else's.
-    const inboxOf = async (): Promise<number[]> => {
+    const pageOf = async (): Promise<
+      { number: number; unblocked: boolean }[]
+    > => {
       const res = await t.app.request("/api/me/inbox", {
         headers: bob.headers,
       });
       expect(res.status).toBe(200);
-      return (await json(res)).items.map((i: { number: number }) => i.number);
+      return (await json(res)).items;
+    };
+    const inboxOf = async (): Promise<number[]> =>
+      (await pageOf()).map((i) => i.number);
+    // The row's `unblocked` on both paths: the list, and the per-event one
+    // the SSE stream sends (T-604). A web client that hides event-only
+    // markers under this preference draws the row's only reason from it.
+    const unblockedOf = async (number: number) => {
+      const listed = (await pageOf()).find((i) => i.number === number);
+      const project = (await accessibleProjectRows(t.ctx, bob.user)).find(
+        (p) => p.slug === PA,
+      );
+      if (!project) throw new Error(`bob cannot read ${PA}`);
+      const single = await inboxRowState(
+        t.ctx.router.system(),
+        await t.ctx.router.forProject(routeInfoOf(project)),
+        project,
+        bob.user,
+        number,
+        await readPrefs(t.ctx.router.system(), bob.user.id),
+        await visibleProjects(t.ctx, bob.user),
+      );
+      return { list: listed?.unblocked, single: single?.unblocked };
     };
     const prefs = async (weak: boolean) => {
       const res = await t.app.request("/api/me/prefs", {
@@ -891,6 +919,7 @@ describe("issue block edges T-377", () => {
     await setStatus(PA, blocker, "Shipped");
     await settle();
     expect(await inboxOf()).toContain(blocked);
+    expect(await unblockedOf(blocked)).toEqual({ list: true, single: true });
 
     // And the bad news stays weak: re-blocking is not an action signal.
     await readIt(blocked);
@@ -901,6 +930,8 @@ describe("issue block edges T-377", () => {
 
     await prefs(true);
     expect(await inboxOf()).toContain(blocked);
+    // Back for the re-block, which is weak news: nothing here says unblocked.
+    expect(await unblockedOf(blocked)).toEqual({ list: false, single: false });
   });
 
   it("keeps a muted card quiet even when its blocker clears", async () => {

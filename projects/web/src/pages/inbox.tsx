@@ -344,6 +344,7 @@ function InboxRow({
       issue={item}
       specAwaitingReview={item.pending_spec_review}
       mentionsYou={item.mentions_you}
+      unblocked={item.unblocked}
       trailing={
         <span className="ml-auto flex shrink-0 items-center gap-2">
           {hasAvatars && (

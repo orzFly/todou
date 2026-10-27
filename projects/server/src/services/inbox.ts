@@ -53,6 +53,7 @@ type KeptState = {
   specCreatedAt: Date | undefined;
   mentionsYou: boolean;
   mentionLatest: Date | undefined;
+  unblocked: boolean;
 };
 
 /**
@@ -476,6 +477,7 @@ export async function groupInbox(
         specCreatedAt: specAuthor?.createdAt,
         mentionsYou: mentionsYou.has(row.id),
         mentionLatest: mentionLatest.get(row.id),
+        unblocked: (strongCand.get(row.id) ?? 0) > 0,
       },
     });
   }
@@ -522,6 +524,7 @@ export async function groupInbox(
         last_activity_at: at.toISOString(),
         pending_spec_review: state.pendingSpecReview,
         mentions_you: state.mentionsYou,
+        unblocked: state.unblocked,
       },
     });
     slices.set(row.projectId, slice);
@@ -650,6 +653,7 @@ export async function inboxRowState(
     pending_spec_review: pendingSpecReview,
     open_questions: row.openQuestions,
     mentions_you: mentioned.has(row.id),
+    unblocked: (strong.get(row.id) ?? 0) > 0,
   };
 }
 

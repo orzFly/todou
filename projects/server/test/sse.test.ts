@@ -534,7 +534,7 @@ describe("user-level SSE stream (T-122)", () => {
     let zoe: Awaited<ReturnType<typeof addUserWithToken>>;
     let alphaId: number;
 
-    /** The five deciding fields of one row of /api/me/inbox. */
+    /** The deciding fields of one row of /api/me/inbox. */
     const inboxRowOf = async (
       who: Record<string, string>,
       slug: string,
@@ -554,6 +554,7 @@ describe("user-level SSE stream (T-122)", () => {
         pending_spec_review: row.pending_spec_review,
         open_questions: row.open_questions,
         mentions_you: row.mentions_you,
+        unblocked: row.unblocked,
       };
     };
 
@@ -1006,6 +1007,7 @@ describe("user-level SSE stream (T-122)", () => {
         pending_spec_review: row.pending_spec_review,
         open_questions: row.open_questions,
         mentions_you: row.mentions_you,
+        unblocked: row.unblocked,
       });
       expect(event.inbox_row).toMatchObject({
         unread: false,

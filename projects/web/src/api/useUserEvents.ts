@@ -536,7 +536,8 @@ export function inboxAttentionDiffers(
     cached.unread !== row.unread ||
     cached.unread_comments !== row.unread_comments ||
     cached.pending_spec_review !== row.pending_spec_review ||
-    cached.open_questions !== row.open_questions
+    cached.open_questions !== row.open_questions ||
+    cached.unblocked !== row.unblocked
   );
 }
 

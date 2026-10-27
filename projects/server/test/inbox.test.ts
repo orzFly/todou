@@ -700,7 +700,7 @@ describe("cross-project inbox T-97", () => {
       expect(res.status).toBe(200);
     }
 
-    /** The six deciding fields of the list's row, or null when it has none. */
+    /** The seven deciding fields of the list's row, or null when it has none. */
     function listFingerprint(
       page: {
         items: {
@@ -712,6 +712,7 @@ describe("cross-project inbox T-97", () => {
           pending_spec_review: boolean;
           open_questions: number;
           mentions_you: boolean;
+          unblocked: boolean;
         }[];
       },
       number: number,
@@ -727,6 +728,7 @@ describe("cross-project inbox T-97", () => {
         pending_spec_review: row.pending_spec_review,
         open_questions: row.open_questions,
         mentions_you: row.mentions_you,
+        unblocked: row.unblocked,
       };
     }
 

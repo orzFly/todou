@@ -506,6 +506,7 @@ export function reviewApiFixture(): ReviewApiFixture {
                 pending_spec_review:
                   committedVerdict === null || committedVerdict === "comment",
                 mentions_you: false,
+                unblocked: false,
               },
             ],
             truncated: false,

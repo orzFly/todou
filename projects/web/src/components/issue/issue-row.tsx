@@ -138,6 +138,7 @@ export function IssueRow({
   issue,
   specAwaitingReview = issue.spec_review_status === "unreviewed",
   mentionsYou = false,
+  unblocked = false,
   trailing,
   meta,
   readMarker = true,
@@ -155,6 +156,8 @@ export function IssueRow({
   specAwaitingReview?: boolean;
   /** The viewer was @-mentioned on this card (T-373). */
   mentionsYou?: boolean;
+  /** Inbox only: the server's flag that a blocker was cleared (T-604). */
+  unblocked?: boolean;
   trailing?: ReactNode;
   meta?: ReactNode;
   /** The ● column. Off for a list with no read state; pair with the grid's own flag. */
@@ -195,6 +198,7 @@ export function IssueRow({
             unread={issue.unread ?? false}
             unreadComments={issue.unread_comments ?? 0}
             muted={issue.muted ?? null}
+            unblocked={unblocked}
           />
         </span>
       )}

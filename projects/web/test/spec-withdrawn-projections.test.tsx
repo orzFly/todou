@@ -52,6 +52,7 @@ function item(reviewStatus: SpecReviewStatus): InboxItem {
     last_activity_at: "2026-01-02T00:00:00Z",
     pending_spec_review: reviewStatus === "unreviewed",
     mentions_you: false,
+    unblocked: false,
   };
 }
 

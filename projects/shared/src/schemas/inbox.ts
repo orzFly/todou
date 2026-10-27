@@ -42,6 +42,14 @@ export const InboxItem = IssueListItem.extend({
    * response still parses.
    */
   mentions_you: z.boolean().default(false),
+  /**
+   * Something that blocked this row was cleared since the caller last read
+   * it (T-377). The one event-only reason that survives `show_weak_unread`
+   * being off, so a client that hides event-only markers under that
+   * preference needs it to know this row's marker is not one of them
+   * (T-604). Defaulted so an older server's response still parses.
+   */
+  unblocked: z.boolean().default(false),
 });
 export type InboxItem = z.infer<typeof InboxItem>;
 

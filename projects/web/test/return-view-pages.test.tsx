@@ -1942,6 +1942,7 @@ const inboxItem = (
   last_activity_at: "2026-09-01T00:00:00Z",
   pending_spec_review: false,
   mentions_you: false,
+  unblocked: false,
   unread: true,
   unread_comments: 1,
   ...over,

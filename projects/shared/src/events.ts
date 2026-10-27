@@ -173,6 +173,8 @@ export const InboxRowState = z.object({
    * on this field, costing one refetch).
    */
   mentions_you: z.boolean().default(false),
+  /** Same as InboxItem's `unblocked`, defaulted the same way. */
+  unblocked: z.boolean().default(false),
 });
 export type InboxRowState = z.infer<typeof InboxRowState>;
 

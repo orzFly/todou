@@ -78,6 +78,7 @@ function makeItem(
     last_activity_at: "2026-01-02T00:00:00Z",
     pending_spec_review: false,
     mentions_you: false,
+    unblocked: false,
     ...overrides,
   };
 }
@@ -606,6 +607,32 @@ describe("InboxPage", () => {
     const badge = badges[0] as SVGElement;
     // The badge sits on the mentioned row, not the other one.
     expect(badge.closest("li")?.textContent).toContain("issue 1");
+  });
+
+  // With weak unread off, the server keeps an event-only row only for a
+  // cleared blocker (T-377); without its ring the row showed no reason.
+  it("rings the unblocked row when weak unread is off (T-604)", async () => {
+    const eventOnly = { unread_comments: 0 };
+    mockInbox({
+      items: [
+        makeItem("a", 1, { ...eventOnly, unblocked: true }),
+        makeItem("a", 2, { ...eventOnly, open_questions: 1 }),
+      ],
+      truncated: false,
+    });
+    const prefs = await api.getMyPrefs();
+    vi.mocked(api.getMyPrefs).mockResolvedValue({
+      ...prefs,
+      show_weak_unread: false,
+    });
+    const view = renderWithProviders(<InboxPage />);
+    const ring = await view.findByRole("button", {
+      name: "new activity — mark as read",
+    });
+    expect(ring.closest("li")?.textContent).toContain("issue 1");
+    expect(view.getAllByRole("button", { name: /mark as read/ })).toHaveLength(
+      1,
+    );
   });
 
   it("keeps the Muted link outside the reason tabs when the list is empty", async () => {

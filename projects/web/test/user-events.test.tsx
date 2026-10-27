@@ -59,6 +59,7 @@ const fingerprint = (over: Partial<InboxRowState> = {}): InboxRowState => ({
   pending_spec_review: false,
   open_questions: 0,
   mentions_you: false,
+  unblocked: false,
   ...over,
 });
 
@@ -747,12 +748,13 @@ describe("inboxAttentionDiffers / inboxRowContentDiffers", () => {
     expect(inboxAttentionDiffers(empty, "todou", 7, fingerprint())).toBe(true);
   });
 
-  it("wants a refetch on any of the four attention fields", () => {
+  it("wants a refetch on any of the five attention fields", () => {
     for (const over of [
       { unread: false },
       { unread_comments: 3 },
       { pending_spec_review: true },
       { open_questions: 1 },
+      { unblocked: true },
     ]) {
       expect(inboxAttentionDiffers(held, "todou", 7, fingerprint(over))).toBe(
         true,

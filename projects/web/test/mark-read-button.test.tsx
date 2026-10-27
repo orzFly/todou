@@ -109,6 +109,24 @@ describe("MarkReadButton (T-81)", () => {
     ).toBeTruthy();
   });
 
+  it("keeps the ring for a cleared blocker when the preference is off (T-604)", async () => {
+    const client = testQueryClient();
+    client.setQueryData(["me-prefs"], { show_weak_unread: false });
+    const view = renderWithProviders(
+      <MarkReadButton
+        slug="p"
+        number={7}
+        unread
+        unreadComments={0}
+        unblocked
+      />,
+      client,
+    );
+    expect(
+      await view.findByRole("button", { name: "new activity — mark as read" }),
+    ).toBeTruthy();
+  });
+
   it("refreshes the inbox badge, which no event ever would (T-112)", async () => {
     // Read positions are eventless: neither SSE nor the /activity poll can
     // report them, so the badge only drops if the mutation says so.

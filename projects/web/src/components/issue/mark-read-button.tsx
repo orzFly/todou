@@ -16,7 +16,10 @@ import { UnreadMarker } from "@/components/issue/unread-marker.tsx";
  *
  * The weak-unread preference gate lives here, not in UnreadMarker: hiding
  * only the ring would leave an invisible but hoverable button behind
- * (T-97). Marker and click target vanish together.
+ * (T-97). Marker and click target vanish together. `unblocked` passes the
+ * gate for the same reason the server's inbox keep-check lets it through
+ * (T-377): without the marker an inbox row kept for it showed no reason at
+ * all (T-604).
  */
 export function MarkReadButton({
   slug,
@@ -24,12 +27,15 @@ export function MarkReadButton({
   unread,
   unreadComments,
   muted = null,
+  unblocked = false,
 }: {
   slug: string;
   number: number;
   unread: boolean;
   unreadComments: number;
   muted?: MuteReason | null;
+  /** A blocker of this card was cleared since it was last read (T-377). */
+  unblocked?: boolean;
 }) {
   const [marked, setMarked] = useState(false);
   const { mutate } = useMarkReadAction();
@@ -37,7 +43,7 @@ export function MarkReadButton({
   // marker must never flicker off while the query warms up.
   const showWeakUnread = useQuery(prefsQuery).data?.show_weak_unread ?? true;
   if ((!unread && unreadComments === 0) || marked) return null;
-  if (!showWeakUnread && unreadComments === 0) return null;
+  if (!showWeakUnread && unreadComments === 0 && !unblocked) return null;
 
   // The button's accessible name replaces the marker's own role="img"
   // label, so the count has to travel along.

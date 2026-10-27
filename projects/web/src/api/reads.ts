@@ -82,7 +82,13 @@ export function clearInboxUnread(page: InboxPage, slug?: string): InboxPage {
       return [];
     }
     return [
-      { ...item, unread: false, unread_comments: 0, mentions_you: false },
+      {
+        ...item,
+        unread: false,
+        unread_comments: 0,
+        mentions_you: false,
+        unblocked: false,
+      },
     ];
   });
   return { ...page, items, unread_counts: counts };
