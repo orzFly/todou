@@ -525,6 +525,41 @@ describe("renderActivityLine", () => {
       expect(lines[1]).toBe("  第二行");
     });
 
+    const born = event({
+      event_type: "opened",
+      payload: {
+        status: { id: 4, name: "Next" },
+        labels: [
+          { id: 1, name: "area:cli", color: "#000000" },
+          { id: 2, name: "kind:bug", color: "#000000" },
+        ],
+        assignees: [{ id: 7, login: "alice" }],
+      },
+    });
+
+    it("says what an opened card was born with, between title and time", () => {
+      const lines = renderActivityLine(born, paint, known).split("\n");
+      expect(lines[0]).toMatch(
+        /^T-146 User opened "读不到项目时给一条无差别提示" \(Next · area:cli, kind:bug · @alice\) .+: 第一行$/,
+      );
+    });
+
+    it("leaves out the empty sets of an opened card", () => {
+      const bare = event({
+        event_type: "opened",
+        payload: { status: { id: 1, name: "Todo" }, labels: [], assignees: [] },
+      });
+      expect(renderActivityLine(bare, paint, known).split("\n")[0]).toMatch(
+        /^T-146 User opened "读不到项目时给一条无差别提示" \(Todo\) .+: 第一行$/,
+      );
+    });
+
+    it("says it even when the card could not be resolved", () => {
+      expect(renderActivityLine(born, paint, ctx)).toMatch(
+        /^T-146 User opened \(Next · area:cli, kind:bug · @alice\) .+ ago$/,
+      );
+    });
+
     it("ends an empty-bodied card's line at the time, with no colon", () => {
       const line = renderActivityLine(opened, paint, {
         ...known,

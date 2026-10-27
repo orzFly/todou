@@ -4,7 +4,7 @@ import { type CardOf, referenceTarget } from "./timeline.ts";
 
 /**
  * The titles and bodies a batch of activity entries needs before it can be
- * rendered (T-286). An `opened` event's payload is `{}` and a reference's
+ * rendered (T-286). An `opened` event's payload carries no title or body and a reference's
  * names its referrer by number, so the two lines that are about *another
  * card* have to be resolved from the cards themselves — asynchronously, while
  * `renderActivityLine` is synchronous. Hence the shape: the drain resolves the

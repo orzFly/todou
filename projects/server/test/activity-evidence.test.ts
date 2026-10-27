@@ -45,6 +45,29 @@ const edge = {
 // Expected answers are deliberately literal and independent of the allowlist.
 const cases: [string, string, unknown, boolean][] = [
   ["creation", "opened", {}, true],
+  [
+    "creation with its opening state",
+    "opened",
+    {
+      status: to,
+      labels: [{ id: 3, name: "area:cli", color: "#000000" }],
+      assignees: [{ id: 4, login: "alice" }],
+    },
+    true,
+  ],
+  ["creation without a status", "opened", { labels: [], assignees: [] }, false],
+  [
+    "creation with a malformed assignee",
+    "opened",
+    { status: to, labels: [], assignees: [{ id: 4 }] },
+    false,
+  ],
+  [
+    "creation with an unknown key",
+    "opened",
+    { status: to, labels: [], assignees: [], surprise: true },
+    false,
+  ],
   ["close", "closed", { from, to }, true],
   ["reopen", "reopened", { from: to, to: from }, true],
   ["status change", "status_changed", { from, to }, true],

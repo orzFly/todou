@@ -12,6 +12,7 @@ import type {
   Label,
   MemberRole,
   MetadataNamespaceSelector,
+  OpenedPayload,
   Status,
   UserRef,
 } from "@todou/shared";
@@ -386,15 +387,16 @@ async function validateLabelIds(
   db: Db,
   projectId: number,
   ids: number[],
-): Promise<void> {
-  if (ids.length === 0) return;
+): Promise<Array<typeof labels.$inferSelect>> {
+  if (ids.length === 0) return [];
   const rows = await db
-    .select({ id: labels.id })
+    .select()
     .from(labels)
     .where(and(eq(labels.projectId, projectId), inArray(labels.id, ids)));
   if (rows.length !== new Set(ids).size) {
     throw new ValidationFailedError("unknown label_ids");
   }
+  return rows;
 }
 
 async function validateAssigneeIds(
@@ -470,14 +472,18 @@ export async function createIssue(
   assertMaySetTriageFields(input, role);
   const db = await ctx.router.forProject(routeInfoOf(project));
 
-  await validateLabelIds(db, project.id, input.label_ids);
+  const labelRows = await validateLabelIds(db, project.id, input.label_ids);
   await validateAssigneeIds(ctx, project.id, input.assignee_ids);
+  const assigneeRefs = await getUserRefs(
+    ctx.router.system(),
+    input.assignee_ids,
+  );
 
-  let statusId = input.status_id;
-  if (statusId === undefined) {
+  let status: { id: number; name: string };
+  if (input.status_id === undefined) {
     // The project's default status wins; without one, first by position.
     const first = await db
-      .select({ id: statuses.id })
+      .select({ id: statuses.id, name: statuses.name })
       .from(statuses)
       .where(eq(statuses.projectId, project.id))
       .orderBy(
@@ -486,13 +492,32 @@ export async function createIssue(
         asc(statuses.id),
       )
       .limit(1);
-    statusId = first[0]?.id;
-    if (statusId === undefined) {
+    const found = first[0];
+    if (found === undefined) {
       throw new ValidationFailedError("project has no statuses");
     }
+    status = found;
   } else {
-    await validateStatusId(db, project.id, statusId);
+    status = await validateStatusId(db, project.id, input.status_id);
   }
+  const statusId = status.id;
+  const labelById = new Map(labelRows.map((l) => [l.id, l]));
+  // What the card was born with (T-605). Setting these at creation writes no
+  // status_changed, label_added or assigned, so without them a stream reader
+  // assumes the card arrived in the default status, bare.
+  const openedPayload: OpenedPayload = {
+    status: { id: status.id, name: status.name },
+    labels: [...new Set(input.label_ids)].flatMap((id) => {
+      const label = labelById.get(id);
+      return label
+        ? [{ id: label.id, name: label.name, color: label.color }]
+        : [];
+    }),
+    assignees: [...new Set(input.assignee_ids)].map((id) => ({
+      id,
+      login: assigneeRefs.get(id)?.login ?? "ghost",
+    })),
+  };
 
   const events: ChangeEvent[] = [];
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
@@ -522,7 +547,7 @@ export async function createIssue(
         number,
         title: input.title,
         body: resolved.storedText,
-        statusId: statusId as number,
+        statusId,
         authorId: actor.id,
       })
       .returning();
@@ -550,7 +575,7 @@ export async function createIssue(
         issueId: issue.id,
         actorId: actor.id,
         type: "opened",
-        payload: {},
+        payload: openedPayload,
         agentContext,
       })
       .returning({ id: issueEvents.id });
@@ -564,7 +589,7 @@ export async function createIssue(
       // all three travel and no reader has to guess at an omission (T-279).
       list_row: {
         kind: "fields",
-        status_id: statusId as number,
+        status_id: statusId,
         label_ids: input.label_ids,
         assignee_ids: input.assignee_ids,
       },

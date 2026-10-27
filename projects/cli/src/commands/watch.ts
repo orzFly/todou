@@ -122,8 +122,11 @@ export class WatchCommand extends ProjectCommand {
       ends with its \`cursor:\` line, as before.
 
       Two kinds of entry are about a card rather than about a change, and
-      both name it: an \`opened\` entry carries the card's title, quoted, and
-      then its body in the same block shape a comment uses; a reference
+      both name it: an \`opened\` entry carries the card's title, quoted,
+      the status, labels and assignees it was opened with —
+      \`(Next · area:cli, kind:bug · @alice)\`, absent from cards opened
+      before the server recorded them — and then its body in the same block
+      shape a comment uses; a reference
       carries the title of the card it came from, spelled that project's way
       (\`by acme#31 "…"\`) when it is not the one being read. **A title is
       never cut** — not by \`--summary\`, which governs bodies. A card that

@@ -86,6 +86,20 @@ export const MovedOutPayload = z.object({
 export type MovedOutPayload = z.infer<typeof MovedOutPayload>;
 
 /**
+ * What a card was opened with (T-605): setting these at creation writes no
+ * `status_changed`, `label_added` or `assigned`, so this is the only record
+ * of them. Each entry has the shape of the event it stands in for. Events
+ * written before carry `{}`, which this schema refuses.
+ */
+export const OpenedPayload = z.object({
+  status: z.object({ id: Id, name: z.string() }),
+  labels: z.array(z.object({ id: Id, name: z.string(), color: z.string() })),
+  /** Logins, not refs: the event outlives the accounts it names. */
+  assignees: z.array(z.object({ id: Id, login: z.string() })),
+});
+export type OpenedPayload = z.infer<typeof OpenedPayload>;
+
+/**
  * One `referenced` event: who mentioned this card, named by the referring
  * project's permanent id (T-266).
  *

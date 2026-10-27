@@ -364,6 +364,46 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     expect(byType.has("label_added")).toBe(true);
   });
 
+  it("records what a card was opened with on its opened event", async () => {
+    const me = await json(
+      await t.app.request("/api/me", { headers: { cookie } }),
+    );
+    const label = await json(
+      await t.app.request(`/api/projects/${slug}/labels`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ name: `born-${placement}`, color: "#445566" }),
+      }),
+    );
+    const next = (await statusesOf()).find(
+      (s: { name: string }) => s.name === "Next",
+    );
+    const issue = await createIssue({
+      title: "Born triaged",
+      status_id: next.id,
+      label_ids: [label.id],
+      assignee_ids: [me.id],
+    });
+
+    const timeline = await timelineOf(issue.number);
+    expect(timeline.items).toHaveLength(1);
+    expect(timeline.items[0].payload).toEqual({
+      status: { id: next.id, name: "Next" },
+      labels: [{ id: label.id, name: `born-${placement}`, color: "#445566" }],
+      assignees: [{ id: me.id, login: me.login }],
+    });
+
+    // The default status is recorded too: it is what an empty status_id
+    // resolved to, which a reader cannot know without asking.
+    const bare = await createIssue({ title: "Born bare" });
+    const bareTimeline = await timelineOf(bare.number);
+    expect(bareTimeline.items[0].payload).toEqual({
+      status: { id: bare.status.id, name: bare.status.name },
+      labels: [],
+      assignees: [],
+    });
+  });
+
   it("rejects non-member assignees and foreign labels", async () => {
     const stranger = await addUserWithToken(t.ctx, `stranger-${placement}`);
     const res = await t.app.request(`/api/projects/${slug}/issues`, {

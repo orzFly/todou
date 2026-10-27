@@ -12,6 +12,7 @@ import {
   formatRef,
   isAction,
   isHidden,
+  OpenedPayload,
   ProjectSlug,
   SpecPushedPayload,
   SpecReviewPayload,
@@ -37,6 +38,7 @@ import type { SelfFilter } from "./watch-loop.ts";
 const SpecPushedEventPayload = SpecPushedPayload.loose();
 const SpecWithdrawnEventPayload = SpecWithdrawnPayload.loose();
 const SpecReviewEventPayload = SpecReviewPayload.loose();
+const OpenedEventPayload = OpenedPayload.loose();
 
 /**
  * Reading and printing one issue's timeline. Extracted from
@@ -421,9 +423,10 @@ export function renderActivityLine(
     // rename — so everything after the colon is still the body, and nothing
     // after it is the title. It is not `--summary`'s business either (T-283):
     // 88 characters is the longest one this tracker has.
+    const detail = eventDetail(item, ctx);
     const head = `${ref} ${paint(
       "dim",
-      `${personName(item.actor)}${agentSuffix(item.agent_context)} opened "${opened.title}" ${when}`,
+      `${personName(item.actor)}${agentSuffix(item.agent_context)} opened "${opened.title}"${detail ? ` (${detail})` : ""} ${when}`,
     )}`;
     const body = opened.body === null ? "" : opened.body.trim();
     return body === "" ? head : `${head}: ${bodyBlock(body, ctx.summaryChars)}`;
@@ -437,8 +440,8 @@ export function renderActivityLine(
 
 /**
  * The card an `opened` entry announces, or undefined when this line has to
- * stay as it was. The event's payload is `{}` — the title and body were never
- * in this stream — so the whole shape depends on a resolver having run
+ * stay as it was. The event's payload holds the card's opening status, labels
+ * and assignees but never its title or body, so the whole shape depends on a resolver having run
  * (T-286); one that could not name the card leaves the plain line, which is
  * what every caller that passes no resolver at all gets.
  */
@@ -460,6 +463,18 @@ function openedCard(
 function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
   const payload = event.payload;
   switch (event.event_type) {
+    case "opened": {
+      const opened = OpenedEventPayload.safeParse(payload);
+      if (!opened.success) return scalarDetail(payload);
+      const { status, labels, assignees } = opened.data;
+      return [
+        status.name,
+        labels.map((l) => l.name).join(", "),
+        assignees.map((a) => `@${a.login}`).join(", "),
+      ]
+        .filter((part) => part !== "")
+        .join(" · ");
+    }
     case "closed":
     case "reopened":
     case "status_changed": {

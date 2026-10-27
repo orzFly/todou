@@ -150,20 +150,27 @@ function eventPredicate(
   const changedFiles = ["added", "changed", "removed"].map((key) =>
     field(p, key),
   );
+  const labelShaped = (value: SQLWrapper) => sql`(${object(value)}
+    AND ${integer(field(value, "id"))}
+    AND (NOT (${value} ? 'name') OR ${nonempty(field(value, "name"))})
+    AND (NOT (${value} ? 'color') OR ${string(field(value, "color"))}))`;
+  const userShaped = (value: SQLWrapper) => sql`(${object(value)}
+    AND ${integer(field(value, "id"))} AND ${nonempty(field(value, "login"))})`;
   const rules: Record<(typeof ACTIVITY_EVENT_TYPES)[number], SQL> = {
-    opened: sql`${p} = '{}'::jsonb`,
+    // `{}` before T-605, the opening status/labels/assignees since.
+    opened: sql`(${p} = '{}'::jsonb OR (${onlyKeys(p, ["status", "labels", "assignees"])}
+      AND ${status(field(p, "status"))}
+      AND ${arrayOf(field(p, "labels"), labelShaped)}
+      AND ${arrayOf(field(p, "assignees"), userShaped)}))`,
     closed: sql`((${from} = 'null'::jsonb OR ${status(from)})
       AND ${status(to)} AND (${validityOnly} OR ${from} = 'null'::jsonb
         OR ${field(from, "id")} <> ${field(to, "id")}))`,
     reopened: sql`false`,
     status_changed: sql`false`,
     title_changed: sql`(${nonempty(from)} AND ${nonempty(to)} AND (${validityOnly} OR ${from} <> ${to}))`,
-    label_added: sql`(${object(label)} AND ${integer(field(label, "id"))}
-      AND (NOT (${label} ? 'name') OR ${nonempty(field(label, "name"))})
-      AND (NOT (${label} ? 'color') OR ${string(field(label, "color"))}))`,
+    label_added: labelShaped(label),
     label_removed: sql`false`,
-    assigned: sql`(${object(user)} AND ${integer(field(user, "id"))}
-      AND ${nonempty(field(user, "login"))})`,
+    assigned: userShaped(user),
     unassigned: sql`false`,
     attachment_added: sql`(${object(attachment)}
       AND ${integer(field(attachment, "id"))}
