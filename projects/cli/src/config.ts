@@ -201,7 +201,7 @@ export function saveCliConfig(config: CliConfig, env: Env = process.env): void {
   } catch {
     existing = undefined;
   }
-  writeFileSync(path, renderConfig(existing, doc), { mode: 0o600 });
+  writeFileSync(path, renderToml(existing, doc), { mode: 0o600 });
   // writeFileSync applies mode only on create; tighten pre-existing files too.
   chmodSync(path, 0o600);
 }
@@ -215,7 +215,7 @@ export function saveCliConfig(config: CliConfig, env: Env = process.env): void {
  * reads it back as `doc`: a file the appending cannot extend (`servers =
  * { … }` written inline, say) costs its comments, never a value.
  */
-function renderConfig(
+export function renderToml(
   existing: string | undefined,
   doc: Record<string, unknown>,
 ): string {

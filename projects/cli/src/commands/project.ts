@@ -1,4 +1,4 @@
-import { statSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MEMBER_ROLES,
@@ -7,9 +7,14 @@ import {
   type TodouClient,
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
-import { stringify } from "smol-toml";
+import { parse as parseToml } from "smol-toml";
 import { ApiCommand, type CliContext, ProjectCommand } from "../api-command.ts";
-import { configPath, loadCliConfigSet, saveCliConfig } from "../config.ts";
+import {
+  configPath,
+  loadCliConfigSet,
+  renderToml,
+  saveCliConfig,
+} from "../config.ts";
 import { gitRemoteUrl, gitToplevel } from "../context.ts";
 import {
   DIR_CONFIG_NAMES,
@@ -24,6 +29,14 @@ function statOrNull(path: string) {
     return statSync(path);
   } catch {
     return null;
+  }
+}
+
+function readOrUndefined(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
   }
 }
 
@@ -286,11 +299,26 @@ export class ProjectLinkCommand extends ApiCommand {
 
     const cwd = this.context.cwd;
     const file = dirConfigFileIn(linkTarget(cwd));
-    // A full rewrite: the only legal keys are these two, so anything else
-    // in the file was already being ignored on read. The server is written
-    // as the origin — a name is this machine's user config, and this file
-    // may be committed and travel to a machine that never defined it.
-    writeFileSync(file, `${stringify({ server, project: slug })}\n`);
+    // The server is written as the origin — a name is this machine's user
+    // config, and this file may be committed and travel to a machine that
+    // never defined it. Everything else in the file is kept, comments
+    // included. A file that does not parse can only get here shadowed by a
+    // nearer one, so nothing reads it today; it is replaced outright.
+    let existing = readOrUndefined(file);
+    let prior: Record<string, unknown> = {};
+    try {
+      if (existing !== undefined) prior = parseToml(existing);
+    } catch {
+      existing = undefined;
+    }
+    writeFileSync(
+      file,
+      renderToml(existing, {
+        ...prior,
+        server,
+        project: slug,
+      }),
+    );
     this.note(`linked ${displayPath(file, cwd)} → ${server} · ${slug}`);
     this.note(
       "note: this file is not auto-gitignored and carries the server origin — commit or ignore it deliberately",

@@ -98,16 +98,46 @@ describe("project link → directory config", () => {
     expect(existsSync(join(work, ".config", "todou.toml"))).toBe(false);
   });
 
-  it("rewrites the whole file, dropping unknown keys", async () => {
+  it("keeps comments and unknown keys in an existing file", async () => {
     const { home, work } = setup();
-    writeFileSync(join(work, ".todou.toml"), 'project = "old"\nfuture = 1\n');
+    writeFileSync(
+      join(work, ".todou.toml"),
+      '# tracker for this checkout\nproject = "old" # renamed soon\nfuture = 1\n\n[extra]\nnote = "kept"\n',
+    );
     const { fetchImpl } = fakeFetch([acme]);
-    await runCli(["project", "link", "acme"], {
+    const result = await runCli(["project", "link", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
     });
+    expect(result.exitCode).toBe(0);
+    const text = readFileSync(join(work, ".todou.toml"), "utf8");
+    expect(text).toContain("# tracker for this checkout");
+    expect(text).toContain("# renamed soon");
     expect(readToml(join(work, ".todou.toml"))).toEqual({
+      project: "acme",
+      future: 1,
+      server: "http://stub.test",
+      extra: { note: "kept" },
+    });
+  });
+
+  it("replaces a shadowed root file that does not parse", async () => {
+    const { home, work } = setup();
+    const repo = join(work, "repo");
+    makeRepo(repo);
+    const sub = join(repo, "sub");
+    mkdirSync(sub);
+    writeFileSync(join(repo, ".todou.toml"), "project = [broken\n");
+    writeFileSync(join(sub, ".todou.toml"), 'project = "near"\n');
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme"], {
+      fetchImpl,
+      env: { ...loggedInEnv(), HOME: home },
+      cwd: sub,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(readToml(join(repo, ".todou.toml"))).toEqual({
       server: "http://stub.test",
       project: "acme",
     });
