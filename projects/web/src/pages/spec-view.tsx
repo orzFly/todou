@@ -38,6 +38,7 @@ import {
 import {
   type ComponentProps,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useId,
@@ -72,6 +73,7 @@ import {
 } from "@/components/shared/return-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
+  type AnchorRange,
   AnnotatedMarkdown,
   type DisplayedAnnotation,
 } from "@/components/spec/annotated-markdown.tsx";
@@ -242,6 +244,96 @@ function ToolbarSlot({
     >
       {children}
     </span>
+  );
+}
+
+/**
+ * The counter beside ↑↓. Its own component because it is the one thing on the
+ * page that changes as the reader scrolls: held by the page, every changed
+ * block scrolled past re-rendered the toolbar, the document and every
+ * annotation chip with it (T-601).
+ */
+function ChangeCount({
+  measure,
+  contentRef,
+  fold,
+  unit,
+  reason,
+}: {
+  measure: () => ChangePosition | null;
+  contentRef: RefObject<HTMLElement | null>;
+  /** Folding changes the blocks' heights, not `measure`'s inputs. */
+  fold: boolean;
+  unit: string;
+  reason: string | undefined;
+}) {
+  const [position, setPosition] = useState<ChangePosition | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fold changes the blocks' heights, not measure's inputs
+  useEffect(() => {
+    let frame = 0;
+    const sync = () => {
+      frame = 0;
+      const next = measure();
+      setPosition((prev) =>
+        prev?.index === next?.index && prev?.total === next?.total
+          ? prev
+          : next,
+      );
+    };
+    const schedule = () => {
+      if (frame === 0) frame = requestAnimationFrame(sync);
+    };
+    sync();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    // Whether a fold placeholder is open lives inside AnnotatedMarkdown, and
+    // opening one changes the document's height without producing a scroll
+    // event — height is the only signal that reaches this far.
+    const root = contentRef.current;
+    let observer: ResizeObserver | null = null;
+    if (root !== null && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(schedule);
+      observer.observe(root);
+    }
+    return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      observer?.disconnect();
+    };
+  }, [measure, contentRef, fold]);
+
+  return (
+    <ToolbarSlot
+      name="change-count"
+      title={
+        reason ??
+        (position === null
+          ? undefined
+          : `${unit} ${position.index} of ${position.total}`)
+      }
+    >
+      <span className="text-xs tabular-nums text-muted-foreground">
+        {position === null ? (
+          "–"
+        ) : (
+          <>
+            {/* Reserved by the total's width, not the index's: the
+                index grows a digit going from 9 to 10, and that
+                happens while the reader is scrolling — ↓ would step
+                sideways under the cursor. */}
+            <span
+              className="inline-block text-right"
+              style={{ minWidth: `${String(position.total).length}ch` }}
+            >
+              {position.index}
+            </span>
+            /{position.total}
+          </>
+        )}
+      </span>
+    </ToolbarSlot>
   );
 }
 
@@ -458,7 +550,6 @@ function SpecViewBody({
   const [wrap, setWrap] = useState(readDiffWrap);
   const [fold, setFold] = useState(readSpecFold);
   const [filesOpen, setFilesOpen] = useState(false);
-  const [position, setPosition] = useState<ChangePosition | null>(null);
   const contentRef = useRef<HTMLElement>(null);
   const rowBRef = useRef<HTMLDivElement>(null);
 
@@ -556,7 +647,10 @@ function SpecViewBody({
 
   /** Every anchor gesture — selection, line drag, "Comment file". */
   const stage = (next: ComposerStaging) => session.retarget(next);
-  const editDraft = (draft: SpecReviewDraft) => session.editDraft(draft);
+  const editDraft = useCallback(
+    (draft: SpecReviewDraft) => session.editDraft(draft),
+    [session],
+  );
   const editingDraft = drafts.drafts.find((d) => d.id === staging?.draftId);
 
   // The source diff stacks every differing file at once, so the rail marks a
@@ -865,8 +959,8 @@ function SpecViewBody({
     return { unit: changedRanges.length === 0 ? "changed file" : "change" };
   })();
 
-  // The counter re-renders on every scroll frame; the listener must not be
-  // torn down and re-attached that often, so what it needs goes in a ref.
+  // What a step needs is rebuilt on every render; the listener reads it
+  // through a ref rather than being torn down and re-attached each time.
   const navRef = useRef({ disabled: true, step: (_direction: 1 | -1) => {} });
   useEffect(() => {
     navRef.current = {
@@ -985,41 +1079,6 @@ function SpecViewBody({
     else flashTo(root, "start", false);
   }, [selectedPath, changedRanges]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fold changes the blocks' heights, not measurePosition's inputs
-  useEffect(() => {
-    let frame = 0;
-    const sync = () => {
-      frame = 0;
-      const next = measurePosition();
-      setPosition((prev) =>
-        prev?.index === next?.index && prev?.total === next?.total
-          ? prev
-          : next,
-      );
-    };
-    const schedule = () => {
-      if (frame === 0) frame = requestAnimationFrame(sync);
-    };
-    sync();
-    window.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    // Whether a fold placeholder is open lives inside AnnotatedMarkdown, and
-    // opening one changes the document's height without producing a scroll
-    // event — height is the only signal that reaches this far.
-    const root = contentRef.current;
-    let observer: ResizeObserver | null = null;
-    if (root !== null && typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(schedule);
-      observer.observe(root);
-    }
-    return () => {
-      if (frame !== 0) cancelAnimationFrame(frame);
-      window.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-      observer?.disconnect();
-    };
-  }, [measurePosition, fold]);
-
   const queryClient = useQueryClient();
   const resolve = useMutation({
     mutationFn: (vars: Target) =>
@@ -1036,6 +1095,35 @@ function SpecViewBody({
     },
     onError: (error) => toast.error(error.message),
   });
+
+  // Stable, because the document and every chip on it are memoised against
+  // them: a fresh closure per render re-renders the lot (T-601).
+  const stageRange = useCallback(
+    (range: AnchorRange) => {
+      if (selected === undefined) return;
+      session.retarget({
+        path: selected.path,
+        version,
+        lineStart: range.lineStart,
+        lineEnd: range.lineEnd,
+        colStart: range.colStart,
+        colEnd: range.colEnd,
+        quote: quoteOf(
+          selected.body,
+          range.lineStart,
+          range.lineEnd,
+          range.colStart,
+          range.colEnd,
+        ),
+      });
+    },
+    [session, selected, version],
+  );
+  const { mutate: resolveMutate } = resolve;
+  const resolveComment = useCallback(
+    (commentId: number) => resolveMutate({ slug, issueNumber, commentId }),
+    [resolveMutate, slug, issueNumber],
+  );
 
   // Comments that can hang inline on the viewed version of the selected
   // file; everything else (outdated, anchored to another version while an
@@ -1401,35 +1489,13 @@ function SpecViewBody({
           <ArrowUpIcon className="size-4" />
         </Button>
       </ToolbarSlot>
-      <ToolbarSlot
-        name="change-count"
-        title={
-          changeNav.reason ??
-          (position === null
-            ? undefined
-            : `${changeNav.unit} ${position.index} of ${position.total}`)
-        }
-      >
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {position === null ? (
-            "–"
-          ) : (
-            <>
-              {/* Reserved by the total's width, not the index's: the
-                  index grows a digit going from 9 to 10, and that
-                  happens while the reader is scrolling — ↓ would step
-                  sideways under the cursor. */}
-              <span
-                className="inline-block text-right"
-                style={{ minWidth: `${String(position.total).length}ch` }}
-              >
-                {position.index}
-              </span>
-              /{position.total}
-            </>
-          )}
-        </span>
-      </ToolbarSlot>
+      <ChangeCount
+        measure={measurePosition}
+        contentRef={contentRef}
+        fold={fold}
+        unit={changeNav.unit}
+        reason={changeNav.reason}
+      />
       <ToolbarSlot name="next-change" title={changeNav.reason}>
         <Button
           size="icon-sm"
@@ -1725,28 +1791,10 @@ function SpecViewBody({
                       annotations={displayed}
                       changedRanges={changedRanges}
                       foldUnchanged={foldUnchanged}
-                      onStage={(range) =>
-                        stage({
-                          path: selected.path,
-                          version,
-                          lineStart: range.lineStart,
-                          lineEnd: range.lineEnd,
-                          colStart: range.colStart,
-                          colEnd: range.colEnd,
-                          quote: quoteOf(
-                            selected.body,
-                            range.lineStart,
-                            range.lineEnd,
-                            range.colStart,
-                            range.colEnd,
-                          ),
-                        })
-                      }
+                      onStage={stageRange}
                       onEditDraft={editDraft}
                       onRemoveDraft={drafts.remove}
-                      onResolve={(id) =>
-                        resolve.mutate({ slug, issueNumber, commentId: id })
-                      }
+                      onResolve={resolveComment}
                       resolving={resolve.isPending}
                     />
                   )}

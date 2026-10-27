@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import type { ComponentProps, CSSProperties } from "react";
 import {
+  memo,
   type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
@@ -588,8 +589,12 @@ function entryTop(
  * selecting text floats a "comment" button (the anchor is derived from the
  * blocks' stamped source lines), staged drafts and submitted comments hang
  * as chips on their blocks, and each chip opens the thread in a popover.
+ *
+ * Memoised, and so is each chip: every chip is a whole Radix popover even
+ * while closed, and the page around them re-renders for reasons that never
+ * reach the document (T-601). The callbacks have to arrive stable for that.
  */
-export function AnnotatedMarkdown({
+export const AnnotatedMarkdown = memo(function AnnotatedMarkdown({
   slug,
   issueNumber,
   body,
@@ -834,17 +839,22 @@ export function AnnotatedMarkdown({
       });
     }
     next.sort((a, b) => a.top - b.top);
+    // Chip by chip, so that one chip moving re-renders that chip alone.
     setChips((prev) => {
-      const same =
-        prev.length === next.length &&
-        prev.every(
-          (chip, i) =>
-            chip.blockKey === next[i]?.blockKey &&
-            chip.top === next[i]?.top &&
-            chip.items.length === next[i]?.items.length &&
-            chip.items.every((item, j) => item.key === next[i]?.items[j]?.key),
-        );
-      return same ? prev : next;
+      const before = new Map(prev.map((chip) => [chip.blockKey, chip]));
+      const kept = next.map((chip) => {
+        const old = before.get(chip.blockKey);
+        return old !== undefined &&
+          old.top === chip.top &&
+          old.items.length === chip.items.length &&
+          old.items.every((item, j) => item === chip.items[j])
+          ? old
+          : chip;
+      });
+      return kept.length === prev.length &&
+        kept.every((chip, i) => chip === prev[i])
+        ? prev
+        : kept;
     });
   }, [annotations, changedRanges]);
 
@@ -1068,7 +1078,7 @@ export function AnnotatedMarkdown({
         ))}
     </div>
   );
-}
+});
 
 /** The entry itself, in both of the shapes it takes. */
 function StageButton({
@@ -1113,7 +1123,7 @@ function StageButton({
   );
 }
 
-function AnnotationChip({
+const AnnotationChip = memo(function AnnotationChip({
   slug,
   issueNumber,
   chip,
@@ -1270,4 +1280,4 @@ function AnnotationChip({
       </PopoverContent>
     </Popover>
   );
-}
+});
