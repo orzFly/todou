@@ -35,13 +35,9 @@ export function SpecCommentAnchorCard({
   canResolve: boolean;
 }) {
   const anchor = component.anchor;
-  // Click-to-expand context (T-23): fetch the anchored version lazily and
-  // widen the quote by a few lines either side, anchored range highlighted.
+  // Click-to-expand context (T-23): widen the quote by a few lines either
+  // side, anchored range highlighted.
   const [expanded, setExpanded] = useState(false);
-  const context = useQuery({
-    ...specFilesQuery(slug, issueNumber, anchor.version),
-    enabled: expanded,
-  });
   const target: Target = { slug, issueNumber, commentId };
   const queryClient = useQueryClient();
   const resolve = useMutation({
@@ -111,19 +107,18 @@ export function SpecCommentAnchorCard({
           title={expanded ? "collapse context" : "expand surrounding context"}
           onClick={() => setExpanded(!expanded)}
         >
-          {expanded && context.data ? (
+          {expanded ? (
             <ExpandedContext
-              fileBody={
-                context.data.files.find((f) => f.path === anchor.path)?.body
-              }
+              slug={slug}
+              issueNumber={issueNumber}
+              version={anchor.version}
+              path={anchor.path}
               lineStart={anchor.line_start}
               lineEnd={anchor.line_end}
               quote={anchor.quote}
             />
           ) : (
-            <pre className="max-h-40 overflow-auto bg-background px-3 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-              {anchor.quote}
-            </pre>
+            <AnchorQuote quote={anchor.quote} />
           )}
         </button>
       )}
@@ -131,17 +126,39 @@ export function SpecCommentAnchorCard({
   );
 }
 
+function AnchorQuote({ quote }: { quote: string }) {
+  return (
+    <pre className="max-h-40 overflow-auto bg-background px-3 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+      {quote}
+    </pre>
+  );
+}
+
+// The query lives here, mounted only once expanded, rather than disabled in
+// the card (T-602): a disabled observer still re-renders on every state
+// change of a query someone else fetches, and every card on a review shares
+// the version's query with the spec sidebar — 31 cards rendered three times
+// each on load.
 function ExpandedContext({
-  fileBody,
+  slug,
+  issueNumber,
+  version,
+  path,
   lineStart,
   lineEnd,
   quote,
 }: {
-  fileBody: string | undefined;
+  slug: string;
+  issueNumber: number;
+  version: number;
+  path: string;
   lineStart: number;
   lineEnd: number;
   quote: string;
 }) {
+  const context = useQuery(specFilesQuery(slug, issueNumber, version));
+  if (!context.data) return <AnchorQuote quote={quote} />;
+  const fileBody = context.data.files.find((f) => f.path === path)?.body;
   if (fileBody === undefined) {
     // The file vanished from that version snapshot (should not happen —
     // anchors are validated) — fall back to the stored quote.
