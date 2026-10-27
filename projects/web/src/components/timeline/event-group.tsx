@@ -3,6 +3,7 @@ import type { Label, TimelineEvent } from "@todou/shared";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  MessageSquareTextIcon,
   UserMinusIcon,
   UserPlusIcon,
 } from "lucide-react";
@@ -14,6 +15,9 @@ import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
+  blockEnd,
+  blockVerb,
+  type EventRenderContext,
   EventRow,
   IN_SENTENCE,
   iconForEvent,
@@ -23,6 +27,8 @@ import {
 } from "@/components/timeline/event-row.tsx";
 import {
   type CollapsedFamily,
+  type GroupFold,
+  isBlockFamily,
   type MergeFamily,
   netAssignees,
   netStatusChain,
@@ -36,7 +42,7 @@ import {
   resolveUser,
   useEventEntities,
 } from "@/components/timeline/use-event-entities.ts";
-import { eventAnchor } from "@/lib/timeline-anchors.ts";
+import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils";
 
 type ListRow = {
@@ -245,6 +251,8 @@ export function EventGroup({
   slug,
   issueNumber,
   anchorEventId,
+  folded,
+  onToggleFold,
 }: {
   family: MergeFamily;
   events: TimelineEvent[];
@@ -252,8 +260,24 @@ export function EventGroup({
   issueNumber: number;
   /** Parsed `#event-N` target currently in the URL hash, if any. */
   anchorEventId?: number;
+  /** What this group's block events took off the timeline (T-598). */
+  folded?: GroupFold;
+  onToggleFold?: () => void;
 }) {
   if (rendersAsList(family)) {
+    if (isBlockFamily(family)) {
+      return (
+        <BlockGroup
+          events={events}
+          slug={slug}
+          issueNumber={issueNumber}
+          folded={folded}
+          toggle={
+            folded && <FoldToggle folded={folded} onToggle={onToggleFold} />
+          }
+        />
+      );
+    }
     if (family === "attachments") {
       return (
         <AttachmentsGroup
@@ -307,12 +331,15 @@ function ListGroup({
   issueNumber,
   headline,
   rows,
+  toggle,
 }: {
   events: TimelineEvent[];
   slug: string;
   issueNumber: number;
   /** The header's sentence, in the family's own words. */
   headline: ReactNode;
+  /** A control left of the timestamp, where a collapsed group keeps its own. */
+  toggle?: ReactNode;
   /**
    * Built by the caller rather than mapped from `events`: a resolve call
    * settles several annotations, and each of those is a row.
@@ -339,6 +366,7 @@ function ListGroup({
           className="align-middle sm:self-center"
         />{" "}
         <span className="min-w-0 flex-1">{headline}</span>{" "}
+        {toggle && <>{toggle} </>}
         <Link
           to="/projects/$slug/issues/$number"
           params={{ slug, number: String(issueNumber) }}
@@ -400,6 +428,144 @@ function ReferencedGroup({
         node: referenceSource(event, ctx).node,
       }))}
     />
+  );
+}
+
+/**
+ * One block verb in the header, the cards it was done to underneath, titles
+ * wrapping in full (T-598). A lone event takes this shape too, for the same
+ * reason a lone reference does.
+ *
+ * While collapsed, a card whose reference came from a comment keeps a link
+ * to that comment on its row: the reference row that carried it is off the
+ * page, and the comment may be the only place that says why the block was
+ * added. Expanded, the reference row is back and carries it itself.
+ */
+function BlockGroup({
+  events,
+  slug,
+  issueNumber,
+  folded,
+  toggle,
+}: {
+  events: TimelineEvent[];
+  slug: string;
+  issueNumber: number;
+  folded?: GroupFold;
+  toggle?: ReactNode;
+}) {
+  const ctx = useEventRenderContext(slug, issueNumber);
+  const first = events[0];
+  if (!first) return null;
+  return (
+    <ListGroup
+      events={events}
+      slug={slug}
+      issueNumber={issueNumber}
+      headline={blockVerb(first)}
+      toggle={toggle}
+      rows={events.map((event) => {
+        const { payload } = event;
+        const cleared =
+          event.event_type === "block_cleared" ||
+          event.event_type === "block_reblocked";
+        const other = cleared
+          ? blockEnd(payload.blocker_project_id, payload.blocker_number, ctx)
+          : blockEnd(payload.other_project_id, payload.other_number, ctx);
+        const references = folded?.expanded
+          ? []
+          : (folded?.hosts.get(event.id)?.references ?? []);
+        return {
+          key: event.id,
+          id: eventAnchor(event.id),
+          title: event.created_at,
+          node: (
+            <>
+              {other.node}
+              {references.map((reference) => (
+                <CommentLink
+                  key={reference.id}
+                  reference={reference}
+                  ctx={ctx}
+                />
+              ))}
+            </>
+          ),
+        };
+      })}
+    />
+  );
+}
+
+/** The comment a folded reference was written in, or nothing where the
+    reference came from a card body or its project cannot be named. */
+function CommentLink({
+  reference,
+  ctx,
+}: {
+  reference: TimelineEvent;
+  ctx: EventRenderContext;
+}) {
+  const { by_comment, by_issue, by_project_id } = reference.payload;
+  if (typeof by_comment !== "number" || typeof by_issue !== "number") {
+    return null;
+  }
+  // The fold only takes a reference that names its project by id or names
+  // none, so a missing id here means this project.
+  const slug =
+    typeof by_project_id === "number"
+      ? ctx.slugOfProject?.(by_project_id)
+      : ctx.slug;
+  if (slug === undefined) return null;
+  return (
+    <Link
+      to="/projects/$slug/issues/$number"
+      params={{ slug, number: String(by_issue) }}
+      hash={commentAnchor(by_comment)}
+      state={ctx.returnState}
+      className="ml-1.5 inline-flex items-center gap-0.5 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
+      data-testid="fold-comment-link"
+    >
+      <MessageSquareTextIcon className="size-3" />
+      comment
+    </Link>
+  );
+}
+
+/** Counted per reason, since "+3" alone would not say what reopening
+    brings back. */
+function FoldToggle({
+  folded,
+  onToggle,
+}: {
+  folded: GroupFold;
+  onToggle?: () => void;
+}) {
+  const references = folded.references.length;
+  const undone = folded.undone.length;
+  const label = [
+    references > 0
+      ? `+${references} reference${references === 1 ? "" : "s"}`
+      : null,
+    undone > 0 ? `+${undone} undone` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <button
+      type="button"
+      aria-expanded={folded.expanded}
+      onClick={onToggle}
+      className="inline-flex shrink-0 items-center gap-0.5 text-xs whitespace-nowrap text-muted-foreground/70 hover:text-foreground hover:underline sm:self-center"
+      data-testid="fold-toggle"
+    >
+      {label}
+      {folded.expanded ? (
+        <ChevronDownIcon className="size-3" />
+      ) : (
+        <ChevronRightIcon className="size-3" />
+      )}
+    </button>
   );
 }
 

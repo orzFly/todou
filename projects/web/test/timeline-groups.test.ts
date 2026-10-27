@@ -16,6 +16,7 @@ import {
   netStatusChain,
   type RenderUnit,
   rendersAsList,
+  unitSize,
   windowMsFor,
 } from "../src/components/timeline/group-events.ts";
 
@@ -150,6 +151,10 @@ describe("familyOf", () => {
     expect(familyOf("assigned")).toBe("assignees");
     expect(familyOf("unassigned")).toBe("assignees");
     expect(familyOf("spec_comments_resolved")).toBe("spec_resolved");
+    expect(familyOf("block_added")).toBe("block_added");
+    expect(familyOf("block_removed")).toBe("block_removed");
+    expect(familyOf("block_cleared")).toBe("block_cleared");
+    expect(familyOf("block_reblocked")).toBe("block_reblocked");
     // Every remaining type, so "nothing else" is a claim and not a sample —
     // cross_referenced sat outside both lists and merged nowhere for two
     // releases without a single test going red (T-256).
@@ -179,6 +184,10 @@ describe("rendersAsList", () => {
     expect(rendersAsList("referenced")).toBe(true);
     expect(rendersAsList("attachments")).toBe(true);
     expect(rendersAsList("spec_resolved")).toBe(true);
+    expect(rendersAsList("block_added")).toBe(true);
+    expect(rendersAsList("block_removed")).toBe(true);
+    expect(rendersAsList("block_cleared")).toBe(true);
+    expect(rendersAsList("block_reblocked")).toBe(true);
     expect(rendersAsList("status")).toBe(false);
     expect(rendersAsList("labels")).toBe(false);
     expect(rendersAsList("assignees")).toBe(false);
@@ -775,5 +784,185 @@ describe("netAssignees", () => {
       added: [assignees.newcomer],
       removed: [ghost],
     });
+  });
+});
+
+/** One end of a block edge as it lands on this card's timeline. */
+const blockEvent = (
+  type: "block_added" | "block_removed",
+  role: string,
+  other: number,
+  atMs: number,
+  overrides: Partial<TimelineEvent> = {},
+) =>
+  event({
+    event_type: type,
+    payload: {
+      edge_id: 9000 + other,
+      role,
+      other_project_id: 1,
+      other_number: other,
+    },
+    atMs,
+    ...overrides,
+  });
+
+const clearEvent = (
+  type: "block_cleared" | "block_reblocked",
+  blocker: number,
+  atMs: number,
+) =>
+  event({
+    event_type: type,
+    payload: {
+      edge_id: 9000 + blocker,
+      blocker_project_id: 1,
+      blocker_number: blocker,
+    },
+    atMs,
+  });
+
+describe("groupTimeline · blocks (T-598)", () => {
+  it("merges one direction of one gesture into a single list", () => {
+    const units = groupTimeline([
+      blockEvent("block_added", "blocked", 1, 0),
+      blockEvent("block_added", "blocked", 2, 500),
+      blockEvent("block_added", "blocked", 3, 1000),
+    ]);
+    expect(kinds(units)).toEqual(["group:3"]);
+    expect(unitOf("group", units[0]).family).toBe("block_added");
+  });
+
+  it("splits a two-way gesture by role", () => {
+    const units = groupTimeline([
+      blockEvent("block_added", "blocked", 1, 0),
+      blockEvent("block_added", "blocked", 2, 100),
+      blockEvent("block_added", "blocker", 3, 200),
+      blockEvent("block_added", "blocker", 4, 300),
+    ]);
+    expect(kinds(units)).toEqual(["group:2", "group:2"]);
+  });
+
+  it("splits removals by role the same way", () => {
+    const units = groupTimeline([
+      blockEvent("block_removed", "blocked", 1, 0),
+      blockEvent("block_removed", "blocker", 2, 100),
+    ]);
+    expect(kinds(units)).toEqual(["group:1", "group:1"]);
+  });
+
+  it("splits across sessions", () => {
+    const units = groupTimeline([
+      blockEvent("block_added", "blocked", 1, 0),
+      blockEvent("block_added", "blocked", 2, 100, {
+        agent_context: sessionB,
+      }),
+    ]);
+    expect(kinds(units)).toEqual(["group:1", "group:1"]);
+  });
+
+  it("splits past the merge window", () => {
+    const units = groupTimeline([
+      blockEvent("block_added", "blocked", 1, 0),
+      blockEvent("block_added", "blocked", 2, MERGE_WINDOW_MS + 1),
+    ]);
+    expect(kinds(units)).toEqual(["group:1", "group:1"]);
+  });
+
+  it("emits a lone block event as a group", () => {
+    const units = groupTimeline([blockEvent("block_added", "blocker", 1, 0)]);
+    expect(kinds(units)).toEqual(["group:1"]);
+  });
+
+  it("leaves a role no header can spell as a plain row", () => {
+    const units = groupTimeline([
+      blockEvent("block_added", "sideways", 1, 0),
+      blockEvent("block_added", "sideways", 2, 100),
+    ]);
+    expect(kinds(units)).toEqual(["item", "item"]);
+  });
+
+  it("groups cleared and reblocked each under their own verb", () => {
+    const units = groupTimeline([
+      clearEvent("block_cleared", 1, 0),
+      clearEvent("block_cleared", 2, 100),
+      clearEvent("block_reblocked", 1, 200),
+    ]);
+    expect(kinds(units)).toEqual(["group:2", "group:1"]);
+    expect(units.map((u) => unitOf("group", u).family)).toEqual([
+      "block_cleared",
+      "block_reblocked",
+    ]);
+  });
+});
+
+describe("groupTimelineSides · block folds (T-598)", () => {
+  /** A reference card 5 wrote here, then the block that makes it redundant. */
+  const referenceThenBlock = () => {
+    const ref = event({
+      event_type: "referenced",
+      payload: { by_issue: 5 },
+      atMs: 0,
+    });
+    const block = blockEvent("block_added", "blocked", 5, 1000);
+    return { ref, block };
+  };
+
+  const sizeOf = (units: { above: RenderUnit[]; below: RenderUnit[] }) =>
+    [...units.above, ...units.below].reduce((n, u) => n + unitSize(u), 0);
+
+  it("folds across a closed seam", () => {
+    const { ref, block } = referenceThenBlock();
+    const units = groupTimelineSides([ref], [block], {
+      gap: false,
+      projectId: 1,
+    });
+    expect([...units.above, ...units.below]).toHaveLength(1);
+    const group = unitOf("group", units.above[0]);
+    expect(group.folded?.references).toEqual([ref]);
+    expect(units.hostOf.get(ref.id)).toBe(block.id);
+  });
+
+  it("does not fold across a fold block", () => {
+    const { ref, block } = referenceThenBlock();
+    const units = groupTimelineSides([ref], [block], {
+      gap: true,
+      projectId: 1,
+    });
+    expect(unitOf("group", units.above[0]).family).toBe("referenced");
+    expect(unitOf("group", units.below[0]).folded).toBeUndefined();
+    expect(units.hostOf.size).toBe(0);
+  });
+
+  it("keeps the cut invariant folded and unfolded", () => {
+    const { ref, block } = referenceThenBlock();
+    const above = [comment(-2000), ref];
+    const below = [block, comment(2000)];
+    for (const open of [false, true]) {
+      const units = groupTimelineSides(above, below, {
+        gap: false,
+        projectId: 1,
+        isFoldExpanded: () => open,
+      });
+      expect(sizeOf(units)).toBe(above.length + below.length);
+      // The cut still lands where the head side ends.
+      expect(
+        units.above.reduce((n, u) => n + unitSize(u), 0),
+      ).toBeGreaterThanOrEqual(above.length);
+    }
+  });
+
+  it("puts an opened host's reference back in its own group", () => {
+    const { ref, block } = referenceThenBlock();
+    const units = groupTimelineSides([ref, block], [], {
+      gap: false,
+      projectId: 1,
+      isFoldExpanded: (id) => id === block.id,
+    });
+    expect(kinds(units.above)).toEqual(["group:1", "group:1"]);
+    const host = unitOf("group", units.above[1]);
+    expect(host.folded?.expanded).toBe(true);
+    expect(host.folded?.references).toEqual([ref]);
+    expect(unitSize(host)).toBe(1);
   });
 });

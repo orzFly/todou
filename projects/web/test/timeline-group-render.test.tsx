@@ -34,6 +34,7 @@ import {
 } from "../src/api/references.ts";
 import { specCommentsQuery } from "../src/api/spec.ts";
 import { EventGroup } from "../src/components/timeline/event-group.tsx";
+import type { GroupFold } from "../src/components/timeline/group-events.ts";
 import { renderWithProviders } from "./render.tsx";
 
 const bot: UserRef = {
@@ -1464,5 +1465,261 @@ describe("the assignment summary names people you can reach (T-391)", () => {
         a.getAttribute("href"),
       ),
     ).toEqual(["/users/alice", "/users/newcomer"]);
+  });
+});
+
+describe("block groups (T-598)", () => {
+  const block = (
+    type: TimelineEvent["event_type"],
+    role: string,
+    other: number,
+    projectId: number | null = 1,
+  ) =>
+    event({
+      event_type: type,
+      payload: {
+        edge_id: 9000 + other,
+        role,
+        other_project_id: projectId,
+        other_number: projectId === null ? null : other,
+      },
+    });
+
+  const clear = (type: "block_cleared" | "block_reblocked", blocker: number) =>
+    event({
+      event_type: type,
+      payload: {
+        edge_id: 9000 + blocker,
+        blocker_project_id: 1,
+        blocker_number: blocker,
+      },
+    });
+
+  const reference = (byIssue: number, byComment?: number) =>
+    event({
+      event_type: "referenced",
+      payload:
+        byComment === undefined
+          ? { by_issue: byIssue }
+          : { by_issue: byIssue, by_comment: byComment },
+    });
+
+  /** The fold a group carries for one host, as groupTimelineSides builds it. */
+  const foldOf = (
+    host: TimelineEvent,
+    absorbed: { references?: TimelineEvent[]; undone?: TimelineEvent[] },
+    expanded = false,
+  ): GroupFold => {
+    const fold = {
+      references: absorbed.references ?? [],
+      undone: absorbed.undone ?? [],
+    };
+    return {
+      ...fold,
+      expanded,
+      collapsed: expanded ? 0 : fold.references.length + fold.undone.length,
+      hosts: new Map([[host.id, fold]]),
+    };
+  };
+
+  it.each([
+    ["block_added", "blocked", "marked this blocked by"],
+    ["block_added", "blocker", "marked this a blocker of"],
+    ["block_removed", "blocked", "removed the block by"],
+    ["block_removed", "blocker", "removed this card's block on"],
+  ] as const)("heads %s/%s with its verb once", async (type, role, verb) => {
+    const events = [block(type, role, 5), block(type, role, 6)];
+    const { findByTestId, container } = renderWithProviders(
+      <EventGroup family={type} events={events} slug="todou" issueNumber={1} />,
+      crossClient([
+        ["todou", refItem(5, "Five")],
+        ["todou", refItem(6, "Six")],
+      ]),
+    );
+    const group = await findByTestId("event-group");
+    expect(group.textContent?.split(verb)).toHaveLength(2);
+    const rows = container.querySelectorAll("li");
+    expect([...rows].map((r) => r.id)).toEqual(
+      events.map((e) => `event-${e.id}`),
+    );
+    await waitFor(() => {
+      expect(container.querySelector('[data-issue-link="5"]')).toBeTruthy();
+      expect(container.querySelector('[data-issue-link="6"]')).toBeTruthy();
+    });
+  });
+
+  it.each([
+    ["block_cleared", "cleared the block by"],
+    ["block_reblocked", "re-applied the block by"],
+  ] as const)("heads %s with its verb", async (type, verb) => {
+    const { findByTestId, container } = renderWithProviders(
+      <EventGroup
+        family={type}
+        events={[clear(type, 5)]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      crossClient([["todou", refItem(5, "Five")]]),
+    );
+    expect((await findByTestId("event-group")).textContent).toContain(verb);
+    await waitFor(() =>
+      expect(container.querySelector('[data-issue-link="5"]')).toBeTruthy(),
+    );
+  });
+
+  it("draws a lone block event as a header and one row", async () => {
+    const only = block("block_added", "blocked", 5);
+    const { findByTestId, container } = renderWithProviders(
+      <EventGroup
+        family="block_added"
+        events={[only]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      crossClient([["todou", refItem(5, "Five")]]),
+    );
+    await findByTestId("event-group");
+    expect(container.querySelectorAll("li")).toHaveLength(1);
+    expect(container.querySelector("li")?.title).toBe(only.created_at);
+  });
+
+  it("keeps a card the reader cannot see as a row", async () => {
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="block_added"
+        events={[block("block_added", "blocked", 5, null)]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      crossClient(),
+    );
+    expect((await findByTestId("event-group")).textContent).toContain(
+      "a card you cannot see",
+    );
+  });
+
+  it("has no toggle when nothing was folded", async () => {
+    const { findByTestId, queryByTestId } = renderWithProviders(
+      <EventGroup
+        family="block_added"
+        events={[block("block_added", "blocked", 5)]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      crossClient(),
+    );
+    await findByTestId("event-group");
+    expect(queryByTestId("fold-toggle")).toBeNull();
+  });
+
+  it.each([
+    [{ references: 1, undone: 0 }, "+1 reference"],
+    [{ references: 4, undone: 0 }, "+4 references"],
+    [{ references: 0, undone: 2 }, "+2 undone"],
+    [{ references: 3, undone: 2 }, "+3 references · +2 undone"],
+  ])("labels the toggle %o as %s", async (counts, label) => {
+    const host = block("block_added", "blocked", 5);
+    const folded = foldOf(host, {
+      references: Array.from({ length: counts.references }, (_, i) =>
+        reference(20 + i),
+      ),
+      undone: Array.from({ length: counts.undone }, (_, i) =>
+        block(i % 2 ? "block_removed" : "block_added", "blocked", 30),
+      ),
+    });
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="block_added"
+        events={[host]}
+        slug="todou"
+        issueNumber={1}
+        folded={folded}
+      />,
+      crossClient(),
+    );
+    const toggle = await findByTestId("fold-toggle");
+    expect(toggle.tagName).toBe("BUTTON");
+    expect(toggle.textContent).toBe(label);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("links a folded comment reference from its own card's row", async () => {
+    const host = block("block_added", "blocked", 5);
+    const other = block("block_added", "blocked", 6);
+    const folded = foldOf(host, { references: [reference(5, 77)] });
+    const { findByTestId, container } = renderWithProviders(
+      <EventGroup
+        family="block_added"
+        events={[host, other]}
+        slug="todou"
+        issueNumber={1}
+        folded={folded}
+      />,
+      crossClient(),
+    );
+    await findByTestId("event-group");
+    const links = container.querySelectorAll(
+      '[data-testid="fold-comment-link"]',
+    );
+    expect(links).toHaveLength(1);
+    const link = links[0] as HTMLElement;
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe(
+      "/projects/todou/issues/5#comment-77",
+    );
+    expect(link.textContent).toBe("comment");
+    expect(link.closest("li")?.id).toBe(`event-${host.id}`);
+  });
+
+  it("leaves a reference from a card body without a link", async () => {
+    const host = block("block_added", "blocked", 5);
+    const { findByTestId, queryByTestId } = renderWithProviders(
+      <EventGroup
+        family="block_added"
+        events={[host]}
+        slug="todou"
+        issueNumber={1}
+        folded={foldOf(host, { references: [reference(5)] })}
+      />,
+      crossClient(),
+    );
+    await findByTestId("event-group");
+    expect(queryByTestId("fold-comment-link")).toBeNull();
+  });
+
+  it("drops the comment link once opened", async () => {
+    const host = block("block_added", "blocked", 5);
+    const folded = foldOf(host, { references: [reference(5, 77)] }, true);
+    const { findByTestId, queryByTestId } = renderWithProviders(
+      <EventGroup
+        family="block_added"
+        events={[host]}
+        slug="todou"
+        issueNumber={1}
+        folded={folded}
+      />,
+      crossClient(),
+    );
+    const toggle = await findByTestId("fold-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(queryByTestId("fold-comment-link")).toBeNull();
+  });
+
+  it("asks its owner to toggle", async () => {
+    const host = block("block_added", "blocked", 5);
+    let toggled = 0;
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="block_added"
+        events={[host]}
+        slug="todou"
+        issueNumber={1}
+        folded={foldOf(host, { references: [reference(5)] })}
+        onToggleFold={() => toggled++}
+      />,
+      crossClient(),
+    );
+    fireEvent.click(await findByTestId("fold-toggle"));
+    expect(toggled).toBe(1);
   });
 });

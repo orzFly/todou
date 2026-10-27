@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import type { TimelineComment, TimelineItem } from "@todou/shared";
 import { answersByComment, enumValue } from "@todou/shared";
@@ -10,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { projectsQuery } from "@/api/queries.ts";
 import {
   mergeFolded,
   needsHead,
@@ -111,11 +113,34 @@ export function Timeline({
   const gap = remaining > 0;
 
   const { isRevealed, reveal, reportHidden } = useRevealedRuns();
-  const { above: unitsAbove, below: unitsBelow } = groupTimelineSides(
-    above,
-    below,
-    { gap, isRevealed },
+  // Block folds the reader has opened (T-598), by host event id. Local
+  // state is enough: the component is keyed per card, so it starts empty on
+  // each one, and an id that stops being a host is simply never asked about.
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<number>>(
+    () => new Set(),
   );
+  const toggleFolds = useCallback((hostIds: number[], open: boolean) => {
+    setOpenFolds((prev) => {
+      const next = new Set(prev);
+      for (const id of hostIds) {
+        if (open) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+  const projects = useQuery(projectsQuery);
+  const projectId = projects.data?.find((p) => p.slug === slug)?.id;
+  const {
+    above: unitsAbove,
+    below: unitsBelow,
+    hostOf,
+  } = groupTimelineSides(above, below, {
+    gap,
+    isRevealed,
+    projectId,
+    isFoldExpanded: (id) => openFolds.has(id),
+  });
   // Reported upward rather than recomputed there: the section line and the
   // floating bar sit above this component, and the merged item list they
   // would have to count is this component's to own.
@@ -187,6 +212,21 @@ export function Timeline({
         return null;
       },
       revealRun: reveal,
+      foldHolding: (eventId) => {
+        const host = hostOf.get(eventId);
+        return host === undefined || openFolds.has(host) ? null : host;
+      },
+      // The whole group the host sits in, so its one toggle never shows a
+      // group half open.
+      openFold: (hostId) => {
+        for (const unit of [...unitsAbove, ...unitsBelow]) {
+          if (unit.kind === "group" && unit.folded?.hosts.has(hostId)) {
+            toggleFolds([...unit.folded.hosts.keys()], true);
+            return;
+          }
+        }
+        toggleFolds([hostId], true);
+      },
     },
     questionLanding.anchorRequest === undefined
       ? undefined
@@ -372,6 +412,11 @@ export function Timeline({
           slug={slug}
           issueNumber={issueNumber}
           anchorEventId={anchorEventId}
+          folded={unit.folded}
+          onToggleFold={() => {
+            const { folded } = unit;
+            if (folded) toggleFolds([...folded.hosts.keys()], !folded.expanded);
+          }}
         />
       </div>
     );

@@ -20,6 +20,13 @@ export type GapExpansion = {
   hiddenRunHolding?: (commentId: number) => string | null;
   /** Open that run, so the target renders on the next pass. */
   revealRun?: (key: string) => void;
+  /**
+   * The collapsed block host that folded this event away (T-598), if one
+   * did. Null once that host is open — the event is back in place.
+   */
+  foldHolding?: (eventId: number) => number | null;
+  /** Open that host, putting the event back where it happened. */
+  openFold?: (hostId: number) => void;
   /** Initial reads settled; a paging error is not evidence of deletion. */
   ready?: boolean;
   failed?: boolean;
@@ -44,6 +51,11 @@ type AnchorRequest = {
  * and it is checked before the paging gap: the placeholder does not show
  * the ids it stands for, so a permalink followed from elsewhere would land
  * on a line that says nothing about where its target went.
+ *
+ * A block fold is the third (T-598): a reference or an undone edge a block
+ * group absorbed has no row until its host is opened. Also checked before
+ * the gap, for the same reason. Once the target lands `doneFor` stops this
+ * effect, so a reader who folds the group again keeps it folded.
  *
  * The two channels chain without any coordination between them. A comment
  * that is both unloaded and hidden arrives through the gap expansion first,
@@ -97,8 +109,12 @@ export function useTimelineAnchor(
       target.kind === "comment"
         ? (gap.hiddenRunHolding?.(target.id) ?? null)
         : null;
+    const host =
+      target.kind === "event" ? (gap.foldHolding?.(target.id) ?? null) : null;
     if (run !== null) {
       gap.revealRun?.(run);
+    } else if (host !== null) {
+      gap.openFold?.(host);
     } else if (gap.failed) {
       // Let the existing timeline Retry resume this cursor.
       stall.current = null;

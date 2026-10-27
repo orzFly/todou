@@ -1302,3 +1302,172 @@ describe("user chips in the timeline link to the user page (T-391)", () => {
     ]);
   });
 });
+
+describe("block folds on the page (T-598)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  const session = {
+    agent: "claude-code",
+    model: "model-alpha",
+    session_id: "session-a",
+  } as const;
+  const EPOCH = Date.parse("2026-10-27T04:00:00.000Z");
+
+  const at = (id: number, ms: number, rest: Partial<TimelineEvent>) =>
+    ({
+      type: "event",
+      id,
+      event_type: "referenced",
+      actor: bot,
+      payload: {},
+      created_at: new Date(EPOCH + ms).toISOString(),
+      agent_context: session,
+      ...rest,
+    }) as TimelineEvent;
+
+  const edge = (
+    id: number,
+    ms: number,
+    type: "block_added" | "block_removed",
+    other: number,
+  ) =>
+    at(id, ms, {
+      event_type: type,
+      payload: {
+        edge_id: 900 + other,
+        role: "blocked",
+        other_project_id: 1,
+        other_number: other,
+      },
+    });
+
+  /** Card 5 (from a comment) and card 6 reference this one, then the same
+      session blocks it on both, and on card 9 for a moment; card 42's
+      reference has no block behind it. */
+  const items: TimelineItem[] = [
+    at(11, 0, { payload: { by_issue: 5, by_comment: 77 } }),
+    at(12, 100, { payload: { by_issue: 6 } }),
+    at(13, 200, { payload: { by_issue: 42 } }),
+    edge(21, 1000, "block_added", 5),
+    edge(22, 1100, "block_added", 6),
+    edge(23, 1200, "block_added", 9),
+    edge(24, 1300, "block_removed", 9),
+  ];
+
+  function stubCard() {
+    const page: TimelinePage = {
+      items,
+      prev_cursor: null,
+      next_cursor: "c1",
+      total_count: items.length,
+    };
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      // The cards the rows link to: unknown here, so each link stays bare.
+      if (url.includes("/issues") && !url.includes("/timeline")) {
+        return Response.json({ error: "not found" }, { status: 404 });
+      }
+      const reply = url.includes("/timeline")
+        ? page
+        : /\/projects(\?|$)/.test(url)
+          ? [{ id: 1, slug: "p", name: "p", description: "", created_at: "" }]
+          : url.includes("/references/config")
+            ? DEFAULT_REFERENCE_CONFIG
+            : url.includes("/reference-directory")
+              ? { entries: [], contested: [], slug_entries: [] }
+              : [];
+      return Response.json(reply);
+    }) as typeof fetch);
+  }
+
+  const mount = (initialEntry?: string) => {
+    stubCard();
+    return renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+      initialEntry === undefined ? undefined : { initialEntry },
+    );
+  };
+
+  const groupTexts = (container: HTMLElement) =>
+    [...container.querySelectorAll('[data-testid="event-group"]')].map(
+      (g) => g.querySelector("span.flex-1")?.textContent,
+    );
+
+  it("folds the covered references and the round trip under the block", async () => {
+    const { container, findByTestId } = mount();
+    const toggle = await findByTestId("fold-toggle");
+    expect(toggle.textContent).toBe("+2 references · +2 undone");
+    expect(groupTexts(container)).toEqual([
+      "referenced 1 time",
+      "marked this blocked by",
+    ]);
+    for (const id of [11, 12, 23, 24]) {
+      expect(container.querySelector(`#event-${id}`)).toBeNull();
+    }
+    expect(
+      container.querySelector('[data-testid="fold-comment-link"]'),
+    ).not.toBeNull();
+  });
+
+  it("puts them back in place, and takes them away again", async () => {
+    const { container, findByTestId } = mount();
+    fireEvent.click(await findByTestId("fold-toggle"));
+    await waitFor(() =>
+      expect(groupTexts(container)).toEqual([
+        "referenced 3 times",
+        "marked this blocked by",
+        "removed the block by",
+      ]),
+    );
+    const toggle = await findByTestId("fold-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    for (const id of [11, 12, 13, 21, 22, 23, 24]) {
+      expect(container.querySelectorAll(`[id="event-${id}"]`)).toHaveLength(1);
+    }
+    expect(
+      container.querySelector('[data-testid="fold-comment-link"]'),
+    ).toBeNull();
+
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(groupTexts(container)).toEqual([
+        "referenced 1 time",
+        "marked this blocked by",
+      ]),
+    );
+  });
+
+  it("opens the fold an #event- link points into, and lets it close", async () => {
+    const reveals: string[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+    ) {
+      reveals.push(this.id);
+    });
+    const { container, findByTestId } = mount("/#event-11");
+    await waitFor(() => expect(reveals).toContain("event-11"));
+    const target = container.querySelector("#event-11");
+    expect(
+      target?.closest('[data-testid="event-group"]')?.textContent,
+    ).toContain("referenced 3 times");
+    const toggle = await findByTestId("fold-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(container.querySelector("#event-11")).toBeNull(),
+    );
+    // Give the anchor effect renders to change its mind in; it must not.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(container.querySelector("#event-11")).toBeNull();
+    expect(
+      (await findByTestId("fold-toggle")).getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
+});

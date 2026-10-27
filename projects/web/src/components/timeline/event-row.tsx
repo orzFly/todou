@@ -569,8 +569,9 @@ export function renderEvent(
     case "block_removed": {
       // `role` is which end of the edge this card is, so one event type
       // serves both timelines (T-377).
-      const role = enumValue(payload.role, "block role");
-      if (role !== "blocked" && role !== "blocker") {
+      enumValue(payload.role, "block role");
+      const verb = blockVerb(event);
+      if (verb === null) {
         const details = Object.entries(payload)
           .filter(
             ([, value]) =>
@@ -583,15 +584,6 @@ export function renderEvent(
         const text = `logged event: ${event.event_type} (${details})`;
         return { node: text, text };
       }
-      const blocked = role === "blocked";
-      const added = event.event_type === "block_added";
-      const verb = added
-        ? blocked
-          ? "marked this blocked by "
-          : "marked this a blocker of "
-        : blocked
-          ? "removed the block by "
-          : "removed this card's block on ";
       const other = blockEnd(
         payload.other_project_id,
         payload.other_number,
@@ -600,19 +592,16 @@ export function renderEvent(
       return {
         node: (
           <>
-            {verb}
+            {`${verb} `}
             {other.node}
           </>
         ),
-        text: `${verb}${other.text}`,
+        text: `${verb} ${other.text}`,
       };
     }
     case "block_cleared":
     case "block_reblocked": {
-      const verb =
-        event.event_type === "block_cleared"
-          ? "cleared the block by "
-          : "re-applied the block by ";
+      const verb = blockVerb(event);
       const other = blockEnd(
         payload.blocker_project_id,
         payload.blocker_number,
@@ -621,11 +610,11 @@ export function renderEvent(
       return {
         node: (
           <>
-            {verb}
+            {`${verb} `}
             {other.node}
           </>
         ),
-        text: `${verb}${other.text}`,
+        text: `${verb} ${other.text}`,
       };
     }
     default:
@@ -637,11 +626,41 @@ export function renderEvent(
 }
 
 /**
+ * What a block event did, without the card it did it to. A merged block
+ * group says it once in its header and lists the cards underneath, so the
+ * header and the single row share this one spelling. `null` for a role
+ * neither end of an edge carries, and for every other type.
+ */
+export function blockVerb(event: TimelineEvent): string | null {
+  switch (event.event_type) {
+    case "block_added":
+    case "block_removed": {
+      const { role } = event.payload;
+      if (role !== "blocked" && role !== "blocker") return null;
+      const blocked = role === "blocked";
+      return event.event_type === "block_added"
+        ? blocked
+          ? "marked this blocked by"
+          : "marked this a blocker of"
+        : blocked
+          ? "removed the block by"
+          : "removed this card's block on";
+    }
+    case "block_cleared":
+      return "cleared the block by";
+    case "block_reblocked":
+      return "re-applied the block by";
+    default:
+      return null;
+  }
+}
+
+/**
  * The card at the other end of a block edge. Both fields go null together
  * when the reader may not read that project, and what is left — that
  * something is there — is the part the card's own reader is entitled to.
  */
-function blockEnd(
+export function blockEnd(
   projectId: unknown,
   number: unknown,
   ctx: EventRenderContext,

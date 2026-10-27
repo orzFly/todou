@@ -5,6 +5,7 @@ import type {
   TimelineItem,
 } from "@todou/shared";
 import { enumLookup, isHidden } from "@todou/shared";
+import { type Fold, foldTimeline } from "@/components/timeline/fold-events.ts";
 
 /**
  * Merging (T-92) is a pure view over the raw timeline: the server keeps
@@ -25,10 +26,23 @@ export type MergeFamily =
   | "referenced"
   | "attachments"
   | "assignees"
-  | "spec_resolved";
+  | "spec_resolved"
+  | BlockFamily;
+
+/** One family per block event type: the header is the type's verb, and
+    the rows under it are the cards it was done to. */
+export type BlockFamily =
+  | "block_added"
+  | "block_removed"
+  | "block_cleared"
+  | "block_reblocked";
 
 /** The families whose runs render as always-visible rows under a header. */
-export type ListFamily = "referenced" | "attachments" | "spec_resolved";
+export type ListFamily =
+  | "referenced"
+  | "attachments"
+  | "spec_resolved"
+  | BlockFamily;
 /** The rest: a summary row with an expander behind it. */
 export type CollapsedFamily = Exclude<MergeFamily, ListFamily>;
 
@@ -43,7 +57,17 @@ export function rendersAsList(family: MergeFamily): family is ListFamily {
   return (
     family === "referenced" ||
     family === "attachments" ||
-    family === "spec_resolved"
+    family === "spec_resolved" ||
+    isBlockFamily(family)
+  );
+}
+
+export function isBlockFamily(family: MergeFamily): family is BlockFamily {
+  return (
+    family === "block_added" ||
+    family === "block_removed" ||
+    family === "block_cleared" ||
+    family === "block_reblocked"
   );
 }
 
@@ -84,10 +108,46 @@ const FAMILY_BY_TYPE: Partial<Record<IssueEventType, MergeFamily>> = {
   assigned: "assignees",
   unassigned: "assignees",
   spec_comments_resolved: "spec_resolved",
+  block_added: "block_added",
+  block_removed: "block_removed",
+  block_cleared: "block_cleared",
+  block_reblocked: "block_reblocked",
 };
 
 export function familyOf(type: IssueEventType): MergeFamily | null {
   return enumLookup(FAMILY_BY_TYPE, type, () => null, "event_type") ?? null;
+}
+
+/** The role says which end of the edge this card is; an event whose role
+    is neither has no verb to put in a header, and keeps its own row. */
+const blockRole = (event: TimelineEvent): string | null => {
+  const { role } = event.payload;
+  return role === "blocked" || role === "blocker" ? role : null;
+};
+
+/** `familyOf`, with the block roles a header cannot spell taken out. */
+export function familyOfEvent(event: TimelineEvent): MergeFamily | null {
+  const family = familyOf(event.event_type);
+  if (
+    (family === "block_added" || family === "block_removed") &&
+    blockRole(event) === null
+  ) {
+    return null;
+  }
+  return family;
+}
+
+/**
+ * What consecutive events must share to be one run. `groupKey` for every
+ * family, plus the role for an added or removed edge: one header says
+ * "blocked by" or "a blocker of", never both, so a two-way `issue block`
+ * lands as two groups.
+ */
+export function runKey(event: TimelineEvent, family: MergeFamily): string {
+  const key = groupKey(event);
+  return family === "block_added" || family === "block_removed"
+    ? `${key}\u0000${blockRole(event)}`
+    : key;
 }
 
 /**
@@ -107,9 +167,26 @@ export function groupKey(event: TimelineEvent): string {
   ].join("\u0000");
 }
 
+/**
+ * What a group's block events absorbed (T-598), across every host in it.
+ * The group has one toggle, so `expanded` holds only when every host in it
+ * is open; `collapsed` counts what the closed ones still keep off the page.
+ */
+export type GroupFold = Fold & {
+  expanded: boolean;
+  collapsed: number;
+  /** Each host's own share, which is how a row finds its comment link. */
+  hosts: Map<number, Fold>;
+};
+
 export type RenderUnit =
   | { kind: "item"; item: TimelineItem }
-  | { kind: "group"; family: MergeFamily; events: TimelineEvent[] }
+  | {
+      kind: "group";
+      family: MergeFamily;
+      events: TimelineEvent[];
+      folded?: GroupFold;
+    }
   | { kind: "hidden"; comments: TimelineComment[] };
 
 /**
@@ -175,14 +252,14 @@ export function groupTimeline(
   };
 
   for (const item of items) {
-    const family = item.type === "event" ? familyOf(item.event_type) : null;
+    const family = item.type === "event" ? familyOfEvent(item) : null;
     if (item.type !== "event" || family === null) {
       flush();
       if (asHidden(item)) continue;
       units.push({ kind: "item", item });
       continue;
     }
-    const key = groupKey(item);
+    const key = runKey(item, family);
     const ms = Date.parse(item.created_at);
     if (
       run &&
@@ -211,13 +288,72 @@ export function groupTimeline(
 }
 
 /** Items a unit stands for — every kind carries its own, so the sizes of a
-    scan's units sum to the number of items that went into it. */
-const unitSize = (unit: RenderUnit): number =>
+    scan's units sum to the number of items that went into it. A collapsed
+    fold counts what it absorbed: those items went into the scan too, only
+    taken out before it ran, and leaving them uncounted would move the cut
+    between the sides past the head side's real end. Once expanded they are
+    ordinary items of their own units and are counted there. */
+export const unitSize = (unit: RenderUnit): number =>
   unit.kind === "group"
-    ? unit.events.length
+    ? unit.events.length + (unit.folded?.collapsed ?? 0)
     : unit.kind === "hidden"
       ? unit.comments.length
       : 1;
+
+/**
+ * Fold, then group: the scan never sees what a collapsed host absorbed, and
+ * each group picks up the folds of the hosts inside it.
+ */
+function foldAndGroup(
+  items: TimelineItem[],
+  opts: SidesOptions,
+): { units: RenderUnit[]; hostOf: Map<number, number> } {
+  const {
+    items: kept,
+    folds,
+    hostOf,
+  } = foldTimeline(items, {
+    projectId: opts.projectId,
+    isExpanded: opts.isFoldExpanded,
+  });
+  const units = groupTimeline(kept, opts.isRevealed);
+  if (folds.size === 0) return { units, hostOf };
+  const expanded = opts.isFoldExpanded ?? (() => false);
+  return {
+    units: units.map((unit) => {
+      if (unit.kind !== "group") return unit;
+      const folded: GroupFold = {
+        references: [],
+        undone: [],
+        expanded: true,
+        collapsed: 0,
+        hosts: new Map(),
+      };
+      for (const event of unit.events) {
+        const fold = folds.get(event.id);
+        if (!fold) continue;
+        folded.references.push(...fold.references);
+        folded.undone.push(...fold.undone);
+        folded.hosts.set(event.id, fold);
+        if (!expanded(event.id)) {
+          folded.expanded = false;
+          folded.collapsed += fold.references.length + fold.undone.length;
+        }
+      }
+      return folded.hosts.size === 0 ? unit : { ...unit, folded };
+    }),
+    hostOf,
+  };
+}
+
+type SidesOptions = {
+  gap: boolean;
+  isRevealed?: (key: string) => boolean;
+  /** This card's project, for references that do not name one. Unknown
+      until the project list loads, and those references stay out of R1. */
+  projectId?: number;
+  isFoldExpanded?: (hostId: number) => boolean;
+};
 
 /**
  * Group both rendered sides of a folded timeline (T-30) — as one scan when
@@ -239,19 +375,30 @@ const unitSize = (unit: RenderUnit): number =>
  * straddling the seam is handed to the head side; with the seam closed the
  * two arrays render as one sequence, so the choice settles the arithmetic
  * rather than the output.
+ *
+ * Block folds (T-598) follow the same seam: one fold over both sides when
+ * it is closed, one per side while a fold block stands between them.
+ * `hostOf` covers both sides either way.
  */
 export function groupTimelineSides(
   above: TimelineItem[],
   below: TimelineItem[],
-  opts: { gap: boolean; isRevealed?: (key: string) => boolean },
-): { above: RenderUnit[]; below: RenderUnit[] } {
+  opts: SidesOptions,
+): {
+  above: RenderUnit[];
+  below: RenderUnit[];
+  hostOf: Map<number, number>;
+} {
   if (opts.gap) {
+    const head = foldAndGroup(above, opts);
+    const tail = foldAndGroup(below, opts);
     return {
-      above: groupTimeline(above, opts.isRevealed),
-      below: groupTimeline(below, opts.isRevealed),
+      above: head.units,
+      below: tail.units,
+      hostOf: new Map([...head.hostOf, ...tail.hostOf]),
     };
   }
-  const units = groupTimeline([...above, ...below], opts.isRevealed);
+  const { units, hostOf } = foldAndGroup([...above, ...below], opts);
   let seen = 0;
   let cut = 0;
   for (const unit of units) {
@@ -259,7 +406,7 @@ export function groupTimelineSides(
     seen += unitSize(unit);
     cut++;
   }
-  return { above: units.slice(0, cut), below: units.slice(cut) };
+  return { above: units.slice(0, cut), below: units.slice(cut), hostOf };
 }
 
 /** Tolerant name extraction shared with describeEvent — bad payloads render "?". */
