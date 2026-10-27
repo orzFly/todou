@@ -11,6 +11,7 @@ import {
   ChunkMultiFileDiff,
   PIERRE_HIGHLIGHTER,
   PIERRE_THEME_TYPE,
+  redrawOnRemount,
   useSyntaxTheme,
 } from "@/components/shared/pierre.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -280,6 +281,7 @@ function RevisionDiff({
       // this dialog rendered before T-425, option for option.
       overflow: wrap ? ("wrap" as const) : ("scroll" as const),
       preferredHighlighter: PIERRE_HIGHLIGHTER,
+      onPostRender: redrawOnRemount,
     }),
     [syntaxTheme, wrap],
   );

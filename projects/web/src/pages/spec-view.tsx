@@ -62,6 +62,7 @@ import {
 import {
   PIERRE_HIGHLIGHTER,
   PIERRE_THEME_TYPE,
+  redrawOnRemount,
   useSyntaxTheme,
 } from "@/components/shared/pierre.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
@@ -2436,28 +2437,6 @@ function SpecUnfoldableFile({
       )}
     </SpecStackFrame>
   );
-}
-
-const DRAWN_DIFF_CONTAINERS = new WeakSet<HTMLElement>();
-
-/**
- * pierre's diff draws plain lines first when the shared highlighter is up but
- * the file's grammar is not, and repaints once the grammar loads. An instance
- * that mounts onto a container an earlier one already drew into hydrates
- * instead: it takes the plain lines for highlighted output and never starts
- * that load, so the diff stays uncoloured until something forces a render
- * (T-606). StrictMode remounts every instance this way, and arriving at the
- * source view from the rendered one, whose fences already started the
- * highlighter, is exactly the warm-but-no-grammar case.
- */
-function redrawOnRemount(
-  node: HTMLElement,
-  instance: { rerender: () => void },
-  phase: "mount" | "update" | "unmount",
-) {
-  if (phase !== "mount") return;
-  if (DRAWN_DIFF_CONTAINERS.has(node)) instance.rerender();
-  else DRAWN_DIFF_CONTAINERS.add(node);
 }
 
 function AnnotatedFileDiff({

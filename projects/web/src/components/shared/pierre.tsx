@@ -258,6 +258,37 @@ function handlePostRender(container: HTMLElement): void {
   }
 }
 
+const DRAWN_DIFF_CONTAINERS = new WeakSet<HTMLElement>();
+
+/**
+ * pierre's diff draws plain lines first when the shared highlighter is up but
+ * the file's grammar is not, and repaints once the grammar loads. An instance
+ * that mounts onto a container an earlier one already drew into hydrates
+ * instead: it takes the plain lines for highlighted output and never starts
+ * that load, so the diff stays uncoloured until something forces a render.
+ * StrictMode remounts every instance this way, so in development any diff
+ * that mounts while the highlighter is up without its grammar is caught
+ * (T-606, T-607).
+ */
+export function redrawOnRemount(
+  node: HTMLElement,
+  instance: { rerender: () => void },
+  phase: "mount" | "update" | "unmount",
+) {
+  if (phase !== "mount") return;
+  if (DRAWN_DIFF_CONTAINERS.has(node)) instance.rerender();
+  else DRAWN_DIFF_CONTAINERS.add(node);
+}
+
+function handleDiffPostRender(
+  node: HTMLElement,
+  instance: { rerender: () => void },
+  phase: "mount" | "update" | "unmount",
+) {
+  redrawOnRemount(node, instance, phase);
+  handlePostRender(node);
+}
+
 /**
  * pierre defaults to "shiki-js", which transpiles the TextMate grammars'
  * Oniguruma patterns into native RegExp through oniguruma-to-es. That
@@ -367,7 +398,7 @@ function fenceDiffOptions(
     // diff and badly in a fence the reader opened the document to read: a
     // 34-line block with one edited line came out as 10 rendered lines.
     expandUnchanged: true,
-    onPostRender: handlePostRender,
+    onPostRender: handleDiffPostRender,
   } as const;
   FENCE_DIFF_OPTIONS.set(theme, options);
   return options;
