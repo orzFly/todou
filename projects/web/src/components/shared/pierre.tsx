@@ -7,10 +7,8 @@ import type {
 import {
   Component,
   type ComponentType,
-  lazy,
   type ReactNode,
   type Ref,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -20,16 +18,76 @@ import {
 import type { PatchCommit } from "@/lib/patch-commit.ts";
 import { syntaxThemeOf, type ThemePref, useThemePref } from "@/lib/theme.ts";
 
+type Chunk<P> =
+  | { status: "loaded"; Component: ComponentType<P> }
+  | { status: "failed"; error: unknown };
+
+/**
+ * A component fetched in its own chunk on first render, drawing `fallback`
+ * until it arrives.
+ *
+ * Not `lazy()`, because suspending here throws away far more than the code
+ * block (T-600). On a page's first load the nearest boundary that has never
+ * shown its content is the shell's, and React will not commit a retry that
+ * suspends within 300 ms of that boundary's fallback: when the chunk lands it
+ * renders the whole page again from scratch. Every component above the
+ * block, and the spec document's whole-file markdown parse, ran twice.
+ *
+ * Not `useSyncExternalStore` either, for the same reason: a store that
+ * changes while a concurrent render is yielding fails React's consistency
+ * check, and the whole render is redone synchronously. The chunk landing
+ * mid-render is exactly that change.
+ */
+function chunkComponent<P extends object>(
+  load: () => Promise<ComponentType<P>>,
+): ComponentType<P & { fallback?: ReactNode }> {
+  let chunk: Chunk<P> | undefined;
+  let settled: Promise<Chunk<P>> | undefined;
+  const start = () => {
+    settled ??= load().then(
+      (Component) => (chunk = { status: "loaded", Component }),
+      (error: unknown) => (chunk = { status: "failed", error }),
+    );
+    return settled;
+  };
+  return function ChunkComponent({
+    fallback = null,
+    ...props
+  }: P & { fallback?: ReactNode }) {
+    const [current, setCurrent] = useState(chunk);
+    const waiting = current === undefined;
+    // Started from render, as lazy() does, so the fetch is not held back
+    // until the page commits.
+    if (waiting) start();
+    useEffect(() => {
+      if (!waiting) return;
+      let live = true;
+      start().then((next) => {
+        if (live) setCurrent(next);
+      });
+      return () => {
+        live = false;
+      };
+    }, [waiting]);
+    // Rethrown as lazy() would, so CodeViewBoundary still turns a chunk that
+    // never arrives (offline) into plain text.
+    if (current?.status === "failed") throw current.error;
+    if (current?.status !== "loaded") return fallback;
+    return <current.Component {...(props as P)} />;
+  };
+}
+
 // @pierre/diffs is the heaviest dependency in the web bundle (T-24). Every
-// value import goes through lazy() here so the library lands in its own
-// chunk, fetched the first time a code surface actually renders; the rest
+// value import goes through chunkComponent() here so the library lands in its
+// own chunk, fetched the first time a code surface actually renders; the rest
 // of the app must only use type imports.
-const LazyCodeView = lazy(() =>
-  import("@pierre/diffs/react").then((m) => ({
-    default: m.CodeView as ComponentType<
-      CodeViewProps & { ref?: Ref<CodeViewHandle<undefined>> }
-    >,
-  })),
+const ChunkCodeView = chunkComponent(() =>
+  import("@pierre/diffs/react").then(
+    (m) =>
+      m.CodeView as ComponentType<
+        CodeViewProps & { ref?: Ref<CodeViewHandle<undefined>> }
+      >,
+  ),
 );
 
 /**
@@ -41,7 +99,7 @@ const LazyCodeView = lazy(() =>
  * The pool is a page-wide singleton that the last provider to unmount
  * terminates, so it only exists while an attachment is on screen.
  */
-const LazyWorkerCodeView = lazy(() =>
+const ChunkWorkerCodeView = chunkComponent(() =>
   Promise.all([
     import("@pierre/diffs/react"),
     import("@pierre/diffs/worker/worker.js?worker"),
@@ -77,14 +135,14 @@ const LazyWorkerCodeView = lazy(() =>
         </m.WorkerPoolContextProvider>
       );
     }
-    return { default: WorkerCodeView };
+    return WorkerCodeView;
   }),
 );
 
-export const LazyMultiFileDiff = lazy(() =>
-  import("@pierre/diffs/react").then((m) => ({
-    default: m.MultiFileDiff as ComponentType<MultiFileDiffProps<undefined>>,
-  })),
+export const ChunkMultiFileDiff = chunkComponent(() =>
+  import("@pierre/diffs/react").then(
+    (m) => m.MultiFileDiff as ComponentType<MultiFileDiffProps<undefined>>,
+  ),
 );
 
 /**
@@ -456,19 +514,17 @@ export function CodeBlock({
   // gone plain stays plain: re-arming it would only repeat the same failure.
   if (degraded) return <PlainCodeFallback contents={contents} />;
   // Plain text has nothing to tokenize, so no worker to start for it.
-  const View = offThread && !plain ? LazyWorkerCodeView : LazyCodeView;
+  const View = offThread && !plain ? ChunkWorkerCodeView : ChunkCodeView;
   return (
     <CodeViewBoundary contents={contents}>
       {!ready && <PlainCodeFallback contents={contents} />}
       <div style={ready ? undefined : { visibility: "hidden" }}>
-        <Suspense fallback={null}>
-          <View
-            items={items}
-            options={options}
-            className={className}
-            containerRef={containerRef}
-          />
-        </Suspense>
+        <View
+          items={items}
+          options={options}
+          className={className}
+          containerRef={containerRef}
+        />
       </div>
     </CodeViewBoundary>
   );
@@ -530,13 +586,11 @@ function FenceDiff({
       <CodeViewBoundary contents={after}>
         {!ready && <PlainCodeFallback contents={after} />}
         <div style={ready ? undefined : { visibility: "hidden" }}>
-          <Suspense fallback={null}>
-            <LazyMultiFileDiff
-              oldFile={oldFile}
-              newFile={newFile}
-              options={options}
-            />
-          </Suspense>
+          <ChunkMultiFileDiff
+            oldFile={oldFile}
+            newFile={newFile}
+            options={options}
+          />
         </div>
       </CodeViewBoundary>
     </div>
@@ -673,16 +727,15 @@ export function PatchFiles({
   if (degraded) return <PlainCodeFallback contents={text} />;
   return (
     <CodeViewBoundary contents={text}>
-      <Suspense fallback={<PlainCodeFallback contents={text} />}>
-        <LazyCodeView
-          ref={viewRef}
-          items={items}
-          options={options}
-          className={className}
-          containerRef={containerRef}
-          renderCustomHeader={renderHeader}
-        />
-      </Suspense>
+      <ChunkCodeView
+        fallback={<PlainCodeFallback contents={text} />}
+        ref={viewRef}
+        items={items}
+        options={options}
+        className={className}
+        containerRef={containerRef}
+        renderCustomHeader={renderHeader}
+      />
     </CodeViewBoundary>
   );
 }

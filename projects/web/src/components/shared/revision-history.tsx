@@ -1,14 +1,14 @@
 import { hashKey, useQuery } from "@tanstack/react-query";
 import type { Revision, RevisionPage } from "@todou/shared";
 import { WrapTextIcon } from "lucide-react";
-import { Suspense, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
 import {
-  LazyMultiFileDiff,
+  ChunkMultiFileDiff,
   PIERRE_HIGHLIGHTER,
   PIERRE_THEME_TYPE,
   useSyntaxTheme,
@@ -285,19 +285,16 @@ function RevisionDiff({
   );
   return (
     <div className="max-h-[70vh] overflow-auto rounded-md">
-      <Suspense
+      <ChunkMultiFileDiff
         fallback={
           <p className="py-8 text-center text-sm text-muted-foreground">
             Loading diff…
           </p>
         }
-      >
-        <LazyMultiFileDiff
-          oldFile={oldFile}
-          newFile={newFile}
-          options={options}
-        />
-      </Suspense>
+        oldFile={oldFile}
+        newFile={newFile}
+        options={options}
+      />
     </div>
   );
 }
