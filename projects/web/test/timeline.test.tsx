@@ -43,6 +43,12 @@ import {
   testQueryClient,
 } from "./render.tsx";
 
+/**
+ * For units well above the bottom: the first load renders the bottom few and
+ * fills in the rest a batch per idle callback (T-602).
+ */
+const FILL_WAIT = { timeout: 5_000 };
+
 const user: UserRef = {
   id: 1,
   login: "user",
@@ -1021,7 +1027,8 @@ describe("timeline load failure (T-376)", () => {
       <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
       client,
     );
-    await view.findByText("c1");
+    // The head's units arrive above the tail's and fill in a few at a time.
+    await view.findByText("c1", undefined, FILL_WAIT);
     expect(view.getByText("c150")).toBeTruthy();
     expect((await view.findByTestId("fold-block")).textContent).toContain(
       "50 remaining items",
@@ -1166,7 +1173,7 @@ describe("one upload across the fold seam (T-404)", () => {
     // Wait on an entry only the head carries. Before it lands `above` is
     // empty, all six events sit in the tail, and the page already shows one
     // group — asserting any earlier would pass without the fix.
-    await findByText("c1");
+    await findByText("c1", undefined, FILL_WAIT);
     // And with the seam closed, which is what makes one group the right
     // answer: two windows still holding a fold between them may split it.
     expect(queryByTestId("fold-block")).toBeNull();
@@ -1469,5 +1476,91 @@ describe("block folds on the page (T-598)", () => {
     expect(
       (await findByTestId("fold-toggle")).getAttribute("aria-expanded"),
     ).toBe("false");
+  });
+});
+
+describe("first load fills in from the bottom (T-602)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const page = (count: number): TimelinePage => ({
+    items: Array.from({ length: count }, (_, i) => ({
+      type: "comment" as const,
+      id: i + 1,
+      author: user,
+      body: `c${i + 1}`,
+      component: null,
+      created_at: "2026-08-11T00:00:00Z",
+      edited_at: null,
+      resolved_at: null,
+      hidden_at: null,
+      agent_context: null,
+    })),
+    prev_cursor: null,
+    next_cursor: null,
+    total_count: count,
+  });
+
+  // Idle callbacks held until the case runs them, each with no time left:
+  // one unit per callback, so every step of the fill can be looked at.
+  const idle = () => {
+    const queue: IdleRequestCallback[] = [];
+    vi.stubGlobal("requestIdleCallback", (callback: IdleRequestCallback) => {
+      queue.push(callback);
+      return queue.length;
+    });
+    vi.stubGlobal("cancelIdleCallback", () => {});
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      return Response.json(
+        url.includes("/timeline")
+          ? page(20)
+          : url.includes("/references/config")
+            ? DEFAULT_REFERENCE_CONFIG
+            : url.includes("/reference-directory")
+              ? { entries: [], contested: [], slug_entries: [] }
+              : [],
+      );
+    }) as typeof fetch);
+    return {
+      pending: () => queue.length,
+      runAll: async () => {
+        for (let callback = queue.shift(); callback; callback = queue.shift()) {
+          const run = callback;
+          await act(async () => {
+            run({ didTimeout: true, timeRemaining: () => 0 });
+          });
+        }
+      },
+    };
+  };
+
+  const mount = (initialEntry?: string) =>
+    renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+      initialEntry === undefined ? undefined : { initialEntry },
+    );
+
+  it("draws the bottom six first and the rest in idle time", async () => {
+    const callbacks = idle();
+    const { container, findByText, queryByText } = mount();
+    expect(await findByText("c20")).toBeTruthy();
+    expect(queryByText("c15")).not.toBeNull();
+    expect(queryByText("c14")).toBeNull();
+    expect(container.querySelectorAll("[data-unfilled]")).toHaveLength(14);
+
+    await callbacks.runAll();
+    expect(container.querySelectorAll("[data-unfilled]")).toHaveLength(0);
+    for (let n = 1; n <= 20; n++) expect(queryByText(`c${n}`)).not.toBeNull();
+  });
+
+  it("draws everything at once when a permalink lands above the bottom", async () => {
+    const callbacks = idle();
+    const { container, findByText } = mount("/#comment-3");
+    expect(await findByText("c3")).toBeTruthy();
+    expect(container.querySelectorAll("[data-unfilled]")).toHaveLength(0);
+    expect(callbacks.pending()).toBe(0);
   });
 });

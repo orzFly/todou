@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { projectsQuery } from "@/api/queries.ts";
 import {
   mergeFolded,
@@ -40,6 +41,7 @@ import { HiddenBlock } from "@/components/timeline/hidden-block.tsx";
 import { useRevealedRuns } from "@/components/timeline/revealed-runs.tsx";
 import { SpecVersionCard } from "@/components/timeline/spec-version-card.tsx";
 import { TimelineAnswersProvider } from "@/components/timeline/timeline-answers.tsx";
+import { useKeepReading } from "@/components/timeline/use-keep-reading.ts";
 import { useQuestionLanding } from "@/components/timeline/use-question-landing.ts";
 import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,18 @@ import {
 import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 
+/** Units the first render draws, counted up from the bottom (T-602). */
+const FIRST_PASS_UNITS = 6;
+/** The longest idle period browsers grant, for where there are none. */
+const IDLE_BUDGET_MS = 50;
+
+/** The key a unit renders under, and its identity across fills. */
+function unitKey(unit: RenderUnit): string {
+  if (unit.kind === "item") return `${unit.item.type}-${unit.item.id}`;
+  if (unit.kind === "hidden") return hiddenRunKey(unit);
+  return `group-${unit.events[0]?.id}`;
+}
+
 export function Timeline({
   slug,
   issueNumber,
@@ -64,6 +78,18 @@ export function Timeline({
   pendingComments: Array<{ key: number; comment: TimelineComment }>;
   viewer?: Viewer | null;
 }) {
+  // The page hands over a fresh object every render; held by value here so
+  // the memoized comments see the same viewer from one fill to the next.
+  const viewerId = viewer?.id;
+  const viewerIsAdmin = viewer?.isAdmin;
+  const viewerRole = viewer?.role;
+  const stableViewer = useMemo(
+    () =>
+      viewerId === undefined || viewerIsAdmin === undefined
+        ? null
+        : { id: viewerId, isAdmin: viewerIsAdmin, role: viewerRole },
+    [viewerId, viewerIsAdmin, viewerRole],
+  );
   const tail = useTimelineTail(slug, issueNumber);
   const headEnabled = needsHead(tail.data?.pages[0]);
   const head = useTimelineHead(slug, issueNumber, headEnabled);
@@ -176,6 +202,74 @@ export function Timeline({
   }, [keepHold]);
   const questionLanding = useQuestionLanding(slug, issueNumber);
   const timelineReady = tail.isSuccess && (!headEnabled || head.isSuccess);
+
+  // The first load renders the units nearest the bottom, where the page
+  // lands, and fills in the ones above a few at a time while the page is idle
+  // (T-602): 33 markdown comments rendered in one go held the main thread for
+  // 1.4 s at 4× CPU throttling. `fillFrom` is the key of the topmost rendered unit; null
+  // once everything is. A landing anywhere but the bottom renders it all at
+  // once, since its target may sit in the part not yet filled.
+  const unitKeys = [...unitsAbove, ...unitsBelow].map(unitKey);
+  const landsElsewhere =
+    parseTimelineAnchor(anchorHash ?? "") !== null ||
+    isQuestionLandingHash(anchorHash ?? "") ||
+    questionLanding.ownsScroll;
+  const [fillFrom, setFillFrom] = useState<string | null | undefined>(
+    undefined,
+  );
+  if (fillFrom === undefined && hasContent) {
+    setFillFrom(
+      landsElsewhere || unitKeys.length <= FIRST_PASS_UNITS
+        ? null
+        : unitKeys[unitKeys.length - FIRST_PASS_UNITS],
+    );
+  } else if (fillFrom && landsElsewhere) {
+    setFillFrom(null);
+  }
+  const fillIndex =
+    fillFrom && !landsElsewhere ? Math.max(0, unitKeys.indexOf(fillFrom)) : 0;
+  const unfilled = new Set(unitKeys.slice(0, fillIndex));
+  // Read back after each synchronous fill, which re-renders before returning.
+  const fill = useRef({ keys: unitKeys, index: fillIndex });
+  fill.current = { keys: unitKeys, index: fillIndex };
+  const listRef = useRef<HTMLDivElement>(null);
+  // Milliseconds per unit, as the last fill measured them.
+  const fillRate = useRef<number | null>(null);
+  useEffect(() => {
+    if (fillIndex === 0) return;
+    // As many units per idle period as last time's rate says will fit, in
+    // one commit: every commit lays the page out again on top of its units.
+    // A slow machine gets a single unit, which at 4× CPU throttling is a
+    // long task on its own already.
+    const run = (timeRemaining: () => number) => {
+      do {
+        const count =
+          fillRate.current === null
+            ? 1
+            : Math.max(1, Math.floor(timeRemaining() / fillRate.current));
+        const next = Math.max(0, fill.current.index - count);
+        const start = performance.now();
+        flushSync(() =>
+          setFillFrom(next === 0 ? null : fill.current.keys[next]),
+        );
+        fillRate.current = (performance.now() - start) / count;
+      } while (fill.current.index > 0 && timeRemaining() > 0);
+    };
+    if (typeof requestIdleCallback === "function") {
+      const id = requestIdleCallback(
+        (deadline) => run(() => deadline.timeRemaining()),
+        { timeout: 500 },
+      );
+      return () => cancelIdleCallback(id);
+    }
+    // Safari has no idle callbacks: a task of its own, budgeted like one.
+    const id = setTimeout(() => {
+      const start = performance.now();
+      run(() => IDLE_BUDGET_MS - (performance.now() - start));
+    }, 0);
+    return () => clearTimeout(id);
+  }, [fillIndex]);
+  useKeepReading(listRef, fillIndex > 0);
   const finishQuestionLanding = (error?: "unavailable" | "stalled") => {
     // revealBlock has already moved the viewport. Do not wait for a native
     // scroll event before restoring the ordinary follow-bottom policy.
@@ -363,7 +457,7 @@ export function Timeline({
             slug={slug}
             issueNumber={issueNumber}
             comment={item}
-            viewer={viewer}
+            viewer={stableViewer}
           />
         ) : item.type === "event" ? (
           <>
@@ -392,9 +486,16 @@ export function Timeline({
   const anchorEventId =
     anchorTarget?.kind === "event" ? anchorTarget.id : undefined;
   const renderUnit = (unit: RenderUnit) => {
+    const key = unitKey(unit);
+    if (unfilled.has(key)) {
+      return (
+        <div key={key} className="pb-2" data-unfilled>
+          <Skeleton className="h-16 w-full" />
+        </div>
+      );
+    }
     if (unit.kind === "item") return renderItem(unit.item);
     if (unit.kind === "hidden") {
-      const key = hiddenRunKey(unit);
       return (
         <div key={key} className="pb-2">
           <HiddenBlock
@@ -405,7 +506,7 @@ export function Timeline({
       );
     }
     return (
-      <div key={`group-${unit.events[0]?.id}`} className="pb-2">
+      <div key={key} className="pb-2">
         <EventGroup
           family={unit.family}
           events={unit.events}
@@ -447,7 +548,11 @@ export function Timeline({
     // Native scroll anchoring would fight the manual insert compensation
     // above, adjusting the viewport a second time for the same insertion.
     <TimelineAnswersProvider answers={answers}>
-      <div className="[overflow-anchor:none]" data-testid="timeline-scroll">
+      <div
+        ref={listRef}
+        className="[overflow-anchor:none]"
+        data-testid="timeline-scroll"
+      >
         {questionLanding.error && (
           <LoadFailure
             message={

@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { MemberRole, TimelineComment } from "@todou/shared";
 import { can, isAction, isHidden } from "@todou/shared";
 import { EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
-import { useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { invalidateSearchRefQueries } from "@/api/search-refs.ts";
@@ -85,14 +85,20 @@ export type CommentItemProps = {
   pending?: boolean;
 };
 
-/** A timeline comment, drawn as what its kind says it is (T-575). */
-export function CommentItem(props: CommentItemProps) {
+/**
+ * A timeline comment, drawn as what its kind says it is (T-575).
+ *
+ * Memoized because the timeline re-renders as it fills in on first load
+ * (T-602), once per batch, and every comment already drawn would otherwise
+ * render again each time.
+ */
+export const CommentItem = memo(function CommentItem(props: CommentItemProps) {
   return isAction(props.comment) ? (
     <ActionItem {...props} />
   ) : (
     <PlainCommentItem {...props} />
   );
-}
+});
 
 /**
  * The three writes every timeline comment offers, with the invalidation they
