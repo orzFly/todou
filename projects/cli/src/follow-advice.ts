@@ -210,7 +210,6 @@ export function followAdvice(input: {
       return advice("codex-queue", [
         "running under Codex, so `--follow=codex` hands each batch to `codex queue`: it starts a new turn when this conversation is idle, and otherwise waits for the running turn to end.",
         ...CODEX_START,
-        "Handle every affected card in a delivered batch, checking current ownership, authorization and review state. For changes_requested, read annotations and revise the design; implementation still needs approval. End quietly when nothing authorized can proceed. The existing watch handles later batches; do not start another monitor.",
         CLOSING,
       ]);
     }

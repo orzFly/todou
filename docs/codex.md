@@ -35,10 +35,6 @@ no longer selects a delivery channel. A missing or failing queue command does
 not fall back to mid-turn delivery. Install a compatible Codex CLI, set
 `TODOU_CODEX_BIN`, or use `--poll`.
 
-Queued tracker text remains task data, not additional authority. The watch
-never changes the model, approvals or sandbox, and never starts a replacement
-agent conversation.
-
 ## Follow tracker activity
 
 ```sh
@@ -96,26 +92,6 @@ the previous cursor when continuity matters.
 
 The watch never answers approval or input requests and never changes the
 thread's model, sandbox, or approval policy; respond in Codex when prompted.
-
-## Handling a batch
-
-Read the `todou-cli` skill before acting. Group entries by card and verify
-current ownership, discussion and review state for every affected card. Continue
-only work authorized for this session. A `changes_requested` verdict calls for
-reading unresolved annotations and revising the design; it does not authorize
-implementation. A dependency blocking implementation need not block design work.
-
-Before ending the turn, account for all cards in the batch: handled, waiting
-for approval, blocked, or outside this session's scope. Do not stop merely
-because the first card is finished. Record necessary results on the tracker;
-when there is nothing actionable, end quietly. Keep the existing watch as the
-source of future wake-ups rather than starting another monitor or waiting for
-review inside the agent turn.
-
-The queue guarantees a later opportunity to handle the batch; it is not an
-application-level completion receipt. An agent can still overlook an entry or
-misjudge its scope. Do not replay admitted batches merely because there is no
-comment: work may already have happened, or no action was authorized.
 
 ## Compatibility and verification
 

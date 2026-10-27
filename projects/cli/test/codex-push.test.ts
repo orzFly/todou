@@ -366,10 +366,24 @@ describe("Codex queue transport", () => {
       THREAD,
       "--message",
     ]);
-    expect(calls[0]?.[5]).toContain("Tracker activity follows.");
-    expect(calls[0]?.[5]).toContain("review approved\nsince: c0\ncursor: c1");
+    // The rendered batch and nothing else: the same body omp and pi receive.
+    expect(calls[0]?.[5]).toBe("review approved\nsince: c0\ncursor: c1");
     expect(push.rejected).toBeNull();
     expect(push.unconfirmed().items).toEqual([]);
+  });
+
+  it("queues only the range for a batch over the argv limit", async () => {
+    const { calls, run } = queueRunner(() => QUEUED);
+    const push = openCodexQueuePush<string>({
+      threadId: THREAD,
+      bin: "/opt/codex",
+      render,
+      run,
+    });
+    await push.send(["x".repeat(128 * 1024)], "c0", "c1");
+    expect(calls[0]?.[5]).toBe(
+      "This batch of 1 entry was too large to push — re-read it from the since cursor below\n\nsince: c0\ncursor: c1",
+    );
   });
 
   it.each([
