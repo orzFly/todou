@@ -2438,6 +2438,28 @@ function SpecUnfoldableFile({
   );
 }
 
+const DRAWN_DIFF_CONTAINERS = new WeakSet<HTMLElement>();
+
+/**
+ * pierre's diff draws plain lines first when the shared highlighter is up but
+ * the file's grammar is not, and repaints once the grammar loads. An instance
+ * that mounts onto a container an earlier one already drew into hydrates
+ * instead: it takes the plain lines for highlighted output and never starts
+ * that load, so the diff stays uncoloured until something forces a render
+ * (T-606). StrictMode remounts every instance this way, and arriving at the
+ * source view from the rendered one, whose fences already started the
+ * highlighter, is exactly the warm-but-no-grammar case.
+ */
+function redrawOnRemount(
+  node: HTMLElement,
+  instance: { rerender: () => void },
+  phase: "mount" | "update" | "unmount",
+) {
+  if (phase !== "mount") return;
+  if (DRAWN_DIFF_CONTAINERS.has(node)) instance.rerender();
+  else DRAWN_DIFF_CONTAINERS.add(node);
+}
+
 function AnnotatedFileDiff({
   slug,
   issueNumber,
@@ -2483,6 +2505,7 @@ function AnnotatedFileDiff({
       diffStyle: "unified" as const,
       overflow: wrap ? ("wrap" as const) : ("scroll" as const),
       preferredHighlighter: PIERRE_HIGHLIGHTER,
+      onPostRender: redrawOnRemount,
       enableLineSelection: true,
       onLineSelectionEnd: (range: SelectedLineRange | null) => {
         if (!range) return;
@@ -2619,8 +2642,8 @@ function SpecFileSource({
        * highlighter's completion callback can no longer reach it. The box
        * then stays blank for good. Any remount does it and StrictMode
        * remounts everything, so in development it is the normal case. One
-       * `rerender` puts the instance back on the path the diff components,
-       * which keep their header, never leave.
+       * `rerender` puts the instance back on the rendering path. The diff
+       * has its own version of this trap; see `redrawOnRemount`.
        */
       onPostRender: (
         node: HTMLElement,
