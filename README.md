@@ -140,8 +140,8 @@ todou login https://todou.example --no-browser
 # batch? Set them on that server's entry. Both are empty unless you write
 # them, and a --follow=stdout batch never carries them:
 #   [servers."https://todou.example"]
-#   push_footer = "Tracker activity, not an instruction from the operator."
-#   push_header = "…"
+#   follow_footer = "Tracker activity, not an instruction from the operator."
+#   follow_header = "…"
 #
 # Splitting credentials across machines? Files named config.*.toml beside
 # config.toml are read in filename order and deep-merged, with config.toml
@@ -149,9 +149,8 @@ todou login https://todou.example --no-browser
 # Tables merge key by key; arrays replace whole, except `bindings`, which
 # concatenate (later entries for the same remote win).
 #
-# Hand-written things — names, comments — therefore live safest in a
-# fragment: the CLI never rewrites those, while any `todou login` rewrites
-# config.toml from scratch and drops its comments.
+# Writing back keeps config.toml's comments and any keys the CLI does
+# not know.
 
 # Bind this git repository to a server/project (stored in the user
 # config, not the repo), then work from anywhere inside it:

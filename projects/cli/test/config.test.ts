@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { ConfigError } from "@todou/shared/config";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  type CliConfig,
   configPath,
   discoverConfigFiles,
   loadCliConfig,
@@ -107,9 +108,7 @@ describe("load/save round-trip", () => {
   });
 
   it("keeps a hand-written instead_of through a rewrite", () => {
-    // Hand-editing is the only way to write this key, and `saveCliConfig`
-    // rewrites the whole document from the parsed config — so a key the
-    // schema did not know would be dropped by the next `todou login`.
+    // Hand-editing is the only way to write this key.
     const env = envFor("instead-of");
     const path = configPath(env);
     mkdirSync(join(env.XDG_CONFIG_HOME, "todou"), { recursive: true });
@@ -153,6 +152,116 @@ describe("load/save round-trip", () => {
     expect(
       loadCliConfig(env).servers["https://todou.example"]?.instead_of,
     ).toEqual([]);
+  });
+});
+
+describe("rewriting a hand-written config.toml (T-610)", () => {
+  function seed(name: string, text: string) {
+    const env = envFor(name);
+    mkdirSync(join(env.XDG_CONFIG_HOME, "todou"), { recursive: true });
+    writeFileSync(configPath(env), text);
+    return env;
+  }
+
+  function entryOf(config: CliConfig, origin: string) {
+    const entry = config.servers[origin];
+    if (!entry) throw new Error(`no entry for ${origin}`);
+    return entry;
+  }
+
+  const handWritten = [
+    "# Rotated monthly.",
+    'default_server = "https://todou.example"',
+    'editor = "vim" # not a todou key',
+    "",
+    '[servers."https://todou.example"]',
+    'token = "todou_pat_old"',
+    'colour = "teal"',
+    "",
+  ].join("\n");
+
+  it("appends new tables and arrays of tables as sections", () => {
+    // Left to toml-patch, a first `[[bindings]]` throws, and a new server
+    // lands as an inline table wedged between the root keys.
+    const env = seed("append", handWritten);
+    const { own } = loadCliConfigSet(env);
+    entryOf(own, "https://todou.example").tokens["claude-code"] =
+      "todou_pat_cc";
+    own.servers["http://localhost:8637"] = {
+      token: "todou_pat_local",
+      tokens: {},
+      instead_of: [],
+    };
+    own.bindings.push({
+      remote: "git@example.com:me/repo.git",
+      server: "https://todou.example",
+      project: "todou",
+      note: "kept",
+    });
+    saveCliConfig(own, env);
+    expect(readFileSync(configPath(env), "utf8")).toBe(
+      [
+        handWritten.trimEnd(),
+        "",
+        '[servers."https://todou.example".tokens]',
+        'claude-code = "todou_pat_cc"',
+        "",
+        '[servers."http://localhost:8637"]',
+        'token = "todou_pat_local"',
+        "",
+        "[[bindings]]",
+        'remote = "git@example.com:me/repo.git"',
+        'server = "https://todou.example"',
+        'project = "todou"',
+        'note = "kept"',
+        "",
+      ].join("\n"),
+    );
+    saveCliConfig(loadCliConfigSet(env).own, env);
+    expect(loadCliConfigSet(env).own.bindings[0]?.note).toBe("kept");
+  });
+
+  it("removes what was deleted and nothing else", () => {
+    const env = seed(
+      "remove",
+      [
+        handWritten.trimEnd(),
+        "",
+        "# Scratch deployment.",
+        '[servers."http://localhost:8637"]',
+        'token = "todou_pat_local"',
+        "",
+      ].join("\n"),
+    );
+    const { own } = loadCliConfigSet(env);
+    delete own.servers["http://localhost:8637"];
+    saveCliConfig(own, env);
+    expect(readFileSync(configPath(env), "utf8")).toBe(handWritten);
+  });
+
+  it("keeps every value when the file is shaped so it cannot be appended to", () => {
+    // `servers` is an inline table, which no later `[servers."…"]` header
+    // may extend; the read-back check has to catch that before it is written.
+    const env = seed(
+      "inline",
+      '# inline\nservers = { "https://a.example" = { token = "x" } }\n',
+    );
+    const { own } = loadCliConfigSet(env);
+    entryOf(own, "https://a.example").tokens.codex = "y";
+    own.servers["https://b.example"] = {
+      token: "z",
+      tokens: {},
+      instead_of: [],
+    };
+    saveCliConfig(own, env);
+    expect(loadCliConfig(env).servers).toEqual({
+      "https://a.example": {
+        token: "x",
+        tokens: { codex: "y" },
+        instead_of: [],
+      },
+      "https://b.example": { token: "z", tokens: {}, instead_of: [] },
+    });
   });
 });
 

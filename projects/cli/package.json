@@ -14,6 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@decimalturn/toml-patch": "^3.3.1",
     "@todou/shared": "workspace:*",
     "clipanion": "4.0.0-rc.4",
     "smol-toml": "^1.7.1",

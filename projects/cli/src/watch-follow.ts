@@ -298,7 +298,7 @@ export async function openFollow<T>(opts: {
   clock: Clock;
   signal?: AbortSignal;
   note: (line: string) => void;
-  /** The server's `push_header` / `push_footer`, when it sets either. */
+  /** The server's `follow_header` / `follow_footer`, when it sets either. */
   frame?: PushFrame;
   /** Test seam; production leaves it unset and a real socket is dialled. */
   open?: typeof openPeerPush;

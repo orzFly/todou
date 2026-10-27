@@ -165,7 +165,7 @@ export class AgentOptOutUdsCommand extends Command<CliContext> {
         );
         return 0;
       }
-      own.agent = { follow_uds: false };
+      own.agent = { ...own.agent, follow_uds: false };
       saveCliConfig(own, env);
       this.context.stdout.write(
         `--follow=uds opted out · ${whereItLives(env)}\n` +
@@ -194,7 +194,7 @@ export class AgentOptInUdsCommand extends Command<CliContext> {
     try {
       const env = this.context.env;
       const { config, own, files } = loadCliConfigSet(env);
-      if (config.agent === undefined) {
+      if (config.agent?.follow_uds === undefined) {
         this.context.stdout.write(
           `--follow=uds was already advised · ${whereItLives(env)}\n`,
         );
@@ -202,9 +202,8 @@ export class AgentOptInUdsCommand extends Command<CliContext> {
       }
       // A fragment's `false` cannot be deleted from here; only an explicit
       // `true` in config.toml outranks it. Absent any fragment, the key is
-      // removed rather than set — `saveCliConfig` rewrites the whole
-      // document, and an `[agent]` section left behind saying the default
-      // is one more thing for the next reader to wonder about.
+      // removed rather than set — an `[agent]` section left behind saying
+      // the default is one more thing for the next reader to wonder about.
       const fragmentOptOut = files.some(
         (f) =>
           f.path !== configPath(env) &&
@@ -212,9 +211,11 @@ export class AgentOptInUdsCommand extends Command<CliContext> {
             false,
       );
       if (fragmentOptOut) {
-        own.agent = { follow_uds: true };
-      } else {
-        delete own.agent;
+        own.agent = { ...own.agent, follow_uds: true };
+      } else if (own.agent) {
+        const { follow_uds: _, ...rest } = own.agent;
+        if (Object.keys(rest).length > 0) own.agent = rest;
+        else delete own.agent;
       }
       saveCliConfig(own, env);
       this.context.stdout.write(

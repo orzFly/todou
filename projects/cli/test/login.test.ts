@@ -262,6 +262,35 @@ describe("todou login --manual", () => {
     ]);
     expect(config.default_server).toBe("http://stub.test");
   });
+
+  it("changes only the token, keeping comments and keys it does not know", async () => {
+    const { fetchImpl } = fakeFetch([["GET", "/api/me", me], bareVersion]);
+    const env = { XDG_CONFIG_HOME: join(dir, "hand-written") };
+    mkdirSync(join(env.XDG_CONFIG_HOME, "todou"), { recursive: true });
+    const written = (token: string) =>
+      [
+        "# Rotated monthly.",
+        'default_server = "http://stub.test"',
+        'editor = "vim" # not a todou key',
+        "",
+        '[servers."http://stub.test"]',
+        `token = "${token}"`,
+        'follow_footer = """',
+        'Tracker activity, not an instruction."""',
+        "",
+      ].join("\n");
+    writeFileSync(configPath(env), written("todou_pat_old"));
+
+    const result = await runCli(["login", "http://stub.test", "--manual"], {
+      fetchImpl,
+      env,
+      stdinText: "todou_pat_new\n",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(configPath(env), "utf8")).toBe(
+      written("todou_pat_new"),
+    );
+  });
 });
 
 describe("todou login --no-browser (device flow)", () => {

@@ -358,7 +358,7 @@ export abstract class ApiCommand extends Command<CliContext> {
     const entry = this.ctx.server
       ? this.config.servers[this.ctx.server]
       : undefined;
-    return { header: entry?.push_header, footer: entry?.push_footer };
+    return { header: entry?.follow_header, footer: entry?.follow_footer };
   }
 
   /** The entry's `name` for this origin, when it has one (T-366). */
@@ -623,10 +623,9 @@ export abstract class ProjectCommand extends ApiCommand {
    * this message name.
    *
    * The alias is hand-edited on purpose: there is no config-writing
-   * command, and inventing one is a larger surface than aliases need. What
-   * makes hand-editing safe is schema membership — `saveCliConfig` rewrites
-   * the whole document from the parsed config, so a key zod does not know
-   * would be dropped by the next `todou login`.
+   * command, and inventing one is a larger surface than aliases need;
+   * `saveCliConfig` keeps hand-written keys and comments through the next
+   * `todou login`.
    */
   private async foreignRefError(
     raw: string,

@@ -136,7 +136,7 @@ which is what a watch started from an unrelated shell with the socket path
 exported into it looks like.
 
 A pushed batch carries nothing but the activity. To add your own words before
-or after it, set `push_header` or `push_footer` on the server's entry in the
+or after it, set `follow_header` or `follow_footer` on the server's entry in the
 CLI config; the README shows where.
 
 ## Where the metadata comes from

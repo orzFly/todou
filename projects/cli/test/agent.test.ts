@@ -151,7 +151,7 @@ describe("agent opt-out-uds / opt-in-uds", () => {
     const back = await runCli(["agent", "opt-in-uds"], { env });
     expect(back.exitCode).toBe(0);
     expect(back.stdout).toContain("--follow=uds advised again");
-    // Removed, not set to `true`: every `todou login` rewrites this file.
+    // Removed, not set to `true`.
     expect(readFileSync(configPath(env), "utf8")).not.toContain("follow_uds");
 
     expect(await canIFollow(udsEnv)).toBe(
@@ -176,8 +176,7 @@ describe("agent opt-out-uds / opt-in-uds", () => {
   });
 
   it("keeps every other part of the config across both writes", async () => {
-    // The switch shares a file with the stored tokens, and `saveCliConfig`
-    // rewrites the whole document each time.
+    // The switch shares a file with the stored tokens.
     const env = { XDG_CONFIG_HOME: join(dir, "preserves") };
     const seeded = {
       default_server: "https://todou.example",
@@ -207,6 +206,16 @@ describe("agent opt-out-uds / opt-in-uds", () => {
     await runCli(["agent", "opt-in-uds"], { env });
     expect(loadCliConfig(env)).toEqual(seeded);
     expect(readFileSync(configPath(env), "utf8")).not.toContain("[agent]");
+  });
+
+  it("keeps a key of its own in [agent] when the preference goes (T-610)", async () => {
+    const env = { XDG_CONFIG_HOME: join(dir, "agent-extra") };
+    mkdirSync(join(dir, "agent-extra", "todou"), { recursive: true });
+    writeFileSync(configPath(env), "[agent]\nnote = 1\n");
+
+    await runCli(["agent", "opt-out-uds"], { env });
+    await runCli(["agent", "opt-in-uds"], { env });
+    expect(readFileSync(configPath(env), "utf8")).toBe("[agent]\nnote = 1\n");
   });
 });
 

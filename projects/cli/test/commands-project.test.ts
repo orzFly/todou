@@ -343,7 +343,9 @@ describe("project unlink → user-config binding (T-366 fragments)", () => {
     expect(result.stderr).toContain(
       "remains in a config fragment and takes effect now",
     );
-    expect(readToml(join(xdg, "todou", "config.toml")).bindings).toEqual([]);
+    expect(
+      readToml(join(xdg, "todou", "config.toml")).bindings,
+    ).toBeUndefined();
     expect(
       readToml(join(xdg, "todou", "config.work.toml")).bindings,
     ).toHaveLength(1);
