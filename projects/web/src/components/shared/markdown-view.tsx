@@ -121,6 +121,9 @@ function MarkdownPre({
   // A changed diagram stays a source diff: there is no per-line red and green
   // to draw on a picture. A changed patch likewise — a diff of a diff is
   // only readable as its text.
+  // A plain fence tokenizes off the main thread (T-602): the first one in a
+  // language compiles that grammar, 520 ms for TypeScript at 4× CPU
+  // throttling, in the middle of the page's first load.
   const tag = fence.tag?.toLowerCase();
   const block =
     baseline !== undefined ? (
@@ -130,7 +133,7 @@ function MarkdownPre({
     ) : tag === "diff" || tag === "patch" ? (
       <PatchView filename={filename} text={fence.text} />
     ) : (
-      <CodeBlock filename={filename} contents={fence.text} />
+      <CodeBlock filename={filename} contents={fence.text} offThread />
     );
   const wrapperProps =
     loc === null

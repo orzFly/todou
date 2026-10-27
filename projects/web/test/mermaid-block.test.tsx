@@ -1,4 +1,5 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { errorSummary, viewBoxWidth } from "../src/lib/mermaid.ts";
@@ -14,6 +15,9 @@ vi.mock("@pierre/diffs/react", () => ({
   MultiFileDiff: ({ newFile }: { newFile: { contents: string } }) => (
     <pre data-testid="fence-diff">{newFile.contents}</pre>
   ),
+  WorkerPoolContextProvider: ({ children }: { children: ReactNode }) =>
+    children,
+  useWorkerPool: () => undefined,
 }));
 
 // mermaid itself cannot lay anything out under happy-dom (no getBBox), so the

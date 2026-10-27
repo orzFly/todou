@@ -97,7 +97,8 @@ const ChunkCodeView = chunkComponent(() =>
  * The lines show as plain text at once, and their colours follow.
  *
  * The pool is a page-wide singleton that the last provider to unmount
- * terminates, so it only exists while an attachment is on screen.
+ * terminates, so it only exists while an attachment or a markdown fence is on
+ * screen.
  */
 const ChunkWorkerCodeView = chunkComponent(() =>
   Promise.all([
@@ -118,7 +119,8 @@ const ChunkWorkerCodeView = chunkComponent(() =>
       const theme = useSyntaxTheme();
       const [poolOptions] = useState(() => ({
         workerFactory: () => new PierreWorker(),
-        // One file is open at a time; each worker loads its own highlighter.
+        // Each worker loads and compiles its own highlighter, so every worker
+        // added costs that startup again.
         poolSize: 2,
       }));
       const [highlighterOptions] = useState(() => ({

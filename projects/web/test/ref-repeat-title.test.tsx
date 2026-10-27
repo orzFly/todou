@@ -6,7 +6,8 @@ import type {
   ReferenceConfig,
   TimelineComment,
 } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vitest";
 import {
   commentRefQuery,
   issueRefQuery,
@@ -17,6 +18,15 @@ import { prefsQuery } from "../src/api/prefs.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+
+// Fences highlight in pierre's worker pool, and happy-dom has no Worker to
+// start; the fence's plain-text fallback is all these cases read.
+vi.mock("@pierre/diffs/react", () => ({
+  CodeView: () => null,
+  WorkerPoolContextProvider: ({ children }: { children: ReactNode }) =>
+    children,
+  useWorkerPool: () => undefined,
+}));
 
 const author = {
   id: 1,
