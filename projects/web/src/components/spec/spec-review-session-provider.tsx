@@ -244,12 +244,16 @@ export function SpecReviewSessionScope({
   );
 }
 
-export function useSpecReviewSession(
+/**
+ * The session and its submit action, without subscribing to the snapshot:
+ * a caller that renders the page around the composer must not re-render on
+ * every keystroke typed into it (T-599). Read fields through
+ * `useSpecReviewSessionValue`.
+ */
+export function useSpecReviewSessionHandle(
   slug: string,
   issueNumber: number,
-): SpecReviewSessionContextValue & {
-  state: SpecReviewSessionSnapshot;
-} {
+): SpecReviewSessionContextValue {
   const value = useContext(SpecReviewSessionContext);
   // This consumer lives below ReturnViewProvider in the shell; SessionOwner
   // intentionally lives above it so Suspense cannot reset an in-flight POST.
@@ -266,9 +270,32 @@ export function useSpecReviewSession(
   ) {
     throw new Error("Spec review session does not match the current route");
   }
-  const state = useSyncExternalStore(
-    value.session.subscribe,
-    value.session.getSnapshot,
+  return { session: value.session, submitReview };
+}
+
+/**
+ * One field of the snapshot. `select` must return something already held by
+ * the snapshot (a field, not a fresh object), or every notification renders.
+ */
+export function useSpecReviewSessionValue<T>(
+  session: SpecReviewSession,
+  select: (state: SpecReviewSessionSnapshot) => T,
+): T {
+  return useSyncExternalStore(session.subscribe, () =>
+    select(session.getSnapshot()),
   );
-  return { ...value, state, submitReview };
+}
+
+export function useSpecReviewSession(
+  slug: string,
+  issueNumber: number,
+): SpecReviewSessionContextValue & {
+  state: SpecReviewSessionSnapshot;
+} {
+  const handle = useSpecReviewSessionHandle(slug, issueNumber);
+  const state = useSyncExternalStore(
+    handle.session.subscribe,
+    handle.session.getSnapshot,
+  );
+  return { ...handle, state };
 }

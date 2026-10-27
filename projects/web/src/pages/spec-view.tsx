@@ -36,6 +36,7 @@ import {
   WrapTextIcon,
 } from "lucide-react";
 import {
+  type ComponentProps,
   type ReactNode,
   useCallback,
   useEffect,
@@ -83,7 +84,8 @@ import {
 } from "@/components/spec/spec-composer.tsx";
 import {
   SpecReviewSessionScope,
-  useSpecReviewSession,
+  useSpecReviewSessionHandle,
+  useSpecReviewSessionValue,
 } from "@/components/spec/spec-review-session-provider.tsx";
 import { SpecVersionPicker } from "@/components/spec/spec-version-picker.tsx";
 import { SpecViewToggle } from "@/components/spec/spec-view-toggle.tsx";
@@ -119,6 +121,7 @@ import {
   type SpecReviewDraft,
   useSpecReviewDrafts,
 } from "@/lib/spec-drafts.ts";
+import type { SpecReviewSession } from "@/lib/spec-review-session.ts";
 import {
   type SpecSearch,
   type SpecView,
@@ -428,11 +431,23 @@ function SpecViewBody({
   const files = useSuspenseQuery(specFilesQuery(slug, issueNumber, version));
   const comments = useSuspenseQuery(specCommentsQuery(slug, issueNumber));
   const drafts = useSpecReviewDrafts(slug, issueNumber);
-  const {
+  // Field by field, and never the composer body or the review summary: this
+  // component renders the whole document, and those two change per keystroke
+  // (T-599). The composer and the dialog read them through the wrappers below.
+  const { session, submitReview } = useSpecReviewSessionHandle(
+    slug,
+    issueNumber,
+  );
+  const staging = useSpecReviewSessionValue(session, (s) => s.staging);
+  const reviewVersion = useSpecReviewSessionValue(
     session,
-    state: reviewSession,
-    submitReview,
-  } = useSpecReviewSession(slug, issueNumber);
+    (s) => s.reviewVersion,
+  );
+  const finishOpen = useSpecReviewSessionValue(session, (s) => s.finishOpen);
+  const pendingVerdict = useSpecReviewSessionValue(
+    session,
+    (s) => s.pending?.verdict ?? null,
+  );
   // The compare toggle's "off" position: a reading stance for this session,
   // which is why it stays out of the URL. A link that pins a baseline still
   // wins over it, so shared diff links open as their sender saw them (T-192).
@@ -542,7 +557,6 @@ function SpecViewBody({
   /** Every anchor gesture — selection, line drag, "Comment file". */
   const stage = (next: ComposerStaging) => session.retarget(next);
   const editDraft = (draft: SpecReviewDraft) => session.editDraft(draft);
-  const staging = reviewSession.staging;
   const editingDraft = drafts.drafts.find((d) => d.id === staging?.draftId);
 
   // The source diff stacks every differing file at once, so the rail marks a
@@ -1763,12 +1777,12 @@ function SpecViewBody({
       </div>
 
       {staging !== null && (
-        <SpecComposer
+        <SessionSpecComposer
           key={`${staging.session}:${version}`}
+          session={session}
           slug={slug}
           staging={staging}
           hostRef={composerRef}
-          body={reviewSession.composerBody}
           editing={staging.draftId !== undefined}
           onCancel={session.clearComposer}
           onBodyChange={session.setComposerBody}
@@ -1792,19 +1806,19 @@ function SpecViewBody({
         />
       )}
 
-      <ReviewSubmitDialog
+      <SessionReviewSubmitDialog
+        session={session}
         slug={slug}
         issueNumber={issueNumber}
-        currentVersion={reviewSession.reviewVersion ?? spec.current_version}
+        currentVersion={reviewVersion ?? spec.current_version}
         drafts={drafts.drafts}
-        summary={reviewSession.summary}
-        open={reviewSession.finishOpen}
-        pendingVerdict={reviewSession.pending?.verdict ?? null}
+        open={finishOpen}
+        pendingVerdict={pendingVerdict}
         onSummaryChange={session.setSummary}
         onClose={() => session.setFinishOpen(false)}
         onSubmit={(verdict) =>
           submitReview({
-            currentVersion: reviewSession.reviewVersion ?? spec.current_version,
+            currentVersion: reviewVersion ?? spec.current_version,
             verdict,
             drafts: drafts.drafts,
           })
@@ -1812,6 +1826,26 @@ function SpecViewBody({
       />
     </div>
   );
+}
+
+function SessionSpecComposer({
+  session,
+  ...props
+}: Omit<ComponentProps<typeof SpecComposer>, "body"> & {
+  session: SpecReviewSession;
+}) {
+  const body = useSpecReviewSessionValue(session, (s) => s.composerBody);
+  return <SpecComposer {...props} body={body} />;
+}
+
+function SessionReviewSubmitDialog({
+  session,
+  ...props
+}: Omit<ComponentProps<typeof ReviewSubmitDialog>, "summary"> & {
+  session: SpecReviewSession;
+}) {
+  const summary = useSpecReviewSessionValue(session, (s) => s.summary);
+  return <ReviewSubmitDialog {...props} summary={summary} />;
 }
 
 /** One rail row: a file of the viewed version, or one the baseline had. */

@@ -101,6 +101,7 @@ node projects/server/src/index.ts serve
 # 2. Start the web app on :8636 (dev server proxies /api to the server).
 pnpm --filter @todou/web dev
 #    TODOU_API=http://localhost:PORT overrides the proxy target.
+#    VITE_REACT_SCAN=1 outlines every React re-render (react-scan).
 ```
 
 The REST API is documented at `/api/openapi.json`. Agents are machine

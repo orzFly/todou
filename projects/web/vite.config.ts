@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import type { Plugin } from "vite";
 import svgr from "vite-plugin-svgr";
 import { defineConfig } from "vitest/config";
 
@@ -40,6 +41,33 @@ function repoUrl(): string {
   return github ? `https://github.com/${github[1]}` : "";
 }
 
+// `VITE_REACT_SCAN=1 pnpm dev` outlines every re-render (T-599). Off by
+// default because its overlay covers the pages the browser smokes measure.
+// react-scan has to hook React before react-dom evaluates, which an import
+// from main.tsx cannot promise; a module script ahead of the entry's can,
+// since module scripts evaluate in document order.
+// Served as a module rather than inlined: Vite resolves bare imports in the
+// modules it serves, not in tags a plugin adds to the page.
+function reactScan(): Plugin {
+  const entry = "/@todou-react-scan";
+  return {
+    name: "todou-react-scan",
+    apply: "serve",
+    resolveId: (id) => (id === entry ? entry : null),
+    load: (id) =>
+      id === entry
+        ? 'import { scan } from "react-scan";\nscan({ enabled: true });'
+        : null,
+    transformIndexHtml: () => [
+      {
+        tag: "script",
+        attrs: { type: "module", src: entry },
+        injectTo: "head-prepend",
+      },
+    ],
+  };
+}
+
 export default defineConfig({
   define: {
     __TODOU_VERSION__: JSON.stringify(buildVersion()),
@@ -56,6 +84,7 @@ export default defineConfig({
     // titleProp turns that into a prop, which is the only way to *drop* it
     // short of pulling in svgo — see the render in shared/agent-badge.tsx.
     svgr({ svgrOptions: { titleProp: true } }),
+    ...(process.env.VITE_REACT_SCAN === "1" ? [reactScan()] : []),
   ],
   resolve: {
     alias: {

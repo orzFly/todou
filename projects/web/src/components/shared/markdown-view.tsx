@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ComponentProps, type ReactNode, useMemo } from "react";
+import { type ComponentProps, memo, type ReactNode, useMemo } from "react";
 import Markdown from "react-markdown";
 import { projectsQuery } from "@/api/queries.ts";
 import {
@@ -262,7 +262,14 @@ export function MarkdownView(props: MarkdownViewProps) {
   return <MarkdownViewWithPlugins {...props} remarkPlugins={remarkPlugins} />;
 }
 
-export function MarkdownViewWithPlugins({
+// Memoized because react-markdown keeps no parse cache: every render of
+// <Markdown> runs remark and rehype over the whole document again. Hosts
+// re-render for reasons that never touch the text — each keystroke in the
+// spec composer, each chip measurement while scrolling — and on a long spec
+// that reparse cost a frame or more per key (T-599). Every prop here is
+// already required to be referentially stable (see the plugin hooks above),
+// which is what makes the shallow compare sound.
+export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
   children,
   slug,
   issueNumber,
@@ -414,4 +421,4 @@ export function MarkdownViewWithPlugins({
       </Markdown>
     </div>
   );
-}
+});
