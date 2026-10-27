@@ -1,0 +1,7 @@
+todou v0.6.7
+
+Faster spec and issue pages, blocking events grouped into one line, and
+follow_header/follow_footer around --follow pushes.
+
+No migrations and nothing breaking; either side can upgrade first. Codex
+queue batches no longer carry a fixed preamble.
