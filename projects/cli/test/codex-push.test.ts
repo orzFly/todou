@@ -488,6 +488,45 @@ describe("Codex queue transport", () => {
     expect(notes.join("\n")).toContain("via codex queue");
   });
 
+  it.each([
+    ["no frame", undefined, "todou issue watch 3 — 1 new entry\nanswer"],
+    [
+      "a header and a footer",
+      { header: "before\n", footer: "after" },
+      "before\n\ntodou issue watch 3 — 1 new entry\nanswer\n\nafter",
+    ],
+    [
+      "an empty footer",
+      { footer: "" },
+      "todou issue watch 3 — 1 new entry\nanswer",
+    ],
+  ])(
+    "queues the batch with %s around it (T-609)",
+    async (_, frame, message) => {
+      const { calls, run } = queueRunner(() => QUEUED);
+      const follow = await openFollow<string>({
+        transport: "codex",
+        label: "todou issue watch 3",
+        subject: "3",
+        following: "T-3",
+        baseline: "c0",
+        intervalSec: 2,
+        wait: undefined,
+        render: (items) => items.join("\n"),
+        emit: () => {},
+        messaging: { codex: { threadId: THREAD, bin: "/opt/codex" } },
+        frame,
+        session: () => THREAD,
+        clock: virtualClock(),
+        note: () => {},
+        runCodexQueue: run,
+      });
+      cleanups.push(follow.finish);
+      await follow.afterItems?.(["answer"], "c1");
+      expect(calls[0]?.[5]).toBe(message);
+    },
+  );
+
   it("advises the queue where there is no socket, and poll where there is neither", async () => {
     const { dir } = codexOnPath();
     const queued = await runCli(["agent", "can-i-follow"], {

@@ -64,6 +64,10 @@ exit. That is why `--follow=stdout` is no substitute here: where the queue
 command is unavailable, use `--poll`, read its output, and resume from the printed
 cursor.
 
+A pushed batch carries nothing but the activity. To add your own words before
+or after it, set `push_header` or `push_footer` on the server's entry in the
+CLI config; the README shows where.
+
 ## Sandboxes
 
 Under Codex's `workspace-write` sandbox, network access is off unless the

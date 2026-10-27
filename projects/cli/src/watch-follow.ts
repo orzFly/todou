@@ -173,6 +173,8 @@ export function cursorLines(
   ];
 }
 
+export type PushFrame = { header?: string; footer?: string };
+
 /** The standing-mode plumbing a watch branch hands to `runWatchLoop`. */
 export type Follow<T> = {
   signal?: AbortSignal;
@@ -296,6 +298,8 @@ export async function openFollow<T>(opts: {
   clock: Clock;
   signal?: AbortSignal;
   note: (line: string) => void;
+  /** The server's `push_header` / `push_footer`, when it sets either. */
+  frame?: PushFrame;
   /** Test seam; production leaves it unset and a real socket is dialled. */
   open?: typeof openPeerPush;
   /** Test seam; production runs the real `codex queue`. */
@@ -322,6 +326,26 @@ export async function openFollow<T>(opts: {
   };
   if (opts.transport === null) return oneShot;
 
+  // Header and footer are the user's words, set per server; with neither
+  // set a push is the batch alone, the same on every channel.
+  const pushBody = (
+    items: T[],
+    since: string | undefined,
+    cursor: string | undefined,
+  ) =>
+    [
+      // Trimmed because a TOML multi-line string ends in the newline
+      // before its closing quotes.
+      opts.frame?.header?.trim(),
+      [
+        `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,
+        opts.render(items, since, cursor),
+      ].join("\n"),
+      opts.frame?.footer?.trim(),
+    ]
+      .filter((part) => part !== undefined && part !== "")
+      .join("\n\n");
+
   let opened: PeerPush<T> | null = null;
   if (opts.transport === "codex") {
     if (!opts.messaging.codex) throw new CliError("missing Codex target");
@@ -330,11 +354,7 @@ export async function openFollow<T>(opts: {
       target: opts.messaging.codex,
       signal,
       run: opts.runCodexQueue,
-      render: (items, since, cursor) =>
-        [
-          `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,
-          opts.render(items, since, cursor),
-        ].join("\n"),
+      render: pushBody,
     });
     opts.note(
       `--follow=codex following ${opts.following} in thread ${opts.messaging.codex.threadId} via codex queue`,
@@ -372,11 +392,7 @@ export async function openFollow<T>(opts: {
         clock: opts.clock,
         signal: opts.signal,
         ...receiver,
-        render: (items, since, cursor) =>
-          [
-            `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,
-            opts.render(items, since, cursor),
-          ].join("\n"),
+        render: pushBody,
       });
     } catch (error) {
       opts.note(

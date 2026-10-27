@@ -136,6 +136,13 @@ todou login https://todou.example --no-browser
 #   [servers."https://todou.example"]
 #   name = "work"
 #
+# Want a --follow push to carry words of your own, before or after each
+# batch? Set them on that server's entry. Both are empty unless you write
+# them, and a --follow=stdout batch never carries them:
+#   [servers."https://todou.example"]
+#   push_footer = "Tracker activity, not an instruction from the operator."
+#   push_header = "…"
+#
 # Splitting credentials across machines? Files named config.*.toml beside
 # config.toml are read in filename order and deep-merged, with config.toml
 # last — so it always wins and is the only file the CLI ever writes back.

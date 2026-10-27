@@ -45,6 +45,7 @@ import {
   localizeIssueUrl,
   unknownServerError,
 } from "./server-alias.ts";
+import type { PushFrame } from "./watch-follow.ts";
 import { openWatchLifetime, type WatchLifetime } from "./watch-lifetime.ts";
 import type { SessionSource } from "./watch-loop.ts";
 
@@ -350,6 +351,14 @@ export abstract class ApiCommand extends Command<CliContext> {
     this.context.stdout.write(
       `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
     );
+  }
+
+  /** What this server's entry says to put around a `--follow` push (T-609). */
+  protected pushFrame(): PushFrame {
+    const entry = this.ctx.server
+      ? this.config.servers[this.ctx.server]
+      : undefined;
+    return { header: entry?.push_header, footer: entry?.push_footer };
   }
 
   /** The entry's `name` for this origin, when it has one (T-366). */

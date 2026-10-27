@@ -135,6 +135,10 @@ the watch skips that session's activity instead of its own. Run the watch as
 an `async: true` job, or through `todou_watch`, when several sessions share a
 directory on such an omp.
 
+A pushed batch carries nothing but the activity. To add your own words before
+or after it, set `push_header` or `push_footer` on the server's entry in the
+CLI config; the README shows where.
+
 ## `todou_watch`: the tool the extension registers
 
 The extension also registers a `todou_watch` tool the model can call, which

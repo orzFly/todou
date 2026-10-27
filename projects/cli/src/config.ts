@@ -40,6 +40,13 @@ export const ServerEntry = z.object({
   tokens: z.record(z.string(), z.string()).default({}),
   /** Other base URLs this same deployment answers at (git's insteadOf). */
   instead_of: z.array(z.string()).default([]),
+  /**
+   * Text a `--follow` push carries before and after each batch (T-609).
+   * Unset by default and never filled in by the CLI: what an agent is told
+   * about its tracker activity is the user's call, not the tracker's.
+   */
+  push_header: z.string().optional(),
+  push_footer: z.string().optional(),
 });
 export type ServerEntry = z.infer<typeof ServerEntry>;
 

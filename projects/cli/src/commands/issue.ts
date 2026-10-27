@@ -1361,6 +1361,7 @@ export class IssueWatchCommand extends ProjectCommand {
           renderHuman(items, since, cursor, plain),
         emit,
         messaging,
+        frame: this.pushFrame(),
         session: () => this.ownSession(),
         home: this.context.home,
         clock: this.clock,
