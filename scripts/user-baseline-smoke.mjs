@@ -190,8 +190,9 @@ const AVATAR_CASES = [
 const DEFAULT_ROLES = ["author", "peer"];
 
 // Only these comment headers delegate narrow-screen wrapping to T-445.
-// BodyBlock, event rows, revision history and version-menu rows still fail.
+// Event rows, revision history and version-menu rows still fail.
 const NARROW_COMMENT_HEADER_CASE_IDS = new Set([
+  "body-block",
   "comment-item",
   "comment-item-agent-session",
   "comment-item-agent-plain",
@@ -241,7 +242,7 @@ const CASES = [
     "body-block",
     "author",
     "projects/web/src/pages/issue-detail.tsx",
-    /flex items-baseline gap-2 border-b/,
+    /flex flex-wrap items-baseline gap-2 border-b/,
   ),
   guard(
     "comment-item",
@@ -808,7 +809,7 @@ async function measure(page, fault = null, cases = CASES) {
         };
         let mutation = null;
         if (kind === "non-header-wrap") {
-          // Real wrapping of BodyBlock's timestamp, not a fabricated status
+          // Real wrapping of a revision's timestamp, not a fabricated status
           // or a displaced baseline. Its flex item must occupy its own line.
           root.style.flexWrap = "wrap";
           roleOf("peer").style.flexBasis = "100%";
@@ -2751,9 +2752,9 @@ try {
 
     if (!options.selfTestCase || options.selfTestCase === "non-header-wrap") {
       const view = VIEWPORTS.find((entry) => entry.width === 390);
-      const fault = { id: "body-block", kind: "non-header-wrap" };
-      const broken = await browserRun(browser, base, seeded, view, fault);
-      const restored = await browserRun(browser, base, seeded, view);
+      const fault = { id: "revision-history", kind: "non-header-wrap" };
+      const broken = await revisionRun(browser, base, seeded, view, fault);
+      const restored = await revisionRun(browser, base, seeded, view);
       const target = broken.rows.find((row) => row.id === fault.id);
       const back = restored.rows.find((row) => row.id === fault.id);
       const detected =
@@ -2767,7 +2768,7 @@ try {
         !baselineRowFails(back, view.width) &&
         !restored.fixtureErrors.length;
       console.log(
-        `  non-header-wrap @390 body-block: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
+        `  non-header-wrap @390 revision-history: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
           `(fault ${target?.status}, wrapped=${target?.wrapped?.join(",") ?? "none"}; ` +
           `${target?.reason ?? ""}; restore ${back?.status})`,
       );

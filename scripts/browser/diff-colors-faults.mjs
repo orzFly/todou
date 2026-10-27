@@ -316,17 +316,22 @@ for (const status of ["approved", "changes_requested"]) {
     },
   );
 }
+// The phone's actions are judged against the desktop's baseline rows, so the
+// phone gets faults of its own to show that reading across still sees one.
 for (const action of ["approve", "request-changes"]) {
-  fault(
-    `review-action-${action}-tinted-diff`,
-    `review-action-${action}`,
-    "color",
-    action === "approve" ? A : D,
-    {
-      finishReview: true,
-      planRow: 106,
-    },
-  );
+  for (const width of [1280, 390]) {
+    fault(
+      `review-action-${action}-tinted-diff${width === 1280 ? "" : "-390"}`,
+      `review-action-${action}`,
+      "color",
+      action === "approve" ? A : D,
+      {
+        finishReview: true,
+        width,
+        planRow: 106,
+      },
+    );
+  }
 }
 fault(
   "independent-comment-tinted-addition",

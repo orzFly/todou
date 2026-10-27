@@ -802,6 +802,17 @@ export const rowKey = (row) =>
     row.role,
     row.index ?? 0,
   ].join("|");
+// The baseline's 390 review-dialog rows recorded the phone's verdict menu
+// items, which 0778ff7 replaced with the desktop buttons themselves. The
+// buttons a phone now shows are owed the desktop's colours, and the baseline
+// is immutable evidence of the original revision, so it is read across rather
+// than rewritten.
+const baselineKey = (row) =>
+  rowKey(
+    row.finishReview && row.role.startsWith("review-action-")
+      ? { ...row, width: 1280 }
+      : row,
+  );
 export function assess(rows, baseline = null) {
   const failures = [];
   if (baseline && rows.length) {
@@ -829,7 +840,8 @@ export function assess(rows, baseline = null) {
       continue;
     }
     for (const p of row.props) {
-      const expected = p.expected ?? baseline?.[`${rowKey(row)}|${p.property}`];
+      const expected =
+        p.expected ?? baseline?.[`${baselineKey(row)}|${p.property}`];
       if (p.kind === "baseline" && baseline === null) continue;
       if (
         !Array.isArray(expected) ||

@@ -219,7 +219,9 @@ export async function probeT359AvatarFault(options = {}) {
     value.avatarOuter.alignItems === "center" &&
     value.clip.display === "block" &&
     value.clip.overflowX === "clip" &&
-    value.clip.overflowY === "clip" &&
+    // Inline axis only since T-574: Safari drops the name's line box from
+    // the chip's baseline when the block clips vertically.
+    value.clip.overflowY === "visible" &&
     (kind !== "machine" ||
       (value.machineWrapper?.display === "flex" &&
         value.machineWrapper?.verticalAlign === "middle"));

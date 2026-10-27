@@ -230,11 +230,16 @@ function markRows(commentId?: number, annotationId?: number) {
     "#fixture-body-block .border-b.bg-muted\\/40",
   );
   if (body) {
+    // The description wears a comment header's shape, narrow-screen split
+    // included, so it is marked the way `markCommentHeader` marks one. Its
+    // meta is unlinked: the time is the only part, and no id stands beside it.
     mark(
       body,
       "body-block",
       authorChipOf(body),
-      body.querySelector(":scope > span[title], :scope > span > span[title]"),
+      body.querySelector('[data-testid="comment-header-meta"] > span'),
+      {},
+      true,
     );
   }
   markCommentHeader("#fixture-comment-item", "comment-item", false);
