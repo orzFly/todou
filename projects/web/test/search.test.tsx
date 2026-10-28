@@ -1499,6 +1499,34 @@ describe("SearchBox · qualifier completion", () => {
     expect(utils.where().pathname).toBe("/");
   });
 
+  it("lets an unaimed Tab leave a box with nothing to complete", async () => {
+    // The key table under an empty word is for reading; taking its first
+    // row turned a held Tab into `is:body is:body …` without end (T-615).
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "部署 ");
+    await waitFor(() =>
+      expect(rowTexts(utils.container).join("\n")).toContain("is:"),
+    );
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(true);
+    expect(input.value).toBe("部署 ");
+  });
+
+  it("finishes a key and its value, then lets Tab go", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "is");
+    await waitFor(() => expect(rowTexts(utils.container)[0]).toContain("is:"));
+    fireEvent.keyDown(input, { key: "Tab" });
+    await waitFor(() => expect(input.value).toBe("is:"));
+    await waitFor(() => expect(rowTexts(utils.container)[0]).toContain("body"));
+    fireEvent.keyDown(input, { key: "Tab" });
+    await waitFor(() => expect(input.value).toBe("is:body "));
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("Search for"),
+    );
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(true);
+    expect(input.value).toBe("is:body ");
+  });
+
   it("rewrites the query when an offer is clicked", async () => {
     const utils = renderBox(seedPools(seedBox()));
     const input = await typeInto(utils, "label:kind");

@@ -343,6 +343,11 @@ export function SearchBox({
    * nothing highlighted Tab still falls back to the first *completion* and
    * never to history — an unaimed Tab means "finish the word I am typing",
    * and a whole past query is a long way from that.
+   *
+   * Only a completion above the search row counts, one the typed word really
+   * matches. The key table under an empty word is there to be read; taking
+   * it unaimed turned a held Tab into `is:body is:body …` forever and left
+   * the box a focus trap (T-615). Without a match Tab moves focus on.
    */
   const acceptable = (
     from: number,
@@ -350,7 +355,10 @@ export function SearchBox({
     const at = rows[from];
     if (at?.kind === "completion") return at.row.apply;
     if (at?.kind === "history") return { value: at.q, caret: at.q.length };
-    for (const row of rows) if (row.kind === "completion") return row.row.apply;
+    for (const row of rows) {
+      if (row.kind === "search") return null;
+      if (row.kind === "completion") return row.row.apply;
+    }
     return null;
   };
 
