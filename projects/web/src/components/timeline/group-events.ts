@@ -30,12 +30,15 @@ export type MergeFamily =
   | BlockFamily;
 
 /** One family per block event type: the header is the type's verb, and
-    the rows under it are the cards it was done to. */
+    the rows under it are the cards it was done to. `block_round_trip` has
+    no type of its own: it is the adds `foldTimeline` found undone with
+    nothing to fold them under (T-613). */
 export type BlockFamily =
   | "block_added"
   | "block_removed"
   | "block_cleared"
-  | "block_reblocked";
+  | "block_reblocked"
+  | "block_round_trip";
 
 /** The families whose runs render as always-visible rows under a header. */
 export type ListFamily =
@@ -67,7 +70,8 @@ export function isBlockFamily(family: MergeFamily): family is BlockFamily {
     family === "block_added" ||
     family === "block_removed" ||
     family === "block_cleared" ||
-    family === "block_reblocked"
+    family === "block_reblocked" ||
+    family === "block_round_trip"
   );
 }
 
@@ -145,7 +149,9 @@ export function familyOfEvent(event: TimelineEvent): MergeFamily | null {
  */
 export function runKey(event: TimelineEvent, family: MergeFamily): string {
   const key = groupKey(event);
-  return family === "block_added" || family === "block_removed"
+  return family === "block_added" ||
+    family === "block_removed" ||
+    family === "block_round_trip"
     ? `${key}\u0000${blockRole(event)}`
     : key;
 }
@@ -186,6 +192,8 @@ export type RenderUnit =
       family: MergeFamily;
       events: TimelineEvent[];
       folded?: GroupFold;
+      /** `block_round_trip` only: each add's id → the remove that undid it. */
+      undoneBy?: Map<number, TimelineEvent>;
     }
   | { kind: "hidden"; comments: TimelineComment[] };
 
@@ -218,10 +226,14 @@ export function hiddenRunKey(unit: { comments: TimelineComment[] }): string {
  * What it scans has to be contiguous: a run is only a run if nothing the
  * reader cannot see sits inside it. The folded timeline arrives in two
  * pieces, and joining them is `groupTimelineSides`' job, not this one's.
+ *
+ * `roundTrips` is `foldTimeline`'s: the adds in it run as
+ * `block_round_trip`, and each group carries the removes that undid them.
  */
 export function groupTimeline(
   items: TimelineItem[],
   isRevealed?: (key: string) => boolean,
+  roundTrips?: ReadonlyMap<number, TimelineEvent>,
 ): RenderUnit[] {
   const units: RenderUnit[] = [];
   let run: {
@@ -236,6 +248,18 @@ export function groupTimeline(
     const first = run.events[0];
     if (run.events.length === 1 && first && !rendersAsList(run.family)) {
       units.push({ kind: "item", item: first });
+    } else if (run.family === "block_round_trip") {
+      const undoneBy = new Map<number, TimelineEvent>();
+      for (const add of run.events) {
+        const remove = roundTrips?.get(add.id);
+        if (remove) undoneBy.set(add.id, remove);
+      }
+      units.push({
+        kind: "group",
+        family: run.family,
+        events: run.events,
+        undoneBy,
+      });
     } else {
       units.push({ kind: "group", family: run.family, events: run.events });
     }
@@ -252,7 +276,12 @@ export function groupTimeline(
   };
 
   for (const item of items) {
-    const family = item.type === "event" ? familyOfEvent(item) : null;
+    const family =
+      item.type !== "event"
+        ? null
+        : roundTrips?.has(item.id)
+          ? "block_round_trip"
+          : familyOfEvent(item);
     if (item.type !== "event" || family === null) {
       flush();
       if (asHidden(item)) continue;
@@ -292,10 +321,13 @@ export function groupTimeline(
     fold counts what it absorbed: those items went into the scan too, only
     taken out before it ran, and leaving them uncounted would move the cut
     between the sides past the head side's real end. Once expanded they are
-    ordinary items of their own units and are counted there. */
+    ordinary items of their own units and are counted there. A round trip's
+    removes are counted on the same grounds. */
 export const unitSize = (unit: RenderUnit): number =>
   unit.kind === "group"
-    ? unit.events.length + (unit.folded?.collapsed ?? 0)
+    ? unit.events.length +
+      (unit.folded?.collapsed ?? 0) +
+      (unit.undoneBy?.size ?? 0)
     : unit.kind === "hidden"
       ? unit.comments.length
       : 1;
@@ -312,11 +344,12 @@ function foldAndGroup(
     items: kept,
     folds,
     hostOf,
+    roundTrips,
   } = foldTimeline(items, {
     projectId: opts.projectId,
     isExpanded: opts.isFoldExpanded,
   });
-  const units = groupTimeline(kept, opts.isRevealed);
+  const units = groupTimeline(kept, opts.isRevealed, roundTrips);
   if (folds.size === 0) return { units, hostOf };
   const expanded = opts.isFoldExpanded ?? (() => false);
   return {

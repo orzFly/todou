@@ -1722,4 +1722,73 @@ describe("block groups (T-598)", () => {
     fireEvent.click(await findByTestId("fold-toggle"));
     expect(toggled).toBe(1);
   });
+
+  describe("a round trip with no host (T-613)", () => {
+    it.each([
+      ["blocked", "added and removed the block by"],
+      ["blocker", "added and removed this card's block on"],
+    ] as const)("heads %s with one dimmed verb", async (role, verb) => {
+      const adds = [
+        block("block_added", role, 5),
+        block("block_added", role, 6),
+      ];
+      const removes = [
+        block("block_removed", role, 6),
+        block("block_removed", role, 5),
+      ];
+      const { findByTestId, container } = renderWithProviders(
+        <EventGroup
+          family="block_round_trip"
+          events={adds}
+          undoneBy={
+            new Map([
+              [adds[0]?.id ?? 0, removes[1] as TimelineEvent],
+              [adds[1]?.id ?? 0, removes[0] as TimelineEvent],
+            ])
+          }
+          slug="todou"
+          issueNumber={1}
+        />,
+        crossClient([
+          ["todou", refItem(5, "Five")],
+          ["todou", refItem(6, "Six")],
+        ]),
+      );
+      const group = await findByTestId("event-group");
+      expect(group.textContent?.split(verb)).toHaveLength(2);
+      expect(container.querySelector("ul")?.className).toContain(
+        "text-muted-foreground/60",
+      );
+      const headline = [...group.querySelectorAll("span")].find(
+        (span) => span.textContent === verb,
+      );
+      expect(headline?.className).toContain("text-muted-foreground/60");
+      expect(group.querySelector('[data-testid="fold-toggle"]')).toBeNull();
+    });
+
+    it("lands either event's anchor on its card's row", async () => {
+      const add = block("block_added", "blocked", 5);
+      const remove = block("block_removed", "blocked", 5);
+      const { findByTestId, container } = renderWithProviders(
+        <EventGroup
+          family="block_round_trip"
+          events={[add]}
+          undoneBy={new Map([[add.id, remove]])}
+          slug="todou"
+          issueNumber={1}
+        />,
+        crossClient([["todou", refItem(5, "Five")]]),
+      );
+      await findByTestId("event-group");
+      const row = container.querySelector("li");
+      expect(row?.id).toBe(`event-${add.id}`);
+      expect(row?.querySelector(`#event-${remove.id}`)).toBeTruthy();
+      expect(row?.title).toBe(
+        `added ${add.created_at} · removed ${remove.created_at}`,
+      );
+      await waitFor(() =>
+        expect(row?.querySelector('[data-issue-link="5"]')).toBeTruthy(),
+      );
+    });
+  });
 });

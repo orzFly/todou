@@ -129,12 +129,40 @@ describe("foldTimeline · R2, an edge added and dropped again", () => {
     expect(result.folds.has(before.id)).toBe(false);
   });
 
-  it("keeps a round trip with nothing else in the operation", () => {
+  it("keeps the add of a round trip with no host, and says what undid it", () => {
     const add = block("block_added", 7, 0);
     const remove = block("block_removed", 7, 1000);
     const result = foldTimeline([add, remove]);
-    expect(ids(result.items)).toEqual([add.id, remove.id]);
+    expect(ids(result.items)).toEqual([add.id]);
     expect(result.folds.size).toBe(0);
+    expect(result.hostOf.size).toBe(0);
+    expect(result.roundTrips).toEqual(new Map([[add.id, remove]]));
+  });
+
+  it("keeps every add of an operation that was all round trips", () => {
+    const add7 = block("block_added", 7, 0);
+    const add8 = block("block_added", 8, 100);
+    const remove8 = block("block_removed", 8, 10_000);
+    const remove7 = block("block_removed", 7, 10_100);
+    const result = foldTimeline([add7, add8, remove8, remove7]);
+    expect(ids(result.items)).toEqual([add7.id, add8.id]);
+    expect(result.roundTrips.get(add7.id)).toBe(remove7);
+    expect(result.roundTrips.get(add8.id)).toBe(remove8);
+  });
+
+  it("takes no round trip where a host absorbs the pair", () => {
+    const add = block("block_added", 7, 0);
+    const remove = block("block_removed", 7, 1000);
+    const host = block("block_added", 8, 2000);
+    expect(foldTimeline([add, remove, host]).roundTrips.size).toBe(0);
+  });
+
+  it("leaves a lone add or a lone remove alone", () => {
+    const add = block("block_added", 7, 0);
+    const remove = block("block_removed", 8, 1000);
+    const result = foldTimeline([add, remove]);
+    expect(ids(result.items)).toEqual([add.id, remove.id]);
+    expect(result.roundTrips.size).toBe(0);
   });
 
   it("does not pair different edges", () => {
@@ -213,6 +241,15 @@ describe("foldTimeline · R1, a reference the block covers", () => {
     expect(result.hostOf.has(r.id)).toBe(false);
     expect(result.folds.get(host.id)?.undone).toEqual([add, remove]);
     expect(ids(result.items)).toEqual([r.id, host.id]);
+  });
+
+  it("leaves it alone when the only match was a round trip", () => {
+    const r = ref(5, 0);
+    const add = block("block_added", 5, 1000);
+    const remove = block("block_removed", 5, 2000);
+    const result = foldTimeline([r, add, remove], { projectId: HERE });
+    expect(result.hostOf.has(r.id)).toBe(false);
+    expect(ids(result.items)).toEqual([r.id, add.id]);
   });
 
   it("does not fold under a removal", () => {

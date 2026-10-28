@@ -514,6 +514,7 @@ export function Timeline({
           issueNumber={issueNumber}
           anchorEventId={anchorEventId}
           folded={unit.folded}
+          undoneBy={unit.undoneBy}
           onToggleFold={() => {
             const { folded } = unit;
             if (folded) toggleFolds([...folded.hosts.keys()], !folded.expanded);

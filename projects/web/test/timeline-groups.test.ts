@@ -966,3 +966,78 @@ describe("groupTimelineSides · block folds (T-598)", () => {
     expect(unitSize(host)).toBe(1);
   });
 });
+
+describe("groupTimelineSides · round trips with no host (T-613)", () => {
+  const sizeOf = (units: { above: RenderUnit[]; below: RenderUnit[] }) =>
+    [...units.above, ...units.below].reduce((n, u) => n + unitSize(u), 0);
+
+  it("draws an operation that was all round trips as one group", () => {
+    const add1 = blockEvent("block_added", "blocked", 1, 0);
+    const add2 = blockEvent("block_added", "blocked", 2, 100);
+    const remove2 = blockEvent("block_removed", "blocked", 2, 10_000);
+    const remove1 = blockEvent("block_removed", "blocked", 1, 10_100);
+    const units = groupTimelineSides([add1, add2, remove2, remove1], [], {
+      gap: false,
+    });
+    expect(units.below).toEqual([]);
+    expect(kinds(units.above)).toEqual(["group:2"]);
+    const group = unitOf("group", units.above[0]);
+    expect(group.family).toBe("block_round_trip");
+    expect(group.events).toEqual([add1, add2]);
+    expect(group.undoneBy).toEqual(
+      new Map([
+        [add1.id, remove1],
+        [add2.id, remove2],
+      ]),
+    );
+    expect(unitSize(group)).toBe(4);
+  });
+
+  it("splits round trips by role", () => {
+    const units = groupTimelineSides(
+      [
+        blockEvent("block_added", "blocked", 1, 0),
+        blockEvent("block_added", "blocker", 2, 100),
+        blockEvent("block_removed", "blocked", 1, 200),
+        blockEvent("block_removed", "blocker", 2, 300),
+      ],
+      [],
+      { gap: false },
+    );
+    expect(kinds(units.above)).toEqual(["group:1", "group:1"]);
+    expect(units.above.map((u) => unitOf("group", u).family)).toEqual([
+      "block_round_trip",
+      "block_round_trip",
+    ]);
+  });
+
+  it("does not merge a round trip with an add that stayed", () => {
+    // Card 2's add stays, but sits between card 1's add and remove, where
+    // R2 does not look for a host.
+    const units = groupTimelineSides(
+      [
+        blockEvent("block_added", "blocked", 1, 0),
+        blockEvent("block_added", "blocked", 2, 100),
+        blockEvent("block_removed", "blocked", 1, 200),
+      ],
+      [],
+      { gap: false },
+    );
+    expect(units.above.map((u) => unitOf("group", u).family)).toEqual([
+      "block_round_trip",
+      "block_added",
+    ]);
+  });
+
+  it("keeps the cut invariant across a closed seam", () => {
+    const above = [comment(-2000), blockEvent("block_added", "blocked", 1, 0)];
+    const below = [
+      blockEvent("block_removed", "blocked", 1, 1000),
+      comment(2000),
+    ];
+    const units = groupTimelineSides(above, below, { gap: false });
+    expect(sizeOf(units)).toBe(above.length + below.length);
+    expect(kinds(units.above)).toEqual(["item", "group:1"]);
+    expect(kinds(units.below)).toEqual(["item"]);
+  });
+});

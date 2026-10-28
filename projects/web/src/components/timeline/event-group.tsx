@@ -252,6 +252,7 @@ export function EventGroup({
   issueNumber,
   anchorEventId,
   folded,
+  undoneBy,
   onToggleFold,
 }: {
   family: MergeFamily;
@@ -262,6 +263,8 @@ export function EventGroup({
   anchorEventId?: number;
   /** What this group's block events took off the timeline (T-598). */
   folded?: GroupFold;
+  /** A round trip's removes, by the add each one undid (T-613). */
+  undoneBy?: Map<number, TimelineEvent>;
   onToggleFold?: () => void;
 }) {
   if (rendersAsList(family)) {
@@ -272,6 +275,7 @@ export function EventGroup({
           slug={slug}
           issueNumber={issueNumber}
           folded={folded}
+          undoneBy={family === "block_round_trip" ? undoneBy : undefined}
           toggle={
             folded && <FoldToggle folded={folded} onToggle={onToggleFold} />
           }
@@ -332,12 +336,15 @@ function ListGroup({
   headline,
   rows,
   toggle,
+  dim,
 }: {
   events: TimelineEvent[];
   slug: string;
   issueNumber: number;
   /** The header's sentence, in the family's own words. */
   headline: ReactNode;
+  /** Faded as a noop status chain is: the group changed nothing. */
+  dim?: boolean;
   /** A control left of the timestamp, where a collapsed group keeps its own. */
   toggle?: ReactNode;
   /**
@@ -350,11 +357,17 @@ function ListGroup({
   const first = events[0];
   const last = events[events.length - 1];
   if (!first || !last) return null;
+  const faded = dim ? "text-muted-foreground/60" : undefined;
 
   return (
     <div data-testid="event-group">
       <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2">
-        <span className="inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center">
+        <span
+          className={cn(
+            "inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center",
+            faded,
+          )}
+        >
           {iconForEvent(first.event_type)}
         </span>{" "}
         <UserChip
@@ -365,7 +378,7 @@ function ListGroup({
           context={first.agent_context}
           className="align-middle sm:self-center"
         />{" "}
-        <span className="min-w-0 flex-1">{headline}</span>{" "}
+        <span className={cn("min-w-0 flex-1", faded)}>{headline}</span>{" "}
         {toggle && <>{toggle} </>}
         <Link
           to="/projects/$slug/issues/$number"
@@ -385,7 +398,7 @@ function ListGroup({
           </time>
         </Link>
       </div>
-      <ul className="ml-7 text-sm text-muted-foreground">
+      <ul className={cn("ml-7 text-sm text-muted-foreground", faded)}>
         {rows.map((row) => (
           <li
             key={row.key}
@@ -440,18 +453,24 @@ function ReferencedGroup({
  * to that comment on its row: the reference row that carried it is off the
  * page, and the comment may be the only place that says why the block was
  * added. Expanded, the reference row is back and carries it itself.
+ *
+ * Given `undoneBy`, the events are adds that were removed again with
+ * nothing else to fold them under (T-613): one dimmed group, each row
+ * carrying its remove's `#event-N` and both moments in its tooltip.
  */
 function BlockGroup({
   events,
   slug,
   issueNumber,
   folded,
+  undoneBy,
   toggle,
 }: {
   events: TimelineEvent[];
   slug: string;
   issueNumber: number;
   folded?: GroupFold;
+  undoneBy?: Map<number, TimelineEvent>;
   toggle?: ReactNode;
 }) {
   const ctx = useEventRenderContext(slug, issueNumber);
@@ -462,7 +481,14 @@ function BlockGroup({
       events={events}
       slug={slug}
       issueNumber={issueNumber}
-      headline={blockVerb(first)}
+      headline={
+        undoneBy
+          ? first.payload.role === "blocked"
+            ? "added and removed the block by"
+            : "added and removed this card's block on"
+          : blockVerb(first)
+      }
+      dim={undoneBy !== undefined}
       toggle={toggle}
       rows={events.map((event) => {
         const { payload } = event;
@@ -475,6 +501,15 @@ function BlockGroup({
         const references = folded?.expanded
           ? []
           : (folded?.hosts.get(event.id)?.references ?? []);
+        const remove = undoneBy?.get(event.id);
+        if (remove) {
+          return {
+            key: event.id,
+            id: eventAnchor(event.id),
+            title: `added ${event.created_at} · removed ${remove.created_at}`,
+            node: <span id={eventAnchor(remove.id)}>{other.node}</span>,
+          };
+        }
         return {
           key: event.id,
           id: eventAnchor(event.id),

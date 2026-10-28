@@ -16,6 +16,9 @@ export type FoldResult = {
   folds: Map<number, Fold>;
   /** Absorbed event id → its host, for the anchor to find which to open. */
   hostOf: Map<number, number>;
+  /** A round trip with no host (T-613): the add's id → the remove that
+      undid it. The add stays in `items`, the remove does not. */
+  roundTrips: Map<number, TimelineEvent>;
 };
 
 type Indexed = { event: TimelineEvent; index: number; ms: number };
@@ -67,9 +70,10 @@ function blockOtherKey(event: TimelineEvent): string | null {
  * Take the events a block operation makes redundant off the timeline (T-598)
  * and say which block event each now hangs under.
  *
- * An edge added and dropped again inside one operation cancels out (R2),
- * but only into a host that stays visible: an operation that was nothing
- * but the round trip has nothing else to show, and must not vanish. The
+ * An edge added and dropped again inside one operation cancels out (R2)
+ * into a host that stays visible. Without one, the operation was nothing
+ * but round trips and must not vanish: each pair keeps its add, which the
+ * grouping draws as a dimmed "added and removed" row instead (T-613). The
  * reference a card wrote here moments before it was declared a block end
  * folds under that `block_added` (R1); the actor is compared and the
  * session is not, because an agent often files a card in one session and
@@ -142,6 +146,7 @@ export function foldTimeline(
   };
 
   const cancelled = new Set<number>();
+  const roundTrips = new Map<number, TimelineEvent>();
   for (const [add, remove] of pairs) {
     const hosts = hostsByKey.get(groupKey(add.event)) ?? [];
     const after = hosts[positionAfter(hosts, remove.index)];
@@ -152,10 +157,10 @@ export function foldTimeline(
         : before && add.ms - before.ms <= MERGE_WINDOW_MS
           ? before
           : undefined;
-    if (!host) continue;
-    absorb(host.event, "undone", add.event, remove.event);
     cancelled.add(add.event.id);
     cancelled.add(remove.event.id);
+    if (host) absorb(host.event, "undone", add.event, remove.event);
+    else roundTrips.set(add.event.id, remove.event);
   }
 
   // R1: only additions that stayed. Once the edge is gone again the
@@ -200,12 +205,16 @@ export function foldTimeline(
     if (host) absorb(host.event, "references", event);
   }
 
-  if (hostOf.size === 0) return { items, folds, hostOf };
+  if (hostOf.size === 0 && roundTrips.size === 0) {
+    return { items, folds, hostOf, roundTrips };
+  }
+  const undoing = new Set([...roundTrips.values()].map((event) => event.id));
   const expanded = opts.isExpanded ?? (() => false);
   const kept = items.filter((item) => {
     if (item.type !== "event") return true;
+    if (undoing.has(item.id)) return false;
     const host = hostOf.get(item.id);
     return host === undefined || expanded(host);
   });
-  return { items: kept, folds, hostOf };
+  return { items: kept, folds, hostOf, roundTrips };
 }
