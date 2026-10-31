@@ -6,11 +6,19 @@ import type {
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import {
   ChevronDownIcon,
+  ChevronRightIcon,
   CodeIcon,
   FileDiffIcon,
   GitCommitHorizontalIcon,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type MouseEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   CopyButton,
@@ -113,16 +121,45 @@ export const LARGE_DIFF_LINES = 2000;
 function FileHeader({
   file,
   stat,
+  collapsed,
+  onToggle,
   onLoad,
 }: {
   file: FileDiffMetadata;
   stat: Stat;
+  /** Drawn as this row alone. */
+  collapsed: boolean;
+  /** Absent where there is no other file to fold this one away for. */
+  onToggle?: (event: MouseEvent<HTMLButtonElement>) => void;
   /** Present while the diff is held back. */
   onLoad?: () => void;
 }) {
   const label = fileLabel(file);
   return (
-    <div className={HEADER_ROW} style={{ height: PATCH_HEADER_HEIGHT }}>
+    <div
+      className={cn(HEADER_ROW, onToggle !== undefined && "pl-1.5")}
+      style={{ height: PATCH_HEADER_HEIGHT }}
+    >
+      {onToggle !== undefined && (
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          // Ghost fills a button while it is expanded, as for an open menu;
+          // this one is expanded whenever its file's diff shows, so only
+          // hover fills it.
+          className="size-6 text-muted-foreground aria-expanded:not-hover:bg-transparent aria-expanded:not-hover:text-muted-foreground"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? `expand ${label}` : `collapse ${label}`}
+          onClick={onToggle}
+        >
+          {collapsed ? (
+            <ChevronRightIcon className="size-3.5" />
+          ) : (
+            <ChevronDownIcon className="size-3.5" />
+          )}
+        </Button>
+      )}
       <FileDiffIcon className="size-4 shrink-0 text-muted-foreground" />
       <span className="min-w-0 truncate font-mono text-[0.8rem]" title={label}>
         {label}
@@ -137,6 +174,17 @@ function FileHeader({
       </span>
     </div>
   );
+}
+
+/**
+ * Whether the item holding `header` begins above the top of `box`, the
+ * scrolling element around it.
+ */
+function scrolledPast(header: Element, box: HTMLElement | undefined) {
+  // pierre slots a header row into a wrapper div on the item's own element.
+  const item = header.closest("[slot]")?.parentElement;
+  if (item == null || box === undefined) return false;
+  return item.getBoundingClientRect().top < box.getBoundingClientRect().top;
 }
 
 function FileList({
@@ -305,13 +353,16 @@ export function PatchView({
 }) {
   const [parsed, setParsed] = useState<Parsed>({ kind: "pending" });
   const [raw, setRaw] = useState(false);
-  const [loaded, setLoaded] = useState<ReadonlySet<number>>(() => new Set());
+  // What the reader set by hand, by file position; the rest follow `large`.
+  const [folded, setFolded] = useState<ReadonlyMap<number, boolean>>(
+    () => new Map(),
+  );
   const view = useRef<CodeViewHandle<undefined>>(null);
 
   useEffect(() => {
     let live = true;
     setParsed({ kind: "pending" });
-    setLoaded(new Set());
+    setFolded(new Map());
     // A fence body arrives without its last newline. The patch's own
     // "\ No newline at end of file" markers carry that fact, not this one.
     parsePatch(text.endsWith("\n") ? text : `${text}\n`).then(
@@ -349,12 +400,12 @@ export function PatchView({
     return { files, stats, commits, large };
   }, [patches]);
   const collapsed = useMemo(() => {
-    const held = new Set<number>();
-    for (const index of drawn?.large ?? []) {
-      if (!loaded.has(index)) held.add(index);
-    }
-    return held;
-  }, [drawn, loaded]);
+    const shut = new Set<number>();
+    drawn?.files.forEach((_, index) => {
+      if (folded.get(index) ?? drawn.large.has(index)) shut.add(index);
+    });
+    return shut;
+  }, [drawn, folded]);
   const headers = useMemo(() => {
     const rows = new Map<string, ReactNode>();
     if (drawn === null) return rows;
@@ -363,22 +414,52 @@ export function PatchView({
         rows.set(patchCommitId(index), <CommitHeader commit={commit} />);
       }
     });
+    const fold = (index: number, shut: boolean) =>
+      setFolded((was) => new Map(was).set(index, shut));
     drawn.files.forEach((file, index) => {
+      const shut = collapsed.has(index);
       rows.set(
         patchFileId(index),
         <FileHeader
           file={file}
           stat={drawn.stats[index]}
+          collapsed={shut}
+          onToggle={
+            drawn.files.length > 1
+              ? (event) => {
+                  // Folding a file whose top has scrolled past the box's
+                  // would leave the reader among files further down; bring
+                  // its header back to the top so the next file follows it.
+                  // `start` resolves from the item's top, which its own
+                  // folding leaves alone.
+                  if (
+                    !shut &&
+                    !clipped &&
+                    scrolledPast(
+                      event.currentTarget,
+                      view.current?.getInstance()?.getContainerElement(),
+                    )
+                  ) {
+                    view.current?.scrollTo({
+                      type: "item",
+                      id: patchFileId(index),
+                      align: "start",
+                    });
+                  }
+                  fold(index, !shut);
+                }
+              : undefined
+          }
           onLoad={
-            collapsed.has(index)
-              ? () => setLoaded((shown) => new Set(shown).add(index))
+            shut && drawn.large.has(index)
+              ? () => fold(index, false)
               : undefined
           }
         />,
       );
     });
     return rows;
-  }, [drawn, collapsed]);
+  }, [drawn, collapsed, clipped]);
 
   // A fence that is not (yet) a drawn patch is still a code block, framed as
   // every other one is.
@@ -431,12 +512,16 @@ export function PatchView({
           onJump={
             clipped
               ? undefined
-              : (index) =>
+              : (index) => {
+                  if (collapsed.has(index)) {
+                    setFolded((was) => new Map(was).set(index, false));
+                  }
                   view.current?.scrollTo({
                     type: "item",
                     id: patchFileId(index),
                     align: "start",
-                  })
+                  });
+                }
           }
         />
       )}

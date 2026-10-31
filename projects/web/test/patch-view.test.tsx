@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { DocumentCard } from "../src/components/shared/document-card.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
@@ -136,7 +136,8 @@ describe("PatchView (T-528)", () => {
     expect(summary.textContent).toContain("+3");
     expect(summary.textContent).toContain("−1");
     fireEvent.click(summary);
-    expect(await screen.findByRole("button", { name: /b\.ts/ })).toBeTruthy();
+    const menu = within(await screen.findByRole("dialog"));
+    expect(menu.getByRole("button", { name: /b\.ts/ })).toBeTruthy();
 
     const raw = screen.getByRole("button", { name: "raw" });
     fireEvent.click(raw);
@@ -155,7 +156,8 @@ describe("PatchView (T-528)", () => {
     await waitFor(() =>
       expect(document.querySelector('li[title="src/b.ts"]')).not.toBeNull(),
     );
-    expect(screen.queryByRole("button", { name: /b\.ts/ })).toBeNull();
+    const menu = within(await screen.findByRole("dialog"));
+    expect(menu.queryByRole("button", { name: /b\.ts/ })).toBeNull();
     expect(screen.getByTestId("codeview").getAttribute("data-class")).toMatch(
       /\boverflow-hidden\b/,
     );
@@ -437,6 +439,88 @@ describe("PatchView large files (T-582)", () => {
       />,
     );
     await waitFor(() => expect(diffs()).toEqual(["state.json"]));
+    expect(collapsedDiffs()).toEqual([]);
+  });
+});
+
+describe("PatchView collapsing files", () => {
+  it("collapses a file from its header and expands it again", async () => {
+    renderWithProviders(<PatchView filename="x.patch" text={TWO_FILES} />);
+    const collapse = await screen.findByRole("button", {
+      name: "collapse src/a.ts",
+    });
+    expect(collapse.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(collapse);
+    expect(collapsedDiffs()).toEqual(["src/a.ts"]);
+    const expand = screen.getByRole("button", { name: "expand src/a.ts" });
+    expect(expand).toBe(collapse);
+    expect(expand.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(expand);
+    expect(collapsedDiffs()).toEqual([]);
+  });
+
+  it("expands a collapsed file the file list jumps to", async () => {
+    renderWithProviders(<PatchView filename="x.patch" text={TWO_FILES} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "collapse src/b.ts" }),
+    );
+    expect(collapsedDiffs()).toEqual(["src/b.ts"]);
+    fireEvent.click(screen.getByRole("button", { name: /2 files/ }));
+    const menu = within(await screen.findByRole("dialog"));
+    fireEvent.click(menu.getByRole("button", { name: /b\.ts/ }));
+    expect(collapsedDiffs()).toEqual([]);
+  });
+
+  it("treats a large file's chevron like Load diff", async () => {
+    renderWithProviders(
+      <PatchView
+        filename="x.patch"
+        text={`${TWO_FILES}${newFile("state.json", LARGE_DIFF_LINES + 1)}`}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "expand state.json" }),
+    );
+    expect(collapsedDiffs()).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Load diff" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "collapse state.json" }),
+    );
+    expect(collapsedDiffs()).toEqual(["state.json"]);
+    expect(screen.getByRole("button", { name: "Load diff" })).toBeTruthy();
+  });
+
+  it("keeps what was collapsed across the raw view", async () => {
+    renderWithProviders(<PatchView filename="x.patch" text={TWO_FILES} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "collapse src/a.ts" }),
+    );
+    const raw = screen.getByRole("button", { name: "raw" });
+    fireEvent.click(raw);
+    fireEvent.click(raw);
+    expect(collapsedDiffs()).toEqual(["src/a.ts"]);
+  });
+
+  it("starts a different patch with every file expanded", async () => {
+    const other = TWO_FILES.replaceAll("src/", "lib/");
+    function Swap() {
+      const [text, setText] = useState(TWO_FILES);
+      return (
+        <>
+          <button type="button" onClick={() => setText(other)}>
+            swap
+          </button>
+          <PatchView filename="x.patch" text={text} />
+        </>
+      );
+    }
+    renderWithProviders(<Swap />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "collapse src/a.ts" }),
+    );
+    expect(collapsedDiffs()).toEqual(["src/a.ts"]);
+    fireEvent.click(screen.getByRole("button", { name: "swap" }));
+    await waitFor(() => expect(diffs()).toEqual(["lib/a.ts", "lib/b.ts"]));
     expect(collapsedDiffs()).toEqual([]);
   });
 });
