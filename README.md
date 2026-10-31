@@ -205,6 +205,8 @@ and [docs/omp.md](docs/omp.md) for omp, whose session identification and
 activity pushes come from an extension `todou integration install omp`
 writes. [docs/codex.md](docs/codex.md) covers Codex, whose activity delivery
 needs no extension: it goes through Codex's own app-server or `codex queue`.
+[docs/dsh.md](docs/dsh.md) covers DSH, which reports its session and model
+from the environment and its desktop session cache.
 
 #### Standalone builds
 

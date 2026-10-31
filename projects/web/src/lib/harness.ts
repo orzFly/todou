@@ -3,6 +3,7 @@ import type { ComponentType, SVGProps } from "react";
 import {
   ClaudeMark,
   CodexMark,
+  DshMark,
   HermesMark,
   OmpMark,
   PiMark,
@@ -44,6 +45,7 @@ export const HARNESS_META: Record<HarnessId, HarnessMeta> = {
     logo: CodexMark,
     resume: (sessionWord) => `codex resume ${sessionWord}`,
   },
+  dsh: { logo: DshMark },
   "hermes-agent": {
     logo: HermesMark,
     resume: (sessionWord) => `hermes --resume ${sessionWord}`,

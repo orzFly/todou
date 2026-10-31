@@ -3,6 +3,7 @@ import type { AgentContext, HarnessId } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { claudeCode } from "./claude-code.ts";
 import { codex } from "./codex.ts";
+import { dsh } from "./dsh.ts";
 import { hermesAgent } from "./hermes-agent.ts";
 import { behindOmpBroker, isOmpWorker, omp, ompHostAncestor } from "./omp.ts";
 import { publishedState } from "./omp-state.ts";
@@ -46,6 +47,7 @@ export const HARNESSES = [
   omp,
   claudeCode,
   codex,
+  dsh,
   pi,
   hermesAgent,
 ] as const satisfies readonly Harness[];
@@ -59,6 +61,7 @@ export const HARNESSES = [
 export const HARNESS_LABELS: Record<HarnessId, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
+  dsh: "DSH",
   "hermes-agent": "Hermes",
   omp: "omp",
   pi: "pi",

@@ -28,6 +28,7 @@ export type AgentContext = z.infer<typeof AgentContext>;
 export const HARNESS_IDS = [
   "claude-code",
   "codex",
+  "dsh",
   "hermes-agent",
   "omp",
   "pi",
