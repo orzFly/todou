@@ -547,9 +547,31 @@ export async function deleteComment(
   const projectId = project.id;
   let counterChanged = false;
   await db.transaction(async (tx) => {
+    // The card before the comment, as answering takes them.
+    await tx
+      .select({ id: issues.id })
+      .from(issues)
+      .where(eq(issues.id, row.issueId))
+      .for("no key update");
+    // Lock the row before reading what it already gave back: an answer or a
+    // resolve that committed while this request waited is then visible here,
+    // and a delete that won the race leaves nothing to lock. Read outside
+    // this lock, either one refunds a counter twice.
+    const [locked] = await tx
+      .select({
+        component: comments.component,
+        resolvedAt: comments.resolvedAt,
+      })
+      .from(comments)
+      .where(and(eq(comments.id, row.id), eq(comments.issueId, row.issueId)))
+      .for("update");
+    if (!locked) throw new NotFoundError("comment not found");
     // A still-unresolved spec comment gives its count back (T-23); a
     // resolved one already surrendered it at resolve time.
-    if (row.component?.type === "spec_comment" && row.resolvedAt === null) {
+    if (
+      locked.component?.type === "spec_comment" &&
+      locked.resolvedAt === null
+    ) {
       await tx
         .update(issues)
         .set({
@@ -560,7 +582,7 @@ export async function deleteComment(
     }
     // A still-unanswered question comment gives its count back; an answered
     // one already surrendered it when the answer landed.
-    const asked = questionCount(row.component);
+    const asked = questionCount(locked.component);
     if (asked > 0) {
       const answered = (
         await tx
