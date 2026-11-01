@@ -11,11 +11,7 @@ import type {
   SettledByHide,
   TimelineComment,
 } from "@todou/shared";
-import {
-  actionTextProblem,
-  formatRef,
-  QuestionAnsweredPayload,
-} from "@todou/shared";
+import { actionTextProblem, formatRef } from "@todou/shared";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -36,9 +32,10 @@ import { commitDraftAttachments } from "./attachments.ts";
 import { loadReferenceInputs } from "./cross-references.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
 import {
-  answerEventFor,
   canonicalizeComponent,
   questionCount,
+  settlementFor,
+  settlingEvents,
 } from "./questions.ts";
 import { currentRefPrefix } from "./references.ts";
 import { throwIfCommentAliased } from "./relocation.ts";
@@ -584,21 +581,11 @@ export async function deleteComment(
     // one already surrendered it when the answer landed.
     const asked = questionCount(locked.component);
     if (asked > 0) {
-      const answered = (
-        await tx
-          .select({ payload: issueEvents.payload })
-          .from(issueEvents)
-          .where(
-            and(
-              eq(issueEvents.issueId, row.issueId),
-              eq(issueEvents.type, "question_answered"),
-            ),
-          )
-      ).some((e) => {
-        const parsed = QuestionAnsweredPayload.safeParse(e.payload);
-        return parsed.success && parsed.data.comment_id === row.id;
-      });
-      if (!answered) {
+      const settled = settlementFor(
+        await settlingEvents(tx, row.issueId),
+        row.id,
+      );
+      if (settled === undefined) {
         await tx
           .update(issues)
           .set({
@@ -689,20 +676,12 @@ export async function settleHiddenInTx(
     (row) => row.component?.type === "questions",
   );
   if (withQuestions.length > 0) {
-    const answerRows = await tx
-      .select()
-      .from(issueEvents)
-      .where(
-        and(
-          eq(issueEvents.issueId, args.issueId),
-          eq(issueEvents.type, "question_answered"),
-        ),
-      );
+    const settling = await settlingEvents(tx, args.issueId);
     let closed = 0;
     for (const row of withQuestions) {
       const component = row.component;
       if (component?.type !== "questions") continue;
-      if (answerEventFor(answerRows, row.id) !== undefined) continue;
+      if (settlementFor(settling, row.id) !== undefined) continue;
       const answers = component.questions.map((question) => ({
         key: question.key,
         selected: [],
@@ -946,18 +925,10 @@ async function settleScan(
   );
   const asked = rows.filter((row) => row.component?.type === "questions");
   if (asked.length === 0) return { questions: false, annotations };
-  const answerRows = await db
-    .select()
-    .from(issueEvents)
-    .where(
-      and(
-        eq(issueEvents.issueId, issueId),
-        eq(issueEvents.type, "question_answered"),
-      ),
-    );
+  const settling = await settlingEvents(db, issueId);
   return {
     questions: asked.some(
-      (row) => answerEventFor(answerRows, row.id) === undefined,
+      (row) => settlementFor(settling, row.id) === undefined,
     ),
     annotations,
   };

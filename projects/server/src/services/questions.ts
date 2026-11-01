@@ -10,7 +10,7 @@ import type {
   TimelineEvent,
 } from "@todou/shared";
 import { QuestionAnsweredPayload } from "@todou/shared";
-import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -152,15 +152,53 @@ async function loadIssue(db: Db, projectId: number, number: number) {
   return row;
 }
 
-/** The one answer event for a comment, if any (payloads are append-only). */
-export function answerEventFor(
-  rows: Array<typeof issueEvents.$inferSelect>,
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type EventRow = typeof issueEvents.$inferSelect;
+
+/**
+ * The events that settle a question comment. Every reader asking whether a
+ * comment still waits for an answer reads them through `settlingEvents` and
+ * `settlementFor`, so none of them can miss a kind of settlement the others
+ * know about.
+ */
+export const SETTLING_EVENT_TYPES = ["question_answered"] as const;
+
+/** Every settling event on one issue, oldest first. */
+export function settlingEvents(db: Db | Tx, issueId: number) {
+  return db
+    .select()
+    .from(issueEvents)
+    .where(
+      and(
+        eq(issueEvents.issueId, issueId),
+        inArray(issueEvents.type, [...SETTLING_EVENT_TYPES]),
+      ),
+    )
+    .orderBy(asc(issueEvents.id));
+}
+
+export type Settlement = {
+  kind: "answered";
+  row: EventRow;
+  payload: QuestionAnsweredPayload;
+};
+
+/**
+ * How a comment was settled, if it was: the first settling event that names
+ * it. Payloads are append-only, and a comment is settled once.
+ */
+export function settlementFor(
+  rows: EventRow[],
   commentId: number,
-) {
-  return rows.find((row) => {
+): Settlement | undefined {
+  for (const row of rows) {
+    if (row.type !== "question_answered") continue;
     const parsed = QuestionAnsweredPayload.safeParse(row.payload);
-    return parsed.success && parsed.data.comment_id === commentId;
-  });
+    if (parsed.success && parsed.data.comment_id === commentId) {
+      return { kind: "answered", row, payload: parsed.data };
+    }
+  }
+  return undefined;
 }
 
 export async function submitAnswers(
@@ -214,21 +252,13 @@ export async function submitAnswers(
       .where(eq(comments.id, commentId))
       .for("update");
     if (!locked) throw new NotFoundError("comment not found");
-    const existing = answerEventFor(
-      await tx
-        .select()
-        .from(issueEvents)
-        .where(
-          and(
-            eq(issueEvents.issueId, issue.id),
-            eq(issueEvents.type, "question_answered"),
-          ),
-        ),
+    const existing = settlementFor(
+      await settlingEvents(tx, issue.id),
       commentId,
     );
     if (existing) {
       throw new ConflictError(
-        `comment ${commentId} was already answered at ${existing.createdAt.toISOString()} — answers cannot be changed`,
+        `comment ${commentId} was already answered at ${existing.row.createdAt.toISOString()} — answers cannot be changed`,
       );
     }
     const inserted = await tx
@@ -302,15 +332,7 @@ export async function listIssueQuestions(
     .from(comments)
     .where(and(eq(comments.issueId, issue.id), isNotNull(comments.component)))
     .orderBy(asc(comments.createdAt), asc(comments.id));
-  const eventRows = await db
-    .select()
-    .from(issueEvents)
-    .where(
-      and(
-        eq(issueEvents.issueId, issue.id),
-        eq(issueEvents.type, "question_answered"),
-      ),
-    );
+  const eventRows = await settlingEvents(db, issue.id);
 
   const refIds = [
     ...commentRows.map((c) => c.authorId),
@@ -324,16 +346,17 @@ export async function listIssueQuestions(
     if (comment.component?.type !== "questions") continue;
     const author = refs.get(comment.authorId);
     if (!author) throw new Error("author ref missing");
-    const event = answerEventFor(eventRows, comment.id);
+    const settlement = settlementFor(eventRows, comment.id);
     let answer: IssueQuestionsItem["answer"] = null;
-    if (event) {
+    if (settlement) {
+      const event = settlement.row;
       const actorRef = refs.get(event.actorId);
       if (!actorRef) throw new Error("actor ref missing");
       answer = {
         event_id: event.id,
         actor: actorRef,
         created_at: event.createdAt.toISOString(),
-        answers: QuestionAnsweredPayload.parse(event.payload).answers,
+        answers: settlement.payload.answers,
       };
     } else {
       open += comment.component.questions.length;
