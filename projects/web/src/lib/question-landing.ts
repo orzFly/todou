@@ -11,7 +11,8 @@ export function selectQuestionLanding({
   items,
 }: IssueQuestions): number | null {
   return (
-    items.find((item) => item.answer === null)?.comment_id ??
+    items.find((item) => item.answer === null && item.withdrawal === null)
+      ?.comment_id ??
     items.at(-1)?.comment_id ??
     null
   );

@@ -18,7 +18,7 @@ import {
 } from "@/components/shared/auth-target-picker.tsx";
 import { MentionLink } from "@/components/shared/mention-link.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
-import { TimelineAnswersProvider } from "@/components/timeline/timeline-answers.tsx";
+import { TimelineSettlementsProvider } from "@/components/timeline/timeline-answers.tsx";
 import { BoardCardContent } from "@/pages/board.tsx";
 
 export type UntouchedBaselineQuestion = {
@@ -209,19 +209,25 @@ function AnsweredQuestionSample({
   issueNumber: number;
   question: UntouchedBaselineQuestion;
 }) {
-  const answers = useMemo(
-    () => new Map([[question.commentId, question.answer]]),
+  const settlements = useMemo(
+    () =>
+      new Map([
+        [
+          question.commentId,
+          { kind: "answered" as const, answer: question.answer },
+        ],
+      ]),
     [question],
   );
   return (
-    <TimelineAnswersProvider answers={answers}>
+    <TimelineSettlementsProvider settlements={settlements}>
       <QuestionsCard
         slug={slug}
         issueNumber={issueNumber}
         commentId={question.commentId}
         component={question.component}
       />
-    </TimelineAnswersProvider>
+    </TimelineSettlementsProvider>
   );
 }
 

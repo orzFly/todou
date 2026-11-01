@@ -89,6 +89,19 @@ function question(id: number, createdAt = timestamp(id)): IssueQuestionsItem {
       },
     ],
     answer: null,
+    withdrawal: null,
+  };
+}
+
+function withdrawn(item: IssueQuestionsItem, at: number): IssueQuestionsItem {
+  return {
+    ...item,
+    withdrawal: {
+      event_id: 20_000 + item.comment_id,
+      actor: user,
+      created_at: timestamp(at),
+      reason: "moot",
+    },
   };
 }
 
@@ -118,7 +131,11 @@ function answered(
 const questions = (items: IssueQuestionsItem[]): IssueQuestions => ({
   items,
   open: items.reduce(
-    (count, item) => count + (item.answer === null ? item.questions.length : 0),
+    (count, item) =>
+      count +
+      (item.answer === null && item.withdrawal === null
+        ? item.questions.length
+        : 0),
     0,
   ),
 });
@@ -161,6 +178,21 @@ function answerEvent(item: IssueQuestionsItem): TimelineEvent {
   };
 }
 
+function withdrawalEvent(item: IssueQuestionsItem): TimelineEvent {
+  if (item.withdrawal === null) {
+    throw new Error("A withdrawal event needs a withdrawal");
+  }
+  return {
+    type: "event",
+    id: item.withdrawal.event_id,
+    actor: item.withdrawal.actor,
+    created_at: item.withdrawal.created_at,
+    event_type: "question_withdrawn",
+    payload: { comment_id: item.comment_id, reason: item.withdrawal.reason },
+    agent_context: null,
+  };
+}
+
 const ordered = (items: TimelineItem[]) =>
   [...items].sort(
     (a, b) => a.created_at.localeCompare(b.created_at) || a.id - b.id,
@@ -171,6 +203,7 @@ function questionItems(items: IssueQuestionsItem[], hiddenIds: number[] = []) {
     items.flatMap((item): TimelineItem[] => [
       questionComment(item, hiddenIds.includes(item.comment_id)),
       ...(item.answer === null ? [] : [answerEvent(item)]),
+      ...(item.withdrawal === null ? [] : [withdrawalEvent(item)]),
     ]),
   );
 }
@@ -721,6 +754,16 @@ describe("question landing through the real issue route", () => {
     expect(scroll.reveals("comment-5")).toBe(0);
     // Head prepend compensation is allowed before the final anchor reveal.
     expect(scroll.events.at(-1)).toBe("reveal:comment-125");
+  });
+
+  it("passes over a withdrawn question to the first one still open", async () => {
+    const model = card([withdrawn(question(10), 11), question(12)]);
+    const server = serve({ "p/7": model });
+    const scroll = scrolling();
+    const view = renderAt();
+    await landed(view, scroll, 12);
+    expect(server.questions()).toHaveLength(1);
+    expect(scroll.reveals("comment-10")).toBe(0);
   });
 
   it.each(["/projects/p/issues/007", "/projects/p/issues/7/"])(

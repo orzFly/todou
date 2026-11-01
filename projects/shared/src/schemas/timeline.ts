@@ -22,6 +22,9 @@ export const IssueEventType = z.enum([
   // event is the only place the name survives.
   "attachment_deleted",
   "question_answered",
+  // The asker's other way to settle a question comment: it takes no answer
+  // afterwards. Payload `{comment_id, reason}`.
+  "question_withdrawn",
   "spec_pushed",
   "spec_withdrawn",
   "spec_review",

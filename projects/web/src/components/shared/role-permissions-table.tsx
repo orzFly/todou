@@ -120,6 +120,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Report",
+    label: "Withdraw your own questions",
+    caps: ["question.withdraw"],
+  },
+  {
+    group: "Report",
     label: "Edit the title and body of an issue",
     caps: ["issue.update"],
   },
@@ -148,6 +153,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
     group: "Collaborate",
     label: "Answer questions",
     caps: ["question.answer"],
+  },
+  {
+    group: "Collaborate",
+    label: "Withdraw anyone's questions",
+    caps: ["question.withdraw_any"],
   },
   {
     group: "Collaborate",

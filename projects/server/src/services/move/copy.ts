@@ -738,6 +738,7 @@ export function remapPayload(
     typeof id === "number" ? (ids.commentMap.get(id) ?? id) : id;
   switch (type) {
     case "question_answered":
+    case "question_withdrawn":
     case "spec_review":
       return { ...payload, comment_id: comment(payload.comment_id) };
     case "spec_comments_resolved":

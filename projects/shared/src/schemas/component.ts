@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Id, Timestamp } from "./common.ts";
+import { Cursor, Id, Timestamp } from "./common.ts";
 import { SpecCommentComponent } from "./spec.ts";
 import { UserRef } from "./user.ts";
 
@@ -129,6 +129,30 @@ export const QuestionAnsweredPayload = z.strictObject({
 });
 export type QuestionAnsweredPayload = z.infer<typeof QuestionAnsweredPayload>;
 
+/**
+ * Withdrawing a question comment nobody has answered. The reason is plain
+ * text: no mention or ref is parsed out of it, so it notifies nobody.
+ */
+export const QuestionWithdrawInput = z.strictObject({
+  reason: z.string().trim().min(1).max(2000).optional(),
+});
+export type QuestionWithdrawInput = z.infer<typeof QuestionWithdrawInput>;
+
+export const QuestionWithdrawResult = z.object({
+  comment_id: Id,
+  unchanged: z.boolean(),
+  /** The withdrawal event's own cursor; on an unchanged retry, the first withdrawal's. */
+  cursor: Cursor,
+});
+export type QuestionWithdrawResult = z.infer<typeof QuestionWithdrawResult>;
+
+/** Payload of the `question_withdrawn` timeline event. */
+export const QuestionWithdrawnPayload = z.strictObject({
+  comment_id: Id,
+  reason: z.string().nullable(),
+});
+export type QuestionWithdrawnPayload = z.infer<typeof QuestionWithdrawnPayload>;
+
 // — per-issue question status (GET …/issues/:n/questions) —
 
 export const IssueQuestionsItem = z.object({
@@ -144,12 +168,24 @@ export const IssueQuestionsItem = z.object({
       answers: z.array(QuestionAnswer),
     })
     .nullable(),
+  /** At most one of `answer` and `withdrawal` is set; neither means still open. */
+  withdrawal: z
+    .object({
+      event_id: Id,
+      actor: UserRef,
+      created_at: Timestamp,
+      reason: z.string().nullable(),
+    })
+    .nullable(),
 });
 export type IssueQuestionsItem = z.infer<typeof IssueQuestionsItem>;
 
 export const IssueQuestions = z.object({
   items: z.array(IssueQuestionsItem),
-  /** Unanswered question count — matches `issues.open_questions` (T-46). */
+  /**
+   * The question count of the items whose `answer` and `withdrawal` are both
+   * null — matches `issues.open_questions` (T-46).
+   */
   open: z.number().int().nonnegative(),
 });
 export type IssueQuestions = z.infer<typeof IssueQuestions>;

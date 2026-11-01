@@ -20,6 +20,7 @@ import {
   clearIssueChildren,
   copyIssueTree,
   ISSUE_CHILD_TABLES,
+  remapPayload,
 } from "../src/services/move/copy.ts";
 import { microIso } from "../src/services/timeline.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
@@ -483,5 +484,17 @@ describe("copyIssueTree", () => {
     // all — so the loop above cannot see them and the list must name them.
     expect(listed).toContain("spec_version_files");
     expect(listed).toContain("revisions");
+  });
+});
+
+describe("remapPayload", () => {
+  it("points a question withdrawal at the copied comment", () => {
+    expect(
+      remapPayload(
+        "question_withdrawn",
+        { comment_id: 7, reason: "answered by the code" },
+        { commentMap: new Map([[7, 70]]), attachmentMap: new Map() },
+      ),
+    ).toEqual({ comment_id: 70, reason: "answered by the code" });
   });
 });

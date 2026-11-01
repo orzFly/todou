@@ -1,15 +1,23 @@
 import type {
   AgentContext,
   AnswersSubmitInput,
+  ChangeEvent,
   CommentComponent,
   CommentComponentInput,
   IssueQuestions,
   IssueQuestionsItem,
   QuestionAnswer,
   QuestionsComponent,
+  QuestionWithdrawInput,
+  QuestionWithdrawResult,
   TimelineEvent,
 } from "@todou/shared";
-import { QuestionAnsweredPayload } from "@todou/shared";
+import {
+  can,
+  minRoleOf,
+  QuestionAnsweredPayload,
+  QuestionWithdrawnPayload,
+} from "@todou/shared";
 import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -17,10 +25,13 @@ import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import {
   ConflictError,
+  ForbiddenError,
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
 import { projectForRead, requireCapability, routeInfoOf } from "./access.ts";
+import { encodeTimelineCursor } from "./cursor.ts";
+import { microIso } from "./timeline.ts";
 import {
   assertIssueReadable,
   assertIssueWritable,
@@ -161,7 +172,10 @@ type EventRow = typeof issueEvents.$inferSelect;
  * `settlementFor`, so none of them can miss a kind of settlement the others
  * know about.
  */
-export const SETTLING_EVENT_TYPES = ["question_answered"] as const;
+export const SETTLING_EVENT_TYPES = [
+  "question_answered",
+  "question_withdrawn",
+] as const;
 
 /** Every settling event on one issue, oldest first. */
 export function settlingEvents(db: Db | Tx, issueId: number) {
@@ -177,11 +191,9 @@ export function settlingEvents(db: Db | Tx, issueId: number) {
     .orderBy(asc(issueEvents.id));
 }
 
-export type Settlement = {
-  kind: "answered";
-  row: EventRow;
-  payload: QuestionAnsweredPayload;
-};
+export type Settlement =
+  | { kind: "answered"; row: EventRow; payload: QuestionAnsweredPayload }
+  | { kind: "withdrawn"; row: EventRow; payload: QuestionWithdrawnPayload };
 
 /**
  * How a comment was settled, if it was: the first settling event that names
@@ -192,10 +204,16 @@ export function settlementFor(
   commentId: number,
 ): Settlement | undefined {
   for (const row of rows) {
-    if (row.type !== "question_answered") continue;
-    const parsed = QuestionAnsweredPayload.safeParse(row.payload);
-    if (parsed.success && parsed.data.comment_id === commentId) {
-      return { kind: "answered", row, payload: parsed.data };
+    if (row.type === "question_answered") {
+      const parsed = QuestionAnsweredPayload.safeParse(row.payload);
+      if (parsed.success && parsed.data.comment_id === commentId) {
+        return { kind: "answered", row, payload: parsed.data };
+      }
+    } else if (row.type === "question_withdrawn") {
+      const parsed = QuestionWithdrawnPayload.safeParse(row.payload);
+      if (parsed.success && parsed.data.comment_id === commentId) {
+        return { kind: "withdrawn", row, payload: parsed.data };
+      }
     }
   }
   return undefined;
@@ -256,6 +274,11 @@ export async function submitAnswers(
       await settlingEvents(tx, issue.id),
       commentId,
     );
+    if (existing?.kind === "withdrawn") {
+      throw new ConflictError(
+        `comment ${commentId} was withdrawn at ${existing.row.createdAt.toISOString()} — it takes no answers`,
+      );
+    }
     if (existing) {
       throw new ConflictError(
         `comment ${commentId} was already answered at ${existing.row.createdAt.toISOString()} — answers cannot be changed`,
@@ -313,6 +336,141 @@ export async function submitAnswers(
   };
 }
 
+/**
+ * Withdraw a question comment nobody has answered: the asker's way of
+ * settling it, recorded as `question_withdrawn`. It settles the way an
+ * answer does — under the comment's row lock, once, giving its count back
+ * to `open_questions` — and a repeat returns the first withdrawal's cursor
+ * without touching its reason.
+ */
+export async function withdrawQuestions(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  issueNumber: number,
+  commentId: number,
+  input: QuestionWithdrawInput,
+  agentContext: AgentContext | null = null,
+): Promise<QuestionWithdrawResult> {
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "question.withdraw",
+  );
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const issue = await loadIssue(db, project.id, issueNumber);
+  assertIssueWritable(issue, actor, role);
+
+  const commentRows = await db
+    .select()
+    .from(comments)
+    .where(and(eq(comments.id, commentId), eq(comments.issueId, issue.id)));
+  const comment = commentRows[0];
+  if (!comment) throw new NotFoundError("comment not found");
+  const asked = questionCount(comment.component);
+  if (asked === 0) {
+    throw new ValidationFailedError(
+      `comment ${commentId} carries no questions`,
+    );
+  }
+  if (comment.authorId !== actor.id && !can(role, "question.withdraw_any")) {
+    throw new ForbiddenError(
+      `only the asker or a ${minRoleOf("question.withdraw_any")} may withdraw these questions`,
+    );
+  }
+
+  const events: ChangeEvent[] = [];
+  const result = await db.transaction(
+    async (tx): Promise<QuestionWithdrawResult> => {
+      // The card first, as answering and deleting take it, with the gate
+      // asked again under its lock: a cross-database move that froze the
+      // card after the check above copies it without this withdrawal and
+      // then empties the source, so the withdrawal would vanish behind a 200.
+      const [card] = await tx
+        .select(gateColumns)
+        .from(issues)
+        .where(eq(issues.id, issue.id))
+        .for("no key update");
+      if (!card) throw new NotFoundError("issue not found");
+      assertIssueWritable(card, actor, role);
+      // The lock answering and deleting take too: whichever comes second
+      // sees the first one's settlement, or finds the comment gone.
+      const [locked] = await tx
+        .select({ id: comments.id })
+        .from(comments)
+        .where(eq(comments.id, commentId))
+        .for("update");
+      if (!locked) throw new NotFoundError("comment not found");
+      const existing = settlementFor(
+        await settlingEvents(tx, issue.id),
+        commentId,
+      );
+      if (existing?.kind === "withdrawn") {
+        // `createdAt` above is a Date, cut to milliseconds; the cursor
+        // needs the column's own microseconds.
+        const [event] = await tx
+          .select({ id: issueEvents.id, ts: microIso(issueEvents.createdAt) })
+          .from(issueEvents)
+          .where(eq(issueEvents.id, existing.row.id));
+        if (!event) throw new Error("withdrawal event vanished under lock");
+        return {
+          comment_id: commentId,
+          unchanged: true,
+          cursor: encodeTimelineCursor({ t: event.ts, k: 1, i: event.id }),
+        };
+      }
+      if (existing) {
+        throw new ConflictError(
+          `comment ${commentId} was already answered at ${existing.row.createdAt.toISOString()} — answered questions cannot be withdrawn`,
+        );
+      }
+      const [event] = await tx
+        .insert(issueEvents)
+        .values({
+          projectId: project.id,
+          issueId: issue.id,
+          actorId: actor.id,
+          type: "question_withdrawn",
+          payload: { comment_id: commentId, reason: input.reason ?? null },
+          agentContext,
+        })
+        .returning({ id: issueEvents.id, ts: microIso(issueEvents.createdAt) });
+      if (!event) throw new Error("event insert returned no row");
+      await tx
+        .update(issues)
+        .set({
+          openQuestions: sql`greatest(${issues.openQuestions} - ${asked}, 0)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(issues.id, issue.id));
+      events.push(
+        {
+          entity: "timeline",
+          id: event.id,
+          action: "created",
+          issue_number: issueNumber,
+        },
+        // The open_questions counter changed; issue list badges must refresh.
+        {
+          entity: "issue",
+          id: issue.id,
+          action: "updated",
+          issue_number: issueNumber,
+          list_row: { kind: "activity" },
+        },
+      );
+      return {
+        comment_id: commentId,
+        unchanged: false,
+        cursor: encodeTimelineCursor({ t: event.ts, k: 1, i: event.id }),
+      };
+    },
+  );
+  for (const event of events) ctx.bus.publish(project.id, event);
+  return result;
+}
+
 export async function listIssueQuestions(
   ctx: AppContext,
   actor: UserRow,
@@ -348,16 +506,21 @@ export async function listIssueQuestions(
     if (!author) throw new Error("author ref missing");
     const settlement = settlementFor(eventRows, comment.id);
     let answer: IssueQuestionsItem["answer"] = null;
+    let withdrawal: IssueQuestionsItem["withdrawal"] = null;
     if (settlement) {
       const event = settlement.row;
       const actorRef = refs.get(event.actorId);
       if (!actorRef) throw new Error("actor ref missing");
-      answer = {
+      const settled = {
         event_id: event.id,
         actor: actorRef,
         created_at: event.createdAt.toISOString(),
-        answers: settlement.payload.answers,
       };
+      if (settlement.kind === "answered") {
+        answer = { ...settled, answers: settlement.payload.answers };
+      } else {
+        withdrawal = { ...settled, reason: settlement.payload.reason };
+      }
     } else {
       open += comment.component.questions.length;
     }
@@ -367,6 +530,7 @@ export async function listIssueQuestions(
       created_at: comment.createdAt.toISOString(),
       questions: comment.component.questions,
       answer,
+      withdrawal,
     });
   }
   return { items, open };

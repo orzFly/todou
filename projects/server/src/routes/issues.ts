@@ -25,6 +25,8 @@ import {
   MoveIssueResult,
   minRoleOf,
   ProjectRef,
+  QuestionWithdrawInput,
+  QuestionWithdrawResult,
   RevisionPage,
   RevisionQuery,
   TimelineComment,
@@ -53,7 +55,11 @@ import {
   updateIssue,
 } from "../services/issues.ts";
 import { moveIssue } from "../services/move/execute.ts";
-import { listIssueQuestions, submitAnswers } from "../services/questions.ts";
+import {
+  listIssueQuestions,
+  submitAnswers,
+  withdrawQuestions,
+} from "../services/questions.ts";
 import {
   listCommentRevisions,
   listIssueRevisions,
@@ -336,6 +342,10 @@ const issueQuestionsRoute = createRoute({
   summary:
     "Question comments of an issue with their answer status (T-19); powers " +
     "`todou question list/wait` and the web answer cards",
+  description:
+    "Each item carries `answer` or `withdrawal`, at most one of them; both " +
+    "null means the questions still wait for an answer, and only those " +
+    "count towards `open`.",
   request: { params: issueParams },
   responses: {
     200: { description: "Status", ...jsonBody(IssueQuestions) },
@@ -352,6 +362,29 @@ const submitAnswersRoute = createRoute({
   request: { params: commentParams, body: jsonBody(AnswersSubmitInput) },
   responses: {
     201: { description: "Answered", ...jsonBody(TimelineEvent) },
+  },
+});
+
+const withdrawQuestionsRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/comments/{commentId}/questions/withdraw",
+  summary: `Withdraw a question comment nobody has answered ${roleTag("question.withdraw")}`,
+  description:
+    "Settles the comment's questions without an answer: it takes no answer " +
+    "afterwards, and its body and questions stay as they are. Withdrawing " +
+    `someone else's questions takes ${minRoleOf("question.withdraw_any")}. ` +
+    "The optional reason is plain text, without mention notifications. " +
+    "Retrying an already withdrawn comment returns the original event " +
+    "cursor without changing the reason, timestamp or timeline. A comment " +
+    "already answered, or settled by hiding it, returns 409; a comment " +
+    "carrying no questions returns 422.",
+  request: { params: commentParams, body: jsonBody(QuestionWithdrawInput) },
+  responses: {
+    200: { description: "Withdrawal", ...jsonBody(QuestionWithdrawResult) },
+    403: { description: "Not the asker, and no capability to withdraw any" },
+    404: { description: "Issue or comment not found" },
+    409: { description: "Already answered, or issue not writable" },
+    422: { description: "Invalid input, or a comment without questions" },
   },
 });
 
@@ -659,6 +692,22 @@ export function issueRoutes() {
         c.get("agentContext"),
       ),
       201,
+    );
+  });
+
+  app.openapi(withdrawQuestionsRoute, async (c) => {
+    const { slug, number, commentId } = c.req.valid("param");
+    return c.json(
+      await withdrawQuestions(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        commentId,
+        c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      200,
     );
   });
 

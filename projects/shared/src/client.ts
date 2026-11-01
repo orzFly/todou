@@ -72,6 +72,8 @@ import type {
   ProjectWatchers,
   PublicUser,
   PutSettings,
+  QuestionWithdrawInput,
+  QuestionWithdrawResult,
   ReferenceConfig,
   ReferenceDirectory,
   RefFormatSetInput,
@@ -1091,6 +1093,17 @@ export class TodouClient {
     this.request<TimelineEvent>(
       "POST",
       `/projects/${slug}/issues/${number}/comments/${commentId}/answers`,
+      { json: input },
+    );
+  withdrawQuestions = (
+    slug: string,
+    number: number,
+    commentId: number,
+    input: QuestionWithdrawInput,
+  ) =>
+    this.request<QuestionWithdrawResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/comments/${commentId}/questions/withdraw`,
       { json: input },
     );
 

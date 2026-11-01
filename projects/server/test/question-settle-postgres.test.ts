@@ -121,6 +121,19 @@ describe.skipIf(!PG_URL)("question settlement races on PostgreSQL", () => {
     );
   }
 
+  function withdraw(number: number, commentId: number) {
+    return Promise.resolve(
+      t.app.request(
+        `/api/projects/${slug}/issues/${number}/comments/${commentId}/questions/withdraw`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ reason: "moot" }),
+        },
+      ),
+    );
+  }
+
   function remove(number: number, commentId: number) {
     return Promise.resolve(
       t.app.request(
@@ -320,4 +333,66 @@ describe.skipIf(!PG_URL)("question settlement races on PostgreSQL", () => {
     expect(deleted?.status).toBe(204);
     expect((await snapshot(issue.id)).issue.specUnresolvedComments).toBe(1);
   });
+
+  it("an answer and a withdrawal queued on one comment settle it once", async () => {
+    const { issue, a } = await askTwo();
+    const [answered, withdrawn] = await race(
+      { sql: "SELECT id FROM comments WHERE id = $1 FOR UPDATE", id: a },
+      () => answerA(issue.number, a),
+      () => withdraw(issue.number, a),
+    );
+    expect(
+      [answered?.status, withdrawn?.status].filter(
+        (status) => status === 201 || status === 200,
+      ),
+    ).toHaveLength(1);
+    expect([answered?.status, withdrawn?.status]).toContain(409);
+    const state = await snapshot(issue.id);
+    expect(settlementsOf(state.events, a)).toHaveLength(1);
+    expect(state.issue.openQuestions).toBe(1);
+  });
+
+  it("a withdrawal arriving after a delete finds no comment to withdraw", async () => {
+    const { issue, a } = await askTwo();
+    const [deleted, withdrawn] = await race(
+      issueLock(issue.id),
+      () => remove(issue.number, a),
+      () => withdraw(issue.number, a),
+    );
+    expect(deleted?.status).toBe(204);
+    expect(withdrawn?.status).toBe(404);
+    const state = await snapshot(issue.id);
+    expect(state.issue.openQuestions).toBe(1);
+    expect(settlementsOf(state.events, a)).toEqual([]);
+  });
+
+  it.each(["moving_since", "deleted_at", "moved_at"] as const)(
+    "a withdrawal rechecks %s once it holds the issue row",
+    async (column) => {
+      const { issue, a } = await askTwo();
+      await holder.query("BEGIN");
+      await holder.query(issueLock(issue.id).sql, [issue.id]);
+      const pending = withdraw(issue.number, a);
+      try {
+        await waitForLockWaiters(1);
+        // column is a fixed test-only literal union, not request input.
+        await holder.query(
+          `UPDATE issues SET ${column} = now() WHERE id = $1`,
+          [issue.id],
+        );
+        await holder.query("COMMIT");
+        const refused = await pending;
+        // A card moved away answers a write with its redirect status, which
+        // needs the move's record this bare column flip does not leave.
+        if (column !== "moved_at") expect(refused.status).toBe(409);
+        expect(refused.status).not.toBe(200);
+        const state = await snapshot(issue.id);
+        expect(state.issue.openQuestions).toBe(3);
+        expect(settlementsOf(state.events, a)).toEqual([]);
+      } finally {
+        await holder.query("ROLLBACK");
+        await pending;
+      }
+    },
+  );
 });

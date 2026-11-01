@@ -2,11 +2,16 @@ import { readFileSync } from "node:fs";
 import type { Readable } from "node:stream";
 import type {
   CommentComponentInput,
+  IssueQuestionsItem,
   QuestionAnswer,
   QuestionsComponent,
   TimelineEvent,
 } from "@todou/shared";
-import { QuestionAnsweredPayload, QuestionsInput } from "@todou/shared";
+import {
+  QuestionAnsweredPayload,
+  QuestionsInput,
+  QuestionWithdrawnPayload,
+} from "@todou/shared";
 import { z } from "zod";
 import { drain } from "./body.ts";
 import { CliError } from "./errors.ts";
@@ -62,6 +67,29 @@ export function decodeAnswerEvent(
   if (item.event_type !== "question_answered") return null;
   const parsed = AnswerEventPayload.safeParse(item.payload);
   return parsed.success ? parsed.data : null;
+}
+
+const WithdrawalEventPayload = QuestionWithdrawnPayload.loose();
+
+/** Payload of a question_withdrawn event, or null for any other event. */
+export function decodeWithdrawalEvent(
+  item: TimelineEvent,
+): { comment_id: number; reason: string | null } | null {
+  if (item.event_type !== "question_withdrawn") return null;
+  const parsed = WithdrawalEventPayload.safeParse(item.payload);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * A question item's withdrawal, or null. `undefined` is in the signature
+ * because responses are cast rather than parsed: a server predating
+ * withdrawals sends no such key, and its unanswered questions must still
+ * read as awaiting an answer.
+ */
+export function withdrawalOf(item: {
+  withdrawal?: IssueQuestionsItem["withdrawal"];
+}): IssueQuestionsItem["withdrawal"] {
+  return item.withdrawal ?? null;
 }
 
 /**

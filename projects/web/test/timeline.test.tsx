@@ -841,6 +841,67 @@ describe("timeline answers reach the question card (T-365)", () => {
     await findByText("answered by");
     expect(gets.filter((g) => g.includes("/questions"))).toEqual([]);
   });
+
+  it("renders a withdrawn footer without asking /questions", async () => {
+    const comp: QuestionsComponent = {
+      type: "questions",
+      questions: [
+        {
+          key: "q1",
+          multiple: false,
+          question: "Ship it?",
+          options: [{ label: "yes" }, { label: "no" }],
+        },
+      ],
+    };
+    const event = {
+      type: "event",
+      id: 9,
+      event_type: "question_withdrawn",
+      actor: user,
+      payload: { comment_id: 42, reason: "answered by the code" },
+      created_at: "2026-08-11T00:00:00Z",
+      agent_context: null,
+    } as const;
+    const page: TimelinePage = {
+      items: [questionComment(42, comp), event],
+      prev_cursor: null,
+      next_cursor: null,
+      total_count: 2,
+    };
+    const gets: string[] = [];
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "GET" && /\/projects\/p\/issues\/19\/timeline/.test(url)) {
+        return Response.json(page);
+      }
+      if (method === "GET" && url.includes("/references/config")) {
+        return Response.json(DEFAULT_REFERENCE_CONFIG);
+      }
+      if (method === "GET" && url.includes("/reference-directory")) {
+        return Response.json(null);
+      }
+      if (method === "GET" && url.includes("/questions")) {
+        gets.push(`${method} ${url}`);
+        return Response.json({ items: [], open: 0 });
+      }
+      if (method === "GET") {
+        return Response.json([]);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    const { findByText, queryByText } = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+    );
+
+    const meta = await findByText("withdrawn by");
+    expect(meta.textContent).toContain("— answered by the code");
+    expect(queryByText("awaiting answer")).toBeNull();
+    expect(gets.filter((g) => g.includes("/questions"))).toEqual([]);
+  });
 });
 
 describe("timeline load failure (T-376)", FILL_CASE, () => {
