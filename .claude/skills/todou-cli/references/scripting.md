@@ -7,6 +7,7 @@ reading for itself uses the default human output instead.
 
 - `--forever` (the standard wait): 0 = new entries, 1 = fatal. `spec wait` always uses this mode,
   but 0 means it successfully returned an outcome, including `withdrawn`; it does not mean approval.
+  `question wait` returns 0 for a withdrawal as well as for answers.
   Timeouts and outages are handled inside the command. `--timeout` is the heartbeat interval (default
   600s): one `still watching — nothing new in …` line per interval on stderr.
 - Blocking without a flag: 0 = new entries; 3 = timeout with nothing new (normal, not an error);
@@ -41,6 +42,10 @@ record closing the batch. `spec wait` and `spec push --wait` add a final
 `review_status`, `unresolved_comments`, `carried_comments` and `version`. A file you append a watch
 to is parseable line by line; resume from the last cursor record, because item lines not yet followed
 by a cursor record replay on the next run.
+
+`question wait --json` prints one result. A settled comment's carries `kind`: `answered` (with
+`answers`) or `withdrawn` (with `reason`); branch on it, not on the exit code, which is 0 for both. A
+`--poll` that finds the comment still open prints `{"comment_id":…,"answer":null}`, with no `kind`.
 
 Branch on the outcome, not exit 0. Only `approved` for the latest version passes the implementation
 gate. `withdrawn` means investigate/rework and push a new version when ready; its `review_status`
