@@ -98,7 +98,7 @@ describe("specMode (T-192, orthogonalised by T-200)", () => {
 });
 
 describe("specSearchFor (T-192)", () => {
-  const base = { file: "design.md", v: 3, version: 3 } as const;
+  const base = { file: "design.md", version: 3 } as const;
 
   it("writes the automatic posture as no params at all", () => {
     expect(specSearchFor({ ...base, baseline: 2, view: "rendered" })).toEqual({

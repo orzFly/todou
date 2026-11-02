@@ -60,7 +60,6 @@ function renderPicker(
       searchFor={(target) =>
         specSearchFor({
           file: "design.md",
-          v: target,
           version: target,
           baseline: null,
           view: "rendered",
@@ -168,7 +167,6 @@ describe("SpecVersionPicker (T-178)", () => {
       searchFor: (target) =>
         specSearchFor({
           file: "design.md",
-          v: target,
           version: target,
           baseline: target > 1 ? target - 1 : null,
           view: "source",

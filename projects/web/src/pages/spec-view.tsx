@@ -396,8 +396,32 @@ export function SpecViewPage() {
   const { slug, number: numberParam } = useParams({
     from: "/authed/projects/$slug/issues/$number/spec",
   });
+  const search = useSearch({
+    from: "/authed/projects/$slug/issues/$number/spec",
+  });
   const issueNumber = Number(numberParam);
   const spec = useSuspenseQuery(specQuery(slug, issueNumber));
+  const navigate = useNavigate();
+  // An address without `v` is pinned in place to the version current when it
+  // opened, so a later push cannot swap the document under the reader. The
+  // same holds for a spec that appears while the empty state below is open.
+  const unpinned =
+    spec.data === null || search.v !== undefined
+      ? undefined
+      : spec.data.current_version;
+  useEffect(() => {
+    if (unpinned === undefined) return;
+    void navigate({
+      to: "/projects/$slug/issues/$number/spec",
+      params: { slug, number: numberParam },
+      search: { ...search, v: unpinned },
+      replace: true,
+      resetScroll: false,
+      hashScrollIntoView: false,
+      ignoreBlocker: true,
+      state: (prev) => prev,
+    });
+  }, [unpinned, navigate, slug, numberParam, search]);
 
   if (spec.data === null) {
     return (
@@ -413,9 +437,15 @@ export function SpecViewPage() {
       </div>
     );
   }
+  if (search.v === undefined) return null;
   return (
     <SpecReviewSessionScope slug={slug} issueNumber={issueNumber}>
-      <SpecViewBody slug={slug} issueNumber={issueNumber} spec={spec.data} />
+      <SpecViewBody
+        slug={slug}
+        issueNumber={issueNumber}
+        spec={spec.data}
+        version={search.v}
+      />
     </SpecReviewSessionScope>
   );
 }
@@ -491,10 +521,13 @@ function SpecViewBody({
   slug,
   issueNumber,
   spec,
+  version,
 }: {
   slug: string;
   issueNumber: number;
   spec: SpecInfo;
+  /** The version on screen: the URL's, never whatever is current. */
+  version: number;
 }) {
   const search = useSearch({
     from: "/authed/projects/$slug/issues/$number/spec",
@@ -521,7 +554,6 @@ function SpecViewBody({
   // its hit area.
   const refLeads = useRefPlacement("detail") === "before";
   const mergedBack = toolbarCarriesBack && refLeads;
-  const version = search.v ?? spec.current_version;
   const files = useSuspenseQuery(specFilesQuery(slug, issueNumber, version));
   const comments = useSuspenseQuery(specCommentsQuery(slug, issueNumber));
   const drafts = useSpecReviewDrafts(slug, issueNumber);
@@ -664,11 +696,10 @@ function SpecViewBody({
   const params = { slug, number: String(issueNumber) };
 
   const fileSearch = (path: string): SpecSearch =>
-    specSearchFor({ file: path, v: search.v, version, baseline, view });
+    specSearchFor({ file: path, version, baseline, view });
   const baselineSearch = (next: number | null): SpecSearch =>
     specSearchFor({
       file: search.file,
-      v: search.v,
       version,
       baseline: next,
       view,
@@ -677,7 +708,6 @@ function SpecViewBody({
   const viewSearch = (next: SpecView): SpecSearch =>
     specSearchFor({
       file: search.file,
-      v: search.v,
       version,
       baseline,
       view: next,
@@ -700,7 +730,6 @@ function SpecViewBody({
         // found" with no way back (T-203).
         search: specSearchFor({
           file: selected === undefined ? undefined : search.file,
-          v: search.v,
           version,
           baseline: null,
           view,
@@ -733,7 +762,6 @@ function SpecViewBody({
           : target - 1;
     return specSearchFor({
       file: search.file,
-      v: target,
       version: target,
       baseline: next,
       view,
@@ -1773,7 +1801,6 @@ function SpecViewBody({
                         params={params}
                         search={specSearchFor({
                           file: selectedPath,
-                          v: search.v,
                           version,
                           baseline,
                           view: "source",
