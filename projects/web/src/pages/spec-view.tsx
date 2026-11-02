@@ -565,10 +565,6 @@ function SpecViewBody({
     issueNumber,
   );
   const staging = useSpecReviewSessionValue(session, (s) => s.staging);
-  const reviewVersion = useSpecReviewSessionValue(
-    session,
-    (s) => s.reviewVersion,
-  );
   const finishOpen = useSpecReviewSessionValue(session, (s) => s.finishOpen);
   const pendingVerdict = useSpecReviewSessionValue(
     session,
@@ -1360,9 +1356,7 @@ function SpecViewBody({
             ? finishLabel
             : `${finishLabel} — ${finishReviewReason}`
         }
-        onClick={() =>
-          session.setFinishOpen(true, version, drafts.drafts.length > 0)
-        }
+        onClick={() => session.setFinishOpen(true)}
       >
         Finish review
         {/* T-190 reserved this box so staging the first draft would not
@@ -1895,7 +1889,7 @@ function SpecViewBody({
         session={session}
         slug={slug}
         issueNumber={issueNumber}
-        currentVersion={reviewVersion ?? version}
+        currentVersion={version}
         drafts={drafts.drafts}
         open={finishOpen}
         pendingVerdict={pendingVerdict}
@@ -1903,7 +1897,7 @@ function SpecViewBody({
         onClose={() => session.setFinishOpen(false)}
         onSubmit={(verdict) =>
           submitReview({
-            currentVersion: reviewVersion ?? version,
+            version,
             verdict,
             drafts: drafts.drafts,
           })

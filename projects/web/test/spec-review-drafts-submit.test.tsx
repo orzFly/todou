@@ -105,7 +105,7 @@ function SessionHarness() {
         type="button"
         onClick={() =>
           submitReview({
-            currentVersion: 1,
+            version: 1,
             verdict: "comment",
             drafts: drafts.drafts,
           })

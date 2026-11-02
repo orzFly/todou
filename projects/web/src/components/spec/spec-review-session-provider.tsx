@@ -40,7 +40,8 @@ import { type NavigationContext, useDirtySource } from "@/lib/unsaved-guard.ts";
 const SPEC_ROUTE_ID = "/authed/projects/$slug/issues/$number/spec";
 
 type SubmitReviewInput = {
-  currentVersion: number;
+  /** The version on screen: a review is never retargeted to another one. */
+  version: number;
   verdict: SpecReviewVerdict;
   drafts: SpecReviewDraft[];
   returnState?: ReturnLinkState;
@@ -102,10 +103,9 @@ function SessionOwner({
   useDirtySource(session.isDirty, survivesNavigation);
 
   const submitReview = useCallback(
-    ({ currentVersion, verdict, drafts, returnState }: SubmitReviewInput) => {
+    ({ version, verdict, drafts, returnState }: SubmitReviewInput) => {
       const state = session.getSnapshot();
       if (state.pending !== null) return;
-      const version = state.reviewVersion ?? currentVersion;
       const latest = queryClient.getQueryData(
         specQuery(slug, issueNumber).queryKey,
       );

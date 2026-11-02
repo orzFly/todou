@@ -533,7 +533,7 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       expect(within(empty).queryByText(DRAFT.body.split("\n")[0])).toBeNull();
     });
 
-    it(`at ${width}px a newer-version 409 cannot retarget retained drafts, even after close/reopen`, async () => {
+    it(`at ${width}px after a newer-version 409 the page stays on v1 and a review reopened on v2 keeps the drafts`, async () => {
       reviewViewport(width);
       const page = await mountPage({ staged: true });
       const errorToast = vi.spyOn(toast, "error");
@@ -544,19 +544,10 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       fireEvent.click(controls(width).approve);
       await expectRefreshed(page, before, 2, "unreviewed");
       expect(errorToast).toHaveBeenCalledWith("Spec changed during review");
-      // Without a pinned session version the refreshed page silently offers a
-      // v2 review with the v1 summary and annotation; closing must not reset it.
+      // The page stays on v1, so the open form still reviews v1 and is stale.
       dialog = await screen.findByRole("dialog", {
         name: "Finish review — spec v1",
       });
-      expectDrafts(dialog, page.storageKey);
-      expect(within(dialog).getByRole("status").textContent).toContain(
-        "Spec v1 is no longer current",
-      );
-      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      await viewVersion(page, 2);
-      dialog = await openReview();
       expectDrafts(dialog, page.storageKey);
       expect(within(dialog).getByRole("status").textContent).toContain(
         "Spec v1 is no longer current",
@@ -575,8 +566,25 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       expect(page.reviews).toEqual([
         { version: 1, verdict: "approve", body: SUMMARY, comments: COMMENTS },
       ]);
-      expect(page.writes).toHaveLength(1);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expectDisabled(
+        screen.getByRole("button", { name: /finish review/i }),
+        true,
+      );
+
+      await viewVersion(page, 2);
+      dialog = await openReview(2);
       expectDrafts(dialog, page.storageKey);
+      expectDisabled(
+        within(dialog).getByRole("button", { name: "Comment" }),
+        false,
+      );
+      expectDisabled(
+        within(dialog).getByRole("button", { name: "Approve" }),
+        false,
+      );
+      expect(page.writes).toHaveLength(1);
     });
 
     it(`at ${width}px a live newer-version refresh disables an open review before any submission`, async () => {
