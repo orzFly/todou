@@ -53,7 +53,18 @@ const uploadRoute = createRoute({
             file: z
               .custom<File>((v: unknown) => v instanceof File, "file required")
               .openapi({ type: "string", format: "binary" }),
-            issue_number: z.coerce.number().int().positive(),
+            issue_number: z.coerce
+              .number()
+              .int()
+              .positive()
+              .optional()
+              .openapi({
+                description:
+                  "Required unless `draft` is `true`. A draft sent without " +
+                  "it is claimed only by the first issue its uploader " +
+                  "creates whose body links it; a comment or an edit that " +
+                  "links it leaves it a draft.",
+              }),
             // A form field is a string; `z.coerce.boolean` would read
             // "false" as true.
             draft: z
@@ -64,7 +75,8 @@ const uploadRoute = createRoute({
                   "`true` holds the file back as a draft (T-568): it stays " +
                   "out of the list and the timeline, and only its uploader " +
                   "can download it, until an issue body or comment the " +
-                  "uploader writes links it. Unlinked drafts are deleted " +
+                  "uploader writes links it (without `issue_number`, only " +
+                  "a new issue's body). Unlinked drafts are deleted " +
                   "after a day. Editors that upload before the text is sent " +
                   "use this; a plain upload is attached at once.",
               }),
@@ -288,7 +300,7 @@ export function attachmentRoutes() {
       c.get("appCtx"),
       c.get("user"),
       slug,
-      form.issue_number,
+      form.issue_number ?? null,
       form.file,
       c.get("agentContext"),
       form.draft === "true",

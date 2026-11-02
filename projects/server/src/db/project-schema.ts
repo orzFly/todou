@@ -472,9 +472,12 @@ export const attachments = pgTable(
   {
     id: id(),
     projectId: projectId(),
-    issueId: bigint("issue_id", { mode: "number" })
-      .notNull()
-      .references(() => issues.id, { onDelete: "cascade" }),
+    // Null only for a draft the new-issue page uploaded before its card
+    // existed; `createIssue` attaches it to the card whose body links it.
+    issueId: bigint("issue_id", { mode: "number" }).references(
+      () => issues.id,
+      { onDelete: "cascade" },
+    ),
     uploaderId: bigint("uploader_id", { mode: "number" }).notNull(),
     filename: text("filename").notNull(),
     contentType: text("content_type").notNull(),
@@ -499,6 +502,10 @@ export const attachments = pgTable(
       t.issueId,
       sql`lower(${t.filename})`,
     ),
+    check(
+      "attachments_card_or_draft",
+      sql`${t.issueId} IS NOT NULL OR ${t.draft}`,
+    ),
   ],
 );
 
@@ -511,9 +518,11 @@ export const pendingUploads = pgTable(
   {
     id: id(),
     projectId: projectId(),
-    issueId: bigint("issue_id", { mode: "number" })
-      .notNull()
-      .references(() => issues.id, { onDelete: "cascade" }),
+    // Null under the same rule as `attachments.issue_id`.
+    issueId: bigint("issue_id", { mode: "number" }).references(
+      () => issues.id,
+      { onDelete: "cascade" },
+    ),
     uploaderId: bigint("uploader_id", { mode: "number" }).notNull(),
     filename: text("filename").notNull(),
     contentType: text("content_type").notNull(),
@@ -537,6 +546,10 @@ export const pendingUploads = pgTable(
   (t) => [
     uniqueIndex("pending_uploads_storage_key_idx").on(t.storageKey),
     index("pending_uploads_expires_idx").on(t.expiresAt),
+    check(
+      "pending_uploads_card_or_draft",
+      sql`${t.issueId} IS NOT NULL OR ${t.draft}`,
+    ),
   ],
 );
 

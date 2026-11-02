@@ -62,7 +62,11 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
-import { commitDraftAttachments } from "./attachments.ts";
+import {
+  attachLooseDrafts,
+  commitDraftAttachments,
+  prepareLooseDrafts,
+} from "./attachments.ts";
 import {
   announceBlockChanges,
   type BlockSets,
@@ -543,19 +547,28 @@ export async function createIssue(
     if (next === undefined) throw new Error("project_meta row missing");
     const number = next - 1;
 
+    // The new-issue page uploads its files before the card exists, so the
+    // body is written once and the card never shows as edited.
+    const loose = await prepareLooseDrafts(
+      tx,
+      project,
+      actor.id,
+      resolved.storedText,
+    );
     const inserted = await tx
       .insert(issues)
       .values({
         projectId: project.id,
         number,
         title: input.title,
-        body: resolved.storedText,
+        body: loose.text,
         statusId,
         authorId: actor.id,
       })
       .returning();
     const issue = inserted[0];
     if (!issue) throw new Error("issue insert returned no row");
+    await attachLooseDrafts(tx, loose.drafts, issue.id);
 
     if (input.assignee_ids.length > 0) {
       await tx
@@ -628,7 +641,7 @@ export async function createIssue(
         tx,
         project,
         actor.id,
-        [resolved.storedText],
+        [loose.text],
         agentContext,
       )),
     );

@@ -30,7 +30,8 @@ export const Attachment = z.object({
 export type Attachment = z.infer<typeof Attachment>;
 
 export const DirectUploadRequest = z.object({
-  issue_number: z.number().int().positive(),
+  /** Required unless `draft` is true; see the multipart upload's field. */
+  issue_number: z.number().int().positive().optional(),
   filename: z.string().min(1),
   content_type: z.string(),
   size: z.number().int().positive(),
