@@ -108,7 +108,9 @@ function setEditorValue(view: EditorView, value: string) {
   });
 }
 
-function renderColdSpec() {
+function renderColdSpec(
+  initialEntry = "/projects/demo/issues/7/spec?v=1&file=a.md",
+) {
   const coldV2 = held<SpecFiles>();
   vi.spyOn(api, "getSpec").mockResolvedValue(SPEC);
   vi.spyOn(api, "getSpecFiles").mockImplementation(
@@ -157,7 +159,7 @@ function renderColdSpec() {
       ]),
     ]),
     history: createMemoryHistory({
-      initialEntries: ["/projects/demo/issues/7/spec?v=1&file=a.md"],
+      initialEntries: [initialEntry],
     }),
     defaultPendingMs: 0,
   });
@@ -183,6 +185,25 @@ function renderColdSpec() {
   return { ...view, router, coldV2 };
 }
 
+/**
+ * Back on the current version, where Finish review is offered, compared with
+ * v1 rather than v2 so the cold v2 stays unrequested.
+ */
+async function toCurrentVersion(view: ReturnType<typeof renderColdSpec>) {
+  void view.router.navigate({
+    to: "/projects/$slug/issues/$number/spec",
+    params: { slug: "demo", number: "7" },
+    search: { v: 3, file: "a.md", compare: 1, view: "rendered" },
+  });
+  await waitFor(() =>
+    expect(
+      view
+        .getByRole("button", { name: /finish review/i })
+        .hasAttribute("disabled"),
+    ).toBe(false),
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
@@ -190,7 +211,7 @@ afterEach(() => {
 
 describe("spec review drafts across navigation", () => {
   it("restores summary after closing Finish review (T-438)", async () => {
-    const view = renderColdSpec();
+    const view = renderColdSpec("/projects/demo/issues/7/spec?v=3&file=a.md");
     fireEvent.click(
       await view.findByRole("button", { name: /finish review/i }),
     );
@@ -222,6 +243,7 @@ describe("spec review drafts across navigation", () => {
     );
     act(() => setEditorValue(firstComposer, "composer marker in full"));
 
+    await toCurrentVersion(view);
     fireEvent.click(view.getByRole("button", { name: /finish review/i }));
     const firstSummary = editorFromElement(
       (await view.findByLabelText("Review summary")) as HTMLElement,
@@ -263,6 +285,7 @@ describe("spec review drafts across navigation", () => {
       "a.mdfile comment · v1",
     );
 
+    await toCurrentVersion(view);
     fireEvent.click(view.getByRole("button", { name: /finish review/i }));
     const restoredSummary = editorFromElement(
       (await view.findByLabelText("Review summary")) as HTMLElement,
@@ -270,7 +293,11 @@ describe("spec review drafts across navigation", () => {
     expect(restoredSummary.state.doc.toString()).toBe("summary marker in full");
     fireEvent.click(view.getByRole("button", { name: "Close" }));
 
-    act(() => setEditorValue(restoredComposer, "composer marker in full!"));
+    // The version switch remounted the composer around the same draft.
+    const composerOnCurrent = editorFromElement(
+      screen.getByLabelText("Spec comment") as HTMLElement,
+    );
+    act(() => setEditorValue(composerOnCurrent, "composer marker in full!"));
     fireEvent.click(view.getByRole("button", { name: "Stage comment" }));
     const stored = JSON.parse(
       localStorage.getItem("todou-spec-review:demo:7") ?? "[]",
@@ -333,7 +360,7 @@ describe("spec review drafts across navigation", () => {
     const submit = vi
       .spyOn(api, "submitSpecReview")
       .mockReturnValue(response.promise);
-    const view = renderColdSpec();
+    const view = renderColdSpec("/projects/demo/issues/7/spec?v=3&file=a.md");
     fireEvent.click(await view.findByRole("button", { name: "Comment file" }));
     act(() =>
       setEditorValue(
@@ -357,7 +384,7 @@ describe("spec review drafts across navigation", () => {
     await view.router.navigate({
       to: "/projects/$slug/issues/$number/spec",
       params: { slug: "demo", number: "7" },
-      search: { v: 1, file: "a.md" },
+      search: { v: 3, file: "a.md" },
     });
     fireEvent.click(
       await screen.findByRole("button", { name: /finish review/i }),
@@ -371,7 +398,7 @@ describe("spec review drafts across navigation", () => {
 
     await act(async () => {
       response.release({
-        version: 1,
+        version: 3,
         verdict: "comment",
         event_id: 9,
         summary_comment_id: null,

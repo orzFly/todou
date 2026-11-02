@@ -48,9 +48,13 @@ const AUTHOR = {
   owner: null,
 };
 
+// Current is past every version the failures below load cold, so Finish
+// review is opened on a version none of them touches.
+const CURRENT = 5;
+
 const SPEC: SpecInfo = {
-  current_version: 3,
-  current_version_cursor: "c3",
+  current_version: CURRENT,
+  current_version_cursor: `c${CURRENT}`,
   review_status: "unreviewed",
   unresolved_comments: 0,
   unresolved_carried_comments: 0,
@@ -58,7 +62,7 @@ const SPEC: SpecInfo = {
     { path: "a.md", size: 30 },
     { path: "b.md", size: 30 },
   ],
-  versions: [1, 2, 3].map((number) => ({
+  versions: [1, 2, 3, 4, 5].map((number) => ({
     number,
     author: AUTHOR,
     message: `v${number}`,
@@ -129,10 +133,10 @@ function appFixture() {
     }
     if (path.endsWith("/spec")) return { status: 200, body: SPEC };
     if (path.endsWith("/spec/comments")) {
-      return { status: 200, body: { current_version: 3, items: [] } };
+      return { status: 200, body: { current_version: CURRENT, items: [] } };
     }
     if (path.endsWith("/spec/files")) {
-      const version = Number(url.searchParams.get("version") ?? 3);
+      const version = Number(url.searchParams.get("version") ?? CURRENT);
       if (version === failureVersion && failure === "network") {
         throw new TypeError("audit network failure");
       }
@@ -227,6 +231,25 @@ async function navigateVersionInBatch(client: TodouClient, version: number) {
   await companion;
 }
 
+/**
+ * Back on the current version, where Finish review is offered. Compared with
+ * v1, which is always loaded, so no version a failure needs cold is fetched.
+ */
+async function toCurrentVersion() {
+  void router.navigate({
+    to: "/projects/$slug/issues/$number/spec",
+    params: { slug: "demo", number: "7" },
+    search: { v: CURRENT, file: "a.md", compare: 1, view: "rendered" },
+  });
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("button", { name: /finish review/i })
+        .hasAttribute("disabled"),
+    ).toBe(false),
+  );
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -260,6 +283,7 @@ describe("spec drafts on the application browser-history router", () => {
       await screen.findByLabelText("Spec comment");
       cmSetValue(mounted.container, "P1 unsaved composer\nline two");
 
+      await toCurrentVersion();
       fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
       await screen.findByLabelText("Review summary");
       cmSetValue(document.body, "P1 hidden summary\nline two", 1);
@@ -272,7 +296,10 @@ describe("spec drafts on the application browser-history router", () => {
       expect(beforeUnloadPrevented()).toBe(true);
       expect(
         fixture.calls.filter((call) => call.includes("/spec/files")),
-      ).toEqual(["/projects/demo/issues/7/spec/files?version=1"]);
+      ).toEqual([
+        "/projects/demo/issues/7/spec/files?version=1",
+        `/projects/demo/issues/7/spec/files?version=${CURRENT}`,
+      ]);
       expect(fixture.batchCalls.length).toBeGreaterThan(0);
 
       fixture.failWith("forbidden", 2);
@@ -298,6 +325,7 @@ describe("spec drafts on the application browser-history router", () => {
       expect(mounted.container.querySelector("main")?.textContent).toContain(
         "a.mdfile comment · v1",
       );
+      await toCurrentVersion();
       fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
       await screen.findByLabelText("Review summary");
       expect(cmGetValue(document.body, 1)).toBe("P1 hidden summary\nline two");
@@ -325,6 +353,7 @@ describe("spec drafts on the application browser-history router", () => {
       expect(mounted.container.querySelector("main")?.textContent).toContain(
         "a.mdfile comment · v1",
       );
+      await toCurrentVersion();
       fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
       await screen.findByLabelText("Review summary");
       expect(cmGetValue(document.body, 1)).toBe("P1 hidden summary\nline two");
@@ -357,6 +386,7 @@ describe("spec drafts on the application browser-history router", () => {
       expect(mounted.container.querySelector("main")?.textContent).toContain(
         "a.mdfile comment · v1",
       );
+      await toCurrentVersion();
       fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
       await screen.findByLabelText("Review summary");
       expect(cmGetValue(document.body, 1)).toBe("P1 hidden summary\nline two");

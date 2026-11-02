@@ -1052,6 +1052,12 @@ function SpecViewBody({
     : selected === undefined
       ? `This file is not part of v${version}`
       : undefined;
+  // Ahead of the cached current version is the cache lagging behind a push,
+  // not an old version.
+  const isCurrent = version >= spec.current_version;
+  const finishReviewReason = isCurrent
+    ? undefined
+    : "Only the current version can be reviewed";
 
   /**
    * The counter beside ↑↓, measured the way they measure. The total comes off
@@ -1339,38 +1345,40 @@ function SpecViewBody({
       </Button>
     </ToolbarSlot>
   );
+  const finishLabel =
+    drafts.drafts.length > 0
+      ? `Finish review (${drafts.drafts.length} staged)`
+      : "Finish review";
   const finishReview = (
-    <Button
-      size="sm"
-      data-toolbar-slot="finish-review"
-      className="shrink-0"
-      aria-label={
-        drafts.drafts.length > 0
-          ? `Finish review (${drafts.drafts.length} staged)`
-          : "Finish review"
-      }
-      onClick={() =>
-        session.setFinishOpen(
-          true,
-          spec.current_version,
-          drafts.drafts.length > 0,
-        )
-      }
-    >
-      Finish review
-      {/* T-190 reserved this box so staging the first draft would not
-          widen the button — at the cost of 24px of hollow beside
-          `Finish review` on every page with no drafts, which is every
-          page most of the time. T-200 takes the one-off shift. */}
-      {drafts.drafts.length > 0 && (
-        <span
-          aria-hidden
-          className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
-        >
-          {drafts.drafts.length}
-        </span>
-      )}
-    </Button>
+    <ToolbarSlot name="finish-review" title={finishReviewReason}>
+      <Button
+        size="sm"
+        className="shrink-0"
+        disabled={finishReviewReason !== undefined}
+        aria-label={
+          finishReviewReason === undefined
+            ? finishLabel
+            : `${finishLabel} — ${finishReviewReason}`
+        }
+        onClick={() =>
+          session.setFinishOpen(true, version, drafts.drafts.length > 0)
+        }
+      >
+        Finish review
+        {/* T-190 reserved this box so staging the first draft would not
+            widen the button — at the cost of 24px of hollow beside
+            `Finish review` on every page with no drafts, which is every
+            page most of the time. T-200 takes the one-off shift. */}
+        {drafts.drafts.length > 0 && (
+          <span
+            aria-hidden
+            className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
+          >
+            {drafts.drafts.length}
+          </span>
+        )}
+      </Button>
+    </ToolbarSlot>
   );
   const viewToggle = (
     <ToolbarSlot name="view-toggle">
@@ -1887,7 +1895,7 @@ function SpecViewBody({
         session={session}
         slug={slug}
         issueNumber={issueNumber}
-        currentVersion={reviewVersion ?? spec.current_version}
+        currentVersion={reviewVersion ?? version}
         drafts={drafts.drafts}
         open={finishOpen}
         pendingVerdict={pendingVerdict}
@@ -1895,7 +1903,7 @@ function SpecViewBody({
         onClose={() => session.setFinishOpen(false)}
         onSubmit={(verdict) =>
           submitReview({
-            currentVersion: reviewVersion ?? spec.current_version,
+            currentVersion: reviewVersion ?? version,
             verdict,
             drafts: drafts.drafts,
           })
