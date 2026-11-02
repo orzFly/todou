@@ -353,7 +353,20 @@ describe("the tray opens what the viewer can show", () => {
     expect(within(dialog).getByRole("heading").textContent).toBe("shot.png");
   });
 
-  it("opens no new tab for a staged file whose page could run script", async () => {
+  it("opens a staged file in a new tab only inside a sandboxed page", async () => {
+    // Every object URL made, with what it was made from.
+    const made = new Map<string, Blob>();
+    const create = URL.createObjectURL.bind(URL);
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      const url = create(blob);
+      made.set(url, blob as Blob);
+      return url;
+    });
+    const urlOf = (name: string) =>
+      [...made].find(
+        ([, blob]) => blob instanceof File && blob.name === name,
+      )?.[0];
+
     const mounted = mountStaging();
     act(() => {
       mounted
@@ -366,19 +379,21 @@ describe("the tray opens what the viewer can show", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "view page.html" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).queryByText("Open in new tab")).toBeNull();
     expect(within(dialog).getByText("Download")).toBeTruthy();
-    const next = () =>
+
+    for (const name of ["page.html", "shot.png", "transform.xsl"]) {
+      expect(within(dialog).getByRole("heading").textContent).toBe(name);
+      const href =
+        within(dialog).getByText("Open in new tab").closest("a")?.href ?? "";
+      const file = urlOf(name);
+      expect(href).not.toBe(file);
+      const page = await made.get(href)?.text();
+      expect(page).toContain(`<iframe sandbox="allow-scripts"`);
+      expect(page).toContain(`src="${file}"`);
       fireEvent.click(
         within(dialog).getByRole("button", { name: "next attachment" }),
       );
-    next();
-    expect(within(dialog).getByText("Open in new tab")).toBeTruthy();
-    next();
-    expect(within(dialog).getByRole("heading").textContent).toBe(
-      "transform.xsl",
-    );
-    expect(within(dialog).queryByText("Open in new tab")).toBeNull();
+    }
   });
 
   it("refuses a token dragged in from another editor's tray", () => {

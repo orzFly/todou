@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import {
   formatSize,
   isPreviewableImage,
+  opensInBrowserTab,
   type PreviewTarget,
   previewKind,
 } from "@/lib/attachment-preview.ts";
@@ -33,6 +34,8 @@ export type StagedFile = {
   token: string;
   /** Object URL for what the viewer can show (image, HTML, text); else none. */
   previewUrl: string | null;
+  /** The sandboxed page "Open in new tab" shows `previewUrl` in. */
+  tabUrl: string | null;
   /**
    * Set once a submit attempt got this file to the server. A later retry
    * (after another file in the batch failed) must not upload it again.
@@ -93,6 +96,28 @@ function deleteDraft(item: StagedFile): Promise<void> {
 /** `deleteDraft`, not awaited: the reader has already moved on. */
 function withdraw(item: StagedFile): void {
   void deleteDraft(item);
+}
+
+/**
+ * A page showing `src` the way the viewer and the /view route do: in a frame
+ * sandboxed to scripts alone, whose opaque origin reaches neither this app's
+ * cookies nor its storage. Opened bare, a staged file's object URL would run
+ * in this app's origin, and the CSP sandbox /view sends needs a response
+ * header an object URL does not have.
+ */
+function sandboxedPage(title: string, src: string): string {
+  const text = title.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  return (
+    `<!doctype html><meta charset="utf-8"><title>${text}</title>` +
+    "<style>html,body{margin:0;height:100%}" +
+    "iframe{display:block;width:100%;height:100%;border:0}</style>" +
+    `<iframe sandbox="allow-scripts" title="${text}" src="${src}"></iframe>`
+  );
+}
+
+function revokeUrls(item: StagedFile): void {
+  if (item.previewUrl !== null) URL.revokeObjectURL(item.previewUrl);
+  if (item.tabUrl !== null) URL.revokeObjectURL(item.tabUrl);
 }
 
 /** The file as it was before any upload: what a withdrawn draft leaves. */
@@ -166,7 +191,7 @@ export function useStagedFiles(): StagedFiles {
     () => () => {
       unbindRef.current?.();
       for (const item of allRef.current) {
-        if (item.previewUrl !== null) URL.revokeObjectURL(item.previewUrl);
+        revokeUrls(item);
         withdraw(item);
       }
     },
@@ -210,14 +235,23 @@ export function useStagedFiles(): StagedFiles {
     const added = list.map((file): StagedFile => {
       const key = stagedKey++;
       const target = { filename: file.name, content_type: file.type };
+      const previewUrl =
+        previewKind({ ...target, size: file.size }) === null
+          ? null
+          : URL.createObjectURL(file);
       return {
         key,
         file,
         token: stagedToken(key, file.name, isPreviewableImage(target)),
-        previewUrl:
-          previewKind({ ...target, size: file.size }) === null
+        previewUrl,
+        tabUrl:
+          previewUrl === null || !opensInBrowserTab(target)
             ? null
-            : URL.createObjectURL(file),
+            : URL.createObjectURL(
+                new Blob([sandboxedPage(file.name, previewUrl)], {
+                  type: "text/html",
+                }),
+              ),
       };
     });
     // Before the dispatch, whose sync has to recognize the new tokens.
@@ -402,9 +436,7 @@ export function useStagedFiles(): StagedFiles {
     // Synchronously, not at the next render: these files belong to a text
     // that was just sent, and an unmount before that render would read the
     // old list and delete them.
-    for (const item of allRef.current) {
-      if (item.previewUrl !== null) URL.revokeObjectURL(item.previewUrl);
-    }
+    for (const item of allRef.current) revokeUrls(item);
     commit([]);
     setReferencedKeys(new Set());
   }
@@ -531,6 +563,7 @@ export function StagedFileTray({
     url: item.previewUrl ?? "",
     content_type: item.file.type,
     size: item.file.size,
+    ...(item.tabUrl === null ? {} : { tabUrl: item.tabUrl }),
   }));
   const index = viewable.findIndex((item) => item.key === viewing);
 

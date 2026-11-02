@@ -36,28 +36,16 @@ import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 import { cn } from "@/lib/utils";
 
 /**
- * What a staged file may open in a tab of its own. Its object URL opens in
- * this app's origin, with none of the sandbox the viewer's iframe or the
- * /view route's CSP gives a file, so only types that cannot carry script
- * qualify; an HTML, SVG or XML file is viewed or downloaded instead.
+ * Where the footer's "Open in new tab" goes, if anywhere. An object URL is
+ * never opened bare: as a page of its own it would run in this app's origin,
+ * outside the sandbox /view gives an uploaded file, so a staged file goes
+ * through the sandboxed page its `tabUrl` names.
  */
-const INERT_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "image/avif",
-  "text/plain",
-  "application/pdf",
-]);
-
-/** Whether the footer offers a new tab for this file. */
-function offersNewTab(target: PreviewTarget): boolean {
-  if (!opensInBrowserTab(target)) return false;
-  return (
-    !target.url.startsWith("blob:") ||
-    INERT_TYPES.has(target.content_type ?? "")
-  );
+function newTabHref(target: PreviewTarget): string | null {
+  if (!opensInBrowserTab(target)) return null;
+  if (target.tabUrl !== undefined) return target.tabUrl;
+  if (target.url.startsWith("blob:")) return null;
+  return viewHrefFromDownload(target.url);
 }
 
 // Long enough to cover a pointer crossing the image between two controls,
@@ -206,6 +194,7 @@ export function AttachmentViewerDialog({
 
   const target = state?.items[state.index];
   const kind = target === undefined ? null : previewKind(target);
+  const tabHref = target === undefined ? null : newTabHref(target);
   // Paging between images tweens from one's height to the next; from
   // anything else, including a closed viewer, the image lands at once.
   useEffect(() => {
@@ -405,9 +394,9 @@ export function AttachmentViewerDialog({
                   .join(" · ")}
               </span>
               <span className="flex shrink-0 items-center gap-3">
-                {offersNewTab(target) && (
+                {tabHref !== null && (
                   <a
-                    href={viewHrefFromDownload(target.url)}
+                    href={tabHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 font-medium hover:underline"
