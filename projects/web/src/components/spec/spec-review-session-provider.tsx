@@ -109,13 +109,19 @@ function SessionOwner({
       const latest = queryClient.getQueryData(
         specQuery(slug, issueNumber).queryKey,
       );
-      if (latest && latest.current_version !== version) {
+      if (latest && latest.current_version > version) {
         toast.error(
-          `Spec v${version} is no longer current. Your review draft has been kept.`,
+          state.summary.trim() === "" && drafts.length === 0
+            ? `Spec v${version} is no longer current.`
+            : `Spec v${version} is no longer current. Your review draft has been kept.`,
         );
         return;
       }
-      if (latest?.review_status === "withdrawn" && verdict !== "comment") {
+      if (
+        latest?.current_version === version &&
+        latest.review_status === "withdrawn" &&
+        verdict !== "comment"
+      ) {
         toast.error(`Spec v${version} has been withdrawn.`);
         return;
       }

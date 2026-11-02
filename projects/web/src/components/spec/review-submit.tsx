@@ -120,11 +120,17 @@ export function ReviewSubmitDialog({
     currentVersion,
   );
   const spec = useQuery(specQuery(slug, issueNumber)).data;
+  // Behind the version under review is the cache lagging behind a push, not
+  // a newer version having replaced it.
   const staleVersion =
     spec !== undefined &&
     spec !== null &&
-    spec.current_version !== currentVersion;
-  const withdrawn = spec?.review_status === "withdrawn";
+    spec.current_version > currentVersion;
+  // The cached status is the cached version's, which a version ahead of it
+  // does not share.
+  const withdrawn =
+    spec?.current_version === currentVersion &&
+    spec.review_status === "withdrawn";
   const summary = controlledSummary ?? localSummary;
   const latestSummary = useRef(summary);
   latestSummary.current = summary;
@@ -174,7 +180,9 @@ export function ReviewSubmitDialog({
   const commentDisabled = pending || staleVersion || saysNothing;
   const verdictDisabled = pending || staleVersion || withdrawn || isPusher;
   const approveDisabled = verdictDisabled || approvedInCurrentRound;
-  const staleTitle = `Spec v${currentVersion} is no longer current. Your review draft has been kept.`;
+  const staleTitle = saysNothing
+    ? `Spec v${currentVersion} is no longer current.`
+    : `Spec v${currentVersion} is no longer current. Your review draft has been kept.`;
   const verdictTitle = staleVersion
     ? staleTitle
     : withdrawn
