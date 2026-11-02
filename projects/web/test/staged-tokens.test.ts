@@ -4,7 +4,6 @@ import {
   resolveStagedTokens,
   stagedKeysIn,
   stagedToken,
-  stripStagedTokens,
   tokenInsertion,
 } from "../src/lib/staged-tokens.ts";
 
@@ -224,24 +223,6 @@ describe("resolveStagedTokens", () => {
   it("leaves keys it was not given, and code, alone", () => {
     expect(resolveStagedTokens(`${T2} \`${T1}\``, resolved)).toBe(
       `${T2} \`${T1}\``,
-    );
-  });
-});
-
-describe("stripStagedTokens", () => {
-  it("takes one neighbouring space with the token", () => {
-    expect(stripStagedTokens(`ab ${T1} cd`, anyKey)).toBe("ab cd");
-    expect(stripStagedTokens(`ab ${T1}`, anyKey)).toBe("ab");
-    expect(stripStagedTokens(`${T1} ${T2}`, anyKey)).toBe("");
-  });
-
-  it("leaves no run of more than two line breaks", () => {
-    expect(stripStagedTokens(`a\n\n${T1}\n\nb`, anyKey)).toBe("a\n\nb");
-  });
-
-  it("returns a text with no token as it was, ends included", () => {
-    expect(stripStagedTokens("  x \n\n\n\n y\n", anyKey)).toBe(
-      "  x \n\n\n\n y\n",
     );
   });
 });

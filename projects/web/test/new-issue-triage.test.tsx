@@ -845,10 +845,10 @@ describe("the new-issue page's edited retries (T-477)", () => {
     const { view, createIssue, updateIssue, error } = start();
     const upload = vi
       .spyOn(api, "uploadAttachment")
-      .mockRejectedValueOnce(new Error("upload unavailable"))
       .mockResolvedValue(attachment);
     const mute = vi
       .spyOn(api, "muteIssue")
+      .mockRejectedValueOnce(new Error("mute unavailable"))
       .mockRejectedValueOnce(new Error("mute unavailable"))
       .mockResolvedValue(undefined);
     fireEvent.change(await screen.findByLabelText("Title"), {
@@ -860,10 +860,10 @@ describe("the new-issue page's edited retries (T-477)", () => {
     await pickNotifications(true);
     await stageNotes(view.container);
     submit();
-    await expectFailure(error, "notes.txt: upload unavailable");
+    await expectFailure(error, "mute unavailable");
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(SLUG, {
       title: "Teh potatos",
-      body: "",
+      body: marker,
       status_id: 2,
       label_ids: [7],
       assignee_ids: [1],
@@ -877,12 +877,18 @@ describe("the new-issue page's edited retries (T-477)", () => {
     await waitFor(() => expect(triageControls().status).toBeNull());
     expect(triageControls().editLabels).toBeNull();
     expect(triageControls().editAssignees).toBeNull();
+    act(() => {
+      cmView(view.container).dispatch({
+        changes: { from: 0, insert: "Notes: " },
+        userEvent: "input.type",
+      });
+    });
     submit();
-    // The body succeeds; a later, independent failure keeps the form here
+    // The body goes out alone; the mute failing again keeps the form here
     // so restoring permission can exercise the saved triage checkpoint.
     await expectFailure(error, "mute unavailable");
     expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, {
-      body: marker,
+      body: `Notes: ${marker}`,
     });
 
     view.setRole("admin");
@@ -890,12 +896,12 @@ describe("the new-issue page's edited retries (T-477)", () => {
     submit();
     expect(await screen.findByText("the card")).toBeTruthy();
     expect(updateIssue.mock.calls).toEqual([
-      [SLUG, 12, { body: marker }],
+      [SLUG, 12, { body: `Notes: ${marker}` }],
       [SLUG, 12, { status_id: 1, label_ids: [], assignee_ids: [] }],
     ]);
     expect(createIssue).toHaveBeenCalledOnce();
-    expect(upload).toHaveBeenCalledTimes(2);
-    expect(mute).toHaveBeenCalledTimes(2);
+    expect(upload).toHaveBeenCalledOnce();
+    expect(mute).toHaveBeenCalledTimes(3);
   });
 
   it("keeps the server's implicit default through retries when the cached default is stale", async () => {
@@ -1038,9 +1044,11 @@ describe("the new-issue page's edited retries (T-477)", () => {
     const file = await stageNotes(view.container);
     submit();
     await expectFailure(error, "edge unavailable");
-    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, {
-      body: `Before the retry. ${marker}`,
-    });
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(
+      SLUG,
+      expect.objectContaining({ body: `Before the retry. ${marker}` }),
+    );
+    expect(updateIssue).not.toHaveBeenCalled();
 
     // Only the text around the file's token changes.
     act(() => {
@@ -1052,14 +1060,36 @@ describe("the new-issue page's edited retries (T-477)", () => {
     submit();
     expect(await screen.findByText("the card")).toBeTruthy();
     expect(updateIssue.mock.calls).toEqual([
-      [SLUG, 12, { body: `Before the retry. ${marker}` }],
       [SLUG, 12, { body: `After the retry. ${marker}` }],
     ]);
-    expect(upload).toHaveBeenCalledExactlyOnceWith(SLUG, 12, file, {
+    expect(upload).toHaveBeenCalledExactlyOnceWith(SLUG, null, file, {
       draft: true,
     });
     expect(createIssue).toHaveBeenCalledOnce();
     expect(addBlockedBy).toHaveBeenCalledTimes(2);
+  });
+
+  it("uploads a file added after the card exists onto that card", async () => {
+    const { view, createIssue, updateIssue, error } = start();
+    const upload = vi
+      .spyOn(api, "uploadAttachment")
+      .mockResolvedValue(attachment);
+    await prepare();
+    cmSetValue(view.container, "Before the retry.");
+    submit();
+    await expectFailure(error, "edge unavailable");
+    expect(upload).not.toHaveBeenCalled();
+
+    const file = await stageNotes(view.container);
+    submit();
+    expect(await screen.findByText("the card")).toBeTruthy();
+    expect(upload).toHaveBeenCalledExactlyOnceWith(SLUG, 12, file, {
+      draft: true,
+    });
+    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, {
+      body: `Before the retry. ${marker}`,
+    });
+    expect(createIssue).toHaveBeenCalledOnce();
   });
 
   it("deletes an uploaded attachment whose token went before the retry", async () => {
@@ -1076,14 +1106,13 @@ describe("the new-issue page's edited retries (T-477)", () => {
     submit();
     expect(await screen.findByText("the card")).toBeTruthy();
     expect(updateIssue.mock.calls).toEqual([
-      [SLUG, 12, { body: `Before the retry. ${marker}` }],
       [SLUG, 12, { body: "Before the retry." }],
     ]);
     expect(remove).toHaveBeenCalledExactlyOnceWith(SLUG, attachment.id);
   });
 
   it.each(["edited fields", "uploaded attachment"] as const)(
-    "does not resend a successful PATCH after another edge failure: %s",
+    "sends nothing twice after another edge failure: %s",
     async (kind) => {
       const { view, createIssue, updateIssue, addBlockedBy, error } = start();
       const upload = vi
@@ -1106,15 +1135,22 @@ describe("the new-issue page's edited retries (T-477)", () => {
           ? "edge unavailable"
           : "edge still unavailable",
       );
-      expect(updateIssue).toHaveBeenCalledExactlyOnceWith(
-        SLUG,
-        12,
-        kind === "uploaded attachment" ? { body: marker } : changes,
-      );
+      if (kind === "uploaded attachment") {
+        // The file went up before the card, which was created linking it.
+        expect(createIssue).toHaveBeenCalledExactlyOnceWith(
+          SLUG,
+          expect.objectContaining({ body: marker }),
+        );
+        expect(updateIssue).not.toHaveBeenCalled();
+      } else {
+        expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, changes);
+      }
       submit();
 
       expect(await screen.findByText("the card")).toBeTruthy();
-      expect(updateIssue).toHaveBeenCalledOnce();
+      expect(updateIssue).toHaveBeenCalledTimes(
+        kind === "uploaded attachment" ? 0 : 1,
+      );
       expect(createIssue).toHaveBeenCalledOnce();
       expect(addBlockedBy).toHaveBeenCalledTimes(
         kind === "uploaded attachment" ? 2 : 3,
@@ -1301,44 +1337,100 @@ describe("the new-issue page's staged files", () => {
     vi.restoreAllMocks();
   });
 
-  it("creates the card without the file's token, then links the file where it was", async () => {
-    const created = { id: 1, number: 12, body: "" } as Issue;
-    const createdWith: string[] = [];
-    vi.spyOn(api, "createIssue").mockImplementation(async (_slug, fields) => {
-      // Read at the call: the page goes on to write the linked body into the
-      // same object for the PATCH.
-      createdWith.push(fields.body);
-      return created;
-    });
-    const updateIssue = vi.spyOn(api, "updateIssue").mockResolvedValue(created);
-    vi.spyOn(api, "uploadAttachment").mockResolvedValue({
-      id: 30,
-      filename: "shot.png",
-      content_type: "image/png",
-      size: 3,
-      url: "/attachments/shot.png",
-      uploader: ME,
-      created_at: "2026-08-01T00:00:00.000Z",
-      aliases: [],
-    });
-    const view = renderAs("admin");
+  const uploaded = (filename: string): Attachment => ({
+    id: filename === "shot.png" ? 30 : 31,
+    filename,
+    content_type: filename === "shot.png" ? "image/png" : "text/plain",
+    size: 3,
+    url: `/attachments/${filename}`,
+    uploader: ME,
+    created_at: "2026-08-01T00:00:00.000Z",
+    aliases: [],
+  });
+
+  /** An image pasted between two words, and a text file picked after them. */
+  async function stageTwo(container: HTMLElement) {
     fireEvent.change(await screen.findByLabelText("Title"), {
       target: { value: "Shots" },
     });
-    cmSetValue(view.container, "before after");
+    cmSetValue(container, "before after");
     act(() => {
-      cmView(view.container).dispatch({ selection: { anchor: 6 } });
+      cmView(container).dispatch({ selection: { anchor: 6 } });
     });
-    cmPasteFiles(view.container, [
-      new File(["png"], "shot.png", { type: "image/png" }),
-    ]);
+    const shot = new File(["png"], "shot.png", { type: "image/png" });
+    cmPasteFiles(container, [shot]);
+    const notes = await stageNotes(container);
+    return { shot, notes };
+  }
+
+  const linked =
+    "before ![shot.png](/attachments/shot.png) after " +
+    "[notes.txt](/attachments/notes.txt)";
+
+  it("uploads the files before the card, and creates it with them linked", async () => {
+    const created = { id: 1, number: 12, body: linked } as Issue;
+    const createIssue = vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    const updateIssue = vi.spyOn(api, "updateIssue").mockResolvedValue(created);
+    const upload = vi
+      .spyOn(api, "uploadAttachment")
+      .mockImplementation(async (_slug, _number, file) => uploaded(file.name));
+    const view = renderAs("admin");
+    const { shot, notes } = await stageTwo(view.container);
 
     fireEvent.click(submitButtonFor());
 
     expect(await screen.findByText("the card")).toBeTruthy();
-    expect(createdWith).toEqual(["before after"]);
-    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, {
-      body: "before ![shot.png](/attachments/shot.png) after",
-    });
+    expect(upload.mock.calls).toEqual([
+      [SLUG, null, shot, { draft: true }],
+      [SLUG, null, notes, { draft: true }],
+    ]);
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(
+      SLUG,
+      expect.objectContaining({ body: linked }),
+    );
+    const createdOrder = createIssue.mock.invocationCallOrder[0] as number;
+    for (const order of upload.mock.invocationCallOrder) {
+      expect(order).toBeLessThan(createdOrder);
+    }
+    expect(updateIssue).not.toHaveBeenCalled();
+  });
+
+  it("creates nothing when an upload fails, and sends only that file again", async () => {
+    const createIssue = vi
+      .spyOn(api, "createIssue")
+      .mockResolvedValue({ id: 1, number: 12, body: linked } as Issue);
+    const upload = vi
+      .spyOn(api, "uploadAttachment")
+      .mockImplementation(async (_slug, _number, file) => uploaded(file.name));
+    upload
+      .mockImplementationOnce(async (_slug, _number, file) =>
+        uploaded(file.name),
+      )
+      .mockRejectedValueOnce(new Error("upload unavailable"));
+    const error = vi.spyOn(toast, "error").mockReturnValue("upload-error");
+    const view = renderAs("admin");
+    const { shot, notes } = await stageTwo(view.container);
+
+    fireEvent.click(submitButtonFor());
+    await waitFor(() =>
+      expect(error).toHaveBeenLastCalledWith("notes.txt: upload unavailable"),
+    );
+    await waitFor(() =>
+      expect((submitButtonFor() as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(createIssue).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Title")).toBeTruthy();
+
+    fireEvent.click(submitButtonFor());
+    expect(await screen.findByText("the card")).toBeTruthy();
+    expect(upload.mock.calls.map((call) => call[2])).toEqual([
+      shot,
+      notes,
+      notes,
+    ]);
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(
+      SLUG,
+      expect.objectContaining({ body: linked }),
+    );
   });
 });

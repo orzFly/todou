@@ -268,10 +268,7 @@ function NewIssueForm({
           );
     const input: IssueCreateInput = {
       title: trimmedTitle,
-      // Created without its file tokens: the files need the card's number
-      // before they can go up, and a failed upload must not leave
-      // `staged:` links on the card it created.
-      body: staging.strip(text),
+      body: text,
       // Empty triage sets ask for nothing on create. PATCH separately checks
       // the current capability: even an empty set is a triage write there.
       status_id:
@@ -284,6 +281,13 @@ function NewIssueForm({
     setSubmitting(true);
     try {
       let issue = createdRef.current;
+      if (staging.pending(text)) {
+        // Before the card exists the files go up as drafts of no card, and
+        // the card is created with its final body, so it is never edited;
+        // a failed upload leaves no card behind. On a retry after creation
+        // they go up onto the card, and a changed body is a real edit.
+        input.body = await staging.resolve(text, slug, issue?.number ?? null);
+      }
       if (!issue) {
         issue = await api.createIssue(slug, input);
         // If creation chose the default, keep the server's actual choice:
@@ -303,11 +307,6 @@ function NewIssueForm({
       // needs its concrete id: undefined would silently leave the old status.
       if (canTriage && input.status_id === undefined) {
         input.status_id = createdDefaultRef.current?.id ?? defaultStatusId;
-      }
-      if (staging.pending(text)) {
-        // Assemble the final body before diffing it. A retry must not
-        // overwrite uploaded markers with the editor's unadorned body.
-        input.body = await staging.resolve(text, slug, issue.number);
       }
       const saved = savedFieldsRef.current;
       if (saved !== null) {

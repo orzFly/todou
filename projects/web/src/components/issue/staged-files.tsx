@@ -24,7 +24,6 @@ import {
   stagedToken,
   stagedTokenDeletions,
   stagedTokenRanges,
-  stripStagedTokens,
   tokenInsertion,
 } from "@/lib/staged-tokens.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
@@ -127,11 +126,14 @@ export type StagedFiles = {
   /**
    * Upload the files `text` places and return it with their tokens pointing
    * at the uploads. Throws on the first failure, the message leading with
-   * the file's name.
+   * the file's name. `issueNumber` null uploads them before their card
+   * exists, for the card created with the returned text to claim.
    */
-  resolve: (text: string, slug: string, issueNumber: number) => Promise<string>;
-  /** `text` without its tokens. */
-  strip: (text: string) => string;
+  resolve: (
+    text: string,
+    slug: string,
+    issueNumber: number | null,
+  ) => Promise<string>;
   /** Forget the files after the text that links them was sent. */
   clear: () => void;
   /** Forget the files because the text is being abandoned (T-568). */
@@ -473,10 +475,17 @@ export function useStagedFiles(): StagedFiles {
   async function resolve(
     text: string,
     slug: string,
-    issueNumber: number,
+    issueNumber: number | null,
   ): Promise<string> {
     const keys = stagedKeysIn(text, knows);
     let touchedServer = false;
+    // A card that does not exist yet has no list to refresh.
+    const refreshList = () => {
+      if (issueNumber === null) return;
+      void queryClient.invalidateQueries({
+        queryKey: ["attachments", slug, issueNumber],
+      });
+    };
     try {
       for (const key of keys) {
         const item = allRef.current.find((p) => p.key === key);
@@ -504,11 +513,7 @@ export function useStagedFiles(): StagedFiles {
       if (orphans.length > 0) {
         // Not awaited: the send need not wait on them. The attachment list
         // refreshes once they are gone.
-        void Promise.all(orphans.map(deleteDraft)).then(() =>
-          queryClient.invalidateQueries({
-            queryKey: ["attachments", slug, issueNumber],
-          }),
-        );
+        void Promise.all(orphans.map(deleteDraft)).then(refreshList);
         commit(
           allRef.current.map((item) =>
             orphans.includes(item) ? forgetUpload(item) : item,
@@ -516,11 +521,7 @@ export function useStagedFiles(): StagedFiles {
         );
       }
     } finally {
-      if (touchedServer) {
-        queryClient.invalidateQueries({
-          queryKey: ["attachments", slug, issueNumber],
-        });
-      }
+      if (touchedServer) refreshList();
     }
     const resolved = new Map<
       string,
@@ -579,7 +580,6 @@ export function useStagedFiles(): StagedFiles {
     remove,
     pending,
     resolve,
-    strip: (text) => stripStagedTokens(text, knows),
     clear,
     discard,
   };

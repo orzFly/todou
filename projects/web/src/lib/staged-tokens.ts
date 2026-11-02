@@ -526,34 +526,3 @@ export function resolveStagedTokens(
   }
   return out + text.slice(last);
 }
-
-/**
- * `text` without its placeholders, spaced as `stagedTokenDeletions` leaves
- * it, and with a run of three or more line breaks left at a deletion cut
- * back to two. The ends are not trimmed.
- */
-export function stripStagedTokens(
-  text: string,
-  known: (key: string) => boolean,
-): string {
-  const deletions = stagedTokenDeletions(text, known);
-  if (deletions.length === 0) return text;
-  let out = "";
-  let last = 0;
-  const joins: number[] = [];
-  for (const { from, to } of deletions) {
-    out += text.slice(last, from);
-    joins.push(out.length);
-    last = to;
-  }
-  out += text.slice(last);
-  // From the end, so the earlier join offsets stay valid.
-  for (const join of joins.reverse()) {
-    let start = join;
-    let end = join;
-    while (out[start - 1] === "\n") start -= 1;
-    while (out[end] === "\n") end += 1;
-    if (end - start > 2) out = `${out.slice(0, start)}\n\n${out.slice(end)}`;
-  }
-  return out;
-}
