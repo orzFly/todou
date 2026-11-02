@@ -37,7 +37,13 @@ import {
 } from "../src/api/queries.ts";
 import { UnsavedChangesGuard } from "../src/components/shared/unsaved-guard.tsx";
 import { NewIssuePage } from "../src/pages/new-issue.tsx";
-import { cmGetValue, cmPressKey, cmSetValue } from "./cm.ts";
+import {
+  cmGetValue,
+  cmPasteFiles,
+  cmPressKey,
+  cmSetValue,
+  cmView,
+} from "./cm.ts";
 import { testQueryClient } from "./render.tsx";
 
 const SLUG = "todou";
@@ -1033,21 +1039,47 @@ describe("the new-issue page's edited retries (T-477)", () => {
     submit();
     await expectFailure(error, "edge unavailable");
     expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, {
-      body: `Before the retry.\n\n${marker}`,
+      body: `Before the retry. ${marker}`,
     });
 
-    cmSetValue(view.container, "After the retry.");
+    // Only the text around the file's token changes.
+    act(() => {
+      cmView(view.container).dispatch({
+        changes: { from: 0, to: "Before".length, insert: "After" },
+        userEvent: "input.type",
+      });
+    });
     submit();
     expect(await screen.findByText("the card")).toBeTruthy();
     expect(updateIssue.mock.calls).toEqual([
-      [SLUG, 12, { body: `Before the retry.\n\n${marker}` }],
-      [SLUG, 12, { body: `After the retry.\n\n${marker}` }],
+      [SLUG, 12, { body: `Before the retry. ${marker}` }],
+      [SLUG, 12, { body: `After the retry. ${marker}` }],
     ]);
     expect(upload).toHaveBeenCalledExactlyOnceWith(SLUG, 12, file, {
       draft: true,
     });
     expect(createIssue).toHaveBeenCalledOnce();
     expect(addBlockedBy).toHaveBeenCalledTimes(2);
+  });
+
+  it("deletes an uploaded attachment whose token went before the retry", async () => {
+    const { view, updateIssue, error } = start();
+    vi.spyOn(api, "uploadAttachment").mockResolvedValue(attachment);
+    const remove = vi.spyOn(api, "deleteAttachment").mockResolvedValue();
+    await prepare();
+    cmSetValue(view.container, "Before the retry.");
+    await stageNotes(view.container);
+    submit();
+    await expectFailure(error, "edge unavailable");
+
+    cmSetValue(view.container, "Before the retry.");
+    submit();
+    expect(await screen.findByText("the card")).toBeTruthy();
+    expect(updateIssue.mock.calls).toEqual([
+      [SLUG, 12, { body: `Before the retry. ${marker}` }],
+      [SLUG, 12, { body: "Before the retry." }],
+    ]);
+    expect(remove).toHaveBeenCalledExactlyOnceWith(SLUG, attachment.id);
   });
 
   it.each(["edited fields", "uploaded attachment"] as const)(
@@ -1209,18 +1241,20 @@ describe("the new-issue page's sidebar-only navigation guard (T-478)", () => {
     const view = renderAs("admin");
     await screen.findByLabelText("Title");
     await stageNotes(view.container);
-    expectEmptyText(view.container);
+    const token = /^\[notes\.txt\]\(staged:\d+\)$/;
+    expect(cmGetValue(view.container)).toMatch(token);
 
     await cancelAndKeepEditing();
     expect(
       screen.getByRole("button", { name: "remove notes.txt" }),
     ).toBeTruthy();
-    expect(screen.getByText("notes.txt")).toBeTruthy();
-    expectEmptyText(view.container);
+    expect(screen.getByTitle("notes.txt")).toBeTruthy();
+    expect(cmGetValue(view.container)).toMatch(token);
     expect(upload).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "remove notes.txt" }));
-    expect(screen.queryByText("notes.txt")).toBeNull();
+    expect(screen.queryByTitle("notes.txt")).toBeNull();
+    expectEmptyText(view.container);
     await cancelCleanly(view.container);
     expect(upload).not.toHaveBeenCalled();
   });
@@ -1259,5 +1293,52 @@ describe("the new-issue page's sidebar-only navigation guard (T-478)", () => {
     expect(mute).toHaveBeenCalledExactlyOnceWith(SLUG, 12, { mode: "forever" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(view.container.querySelector("form")).toBeNull();
+  });
+});
+
+describe("the new-issue page's staged files", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("creates the card without the file's token, then links the file where it was", async () => {
+    const created = { id: 1, number: 12, body: "" } as Issue;
+    const createdWith: string[] = [];
+    vi.spyOn(api, "createIssue").mockImplementation(async (_slug, fields) => {
+      // Read at the call: the page goes on to write the linked body into the
+      // same object for the PATCH.
+      createdWith.push(fields.body);
+      return created;
+    });
+    const updateIssue = vi.spyOn(api, "updateIssue").mockResolvedValue(created);
+    vi.spyOn(api, "uploadAttachment").mockResolvedValue({
+      id: 30,
+      filename: "shot.png",
+      content_type: "image/png",
+      size: 3,
+      url: "/attachments/shot.png",
+      uploader: ME,
+      created_at: "2026-08-01T00:00:00.000Z",
+      aliases: [],
+    });
+    const view = renderAs("admin");
+    fireEvent.change(await screen.findByLabelText("Title"), {
+      target: { value: "Shots" },
+    });
+    cmSetValue(view.container, "before after");
+    act(() => {
+      cmView(view.container).dispatch({ selection: { anchor: 6 } });
+    });
+    cmPasteFiles(view.container, [
+      new File(["png"], "shot.png", { type: "image/png" }),
+    ]);
+
+    fireEvent.click(submitButtonFor());
+
+    expect(await screen.findByText("the card")).toBeTruthy();
+    expect(createdWith).toEqual(["before after"]);
+    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, {
+      body: "before ![shot.png](/attachments/shot.png) after",
+    });
   });
 });

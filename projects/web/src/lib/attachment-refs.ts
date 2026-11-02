@@ -133,6 +133,12 @@ export function attachmentLinkMarker(filename: string, url: string): string {
   return `[${escapeLinkText(filename)}](${url})`;
 }
 
-function escapeLinkText(text: string): string {
-  return text.replaceAll("[", "\\[").replaceAll("]", "\\]");
+/**
+ * A file name as the link text of a marker spells it. Besides the brackets,
+ * a backslash would escape the closing one and a backtick could open a code
+ * span across it; either way the marker would stop being a link.
+ */
+export function escapeLinkText(text: string): string {
+  // \x60 is the backtick, spelled out so the regex holds no literal one.
+  return text.replace(/[\\\x60[\]]/g, "\\$&");
 }

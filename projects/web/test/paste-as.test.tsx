@@ -4,7 +4,7 @@ import { act, render } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
-  type FileClipboardEvent,
+  type EditorFileStaging,
   MarkdownEditor,
 } from "../src/components/shared/markdown-editor.tsx";
 import { prefetchPasteConverter } from "../src/lib/paste/load.ts";
@@ -144,10 +144,18 @@ describe("paste as Markdown", () => {
   });
 
   it("leaves a paste the staged-files handler took as files alone", () => {
-    const onPaste = vi.fn((event: FileClipboardEvent) =>
+    const onPaste = vi.fn<EditorFileStaging["paste"]>((event) =>
       event.preventDefault(),
     );
-    const view = render(<MarkdownEditor onPaste={onPaste} />);
+    const staging: EditorFileStaging = {
+      bind: () => {},
+      sync: () => {},
+      knows: () => false,
+      paste: onPaste,
+      drop: () => false,
+      dragOver: () => {},
+    };
+    const view = render(<MarkdownEditor staging={staging} />);
     place(view.container, "draft");
     paste(view.container, {
       "text/html": '<img src="https://example.com/a.png">',

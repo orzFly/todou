@@ -82,7 +82,6 @@ import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import {
   Composer,
   useCommentComposer,
-  withAttachmentMarkers,
 } from "@/components/timeline/composer.tsx";
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply.tsx";
 import { RevealAllEye } from "@/components/timeline/reveal-all-eye.tsx";
@@ -515,14 +514,10 @@ export function BodyBlock({
     const target = { slug, issueNumber: issue.number };
     const body = (editor.current?.getValue() ?? issue.body).trimEnd();
     let full = body;
-    if (staging.staged.length > 0) {
+    if (staging.pending(body)) {
       setUploading(true);
       try {
-        const markers = await staging.uploadAll(
-          target.slug,
-          target.issueNumber,
-        );
-        full = withAttachmentMarkers(body, markers);
+        full = await staging.resolve(body, target.slug, target.issueNumber);
       } catch (error) {
         toast.error(`Could not upload files: ${(error as Error).message}`);
         return;
@@ -631,9 +626,7 @@ export function BodyBlock({
               placeholder="Describe the issue… (paste or drop files)"
               extensions={refCompletion}
               onSubmit={() => void handleSave()}
-              onPaste={staging.onPaste}
-              onDrop={staging.onDrop}
-              onDragOver={staging.onDragOver}
+              staging={staging.editor}
             />
             <StagedFileTray
               staged={staging.staged}

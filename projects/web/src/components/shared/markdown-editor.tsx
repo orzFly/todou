@@ -13,10 +13,17 @@ import {
 } from "@codemirror/language";
 import { selectNextOccurrence } from "@codemirror/search";
 import type { Extension } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { dropCursor, EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { parser as commonmarkParser, GFM } from "@lezer/markdown";
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 
 import {
   CodeEditor,
@@ -24,8 +31,10 @@ import {
 } from "@/components/shared/code-editor.tsx";
 import { handlePaste, pasteAs } from "@/lib/editor/paste-as.ts";
 import { toggleQuote } from "@/lib/editor/quote-toggle.ts";
+import { stagedTokenAtoms } from "@/lib/editor/staged-token-atoms.ts";
 import { trimTrailingSpaceOnEnter } from "@/lib/editor/trim-trailing-space.ts";
 import { prefetchPasteConverter } from "@/lib/paste/load.ts";
+import { STAGED_TOKEN_TYPE } from "@/lib/staged-tokens.ts";
 
 /**
  * GFM markdown, assembled straight from the Lezer parser rather than through
@@ -47,18 +56,26 @@ const markdownLanguage = new Language(
 export type MarkdownEditorHandle = CodeEditorHandle;
 
 /**
- * Native-event shape shared by React's synthetic events and the DOM's own —
- * the staging handlers in issue/staged-files.tsx are written against this so
- * one hook serves both a <textarea> and CodeMirror's raw listeners.
+ * Where pasted, dropped and picked files go: `useStagedFiles` in
+ * issue/staged-files.tsx implements it, and the editor only calls it. Each
+ * staged file sits in the text as a token, which the editor keeps whole.
  */
-export type FileClipboardEvent = {
-  clipboardData: DataTransfer | null;
-  preventDefault: () => void;
+export type EditorFileStaging = {
+  /** The view once mounted, null once it is gone. */
+  bind: (view: EditorView | null) => void;
+  /** Every document change, programmatic ones included. */
+  sync: (doc: string) => void;
+  /** Whether `key` is a file this editor staged: only those are tokens. */
+  knows: (key: number) => boolean;
+  /** Takes the paste's files, if any, and then default-prevents it. */
+  paste: (event: ClipboardEvent, view: EditorView) => void;
+  /** True when it took the drop's files; CodeMirror's own drop then stays out. */
+  drop: (event: DragEvent, view: EditorView) => boolean;
+  dragOver: (event: DragEvent) => void;
 };
-export type FileDragEvent = {
-  dataTransfer: DataTransfer | null;
-  preventDefault: () => void;
-};
+
+/** One instance for every editor, so reconfiguring never rebuilds it. */
+const dropCursorExtension = dropCursor();
 
 export type MarkdownEditorProps = {
   /** Read once, at mount: the editor owns its document from then on. */
@@ -85,9 +102,11 @@ export type MarkdownEditorProps = {
    * editor, not in React.
    */
   onChange?: (value: string) => void;
-  onPaste?: (event: FileClipboardEvent) => void;
-  onDrop?: (event: FileDragEvent) => void;
-  onDragOver?: (event: FileDragEvent) => void;
+  /**
+   * File staging. Read at mount for the token extension, which is installed
+   * only for an editor that had it then.
+   */
+  staging?: EditorFileStaging;
   /** Extra CodeMirror extensions, appended last so they can override. */
   extensions?: Extension;
   /** Height is the caller's business: pass the min-height/max-height here. */
@@ -165,9 +184,7 @@ export const MarkdownEditor = forwardRef<
     onSubmit,
     onCancel,
     onChange,
-    onPaste,
-    onDrop,
-    onDragOver,
+    staging,
     extensions,
     className,
   },
@@ -175,11 +192,25 @@ export const MarkdownEditor = forwardRef<
 ) {
   // Keymap and DOM handlers are built once but must always call today's
   // props, not the ones captured at mount.
-  const handlers = useRef({ onSubmit, onCancel, onPaste, onDrop, onDragOver });
-  handlers.current = { onSubmit, onCancel, onPaste, onDrop, onDragOver };
+  const handlers = useRef({ onSubmit, onCancel, staging });
+  handlers.current = { onSubmit, onCancel, staging };
   useImperativeHandle(ref, () => innerRef.current as MarkdownEditorHandle, []);
 
   const innerRef = useRef<CodeEditorHandle | null>(null);
+
+  // Built once, like the handlers: a new instance would make the compartment
+  // rebuild the chips on every render.
+  const [tokenExtension] = useState(() =>
+    staging === undefined
+      ? []
+      : stagedTokenAtoms(
+          (key) => handlers.current.staging?.knows(key) ?? false,
+        ),
+  );
+  const bindView = useCallback(
+    (view: EditorView | null) => handlers.current.staging?.bind(view),
+    [],
+  );
 
   useEffect(() => {
     const prefetch = () => void prefetchPasteConverter().catch(() => {});
@@ -234,24 +265,36 @@ export const MarkdownEditor = forwardRef<
       ]}
       language={markdownLanguage}
       highlightStyle={highlightStyle}
-      onChange={onChange}
+      onView={bindView}
+      onChange={(value) => {
+        handlers.current.staging?.sync(value);
+        onChange?.(value);
+      }}
       extensions={[
         pasteAs(),
+        dropCursorExtension,
+        tokenExtension,
         EditorView.domEventHandlers({
           // Staged files first: a paste they take as files is
           // default-prevented, and handlePaste then leaves it alone. Both
           // live in this one handler because the order of two separate
           // handlers is decided by extension precedence, not by position.
           paste: (event, view) => {
-            handlers.current.onPaste?.(event);
+            handlers.current.staging?.paste(event, view);
             return handlePaste(view, event);
           },
-          drop: (event) => {
-            handlers.current.onDrop?.(event);
+          drop: (event, view) => {
+            const staging = handlers.current.staging;
+            if (staging !== undefined) return staging.drop(event, view);
+            // A tray's token means nothing to an editor that stages no files.
+            if (event.dataTransfer?.types.includes(STAGED_TOKEN_TYPE)) {
+              event.preventDefault();
+              return true;
+            }
             return false;
           },
           dragover: (event) => {
-            handlers.current.onDragOver?.(event);
+            handlers.current.staging?.dragOver(event);
             return false;
           },
         }),

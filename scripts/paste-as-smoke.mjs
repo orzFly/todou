@@ -445,7 +445,8 @@ async function composerChecks(page) {
       failures.push(failure("toolbar-missing", "no Markdown for code", at));
   } else failures.push(failure("copy-did-not-happen", "vscode", at));
 
-  // 6. A pasted image is staged as a file and leaves the document alone.
+  // 6. A pasted image is staged as a file and goes in at the caret as its
+  // token, under the name that replaced the clipboard's default (T-269).
   const wrote = await evaluate(page, async () => {
     const canvas = document.createElement("canvas");
     canvas.width = 4;
@@ -471,7 +472,10 @@ async function composerChecks(page) {
     await key(page, "v", { modifiers: CTRL });
     await sleep(300);
     const got = await docOf(page, editor);
-    if (got !== "draft")
+    if (
+      typeof got !== "string" ||
+      !/^draft !\[image-\d{8}-\d{6}-[0-9a-f]{4}\.png\]\(staged:\d+\)$/.test(got)
+    )
       failures.push(failure("6-file-doc", JSON.stringify(got), at));
     const after = await evaluate(
       page,

@@ -1,11 +1,6 @@
-import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { undo } from "@codemirror/commands";
+import { QueryClient } from "@tanstack/react-query";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { Attachment, DeletedAttachment } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -18,12 +13,9 @@ import {
   AttachmentEventLink,
   AttachmentList,
 } from "../src/components/issue/attachment-list.tsx";
-import {
-  StagedFileTray,
-  useStagedFiles,
-} from "../src/components/issue/staged-files.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+import { mountStaging } from "./staging.tsx";
 
 vi.mock("@pierre/diffs/react", () => ({
   CodeView: () => null,
@@ -182,36 +174,19 @@ describe("a file deleted from this card (T-567)", () => {
   });
 });
 
-type Staged = ReturnType<typeof useStagedFiles>;
-
-function mountTray(): { hook: () => Staged; unmount: () => void } {
-  let latest: Staged | null = null;
-  function Harness() {
-    const staged = useStagedFiles();
-    latest = staged;
-    return <StagedFileTray staged={staged.staged} onRemove={staged.remove} />;
-  }
-  const view = render(
-    <QueryClientProvider client={testQueryClient()}>
-      <Harness />
-    </QueryClientProvider>,
-  );
-  return { hook: () => latest as Staged, unmount: view.unmount };
-}
-
 async function stagedAndUploaded() {
   const upload = vi
     .spyOn(api, "uploadAttachment")
     .mockResolvedValue(file(813, "shot.png"));
   const remove = vi.spyOn(api, "deleteAttachment").mockResolvedValue();
-  const tray = mountTray();
+  const mounted = mountStaging();
   act(() => {
-    tray.hook().stage([new File(["bytes"], "shot.png")]);
+    mounted.hook().stage([new File(["bytes"], "shot.png")]);
   });
   await act(async () => {
-    await tray.hook().uploadAll("b", 7);
+    await mounted.hook().resolve(mounted.text(), "b", 7);
   });
-  return { ...tray, upload, remove };
+  return { ...mounted, upload, remove };
 }
 
 describe("an editor's uploads are drafts until sent (T-568)", () => {
@@ -246,5 +221,65 @@ describe("an editor's uploads are drafts until sent (T-568)", () => {
     act(() => hook().clear());
     unmount();
     expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("deletes the draft of a file whose token went before the next send", async () => {
+    const { hook, cm, text, remove } = await stagedAndUploaded();
+    act(() => {
+      cm().dispatch({
+        changes: { from: 0, to: text().length, insert: "no file" },
+      });
+    });
+    let sent = "";
+    await act(async () => {
+      sent = await hook().resolve(text(), "b", 7);
+    });
+    expect(sent).toBe("no file");
+    expect(remove).toHaveBeenCalledWith("b", 813);
+  });
+
+  it("uploads again a file whose draft a send deleted, once undo brings it back", async () => {
+    const { hook, cm, text, upload } = await stagedAndUploaded();
+    const token = text();
+    act(() => {
+      cm().dispatch({ changes: { from: 0, to: token.length, insert: "x" } });
+    });
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    await act(async () => {
+      await hook().resolve(text(), "b", 7);
+    });
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["attachments", "b", 7],
+      }),
+    );
+    act(() => {
+      undo(cm());
+    });
+    expect(text()).toBe(token);
+    upload.mockResolvedValue(file(814, "shot.png"));
+    let sent = "";
+    await act(async () => {
+      sent = await hook().resolve(text(), "b", 7);
+    });
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(sent).toBe(`![shot.png](${file(814, "shot.png").url})`);
+  });
+
+  it("uploads again a file that undo brought back after × deleted its draft", async () => {
+    const { hook, cm, text, upload, remove } = await stagedAndUploaded();
+    const key = hook().staged[0]?.key as number;
+    act(() => hook().remove(key));
+    expect(remove).toHaveBeenCalledWith("b", 813);
+    act(() => {
+      undo(cm());
+    });
+    upload.mockResolvedValue(file(814, "shot.png"));
+    let sent = "";
+    await act(async () => {
+      sent = await hook().resolve(text(), "b", 7);
+    });
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(sent).toBe(`![shot.png](${file(814, "shot.png").url})`);
   });
 });

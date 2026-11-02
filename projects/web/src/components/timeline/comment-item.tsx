@@ -32,7 +32,6 @@ import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { ActionItem } from "@/components/timeline/action-item.tsx";
-import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
 import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
 import { Button } from "@/components/ui/button";
@@ -198,14 +197,10 @@ function PlainCommentItem({
     // a real request, and by the time it answers the page may be showing
     // another card, whose comment of the same id this PATCH would overwrite.
     let full = body;
-    if (staging.staged.length > 0) {
+    if (staging.pending(body)) {
       setUploading(true);
       try {
-        const markers = await staging.uploadAll(
-          target.slug,
-          target.issueNumber,
-        );
-        full = withAttachmentMarkers(body, markers);
+        full = await staging.resolve(body, target.slug, target.issueNumber);
       } catch (error) {
         toast.error(`Could not upload files: ${(error as Error).message}`);
         return;
@@ -385,9 +380,7 @@ function PlainCommentItem({
               className="min-h-28"
               placeholder="Edit comment… (paste or drop files)"
               extensions={refCompletion}
-              onPaste={staging.onPaste}
-              onDrop={staging.onDrop}
-              onDragOver={staging.onDragOver}
+              staging={staging.editor}
               onSubmit={() => void handleSave()}
               onCancel={() => {
                 staging.discard();

@@ -3,9 +3,11 @@ import { render } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  type EditorFileStaging,
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "../src/components/shared/markdown-editor.tsx";
+import { STAGED_TOKEN_TYPE } from "../src/lib/staged-tokens.ts";
 import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import {
   cmGetValue,
@@ -137,18 +139,45 @@ describe("MarkdownEditor", () => {
   });
 
   it("forwards paste and drop to the staging handlers", () => {
-    const onPaste = vi.fn();
-    const onDrop = vi.fn();
-    const view = render(<MarkdownEditor onPaste={onPaste} onDrop={onDrop} />);
-    const content = cmView(view.container).contentDOM;
-    content.dispatchEvent(
+    const staging = stagingSpy();
+    const view = render(<MarkdownEditor staging={staging} />);
+    const cm = cmView(view.container);
+    cm.contentDOM.dispatchEvent(
       new Event("paste", { bubbles: true, cancelable: true }),
     );
-    content.dispatchEvent(
+    cm.contentDOM.dispatchEvent(
       new Event("drop", { bubbles: true, cancelable: true }),
     );
-    expect(onPaste).toHaveBeenCalledOnce();
-    expect(onDrop).toHaveBeenCalledOnce();
+    expect(staging.paste).toHaveBeenCalledOnce();
+    expect(staging.paste).toHaveBeenCalledWith(expect.any(Event), cm);
+    expect(staging.drop).toHaveBeenCalledOnce();
+    expect(staging.drop).toHaveBeenCalledWith(expect.any(Event), cm);
+  });
+
+  it("refuses a staged-file token dropped on an editor that stages no files", () => {
+    const view = render(<MarkdownEditor initialValue="text" />);
+    const event = new MouseEvent("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", {
+      value: {
+        types: [STAGED_TOKEN_TYPE, "text/plain"],
+        files: [],
+        getData: () => "![shot.png](staged:1)",
+      },
+    });
+    cmView(view.container).contentDOM.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(cmGetValue(view.container)).toBe("text");
+  });
+
+  it("binds staging to its view while mounted and reports each change", () => {
+    const staging = stagingSpy();
+    const view = render(<MarkdownEditor staging={staging} />);
+    const cm = cmView(view.container);
+    expect(staging.bind).toHaveBeenLastCalledWith(cm);
+    cmSetValue(view.container, "typed");
+    expect(staging.sync).toHaveBeenLastCalledWith("typed");
+    view.unmount();
+    expect(staging.bind).toHaveBeenLastCalledWith(null);
   });
 
   it("names the field for assistive tech", () => {
@@ -277,3 +306,14 @@ describe("the editor reports unsaved work", () => {
     expect(hasUnsavedWork()).toBe(true);
   });
 });
+
+function stagingSpy() {
+  return {
+    bind: vi.fn<EditorFileStaging["bind"]>(),
+    sync: vi.fn<EditorFileStaging["sync"]>(),
+    knows: vi.fn<EditorFileStaging["knows"]>(() => false),
+    paste: vi.fn<EditorFileStaging["paste"]>(),
+    drop: vi.fn<EditorFileStaging["drop"]>(() => false),
+    dragOver: vi.fn<EditorFileStaging["dragOver"]>(),
+  };
+}

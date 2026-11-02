@@ -35,6 +35,31 @@ import {
 import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 import { cn } from "@/lib/utils";
 
+/**
+ * What a staged file may open in a tab of its own. Its object URL opens in
+ * this app's origin, with none of the sandbox the viewer's iframe or the
+ * /view route's CSP gives a file, so only types that cannot carry script
+ * qualify; an HTML, SVG or XML file is viewed or downloaded instead.
+ */
+const INERT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "text/plain",
+  "application/pdf",
+]);
+
+/** Whether the footer offers a new tab for this file. */
+function offersNewTab(target: PreviewTarget): boolean {
+  if (!opensInBrowserTab(target)) return false;
+  return (
+    !target.url.startsWith("blob:") ||
+    INERT_TYPES.has(target.content_type ?? "")
+  );
+}
+
 // Long enough to cover a pointer crossing the image between two controls,
 // short enough that leaving for good does not read as the viewer lagging.
 const RELEASE_DELAY = 400;
@@ -48,8 +73,8 @@ export type ViewerState = {
 
 type TextPaneProps = {
   target: PreviewTarget;
-  slug: string;
-  issueNumber: number;
+  slug?: string;
+  issueNumber?: number;
   toolbar: HTMLElement | null;
 };
 
@@ -169,8 +194,9 @@ export function AttachmentViewerDialog({
   state: ViewerState | null;
   onNavigate: (index: number) => void;
   onClose: () => void;
-  slug: string;
-  issueNumber: number;
+  /** Markdown context for a text file; a staged file has no card yet. */
+  slug?: string;
+  issueNumber?: number;
 }) {
   // "Maximize" fills the browser window without entering system fullscreen
   // (the form the reviewer picked on T-58); the dialog stays a modal.
@@ -379,7 +405,7 @@ export function AttachmentViewerDialog({
                   .join(" · ")}
               </span>
               <span className="flex shrink-0 items-center gap-3">
-                {opensInBrowserTab(target) && (
+                {offersNewTab(target) && (
                   <a
                     href={viewHrefFromDownload(target.url)}
                     target="_blank"

@@ -219,11 +219,6 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
   };
 }
 
-/** Draft text + freshly-uploaded attachment markers → one comment body. */
-export function withAttachmentMarkers(body: string, markers: string[]): string {
-  return [body, markers.join("\n")].filter((part) => part !== "").join("\n\n");
-}
-
 /**
  * What the submit button says. It names what is about to happen, so a draft
  * that is nothing but commands never looks like it will post a comment, and
@@ -611,14 +606,10 @@ export function Composer({
     const kind: CommentKind = current.action === null ? "comment" : "action";
 
     let full = current.action ?? current.body;
-    if (staging.staged.length > 0) {
+    if (staging.pending(full)) {
       setUploading(true);
       try {
-        const markers = await staging.uploadAll(
-          target.slug,
-          target.issueNumber,
-        );
-        full = withAttachmentMarkers(current.body, markers);
+        full = await staging.resolve(full, target.slug, target.issueNumber);
       } catch (error) {
         // Draft and staged images stay put for another attempt.
         toast.error(`Could not upload files: ${(error as Error).message}`);
@@ -743,9 +734,7 @@ export function Composer({
           className={cn("max-h-[40dvh]", expanded && "min-h-16")}
           extensions={extensions}
           onChange={setDraft}
-          onPaste={staging.onPaste}
-          onDrop={staging.onDrop}
-          onDragOver={staging.onDragOver}
+          staging={staging.editor}
           onSubmit={() => void submit()}
         />
         {/* A phone's way into a folded box it cannot see (T-532). A layer of

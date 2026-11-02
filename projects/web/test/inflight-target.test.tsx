@@ -52,7 +52,7 @@ import { SpecCommentAnchorCard } from "../src/components/timeline/spec-comment-c
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { BodyBlock } from "../src/pages/issue-detail.tsx";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
-import { cmPressKey, cmSetValue, cmView } from "./cm.ts";
+import { cmDropFiles, cmPressKey, cmSetValue, cmView } from "./cm.ts";
 import { renderWithProviders } from "./render.tsx";
 
 const me: Me = {
@@ -218,15 +218,7 @@ function Page() {
   );
 }
 
-const dropBox = (container: HTMLElement) =>
-  fireEvent.drop(cmView(container).contentDOM, {
-    dataTransfer: {
-      files: [shot()],
-      types: [],
-      items: [],
-      getData: () => "",
-    } as unknown as DataTransfer,
-  });
+const dropBox = (container: HTMLElement) => cmDropFiles(container, [shot()]);
 
 describe("a staged upload aimed at a card the page then left", () => {
   it("lands the attachment and the comment it rides on on the same card", async () => {
@@ -243,8 +235,10 @@ describe("a staged upload aimed at a card the page then left", () => {
       </QueryClientProvider>,
     );
 
-    dropBox(view.container);
+    // Text first: the drop places a token in it, which a later setValue of
+    // the whole document would overwrite.
     cmSetValue(view.container, "a reply for card 7");
+    dropBox(view.container);
     await waitFor(() => expect(uploadAttachment).not.toHaveBeenCalled());
 
     const submit = view.container.querySelector<HTMLButtonElement>(

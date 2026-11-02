@@ -27,10 +27,6 @@ import {
   projectsQuery,
   statusesQuery,
 } from "../src/api/queries.ts";
-import {
-  type StagedFiles,
-  useStagedFiles,
-} from "../src/components/issue/staged-files.tsx";
 import { MarkdownEditor } from "../src/components/shared/markdown-editor.tsx";
 import { AppShell } from "../src/components/shell.tsx";
 import { useCommentComposer } from "../src/components/timeline/composer.tsx";
@@ -49,6 +45,7 @@ import {
 } from "./app-router.tsx";
 import { cmSetValue } from "./cm.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+import { mountStaging } from "./staging.tsx";
 
 const me: Me = {
   id: 1,
@@ -385,18 +382,19 @@ describe("the surfaces a form loses along with its text", () => {
   });
 
   it("counts a staged attachment that was never uploaded", async () => {
-    const tray = mountStagedFiles();
+    // The editor's own dirty source is off, so only the staged file counts.
+    const mounted = mountStaging({ ownerManagedDirty: true });
     expect(hasUnsavedWork()).toBe(false);
 
     act(() => {
-      tray.stage([new File(["bytes"], "shot.png", { type: "image/png" })]);
+      mounted
+        .hook()
+        .stage([new File(["bytes"], "shot.png", { type: "image/png" })]);
     });
 
     expect(hasUnsavedWork()).toBe(true);
 
-    act(() => {
-      tray.remove(tray.staged[0]?.key ?? 0);
-    });
+    fireEvent.click(screen.getByRole("button", { name: "remove shot.png" }));
     expect(hasUnsavedWork()).toBe(false);
   });
 
@@ -523,27 +521,6 @@ function mountQuestionsCard() {
       />
     </QueryClientProvider>,
   );
-}
-
-function mountStagedFiles() {
-  let latest: StagedFiles | null = null;
-  function Harness() {
-    latest = useStagedFiles();
-    return null;
-  }
-  render(
-    <QueryClientProvider client={testQueryClient()}>
-      <Harness />
-    </QueryClientProvider>,
-  );
-  return {
-    get staged() {
-      if (latest === null) throw new Error("harness did not mount");
-      return latest.staged;
-    },
-    stage: (files: File[]) => latest?.stage(files),
-    remove: (key: number) => latest?.remove(key),
-  };
 }
 
 const questionComponent: QuestionsComponent = {
