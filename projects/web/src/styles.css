@@ -172,6 +172,19 @@ diffs-container {
     color-scheme: dark;
 }
 
+/* An annotation is light DOM slot content, and slot content inherits from
+   the slot it is assigned to, which sits under pierre's shadow <pre>. So a
+   comment drawn there took the code font, pierre's monospace fallback chain,
+   since the app sets no --diffs-font-family. Everywhere else the app shows
+   the same comment (rendered view, hover card, timeline), its header and
+   body are Geist and monospace is kept for source text. Set on pierre's
+   slot wrapper rather than on a component, so every kind of annotation
+   drawn here (comments and drafts) gets it without remembering to. The
+   code lines live in the shadow root, out of this rule's reach. */
+diffs-container > [slot^="annotation-"] {
+    font-family: var(--font-sans);
+}
+
 /* ---- Named themes (T-36): picotera ports translated into our token set by
    a fixed mapping (surface→background/card, ink→foreground, accent→primary
    and ring, accent-faint/ink→accent pair, err→destructive, line→border).

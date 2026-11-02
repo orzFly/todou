@@ -1473,6 +1473,16 @@ async function specRouteRun(
           if (!document.fonts.check('12px "Geist Variable"')) {
             return { ready: true, error: "Geist Variable did not load" };
           }
+          // pierre draws an annotation as slot content inside its code view,
+          // so a header can inherit the code font, which is whatever
+          // monospace the machine has. The baselines and the self-test's
+          // proof assume Geist, so a header in another font is a fixture
+          // failure naming the font it got: the clean pages report it, where
+          // a self-test row would only read NOT PROVEN. The row is still
+          // marked and measured, so it is not reported as missing too.
+          const offFont = [author, peer, idPart, timePart]
+            .map((part) => getComputedStyle(part).fontFamily)
+            .find((family) => !family.includes("Geist Variable"));
           candidate.dataset.baselineCase = caseId;
           author.dataset.baselineParticipant = "author";
           peer.dataset.baselineParticipant = "peer";
@@ -1544,6 +1554,11 @@ async function specRouteRun(
             );
           return {
             ready: true,
+            ...(offFont
+              ? {
+                  error: `${caseId} header renders in ${offFont}, not Geist Variable`,
+                }
+              : {}),
             overflow: {
               display: getComputedStyle(candidate).display,
               scrollWidth: candidate.scrollWidth,
