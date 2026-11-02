@@ -8,8 +8,8 @@ import {
   tokenInsertion,
 } from "../src/lib/staged-tokens.ts";
 
-const T1 = "![shot.png](staged:1)";
-const T2 = "[notes.md](staged:2)";
+const T1 = "![shot.png](staged:1-a)";
+const T2 = "[notes.md](staged:2-a)";
 
 /**
  * Insert `tokens` into `marked`, where `‸` is the caret or `«…»` the
@@ -38,25 +38,32 @@ const anyKey = () => true;
 
 describe("stagedToken", () => {
   it("embeds an image and links anything else, escaping brackets", () => {
-    expect(stagedToken(1, "shot.png", true)).toBe(T1);
-    expect(stagedToken(2, "notes.md", false)).toBe(T2);
-    expect(stagedToken(3, "a[1].png", true)).toBe("![a\\[1\\].png](staged:3)");
+    expect(stagedToken("1-a", "shot.png", true)).toBe(T1);
+    expect(stagedToken("2-a", "notes.md", false)).toBe(T2);
+    expect(stagedToken("3-a", "a[1].png", true)).toBe(
+      "![a\\[1\\].png](staged:3-a)",
+    );
   });
 
   it("stays a token for a name that reads like an address", () => {
     expect(
-      stagedKeysIn(stagedToken(5, "www.example.com.png", true), anyKey),
-    ).toEqual([5]);
+      stagedKeysIn(stagedToken("5-a", "www.example.com.png", true), anyKey),
+    ).toEqual(["5-a"]);
     expect(
-      stagedKeysIn(stagedToken(6, "bob@example.com.pdf", false), anyKey),
-    ).toEqual([6]);
+      stagedKeysIn(stagedToken("6-a", "bob@example.com.pdf", false), anyKey),
+    ).toEqual(["6-a"]);
   });
 
   it("stays a token for a name with a backslash or a backtick", () => {
-    expect(stagedKeysIn(stagedToken(3, "a\\", true), anyKey)).toEqual([3]);
+    expect(stagedKeysIn(stagedToken("3-a", "a\\", true), anyKey)).toEqual([
+      "3-a",
+    ]);
     expect(
-      stagedKeysIn(`${stagedToken(4, "x`y.png", true)} then \`code\``, anyKey),
-    ).toEqual([4]);
+      stagedKeysIn(
+        `${stagedToken("4-a", "x`y.png", true)} then \`code\``,
+        anyKey,
+      ),
+    ).toEqual(["4-a"]);
   });
 });
 
@@ -184,7 +191,7 @@ describe("tokenInsertion: after a block", () => {
 describe("resolveStagedTokens", () => {
   const url = "/api/projects/p/attachments/813/download/shot-813.png";
   const resolved = new Map([
-    [1, { url, filename: "shot-813.png", insertedName: "shot.png" }],
+    ["1-a", { url, filename: "shot-813.png", insertedName: "shot.png" }],
   ]);
 
   it("points the token at the upload, under the server's name", () => {
@@ -194,24 +201,24 @@ describe("resolveStagedTokens", () => {
   });
 
   it("keeps link text the reader rewrote", () => {
-    expect(resolveStagedTokens("![the bug](staged:1)", resolved)).toBe(
+    expect(resolveStagedTokens("![the bug](staged:1-a)", resolved)).toBe(
       `![the bug](${url})`,
     );
   });
 
   it("resolves every place one key appears", () => {
-    expect(resolveStagedTokens(`${T1}\n\n[see](staged:1)`, resolved)).toBe(
+    expect(resolveStagedTokens(`${T1}\n\n[see](staged:1-a)`, resolved)).toBe(
       `![shot-813.png](${url})\n\n[see](${url})`,
     );
   });
 
   it("matches a name whose brackets the token escaped", () => {
     const named = new Map([
-      [3, { url, filename: "a[2].png", insertedName: "a[1].png" }],
+      ["3-a", { url, filename: "a[2].png", insertedName: "a[1].png" }],
     ]);
-    expect(resolveStagedTokens(stagedToken(3, "a[1].png", true), named)).toBe(
-      `![a\\[2\\].png](${url})`,
-    );
+    expect(
+      resolveStagedTokens(stagedToken("3-a", "a[1].png", true), named),
+    ).toBe(`![a\\[2\\].png](${url})`);
   });
 
   it("leaves keys it was not given, and code, alone", () => {
@@ -242,23 +249,25 @@ describe("stripStagedTokens", () => {
 describe("stagedKeysIn", () => {
   it("lists keys in order of first appearance, once each", () => {
     expect(
-      stagedKeysIn("![a](staged:2) ![b](staged:1) [c](staged:2)", anyKey),
-    ).toEqual([2, 1]);
+      stagedKeysIn("![a](staged:2-a) ![b](staged:1-a) [c](staged:2-a)", anyKey),
+    ).toEqual(["2-a", "1-a"]);
   });
 
   it("ignores code, and counts a plain link", () => {
-    expect(stagedKeysIn("`![x](staged:1)`", anyKey)).toEqual([]);
-    expect(stagedKeysIn("```\n![x](staged:1)\n```", anyKey)).toEqual([]);
-    expect(stagedKeysIn("[n](staged:2)", anyKey)).toEqual([2]);
+    expect(stagedKeysIn("`![x](staged:1-a)`", anyKey)).toEqual([]);
+    expect(stagedKeysIn("```\n![x](staged:1-a)\n```", anyKey)).toEqual([]);
+    expect(stagedKeysIn("[n](staged:2-a)", anyKey)).toEqual(["2-a"]);
   });
 
   it("ignores a key the editor never staged", () => {
-    expect(stagedKeysIn("![x](staged:9)", (key) => key !== 9)).toEqual([]);
+    expect(stagedKeysIn("![x](staged:9-a)", (key) => key !== "9-a")).toEqual(
+      [],
+    );
   });
 
   it("answers each filter for itself on the same text", () => {
-    const text = "![x](staged:9) ![y](staged:8)";
-    expect(stagedKeysIn(text, anyKey)).toEqual([9, 8]);
-    expect(stagedKeysIn(text, (key) => key !== 9)).toEqual([8]);
+    const text = "![x](staged:9-a) ![y](staged:8-a)";
+    expect(stagedKeysIn(text, anyKey)).toEqual(["9-a", "8-a"]);
+    expect(stagedKeysIn(text, (key) => key !== "9-a")).toEqual(["8-a"]);
   });
 });

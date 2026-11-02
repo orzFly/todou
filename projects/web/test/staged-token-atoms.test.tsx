@@ -8,14 +8,14 @@ import {
 } from "../src/components/shared/markdown-editor.tsx";
 import { cmGetValue, cmPressKey, cmView } from "./cm.ts";
 
-const TOKEN = "![shot.png](staged:1)";
+const TOKEN = "![shot.png](staged:1-k3f9)";
 
-/** An editor that staged key 1 and nothing else, caret at `caret`. */
+/** An editor that staged `1-k3f9` and nothing else, caret at `caret`. */
 function mount(doc: string, caret: number) {
   const staging: EditorFileStaging = {
     bind: () => {},
     sync: () => {},
-    knows: (key) => key === 1,
+    knows: (key) => key === "1-k3f9",
     paste: () => {},
     drop: () => false,
     dragOver: () => {},
@@ -79,13 +79,13 @@ describe("a staged-file token is one unit", () => {
   });
 
   it("lets undo take back an edit beside it without growing it", () => {
-    const doc = "a [x](staged:1)";
+    const doc = "a [x](staged:1-k3f9)";
     const { cm } = mount(doc, 0);
     cm.dispatch({
       changes: { from: 2, insert: "!" },
       userEvent: "input.type",
     });
-    expect(cm.state.doc.toString()).toBe("a ![x](staged:1)");
+    expect(cm.state.doc.toString()).toBe("a ![x](staged:1-k3f9)");
     undo(cm);
     expect(cm.state.doc.toString()).toBe(doc);
   });
@@ -104,16 +104,16 @@ describe("a staged-file token is one unit", () => {
 
   it("wears a chip, which other links and unknown keys do not", () => {
     const attachment = "![x](/api/projects/p/attachments/1/download/x.png)";
-    const unknown = "![x](staged:9)";
+    const unknown = "![x](staged:9-k3f9)";
     const { cm } = mount(`${TOKEN} ${attachment} ${unknown}`, 0);
     const chips = [...cm.contentDOM.querySelectorAll(".cm-staged-token")];
     expect(chips.map((chip) => chip.textContent)).toEqual([TOKEN]);
   });
 
   it("leaves an unknown key's link to ordinary Backspace", () => {
-    const doc = "a ![x](staged:9)";
+    const doc = "a ![x](staged:9-k3f9)";
     const { root } = mount(doc, doc.length);
     cmPressKey(root, "Backspace");
-    expect(cmGetValue(root)).toBe("a ![x](staged:9");
+    expect(cmGetValue(root)).toBe("a ![x](staged:9-k3f9");
   });
 });

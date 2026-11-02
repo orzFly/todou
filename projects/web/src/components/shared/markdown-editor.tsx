@@ -66,7 +66,7 @@ export type EditorFileStaging = {
   /** Every document change, programmatic ones included. */
   sync: (doc: string) => void;
   /** Whether `key` is a file this editor staged: only those are tokens. */
-  knows: (key: number) => boolean;
+  knows: (key: string) => boolean;
   /** Takes the paste's files, if any, and then default-prevents it. */
   paste: (event: ClipboardEvent, view: EditorView) => void;
   /** True when it took the drop's files; CodeMirror's own drop then stays out. */

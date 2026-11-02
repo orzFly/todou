@@ -25,29 +25,39 @@ type SyntaxNode = ReturnType<
   ReturnType<typeof gfmParser.parse>["resolveInner"]
 >;
 
-const STAGED_URL = /^staged:(\d+)$/;
+/**
+ * `staged:<n>-<tag>`: `n` reads as which file of its editor it is, and the
+ * random tag tells it apart from another editor's, tab's or visit's `n`.
+ */
+const STAGED_URL = /^staged:(\d+-[a-z0-9]+)$/;
 
 /** Cheap pre-check: a text without it holds no placeholder. */
 const STAGED_MARK = "](staged:";
 
 /**
- * What a drag out of a staging tray carries besides the token as text, so
- * an editor that did not stage the file can refuse it instead of taking a
- * link to nothing.
+ * The type a drag out of a staging tray carries besides the token as text,
+ * naming the page and the file, so an editor can take the file itself
+ * rather than a link to nothing, and an editor that stages no files can
+ * refuse it.
  */
 export const STAGED_TOKEN_TYPE = "application/x-todou-staged-token";
 
 export type StagedTokenRange = {
   from: number;
   to: number;
-  key: number;
+  key: string;
   /** The link text, between the opening bracket and `]`. */
   labelFrom: number;
   labelTo: number;
 };
 
+/** Which file of its editor `key` names: the `n` of `<n>-<tag>`. */
+export function stagedOrdinal(key: string): number {
+  return Number.parseInt(key, 10);
+}
+
 export function stagedToken(
-  key: number,
+  key: string,
   filename: string,
   image: boolean,
 ): string {
@@ -66,11 +76,11 @@ function placeholderKey(
   node: SyntaxNode,
   text: string,
   labelTo: number,
-): number | null {
+): string | null {
   const url = node.getChildren("URL").find((child) => child.from > labelTo);
   if (url === undefined) return null;
   const match = STAGED_URL.exec(text.slice(url.from, url.to));
-  return match === null ? null : Number(match[1]);
+  return match?.[1] ?? null;
 }
 
 /**
@@ -114,7 +124,7 @@ function candidatesIn(text: string): StagedTokenRange[] {
  */
 export function stagedTokenRanges(
   text: string,
-  known: (key: number) => boolean,
+  known: (key: string) => boolean,
 ): StagedTokenRange[] {
   if (!text.includes(STAGED_MARK)) return [];
   const ranges: StagedTokenRange[] = [];
@@ -131,8 +141,8 @@ export function stagedTokenRanges(
 /** The keys `text` places, in order of first appearance. */
 export function stagedKeysIn(
   text: string,
-  known: (key: number) => boolean,
-): number[] {
+  known: (key: string) => boolean,
+): string[] {
   return [...new Set(stagedTokenRanges(text, known).map((r) => r.key))];
 }
 
@@ -471,7 +481,7 @@ export function tokenInsertion(
  */
 export function stagedTokenDeletions(
   text: string,
-  known: (key: number) => boolean,
+  known: (key: string) => boolean,
 ): Array<{ from: number; to: number }> {
   const deletions: Array<{ from: number; to: number }> = [];
   let last = 0;
@@ -493,7 +503,7 @@ export function stagedTokenDeletions(
 export function resolveStagedTokens(
   text: string,
   resolved: ReadonlyMap<
-    number,
+    string,
     { url: string; filename: string; insertedName: string }
   >,
 ): string {
@@ -524,7 +534,7 @@ export function resolveStagedTokens(
  */
 export function stripStagedTokens(
   text: string,
-  known: (key: number) => boolean,
+  known: (key: string) => boolean,
 ): string {
   const deletions = stagedTokenDeletions(text, known);
   if (deletions.length === 0) return text;

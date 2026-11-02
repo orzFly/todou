@@ -199,7 +199,7 @@ describe("an editor's uploads are drafts until sent (T-568)", () => {
 
   it("deletes the draft when its file is taken out of the tray", async () => {
     const { hook, remove } = await stagedAndUploaded();
-    const key = hook().staged[0]?.key as number;
+    const key = hook().staged[0]?.key as string;
     act(() => hook().remove(key));
     expect(remove).toHaveBeenCalledWith("b", 813);
   });
@@ -268,7 +268,7 @@ describe("an editor's uploads are drafts until sent (T-568)", () => {
 
   it("uploads again a file that undo brought back after × deleted its draft", async () => {
     const { hook, cm, text, upload, remove } = await stagedAndUploaded();
-    const key = hook().staged[0]?.key as number;
+    const key = hook().staged[0]?.key as string;
     act(() => hook().remove(key));
     expect(remove).toHaveBeenCalledWith("b", 813);
     act(() => {

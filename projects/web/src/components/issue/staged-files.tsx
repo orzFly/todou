@@ -20,15 +20,18 @@ import {
   resolveStagedTokens,
   STAGED_TOKEN_TYPE,
   stagedKeysIn,
+  stagedOrdinal,
   stagedToken,
   stagedTokenDeletions,
+  stagedTokenRanges,
   stripStagedTokens,
   tokenInsertion,
 } from "@/lib/staged-tokens.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 export type StagedFile = {
-  key: number;
+  /** `<n>-<tag>`: the `n`th file of its editor, and a random tag. */
+  key: string;
   file: File;
   /** The text that placed it in the editor. */
   token: string;
@@ -45,7 +48,62 @@ export type StagedFile = {
   uploadedTo?: string;
 };
 
-let stagedKey = 0;
+/** Every key given out on this page, so no two of its editors share one. */
+const pageKeys = new Set<string>();
+
+/**
+ * A new key for an editor's `n`th file. Four random letters and digits
+ * tell it from another tab's or visit's `n`, and on this page are drawn
+ * again until no other editor's file has them.
+ */
+function newKey(ordinal: number): string {
+  for (let draw = 0; draw < 16; draw += 1) {
+    const tag = Math.random().toString(36).slice(2, 6).padEnd(4, "0");
+    const key = `${ordinal}-${tag}`;
+    if (!pageKeys.has(key)) {
+      pageKeys.add(key);
+      return key;
+    }
+  }
+  // A random source that keeps repeating itself (a stubbed one, say): a
+  // five-character tag counted from the page's keys, which no four-character
+  // draw can match.
+  const key = `${ordinal}-${pageKeys.size.toString(36).padStart(5, "0")}`;
+  pageKeys.add(key);
+  return key;
+}
+
+/**
+ * Past this an `n` in a text is not a count anyone made, and counting on
+ * from it would spell the next one in exponent notation.
+ */
+const MAX_ORDINAL = 1_000_000;
+
+/** This page load, so a tray drag from another tab is told apart. */
+const PAGE = Math.random().toString(36).slice(2);
+
+/** Every file staged on this page, so another editor can take one over. */
+const pageFiles = new Map<string, File>();
+
+/** What a tray drag carries under `STAGED_TOKEN_TYPE`. */
+type TrayDrag = { page: string; key: string };
+
+function trayDragOf(data: string): TrayDrag | null {
+  try {
+    const value: unknown = JSON.parse(data);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "page" in value &&
+      "key" in value &&
+      typeof value.page === "string" &&
+      typeof value.key === "string"
+    ) {
+      return { page: value.page, key: value.key };
+    }
+  } catch {}
+  return null;
+}
 
 /** What `useStagedFiles` hands its caller: the tray, and the ways into it. */
 export type StagedFiles = {
@@ -63,7 +121,7 @@ export type StagedFiles = {
     opts?: { fromClipboard?: boolean; at?: { from: number; to: number } },
   ) => boolean;
   /** Take a file out of the text: every token of it goes. */
-  remove: (key: number) => void;
+  remove: (key: string) => void;
   /** Whether sending `text` needs `resolve` first. */
   pending: (text: string) => boolean;
   /**
@@ -129,7 +187,7 @@ function forgetUpload({
   return item;
 }
 
-function sameKeys(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+function sameKeys(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return a.size === b.size && [...a].every((key) => b.has(key));
 }
 
@@ -154,15 +212,19 @@ export function useStagedFiles(): StagedFiles {
   // it for rendering, so a read straight after a write sees the write.
   const [all, setAll] = useState<StagedFile[]>([]);
   const allRef = useRef<StagedFile[]>([]);
-  const [referenced, setReferenced] = useState<ReadonlySet<number>>(
+  const [referenced, setReferenced] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const referencedRef = useRef<ReadonlySet<number>>(new Set());
+  const referencedRef = useRef<ReadonlySet<string>>(new Set());
   const viewRef = useRef<EditorView | null>(null);
   // Whether the reader has pressed or typed in the editor since it bound: the
   // caret `autoFocus` leaves at 0 is not one they put there.
   const touchedRef = useRef(false);
   const unbindRef = useRef<(() => void) | null>(null);
+  // The next file's `n`: counted from 1 in this editor, and past every `n`
+  // its text already holds, so two files of one editor never share an `n`
+  // that reads as which file it is.
+  const nextOrdinal = useRef(1);
 
   const staged = useMemo(
     () => all.filter((item) => referenced.has(item.key)),
@@ -174,7 +236,7 @@ export function useStagedFiles(): StagedFiles {
     setAll(next);
   }
 
-  function setReferencedKeys(keys: ReadonlySet<number>) {
+  function setReferencedKeys(keys: ReadonlySet<string>) {
     if (sameKeys(keys, referencedRef.current)) return;
     referencedRef.current = keys;
     setReferenced(keys);
@@ -193,16 +255,28 @@ export function useStagedFiles(): StagedFiles {
       for (const item of allRef.current) {
         revokeUrls(item);
         withdraw(item);
+        pageFiles.delete(item.key);
       }
     },
     [],
   );
 
-  function knows(key: number): boolean {
+  function knows(key: string): boolean {
     return allRef.current.some((item) => item.key === key);
   }
 
+  /** Move the count past every `n` that `doc` already holds. */
+  function countPast(doc: string) {
+    for (const { key } of stagedTokenRanges(doc, () => true)) {
+      const ordinal = stagedOrdinal(key);
+      if (ordinal < MAX_ORDINAL && ordinal >= nextOrdinal.current) {
+        nextOrdinal.current = ordinal + 1;
+      }
+    }
+  }
+
   function sync(doc: string) {
+    countPast(doc);
     setReferencedKeys(new Set(stagedKeysIn(doc, knows)));
   }
 
@@ -233,7 +307,8 @@ export function useStagedFiles(): StagedFiles {
     );
     if (list.length === 0 || view === null) return false;
     const added = list.map((file): StagedFile => {
-      const key = stagedKey++;
+      const key = newKey(nextOrdinal.current++);
+      pageFiles.set(key, file);
       const target = { filename: file.name, content_type: file.type };
       const previewUrl =
         previewKind({ ...target, size: file.size }) === null
@@ -257,14 +332,34 @@ export function useStagedFiles(): StagedFiles {
     // Before the dispatch, whose sync has to recognize the new tokens.
     commit([...allRef.current, ...added]);
     const end = view.state.doc.length;
-    const { from, to } =
+    place(
+      view,
+      added.map((item) => item.token),
       opts?.at ??
-      (touchedRef.current ? view.state.selection.main : { from: end, to: end });
+        (touchedRef.current
+          ? view.state.selection.main
+          : { from: end, to: end }),
+      opts?.fromClipboard === true
+        ? "input.paste"
+        : opts?.at !== undefined
+          ? "input.drop"
+          : "input",
+    );
+    return true;
+  }
+
+  /** Put `tokens` in at `at`, by the placement rules of `tokenInsertion`. */
+  function place(
+    view: EditorView,
+    tokens: string[],
+    at: { from: number; to: number },
+    userEvent: string,
+  ) {
     const change = tokenInsertion(
       view.state.doc.toString(),
-      from,
-      to,
-      added.map((item) => item.token),
+      at.from,
+      at.to,
+      tokens,
     );
     view.dispatch({
       changes: { from: change.from, to: change.to, insert: change.insert },
@@ -273,14 +368,8 @@ export function useStagedFiles(): StagedFiles {
       // An undo step of its own, so the next keystroke's undo cannot take
       // the file with it.
       annotations: isolateHistory.of("full"),
-      userEvent:
-        opts?.fromClipboard === true
-          ? "input.paste"
-          : opts?.at !== undefined
-            ? "input.drop"
-            : "input",
+      userEvent,
     });
-    return true;
   }
 
   function paste(event: ClipboardEvent, view: EditorView) {
@@ -298,32 +387,48 @@ export function useStagedFiles(): StagedFiles {
   }
 
   function drop(event: DragEvent, view: EditorView): boolean {
+    const dropPoint = () => {
+      const at =
+        view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
+        view.state.selection.main.head;
+      return { from: at, to: at };
+    };
     const files = event.dataTransfer?.files;
-    if (files === undefined || files.length === 0) {
-      // A token from another editor's tray names a file this one never
-      // staged: dropped in, it would go out as a link to nothing.
-      const token = event.dataTransfer?.getData(STAGED_TOKEN_TYPE) ?? "";
-      if (stagedKeysIn(token, () => true).some((key) => !knows(key))) {
-        event.preventDefault();
-        return true;
-      }
-      // Other text, this tray's tokens included, is CodeMirror's to drop.
-      return false;
+    if (files !== undefined && files.length > 0) {
+      event.preventDefault();
+      stage(files, { at: dropPoint() });
+      return true;
     }
+    const data = event.dataTransfer?.getData(STAGED_TOKEN_TYPE) ?? "";
+    // Other text is CodeMirror's to drop.
+    if (data === "") return false;
     event.preventDefault();
-    const at =
-      view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
-      view.state.selection.main.head;
-    stage(files, { at: { from: at, to: at } });
+    const dragged = trayDragOf(data);
+    // From another tab, whose files are not here to take: nothing.
+    if (dragged === null || dragged.page !== PAGE) return true;
+    const own = allRef.current.find((item) => item.key === dragged.key);
+    if (own !== undefined) {
+      // Placed once more where the reader let go, by the same rules as a
+      // file dropped in: never inside code, a link or a word.
+      place(view, [own.token], dropPoint(), "input.drop");
+      return true;
+    }
+    // Another editor's file: staged here too, under a key of its own.
+    const file = pageFiles.get(dragged.key);
+    if (file !== undefined) stage([file], { at: dropPoint() });
     return true;
   }
 
   function dragOver(event: DragEvent) {
-    // Without this the browser navigates to the dropped file.
-    if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+    const types = event.dataTransfer?.types ?? [];
+    // Without this the browser navigates to a dropped file, and refuses a
+    // tray drag that carries only its own type.
+    if (types.includes("Files") || types.includes(STAGED_TOKEN_TYPE)) {
+      event.preventDefault();
+    }
   }
 
-  function remove(key: number) {
+  function remove(key: string) {
     const hit = allRef.current.find((item) => item.key === key);
     if (hit === undefined) return;
     // Withdrawn and forgotten together: undo can bring the token back, and
@@ -418,7 +523,7 @@ export function useStagedFiles(): StagedFiles {
       }
     }
     const resolved = new Map<
-      number,
+      string,
       { url: string; filename: string; insertedName: string }
     >();
     for (const item of allRef.current) {
@@ -436,9 +541,17 @@ export function useStagedFiles(): StagedFiles {
     // Synchronously, not at the next render: these files belong to a text
     // that was just sent, and an unmount before that render would read the
     // old list and delete them.
-    for (const item of allRef.current) revokeUrls(item);
+    for (const item of allRef.current) {
+      revokeUrls(item);
+      pageFiles.delete(item.key);
+    }
     commit([]);
     setReferencedKeys(new Set());
+    // The next text counts its files from 1 again, past whatever the editor
+    // still holds; its tags keep them apart from the ones just sent.
+    nextOrdinal.current = 1;
+    const view = viewRef.current;
+    if (view !== null) countPast(view.state.doc.toString());
   }
 
   function discard() {
@@ -521,15 +634,17 @@ export function StagedFileUploadButton({
 }
 
 /**
- * What a drag out of the tray carries: the file's token, as text and under
- * a type of its own that tells an editor where it came from.
+ * What a drag out of the tray carries: which page's which file it is,
+ * under a type of its own, for an editor to place it, take it over from
+ * another editor, or ignore it from another tab. No text: a title field or
+ * another app would take the token for words to paste.
  */
 function dragToken(item: StagedFile) {
+  const drag: TrayDrag = { page: PAGE, key: item.key };
   return {
     draggable: true,
     onDragStart: (event: React.DragEvent) => {
-      event.dataTransfer.setData("text/plain", item.token);
-      event.dataTransfer.setData(STAGED_TOKEN_TYPE, item.token);
+      event.dataTransfer.setData(STAGED_TOKEN_TYPE, JSON.stringify(drag));
       event.dataTransfer.effectAllowed = "copy";
     },
   };
@@ -546,10 +661,10 @@ export function StagedFileTray({
   disabled = false,
 }: {
   staged: StagedFile[];
-  onRemove: (key: number) => void;
+  onRemove: (key: string) => void;
   disabled?: boolean;
 }) {
-  const [viewing, setViewing] = useState<number | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
   if (staged.length === 0) return null;
 
   // Once the server has answered, its name is the authoritative one — it

@@ -474,7 +474,9 @@ async function composerChecks(page) {
     const got = await docOf(page, editor);
     if (
       typeof got !== "string" ||
-      !/^draft !\[image-\d{8}-\d{6}-[0-9a-f]{4}\.png\]\(staged:\d+\)$/.test(got)
+      !/^draft !\[image-\d{8}-\d{6}-[0-9a-f]{4}\.png\]\(staged:\d+-[a-z0-9]{4}\)$/.test(
+        got,
+      )
     )
       failures.push(failure("6-file-doc", JSON.stringify(got), at));
     const after = await evaluate(

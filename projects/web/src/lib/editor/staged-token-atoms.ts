@@ -82,7 +82,7 @@ function adjust(
  * redo never come here: history dispatches them with `filter: false`, and
  * replays only what already passed through here.
  */
-function wholeTokenFilter(knows: (key: number) => boolean): Extension {
+function wholeTokenFilter(knows: (key: string) => boolean): Extension {
   return EditorState.transactionFilter.of(
     (tr): Transaction | TransactionSpec => {
       if (!tr.docChanged) return tr;
@@ -173,7 +173,7 @@ function wholeTokenFilter(knows: (key: number) => boolean): Extension {
  * atomic ranges), and a filter for the edits that skip nothing. `knows`
  * says which keys the editor staged; anything else is text.
  */
-export function stagedTokenAtoms(knows: (key: number) => boolean): Extension {
+export function stagedTokenAtoms(knows: (key: string) => boolean): Extension {
   const decorate = (state: EditorState): DecorationSet =>
     Decoration.set(
       stagedTokenRanges(state.doc.toString(), knows).map((range) =>

@@ -1241,7 +1241,7 @@ describe("the new-issue page's sidebar-only navigation guard (T-478)", () => {
     const view = renderAs("admin");
     await screen.findByLabelText("Title");
     await stageNotes(view.container);
-    const token = /^\[notes\.txt\]\(staged:\d+\)$/;
+    const token = /^\[notes\.txt\]\(staged:\d+-[a-z0-9]{4}\)$/;
     expect(cmGetValue(view.container)).toMatch(token);
 
     await cancelAndKeepEditing();
