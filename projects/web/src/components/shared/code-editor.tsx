@@ -150,7 +150,12 @@ const editorTheme = EditorView.theme({
   },
   ".cm-line": { padding: "0" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--foreground)" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection":
+  // The long first selector is not decoration. CodeMirror's base theme gives
+  // a focused selection a fixed colour (#d7d4f0 light, #233 dark) through this
+  // exact structure; matching it ties the specificity, and since theme styles
+  // mount after the base theme the tie goes here, so the selection keeps the
+  // theme's tint whether or not the editor has focus.
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection":
     {
       backgroundColor: "color-mix(in oklab, var(--primary) 22%, transparent)",
     },
