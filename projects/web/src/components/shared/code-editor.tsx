@@ -14,6 +14,7 @@ import { useEffect, useImperativeHandle, useRef } from "react";
 import { compositionSafeMeasure } from "@/lib/editor/composition-safe-measure.ts";
 import { parkedTooltip } from "@/lib/editor/parked-tooltip.ts";
 import { tooltipSpace } from "@/lib/editor/tooltip-space.ts";
+import { useThemeKind } from "@/lib/theme.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { cn } from "@/lib/utils";
 
@@ -198,6 +199,11 @@ export function CodeEditor({
   const placeholderSlot = useRef(new Compartment()).current;
   const readOnlySlot = useRef(new Compartment()).current;
   const extensionsSlot = useRef(new Compartment()).current;
+  // CodeMirror's base theme picks its light or dark set of colours (snippet
+  // fields and the like) by this facet; nobody telling it the app is dark
+  // leaves it on the light set under a dark theme too.
+  const dark = useThemeKind() === "dark";
+  const darkSlot = useRef(new Compartment()).current;
 
   // Read through the ref rather than the closure: the EditorView is a
   // different instance after a rebuild, and only the baseline has to survive
@@ -305,6 +311,7 @@ export function CodeEditor({
           }),
           placeholderSlot.of(placeholderExt(placeholder)),
           readOnlySlot.of(EditorState.readOnly.of(readOnly)),
+          darkSlot.of(EditorView.darkTheme.of(dark)),
           extensionsSlot.of(extensions ?? []),
         ],
       }),
@@ -330,6 +337,12 @@ export function CodeEditor({
       effects: readOnlySlot.reconfigure(EditorState.readOnly.of(readOnly)),
     });
   }, [readOnly, readOnlySlot]);
+
+  useEffect(() => {
+    view.current?.dispatch({
+      effects: darkSlot.reconfigure(EditorView.darkTheme.of(dark)),
+    });
+  }, [dark, darkSlot]);
 
   useEffect(() => {
     view.current?.dispatch({

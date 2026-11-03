@@ -277,3 +277,17 @@ export function useThemePref(): ThemePref {
     () => pref,
   );
 }
+
+/**
+ * The light/dark of the theme in effect. Not derivable from useThemePref():
+ * under "system" an OS switch leaves the preference as it was, so a
+ * component reading only that never re-renders; the media listener above
+ * still notifies, and this snapshot does change.
+ */
+export function useThemeKind(): ThemeKind {
+  return useSyncExternalStore(
+    subscribe,
+    () => themeKind(resolveTheme(pref)),
+    () => themeKind(resolveTheme(pref)),
+  );
+}
