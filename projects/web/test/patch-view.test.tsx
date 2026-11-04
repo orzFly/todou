@@ -256,6 +256,87 @@ describe("the patch header (T-529)", () => {
   });
 });
 
+describe("the file list inside a dialog", () => {
+  /**
+   * Opens an expanded patch card's file list and returns its first row. The
+   * dialog's scroll lock lets a gesture through only where it finds room to
+   * scroll, and happy-dom lays nothing out and loads no Tailwind, so the
+   * list is handed the room its `overflow-y-auto` gives it in a browser.
+   */
+  async function openFileListInDialog() {
+    renderWithProviders(
+      <DocumentCard filename="x.patch" text={TWO_FILES} render="patch" />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "expand x.patch" }),
+    );
+    // Not findByRole("dialog"): the open file list is a dialog too.
+    const dialog = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>(
+        '[data-slot="dialog-content"]',
+      );
+      if (found === null) throw new Error("dialog never opened");
+      return found;
+    });
+    fireEvent.click(
+      await within(dialog).findByRole("button", { name: /2 files/ }),
+    );
+    const list = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>(
+        '[data-slot="popover-content"]',
+      );
+      if (found === null) throw new Error("file list never opened");
+      return found;
+    });
+    list.style.overflowY = "auto";
+    for (const [property, value] of [
+      ["scrollHeight", 1000],
+      ["clientHeight", 400],
+      ["scrollTop", 0],
+    ] as const) {
+      Object.defineProperty(list, property, {
+        value,
+        configurable: true,
+        writable: true,
+      });
+    }
+    const row = list.querySelector("li");
+    if (row === null) throw new Error("the file list has no rows");
+    return row;
+  }
+
+  it("lets a wheel over the list scroll it", async () => {
+    const row = await openFileListInDialog();
+    const wheel = new WheelEvent("wheel", {
+      deltaY: 100,
+      bubbles: true,
+      cancelable: true,
+    });
+    row.dispatchEvent(wheel);
+    expect(wheel.defaultPrevented).toBe(false);
+  });
+
+  it("lets a finger drag over the list scroll it", async () => {
+    const row = await openFileListInDialog();
+    const send = (type: "touchstart" | "touchmove", clientY: number) => {
+      const points = [
+        new Touch({ identifier: 1, target: row, clientX: 100, clientY }),
+      ];
+      const event = new TouchEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        touches: points,
+        targetTouches: points,
+        changedTouches: points,
+      });
+      row.dispatchEvent(event);
+      return event;
+    };
+    send("touchstart", 300);
+    expect(send("touchmove", 200).defaultPrevented).toBe(false);
+  });
+});
+
 describe("```diff fences (T-528)", () => {
   it("draws a fence holding a patch as its diff", async () => {
     renderWithProviders(

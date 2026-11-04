@@ -203,6 +203,7 @@ function FilesMenu({
   onJump?: (index: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [trigger, setTrigger] = useState<HTMLElement | null>(null);
   const total = stats.reduce(
     (sum, s) => ({ plus: sum.plus + s.plus, minus: sum.minus + s.minus }),
     { plus: 0, minus: 0 },
@@ -211,6 +212,7 @@ function FilesMenu({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          ref={setTrigger}
           type="button"
           size="xs"
           variant="ghost"
@@ -222,6 +224,16 @@ function FilesMenu({
         </Button>
       </PopoverTrigger>
       <PopoverContent
+        // A modal dialog's scroll lock cancels every wheel and touchmove that
+        // lands outside the dialog's content, which is where a list portalled
+        // to <body> sits, so inside a dialog the list goes into the content.
+        // Outside one it stays at <body>: next to the button it would sit in
+        // `.markdown-body` (a fence, an embedded card), whose list rules
+        // restyle its rows.
+        container={
+          trigger?.closest<HTMLElement>('[data-slot="dialog-content"]') ??
+          undefined
+        }
         align="end"
         className="max-h-[55vh] w-96 max-w-[calc(100vw-2rem)] overflow-y-auto p-0"
       >
