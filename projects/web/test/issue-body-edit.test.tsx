@@ -123,7 +123,7 @@ describe("the issue body editor", () => {
     await waitFor(() => expect(updateIssue).toHaveBeenCalledOnce());
     const patchedBody = updateIssue.mock.calls[0]?.[2]?.body;
     expect(patchedBody).toBe(
-      "  the second [notes.txt](/attachments/notes.txt)\n\ndraft",
+      "  the second [notes.txt](/attachments/notes.txt) \n\ndraft",
     );
     expect(patchedBody).not.toMatch(/\s$/);
   });

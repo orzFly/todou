@@ -95,7 +95,7 @@ describe("a file pasted into a comment", () => {
     expect(createComment).toHaveBeenCalledWith(
       "todou",
       7,
-      `first paragraph ![shot.png](${SHOT.url})\n\nsecond paragraph`,
+      `first paragraph ![shot.png](${SHOT.url}) \n\nsecond paragraph`,
     );
   });
 });

@@ -64,7 +64,7 @@ describe("staging a file names it once (T-269)", () => {
     const mounted = mountStaging();
     pasteFiles(mounted, image("image.png"));
     expect(mounted.text()).toMatch(
-      /^!\[image-\d{8}-\d{6}-[0-9a-f]{4}\.png\]\(staged:\d+-[a-z0-9]{4}\)$/,
+      /^ !\[image-\d{8}-\d{6}-[0-9a-f]{4}\.png\]\(staged:\d+-[a-z0-9]{4}\) $/,
     );
     expect(screen.getByRole("img").getAttribute("title")).toMatch(
       /^image-\d{8}-\d{6}-[0-9a-f]{4}\.png$/,
@@ -75,7 +75,7 @@ describe("staging a file names it once (T-269)", () => {
     const mounted = mountStaging();
     dropFiles(mounted, image("image.png"));
     expect(mounted.text()).toMatch(
-      /^!\[image\.png\]\(staged:\d+-[a-z0-9]{4}\)$/,
+      /^ !\[image\.png\]\(staged:\d+-[a-z0-9]{4}\) $/,
     );
     expect(screen.getByTitle("image.png")).toBeTruthy();
   });
@@ -86,7 +86,7 @@ describe("staging a file names it once (T-269)", () => {
       mounted.hook().stage([image("image.png")]);
     });
     expect(mounted.text()).toMatch(
-      /^!\[image\.png\]\(staged:\d+-[a-z0-9]{4}\)$/,
+      /^ !\[image\.png\]\(staged:\d+-[a-z0-9]{4}\) $/,
     );
     expect(screen.getByTitle("image.png")).toBeTruthy();
   });
@@ -95,7 +95,7 @@ describe("staging a file names it once (T-269)", () => {
     const mounted = mountStaging();
     pasteFiles(mounted, image("report.png"));
     expect(mounted.text()).toMatch(
-      /^!\[report\.png\]\(staged:\d+-[a-z0-9]{4}\)$/,
+      /^ !\[report\.png\]\(staged:\d+-[a-z0-9]{4}\) $/,
     );
     expect(screen.getByTitle("report.png")).toBeTruthy();
   });
@@ -118,7 +118,7 @@ describe("staging a file names it once (T-269)", () => {
       sent = await mounted.hook().resolve(mounted.text(), "p", 1);
     });
 
-    expect(sent).toBe(`[shot-813.png](${settled.url})`);
+    expect(sent).toBe(` [shot-813.png](${settled.url}) `);
     expect(screen.getByTitle("shot-813.png")).toBeTruthy();
     expect(screen.queryByTitle("shot.png")).toBeNull();
   });
@@ -130,7 +130,7 @@ describe("a staged file goes where the reader put it", () => {
     select(mounted, 6);
     pasteFiles(mounted, image("shot.png"));
     expect(mounted.text()).toMatch(
-      /^before !\[shot\.png\]\(staged:\d+-[a-z0-9]{4}\) after$/,
+      /^before !\[shot\.png\]\(staged:\d+-[a-z0-9]{4}\) {2}after$/,
     );
     expect(screen.getAllByRole("img")).toHaveLength(1);
   });
@@ -140,7 +140,7 @@ describe("a staged file goes where the reader put it", () => {
     select(mounted, 4, 8);
     pasteFiles(mounted, image("shot.png"));
     expect(mounted.text()).toMatch(
-      /^see !\[shot\.png\]\(staged:\d+-[a-z0-9]{4}\) now$/,
+      /^see {2}!\[shot\.png\]\(staged:\d+-[a-z0-9]{4}\) {2}now$/,
     );
   });
 
@@ -152,7 +152,7 @@ describe("a staged file goes where the reader put it", () => {
     );
     expect(event.defaultPrevented).toBe(true);
     expect(mounted.text()).toMatch(
-      /^\[notes\.txt\]\(staged:\d+-[a-z0-9]{4}\)$/,
+      /^ \[notes\.txt\]\(staged:\d+-[a-z0-9]{4}\) $/,
     );
     // CodeMirror's own drop reads a file through FileReader, asynchronously.
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -167,7 +167,7 @@ describe("a staged file goes where the reader put it", () => {
       mounted.hook().stage([image("shot.png")]);
     });
     expect(mounted.text()).toMatch(
-      /^one !\[shot\.png\]\(staged:\d+-[a-z0-9]{4}\) two$/,
+      /^one !\[shot\.png\]\(staged:\d+-[a-z0-9]{4}\) {2}two$/,
     );
   });
 
@@ -177,7 +177,7 @@ describe("a staged file goes where the reader put it", () => {
       mounted.hook().stage([image("shot.png")]);
     });
     expect(mounted.text()).toMatch(
-      /^one two !\[shot\.png\]\(staged:\d+-[a-z0-9]{4}\)$/,
+      /^one two !\[shot\.png\]\(staged:\d+-[a-z0-9]{4}\) $/,
     );
   });
 });
@@ -314,7 +314,7 @@ describe("the text is the record of what is staged", () => {
 
     expect(upload).toHaveBeenCalledOnce();
     expect(upload.mock.calls[0]?.[2]?.name).toBe("kept.png");
-    expect(sent).toBe(`x ![kept.png](${stored(813, "kept.png").url}) y`);
+    expect(sent).toBe(`x ![kept.png](${stored(813, "kept.png").url})  y`);
   });
 
   it("leaves a staged: link it does not know as text", async () => {
@@ -362,10 +362,10 @@ describe("one file placed in several spots", () => {
   async function placedTwice() {
     const mounted = mountStaging();
     pasteFiles(mounted, image("shot.png"));
-    const token = mounted.text();
+    const token = mounted.text().trim();
     act(() => {
       mounted.cm().dispatch({
-        changes: { from: token.length, insert: `\n\nagain ${token}` },
+        changes: { from: token.length + 2, insert: `\n\nagain ${token} ` },
       });
     });
     return { mounted, token };
@@ -379,7 +379,7 @@ describe("one file placed in several spots", () => {
   it("keeps it while one spot is left, and × takes every spot", async () => {
     const { mounted, token } = await placedTwice();
     act(() => {
-      mounted.cm().dispatch({ changes: { from: 0, to: token.length } });
+      mounted.cm().dispatch({ changes: { from: 0, to: token.length + 2 } });
     });
     expect(screen.getByTitle("shot.png")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "remove shot.png" }));
@@ -398,7 +398,7 @@ describe("one file placed in several spots", () => {
     });
     const marker = `![shot.png](${stored(813, "shot.png").url})`;
     expect(upload).toHaveBeenCalledOnce();
-    expect(sent).toBe(`${marker}\n\nagain ${marker}`);
+    expect(sent).toBe(` ${marker} \n\nagain ${marker} `);
   });
 });
 
@@ -509,9 +509,9 @@ describe("the tray opens what the viewer can show", () => {
     act(() => {
       mounted.cm().contentDOM.dispatchEvent(trayDrop(data));
     });
-    // happy-dom's drop point is 0: in front of the first, spaced like any
-    // file placed mid-text.
-    expect(mounted.text()).toBe(`${token} ${token}`);
+    // happy-dom's drop point is 0: in front of the first, with spaces of
+    // its own like any file placed.
+    expect(mounted.text()).toBe(`${token}${token}`);
     expect(screen.getAllByTitle("shot.png")).toHaveLength(1);
   });
 
@@ -521,14 +521,14 @@ describe("the tray opens what the viewer can show", () => {
       mounted.hook().stage([image("shot.png")]);
     });
     const token = mounted.hook().staged[0]?.token ?? "";
-    expect(mounted.text()).toBe(`see \`code\` here ${token}`);
+    expect(mounted.text()).toBe(`see \`code\` here ${token} `);
     const data = dragOut(screen.getByRole("button", { name: "view shot.png" }));
     // Dropped between `co` and `de`.
     vi.spyOn(mounted.cm(), "posAtCoords").mockReturnValue("see `co".length);
     act(() => {
       mounted.cm().contentDOM.dispatchEvent(trayDrop(data));
     });
-    expect(mounted.text()).toBe(`see \`code\` ${token} here ${token}`);
+    expect(mounted.text()).toBe(`see \`code\` ${token}  here ${token} `);
   });
 
   it("takes over a file dragged in from another editor on the page", () => {
@@ -544,7 +544,7 @@ describe("the tray opens what the viewer can show", () => {
     });
     expect(to.hook().staged.map((item) => item.file)).toEqual([file]);
     expect(to.hook().staged[0]?.key).not.toBe(from.hook().staged[0]?.key);
-    expect(to.text()).toBe(to.hook().staged[0]?.token);
+    expect(to.text()).toBe(` ${to.hook().staged[0]?.token} `);
   });
 
   it("drags a thumbnail out as its page and number, with no text", () => {

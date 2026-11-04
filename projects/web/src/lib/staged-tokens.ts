@@ -49,7 +49,16 @@ export type StagedTokenRange = {
   /** The link text, between the opening bracket and `]`. */
   labelFrom: number;
   labelTo: number;
+  /**
+   * The token with the space on each side of it, where there is one: what
+   * the caret steps over and what goes as one. A space between two tokens
+   * belongs to the first.
+   */
+  unitFrom: number;
+  unitTo: number;
 };
+
+type Candidate = Omit<StagedTokenRange, "unitFrom" | "unitTo">;
 
 /** Which file of its editor `key` names: the `n` of `<n>-<tag>`. */
 export function stagedOrdinal(key: string): number {
@@ -89,11 +98,11 @@ function placeholderKey(
  * edit filter about the old one, then the chips and the tray about the new
  * one — and a long description is not worth parsing three times over.
  */
-let parsed: { text: string; candidates: StagedTokenRange[] } | null = null;
+let parsed: { text: string; candidates: Candidate[] } | null = null;
 
-function candidatesIn(text: string): StagedTokenRange[] {
+function candidatesIn(text: string): Candidate[] {
   if (parsed?.text === text) return parsed.candidates;
-  const candidates: StagedTokenRange[] = [];
+  const candidates: Candidate[] = [];
   gfmParser.parse(text).iterate({
     enter: (ref) => {
       if (ref.name !== "Image" && ref.name !== "Link") return;
@@ -120,7 +129,7 @@ function candidatesIn(text: string): StagedTokenRange[] {
 /**
  * Every placeholder in `text`, in order. `known` says whether a key is one
  * the editor staged. A placeholder is not searched for placeholders inside
- * it, so the ranges never overlap.
+ * it, so the ranges never overlap, and neither do their units.
  */
 export function stagedTokenRanges(
   text: string,
@@ -133,7 +142,13 @@ export function stagedTokenRanges(
     if (!known(candidate.key)) continue;
     const last = ranges.at(-1);
     if (last !== undefined && candidate.from < last.to) continue;
-    ranges.push(candidate);
+    const { from, to } = candidate;
+    const unitFrom =
+      text[from - 1] === " " && from - 1 >= (last?.unitTo ?? 0)
+        ? from - 1
+        : from;
+    const unitTo = text[to] === " " ? to + 1 : to;
+    ranges.push({ ...candidate, unitFrom, unitTo });
   }
   return ranges;
 }
@@ -369,12 +384,13 @@ function allRecognized(
 /**
  * The change that puts `tokens` into `doc` for a selection `from`–`to`.
  *
- * Inline, by default: one space between tokens, and one on each side where
- * the neighbour is not already whitespace, the line edge or the document
- * edge. A selection is replaced unless an end of it is inside code, a link
- * or the like; then the selection stays and the tokens go after its end.
- * A position inside such an inline structure moves past it, and one before
- * a line's quote, list or heading marks moves to the text after them.
+ * Each token goes in with a space of its own on each side, whatever is
+ * next to it: the token and those spaces are one unit, which the caret
+ * stops only outside of. Inline, by default. A selection is replaced unless
+ * an end of it is inside code, a link or the like; then the selection stays
+ * and the tokens go after its end. A position inside such an inline
+ * structure moves past it, and one before a line's quote, list or heading
+ * marks moves to the text after them.
  *
  * A position on the lines of a code, HTML or link-definition block, a rule,
  * a setext heading or a table's delimiter row, or on the blank line an HTML
@@ -424,7 +440,7 @@ export function tokenInsertion(
     const { prefix } = lines;
     const blank = prefix.trimEnd();
     const separator = `\n${blank}\n${prefix}`;
-    const body = tokens.join(separator);
+    const body = tokens.map((token) => ` ${token} `).join(separator);
     const after = lines.to;
     let padBefore: string;
     let padAfter: string;
@@ -437,7 +453,14 @@ export function tokenInsertion(
     }
     const insert = padBefore + body + padAfter;
     const result = rest.slice(0, after) + insert + rest.slice(after);
-    if (allRecognized(result, after + padBefore.length, tokens, separator)) {
+    if (
+      allRecognized(
+        result,
+        after + padBefore.length + 1,
+        tokens,
+        ` ${separator} `,
+      )
+    ) {
       return change(after, insert, insert.length);
     }
     const before = lines.from;
@@ -457,11 +480,9 @@ export function tokenInsertion(
   if (spot.kind === "block") return paragraph(spot);
 
   const at = spot.at;
-  const before = at > 0 && !/\s/.test(rest[at - 1] ?? "") ? " " : "";
-  const after = at < rest.length && !/\s/.test(rest[at] ?? "") ? " " : "";
-  const insert = before + tokens.join(" ") + after;
+  const insert = tokens.map((token) => ` ${token} `).join("");
   const result = rest.slice(0, at) + insert + rest.slice(at);
-  if (allRecognized(result, at + before.length, tokens, " ")) {
+  if (allRecognized(result, at + 1, tokens, "  ")) {
     return change(at, insert, insert.length);
   }
   // Swallowed by something the rules above do not know: the tokens take a
@@ -474,25 +495,59 @@ export function tokenInsertion(
   });
 }
 
+/** Chinese, Japanese and Korean text, which runs on without spaces. */
+const CJK =
+  /[\p{scx=Han}\p{scx=Bopomofo}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}\u3000-\u303f\uff00-\uffef]/u;
+
+/** The code point ending at `pos`, a surrogate pair whole. */
+function charBefore(text: string, pos: number): string {
+  return [...text.slice(Math.max(0, pos - 2), pos)].at(-1) ?? "";
+}
+
+/** The code point starting at `pos`. */
+function charAfter(text: string, pos: number): string {
+  return [...text.slice(pos, pos + 2)][0] ?? "";
+}
+
 /**
- * The deletions that take each placeholder out of `text`, each with one
- * neighbouring space — the one after it, else the one before — so a token
- * the insertion padded leaves no double space behind.
+ * What takes the place of `from`–`to`, one or more whole units, when they
+ * go: a space where the words on each side would otherwise run together,
+ * and nothing beside whitespace, an edge, or Chinese, Japanese or Korean
+ * text on both sides.
+ */
+export function stagedUnitGap(text: string, from: number, to: number): string {
+  const before = charBefore(text, from);
+  const after = charAfter(text, to);
+  if (before === "" || after === "") return "";
+  if (/\s/.test(before) || /\s/.test(after)) return "";
+  return CJK.test(before) && CJK.test(after) ? "" : " ";
+}
+
+/**
+ * The changes that take every placeholder for `key` out of `text`, each
+ * unit whole and units that touch as one, leaving `stagedUnitGap` behind.
+ * `known` says which keys the editor staged, which decides whose unit a
+ * space between two tokens is.
  */
 export function stagedTokenDeletions(
   text: string,
   known: (key: string) => boolean,
-): Array<{ from: number; to: number }> {
-  const deletions: Array<{ from: number; to: number }> = [];
-  let last = 0;
+  key: string,
+): Array<{ from: number; to: number; insert?: string }> {
+  const runs: Array<{ from: number; to: number }> = [];
   for (const range of stagedTokenRanges(text, known)) {
-    let { from, to } = range;
-    if (text[to] === " ") to += 1;
-    else if (from - 1 >= last && text[from - 1] === " ") from -= 1;
-    deletions.push({ from, to });
-    last = to;
+    if (range.key !== key) continue;
+    const last = runs.at(-1);
+    if (last !== undefined && last.to === range.unitFrom) {
+      last.to = range.unitTo;
+    } else {
+      runs.push({ from: range.unitFrom, to: range.unitTo });
+    }
   }
-  return deletions;
+  return runs.map(({ from, to }) => {
+    const insert = stagedUnitGap(text, from, to);
+    return insert === "" ? { from, to } : { from, to, insert };
+  });
 }
 
 /**

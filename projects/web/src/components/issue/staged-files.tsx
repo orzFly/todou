@@ -453,7 +453,8 @@ export function useStagedFiles(): StagedFiles {
     }
     const deletions = stagedTokenDeletions(
       view.state.doc.toString(),
-      (k) => k === key,
+      knows,
+      key,
     );
     if (deletions.length > 0) {
       view.dispatch({

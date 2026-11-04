@@ -263,7 +263,7 @@ describe("an editor's uploads are drafts until sent (T-568)", () => {
       sent = await hook().resolve(text(), "b", 7);
     });
     expect(upload).toHaveBeenCalledTimes(2);
-    expect(sent).toBe(`![shot.png](${file(814, "shot.png").url})`);
+    expect(sent).toBe(` ![shot.png](${file(814, "shot.png").url}) `);
   });
 
   it("uploads again a file that undo brought back after × deleted its draft", async () => {
@@ -280,6 +280,6 @@ describe("an editor's uploads are drafts until sent (T-568)", () => {
       sent = await hook().resolve(text(), "b", 7);
     });
     expect(upload).toHaveBeenCalledTimes(2);
-    expect(sent).toBe(`![shot.png](${file(814, "shot.png").url})`);
+    expect(sent).toBe(` ![shot.png](${file(814, "shot.png").url}) `);
   });
 });

@@ -888,7 +888,7 @@ describe("the new-issue page's edited retries (T-477)", () => {
     // so restoring permission can exercise the saved triage checkpoint.
     await expectFailure(error, "mute unavailable");
     expect(updateIssue).toHaveBeenCalledExactlyOnceWith(SLUG, 12, {
-      body: `Notes: ${marker}`,
+      body: `Notes:  ${marker}`,
     });
 
     view.setRole("admin");
@@ -896,7 +896,7 @@ describe("the new-issue page's edited retries (T-477)", () => {
     submit();
     expect(await screen.findByText("the card")).toBeTruthy();
     expect(updateIssue.mock.calls).toEqual([
-      [SLUG, 12, { body: `Notes: ${marker}` }],
+      [SLUG, 12, { body: `Notes:  ${marker}` }],
       [SLUG, 12, { status_id: 1, label_ids: [], assignee_ids: [] }],
     ]);
     expect(createIssue).toHaveBeenCalledOnce();
@@ -1277,7 +1277,7 @@ describe("the new-issue page's sidebar-only navigation guard (T-478)", () => {
     const view = renderAs("admin");
     await screen.findByLabelText("Title");
     await stageNotes(view.container);
-    const token = /^\[notes\.txt\]\(staged:\d+-[a-z0-9]{4}\)$/;
+    const token = /^ \[notes\.txt\]\(staged:\d+-[a-z0-9]{4}\) $/;
     expect(cmGetValue(view.container)).toMatch(token);
 
     await cancelAndKeepEditing();
@@ -1364,7 +1364,7 @@ describe("the new-issue page's staged files", () => {
   }
 
   const linked =
-    "before ![shot.png](/attachments/shot.png) after " +
+    "before ![shot.png](/attachments/shot.png)  after " +
     "[notes.txt](/attachments/notes.txt)";
 
   it("uploads the files before the card, and creates it with them linked", async () => {

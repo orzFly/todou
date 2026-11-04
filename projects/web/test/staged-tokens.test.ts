@@ -4,6 +4,8 @@ import {
   resolveStagedTokens,
   stagedKeysIn,
   stagedToken,
+  stagedTokenDeletions,
+  stagedTokenRanges,
   tokenInsertion,
 } from "../src/lib/staged-tokens.ts";
 
@@ -67,33 +69,30 @@ describe("stagedToken", () => {
 });
 
 describe("tokenInsertion: inline", () => {
-  it("pads the token with a space on each side mid-line", () => {
+  it("each token goes in with a space of its own on each side", () => {
     expect(insert("ab‸cd", T1)).toBe(`ab ${T1} ‸cd`);
+    expect(insert("ab ‸", T1)).toBe(`ab  ${T1} ‸`);
+    expect(insert("ab‸ cd", T1)).toBe(`ab ${T1} ‸ cd`);
+    expect(insert("‸ab", T1)).toBe(` ${T1} ‸ab`);
+    expect(insert("ab‸", T1)).toBe(`ab ${T1} ‸`);
+    expect(insert("x\n‸y", T1)).toBe(`x\n ${T1} ‸y`);
+    expect(insert("x‸\ny", T1)).toBe(`x ${T1} ‸\ny`);
+    expect(insert("‸", T1)).toBe(` ${T1} ‸`);
   });
 
-  it("adds no space next to whitespace, a line edge or a document edge", () => {
-    expect(insert("ab ‸", T1)).toBe(`ab ${T1}‸`);
-    expect(insert("ab‸ cd", T1)).toBe(`ab ${T1}‸ cd`);
-    expect(insert("‸ab", T1)).toBe(`${T1} ‸ab`);
-    expect(insert("ab‸", T1)).toBe(`ab ${T1}‸`);
-    expect(insert("x\n‸y", T1)).toBe(`x\n${T1} ‸y`);
-    expect(insert("x‸\ny", T1)).toBe(`x ${T1}‸\ny`);
-    expect(insert("‸", T1)).toBe(`${T1}‸`);
-  });
-
-  it("separates the tokens of one insertion with a space", () => {
-    expect(insert("ab‸", T1, T2)).toBe(`ab ${T1} ${T2}‸`);
+  it("gives each token of one insertion its own spaces", () => {
+    expect(insert("ab‸", T1, T2)).toBe(`ab ${T1}  ${T2} ‸`);
   });
 
   it("replaces a selection", () => {
-    expect(insert("ab «XX» cd", T1)).toBe(`ab ${T1}‸ cd`);
+    expect(insert("ab «XX» cd", T1)).toBe(`ab  ${T1} ‸ cd`);
     expect(insert("ab«XX»cd", T1)).toBe(`ab ${T1} ‸cd`);
   });
 
   it("stays on a quote line, in a list item and in a table cell", () => {
     expect(insert("> ab‸cd", T1)).toBe(`> ab ${T1} ‸cd`);
     expect(insert("- one\n- ab‸\n- three", T1)).toBe(
-      `- one\n- ab ${T1}‸\n- three`,
+      `- one\n- ab ${T1} ‸\n- three`,
     );
     expect(insert("| a | b |\n| - | - |\n| c‸d | e |", T1)).toBe(
       `| a | b |\n| - | - |\n| c ${T1} ‸d | e |`,
@@ -102,88 +101,134 @@ describe("tokenInsertion: inline", () => {
 
   it("moves from before a table row's leading pipe into its first cell", () => {
     expect(insert("‸| a | b |\n| - | - |\n| c | d |", T1)).toBe(
-      `| ${T1} ‸a | b |\n| - | - |\n| c | d |`,
+      `|  ${T1} ‸a | b |\n| - | - |\n| c | d |`,
     );
   });
 
   it("moves from before a line's marks to the text after them", () => {
-    expect(insert("‸> ab", T1)).toBe(`> ${T1} ‸ab`);
-    expect(insert("‸- item", T1)).toBe(`- ${T1} ‸item`);
-    expect(insert("‸# Title", T1)).toBe(`# ${T1} ‸Title`);
-    expect(insert("«> ab»", T1)).toBe(`${T1}‸`);
+    expect(insert("‸> ab", T1)).toBe(`>  ${T1} ‸ab`);
+    expect(insert("‸- item", T1)).toBe(`-  ${T1} ‸item`);
+    expect(insert("‸# Title", T1)).toBe(`#  ${T1} ‸Title`);
+    expect(insert("«> ab»", T1)).toBe(` ${T1} ‸`);
   });
 
   it("moves out of inline code and past a link or a token it lands in", () => {
-    expect(insert("a `co‸de` b", T1)).toBe(`a \`code\` ${T1}‸ b`);
+    expect(insert("a `co‸de` b", T1)).toBe(`a \`code\` ${T1} ‸ b`);
     expect(insert("[li‸nk](https://example.com) b", T1)).toBe(
-      `[link](https://example.com) ${T1}‸ b`,
+      `[link](https://example.com) ${T1} ‸ b`,
     );
-    expect(insert("![x](stag‸ed:9)", T1)).toBe(`![x](staged:9) ${T1}‸`);
+    expect(insert("![x](stag‸ed:9)", T1)).toBe(`![x](staged:9) ${T1} ‸`);
   });
 
   it("keeps a selection that ends inside code and inserts after it", () => {
-    expect(insert("a `co«de` b»", T1)).toBe(`a \`code\` b ${T1}‸`);
-    expect(insert("«a `co»de` b", T1)).toBe(`a \`code\` ${T1}‸ b`);
+    expect(insert("a `co«de` b»", T1)).toBe(`a \`code\` b ${T1} ‸`);
+    expect(insert("«a `co»de` b", T1)).toBe(`a \`code\` ${T1} ‸ b`);
   });
 });
 
 describe("tokenInsertion: after a block", () => {
   it("puts a token from inside a fence after it, in a paragraph of its own", () => {
     expect(insert("p\n\n```\nco‸de\n```\n\nq", T1)).toBe(
-      `p\n\n\`\`\`\ncode\n\`\`\`\n\n${T1}‸\n\nq`,
+      `p\n\n\`\`\`\ncode\n\`\`\`\n\n ${T1} ‸\n\nq`,
     );
     expect(insert("```\nco‸de\n```", T1, T2)).toBe(
-      `\`\`\`\ncode\n\`\`\`\n\n${T1}\n\n${T2}\n\n‸`,
+      `\`\`\`\ncode\n\`\`\`\n\n ${T1} \n\n ${T2} \n\n‸`,
     );
   });
 
   it("treats the fence lines themselves as the block", () => {
     expect(insert("‸```\ncode\n```\nq", T1)).toBe(
-      `\`\`\`\ncode\n\`\`\`\n\n${T1}\n‸\nq`,
+      `\`\`\`\ncode\n\`\`\`\n\n ${T1} \n‸\nq`,
     );
     expect(insert("```\ncode\n```‸", T1)).toBe(
-      `\`\`\`\ncode\n\`\`\`\n\n${T1}\n\n‸`,
+      `\`\`\`\ncode\n\`\`\`\n\n ${T1} \n\n‸`,
     );
   });
 
   it("leaves the HTML block a token was dropped on whole", () => {
     expect(insert("<div>\na‸b\n</div>\n\nq", T1)).toBe(
-      `<div>\nab\n</div>\n\n${T1}‸\n\nq`,
+      `<div>\nab\n</div>\n\n ${T1} ‸\n\nq`,
     );
   });
 
   it("leaves a table's delimiter row, a rule and a setext underline whole", () => {
     expect(insert("| a | b |\n| -‸ | - |\n| c | d |", T1)).toBe(
-      `| a | b |\n| - | - |\n| c | d |\n\n${T1}\n\n‸`,
+      `| a | b |\n| - | - |\n| c | d |\n\n ${T1} \n\n‸`,
     );
-    expect(insert("a\n\n---‸\n\nb", T1)).toBe(`a\n\n---\n\n${T1}‸\n\nb`);
-    expect(insert("Title\n===‸", T1)).toBe(`Title\n===\n\n${T1}\n\n‸`);
+    expect(insert("a\n\n---‸\n\nb", T1)).toBe(`a\n\n---\n\n ${T1} ‸\n\nb`);
+    expect(insert("Title\n===‸", T1)).toBe(`Title\n===\n\n ${T1} \n\n‸`);
   });
 
   it("keeps a token's own paragraph inside the quote or list item around it", () => {
     expect(insert("> | a | b |\n> | -‸ | - |\n> | c | d |", T1)).toBe(
-      `> | a | b |\n> | - | - |\n> | c | d |\n>\n> ${T1}‸`,
+      `> | a | b |\n> | - | - |\n> | c | d |\n>\n>  ${T1} ‸`,
     );
     expect(insert("- a\n- b\n  ***‸\n- c", T1)).toBe(
-      `- a\n- b\n  ***\n\n  ${T1}\n‸\n- c`,
+      `- a\n- b\n  ***\n\n   ${T1} \n‸\n- c`,
     );
     expect(insert("- a\n\n  ```\n  co‸de\n  ```\n- b", T1)).toBe(
-      `- a\n\n  \`\`\`\n  code\n  \`\`\`\n\n  ${T1}\n‸\n- b`,
+      `- a\n\n  \`\`\`\n  code\n  \`\`\`\n\n   ${T1} \n‸\n- b`,
     );
   });
 
   it("does not put a token on the blank line an HTML block runs on into", () => {
     expect(insert("<div>\nx\n</div>\n‸\nnext", T1)).toBe(
-      `<div>\nx\n</div>\n\n${T1}‸\n\nnext`,
+      `<div>\nx\n</div>\n\n ${T1} ‸\n\nnext`,
     );
   });
 
   it("gives a token something else would swallow a paragraph of its own", () => {
-    expect(insert("p\n\n    ‸", T1)).toBe(`p\n\n    \n\n${T1}\n\n‸`);
+    expect(insert("p\n\n    ‸", T1)).toBe(`p\n\n    \n\n ${T1} \n\n‸`);
   });
 
   it("goes before a fence that never closes, which would swallow it", () => {
-    expect(insert("p\n\n```\nco‸de", T1)).toBe(`p\n\n${T1}‸\n\n\`\`\`\ncode`);
+    expect(insert("p\n\n```\nco‸de", T1)).toBe(`p\n\n ${T1} ‸\n\n\`\`\`\ncode`);
+  });
+});
+
+describe("stagedTokenDeletions", () => {
+  /** `text` once × takes the file `T1` names out of it. */
+  function remove(text: string): string {
+    const changes = stagedTokenDeletions(text, anyKey, "1-a");
+    let out = text;
+    for (const { from, to, insert = "" } of [...changes].reverse()) {
+      out = out.slice(0, from) + insert + out.slice(to);
+    }
+    return out;
+  }
+
+  /** `marked` with `tokens` inserted at its caret, the caret mark gone. */
+  const placed = (marked: string, ...tokens: string[]) =>
+    insert(marked, ...tokens).replace("‸", "");
+
+  it("leaves the text as it was beside whitespace or an edge", () => {
+    for (const marked of [
+      "ab ‸",
+      "ab‸ cd",
+      "‸ab",
+      "ab‸",
+      "x\n‸y",
+      "x‸\ny",
+      "‸",
+      "‸- item",
+    ]) {
+      expect(remove(placed(marked, T1))).toBe(marked.replace("‸", ""));
+    }
+    expect(remove(placed("ab‸", T2, T1))).toBe(`ab ${T2} `);
+  });
+
+  it("leaves a space between two tokens to the first, whichever goes", () => {
+    expect(remove(`${T2} ${T1}`)).toBe(`${T2} `);
+  });
+
+  it("keeps a space between words unless both sides are CJK", () => {
+    expect(remove(`see the bug ${T1} here`)).toBe("see the bug here");
+    expect(remove(`看这里 ${T1} 你看`)).toBe("看这里你看");
+    expect(remove(`截图： ${T1} 然后`)).toBe("截图：然后");
+    expect(remove(`bug ${T1} 你看`)).toBe("bug 你看");
+    expect(remove(placed("ab‸cd", T1))).toBe("ab cd");
+    expect(remove(`𠀀 ${T1} 𠀁`)).toBe("𠀀𠀁");
+    expect(remove(`a ${T1}  ${T1} b`)).toBe("a b");
   });
 });
 
@@ -224,6 +269,28 @@ describe("resolveStagedTokens", () => {
     expect(resolveStagedTokens(`${T2} \`${T1}\``, resolved)).toBe(
       `${T2} \`${T1}\``,
     );
+  });
+});
+
+describe("stagedTokenRanges", () => {
+  const units = (text: string) =>
+    stagedTokenRanges(text, anyKey).map((r) => [r.unitFrom, r.unitTo]);
+
+  it("takes the space on each side of a token into its unit", () => {
+    expect(units(`a ${T1} b`)).toEqual([[1, 3 + T1.length]]);
+    expect(units(T1)).toEqual([[0, T1.length]]);
+  });
+
+  it("gives a space between two tokens to the first", () => {
+    const end1 = 2 + T1.length;
+    expect(units(` ${T1}  ${T2} `)).toEqual([
+      [0, end1],
+      [end1, end1 + 2 + T2.length],
+    ]);
+    expect(units(`${T1} ${T2}`)).toEqual([
+      [0, T1.length + 1],
+      [T1.length + 1, T1.length + 1 + T2.length],
+    ]);
   });
 });
 

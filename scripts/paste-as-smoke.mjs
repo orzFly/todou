@@ -474,7 +474,7 @@ async function composerChecks(page) {
     const got = await docOf(page, editor);
     if (
       typeof got !== "string" ||
-      !/^draft !\[image-\d{8}-\d{6}-[0-9a-f]{4}\.png\]\(staged:\d+-[a-z0-9]{4}\)$/.test(
+      !/^draft !\[image-\d{8}-\d{6}-[0-9a-f]{4}\.png\]\(staged:\d+-[a-z0-9]{4}\) $/.test(
         got,
       )
     )
