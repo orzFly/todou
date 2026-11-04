@@ -770,6 +770,19 @@ describe("the spec page's own moves", () => {
       }),
     );
 
+    // v2 is an old version now, and its notice leads back to the latest.
+    fireEvent.click(
+      await screen.findByRole("link", {
+        name: "This is an old version. Latest: v3",
+      }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        v: 3,
+        file: "b.md",
+      }),
+    );
+
     // Named after the card where the toolbar merges the ref into the control
     // and "Back to Issue" where the reader's ref placement keeps them apart
     // (T-461); this fixture answers /me/prefs with an empty object, so it

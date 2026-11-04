@@ -51,7 +51,10 @@ import { issueQuery } from "@/api/issues.ts";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
-import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
+import {
+  SpecOldVersionBadge,
+  SpecStatusBadge,
+} from "@/components/issue/spec-entry.tsx";
 import {
   COMMENT_HEADER_ACTION,
   COMMENT_HEADER_ROW,
@@ -1275,10 +1278,36 @@ function SpecViewBody({
       omitRef={mergedBack}
     />
   );
+  // The status is the current version's. Beside an older one it would read
+  // as that version's own, so there the badge says only that it is older,
+  // and the way to the current one is the notice below.
   const reviewStatus = (
     <ToolbarSlot name="review-status">
-      <SpecStatusBadge status={spec.review_status} />
+      {isCurrent ? (
+        <SpecStatusBadge status={spec.review_status} />
+      ) : (
+        <SpecOldVersionBadge />
+      )}
     </ToolbarSlot>
+  );
+  /* The toolbar's last row on an older version, sticky at every width. One
+     link with no role of its own: a push that makes this version old while
+     the review dialog is open is already announced there. */
+  const oldVersionNotice = isCurrent ? null : (
+    <Link
+      to="/projects/$slug/issues/$number/spec"
+      params={params}
+      search={versionSearch(spec.current_version)}
+      state={returnState}
+      data-old-version-notice=""
+      className="flex flex-wrap items-center gap-x-2 rounded-md border bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+    >
+      <span>This is an old version.</span>{" "}
+      <span className="font-medium text-foreground">
+        Latest: v{spec.current_version}
+        <span aria-hidden> →</span>
+      </span>
+    </Link>
   );
   /* Below lg the file rail is gone from the flow; this is where it went. In
      source mode it lists the files that differ, and its links carry the
@@ -1562,7 +1591,11 @@ function SpecViewBody({
           One element in both layouts, so the height observers measuring it
           keep their target across the lg boundary. Below lg it holds a
           single row and the rest of the controls follow it in flow — five
-          wrapped rows pinned there took 205 of a phone's 844px (T-593). */}
+          wrapped rows pinned there took 205 of a phone's 844px (T-593).
+
+          On an older version the old-version notice is its last row, pinned
+          below lg too: a reader scrolled deep into the document still needs
+          to know they are not reading the current version. */}
       <div
         ref={toolbarRef}
         data-header-follow=""
@@ -1656,6 +1689,10 @@ function SpecViewBody({
             </Button>
             {finishReview}
           </div>
+        )}
+        {oldVersionNotice !== null && (
+          // Below lg there is no `space-y` to set it apart from the row.
+          <div className={wide ? undefined : "mt-1.5"}>{oldVersionNotice}</div>
         )}
       </div>
       {!wide && (

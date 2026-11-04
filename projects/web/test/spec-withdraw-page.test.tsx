@@ -74,6 +74,8 @@ type FixtureOptions = {
   status?: SpecInfo["review_status"];
   version?: number;
   viewedVersion?: number;
+  /** The baseline the address pins, read in the rendered view. */
+  compare?: number;
   staged?: boolean;
   /** `GET …/spec` answers 404 until the first `advance()`, which pushes v1. */
   absent?: boolean;
@@ -301,7 +303,13 @@ async function mountPage(options: FixtureOptions = {}) {
     .navigate({
       to: "/projects/$slug/issues/$number/spec",
       params: { slug: "demo", number: String(fixture.issueNumber) },
-      search: { file: "design.md", v: options.viewedVersion },
+      search: {
+        file: "design.md",
+        v: options.viewedVersion,
+        ...(options.compare === undefined
+          ? {}
+          : { compare: options.compare, view: "rendered" as const }),
+      },
       replace: true,
       ignoreBlocker: true,
       ...(options.state === undefined
@@ -691,5 +699,40 @@ describe("the spec page reads the version its URL names", () => {
       false,
     );
     expect(page.writes).toHaveLength(0);
+  });
+
+  it("marks an older version and leads to the current one from a notice", async () => {
+    await mountPage({ version: 2, viewedVersion: 1 });
+    const slot = () =>
+      document.querySelector('[data-toolbar-slot="review-status"]');
+    expect(slot()?.textContent).toBe("old version");
+    // Named by its words alone: the arrow is decoration.
+    const link = screen.getByRole("link", {
+      name: "This is an old version. Latest: v2",
+    });
+    expect(link.matches("[data-old-version-notice]")).toBe(true);
+    const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
+    expect(href.searchParams.get("v")).toBe("2");
+    expect(href.searchParams.get("file")).toBe("design.md");
+
+    fireEvent.click(link);
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+    expect(slot()?.textContent).toBe("awaiting review");
+    expect(document.querySelector("[data-old-version-notice]")).toBeNull();
+  });
+
+  it("keeps the comparison the reader pinned on the way to the latest", async () => {
+    await mountPage({ version: 3, viewedVersion: 2, compare: 1 });
+    const link = await screen.findByRole("link", {
+      name: "This is an old version. Latest: v3",
+    });
+    const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
+    expect(Object.fromEntries(href.searchParams)).toEqual({
+      file: "design.md",
+      v: "3",
+      compare: "1",
+      view: "rendered",
+    });
   });
 });
