@@ -68,7 +68,9 @@ export function SpecComposer({
   const hidden = quoteLines.length - shown.length;
 
   return (
-    <div ref={hostRef} className="sticky bottom-0 z-10 bg-background pt-2 pb-3">
+    // z-20 like the compare stack's sticky file headers: the page renders
+    // the composer after the stack, so it paints over a header scrolling by.
+    <div ref={hostRef} className="sticky bottom-0 z-20 bg-background pt-2 pb-3">
       <div className="rounded-lg border shadow-lg">
         <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
           <FileTextIcon className="size-3.5 shrink-0" />
