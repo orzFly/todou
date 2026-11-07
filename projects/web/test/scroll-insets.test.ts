@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { createElement, useRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -148,6 +148,7 @@ function Harness({ composer }: { composer: "mounted" | "absent" }) {
           "div",
           { ref: composerRef, "data-h": "93" },
           createElement("textarea", { "aria-label": "draft" }),
+          createElement("div", null, "quoted line"),
         )
       : null,
     createElement("button", { type: "button" }, "elsewhere"),
@@ -215,6 +216,46 @@ describe("useScrollInsets (T-299)", () => {
 
     view.getByText("elsewhere").focus();
     expect(insets()).toEqual({ top: "48px", bottom: "93px" });
+  });
+
+  it("drops an overlay's inset while a mouse press that began inside it lasts", () => {
+    stubHeights();
+    const view = render(createElement(Harness, { composer: "mounted" }));
+    view.getByLabelText("draft").focus();
+    const quote = view.getByText("quoted line");
+
+    // Every engine's drag-select autoscroll honours scroll-padding, and a
+    // press on the composer's own text takes focus out of it: the pointer sat
+    // in the composer's inset and the page scrolled to its end.
+    fireEvent.pointerDown(quote, { pointerType: "mouse" });
+    view.getByText("elsewhere").focus();
+    expect(insets().bottom).toBe("0px");
+
+    fireEvent.pointerUp(quote, { pointerType: "mouse" });
+    expect(insets().bottom).toBe("93px");
+
+    // A press outside every overlay leaves them all counted: a drag from the
+    // page down onto the composer is what the inset is there to scroll.
+    const outside = view.getByText("elsewhere");
+    fireEvent.pointerDown(outside, { pointerType: "mouse" });
+    expect(insets()).toEqual({ top: "48px", bottom: "93px" });
+    fireEvent.pointerUp(outside, { pointerType: "mouse" });
+
+    // Dragging a selection starts a drag and drop instead, and Chromium and
+    // Firefox end the press with a pointercancel.
+    fireEvent.pointerDown(quote, { pointerType: "mouse" });
+    expect(insets().bottom).toBe("0px");
+    fireEvent.pointerCancel(quote, { pointerType: "mouse" });
+    expect(insets().bottom).toBe("93px");
+
+    // iOS drags a selection handle with one touch pointerdown and never ends
+    // it: a finger would leave the inset at 0 until the next press.
+    fireEvent.pointerDown(quote, { pointerType: "touch" });
+    expect(insets().bottom).toBe("93px");
+
+    // A right-click's menu may keep the pointerup from the page.
+    fireEvent.pointerDown(quote, { pointerType: "mouse", button: 2 });
+    expect(insets().bottom).toBe("93px");
   });
 });
 
