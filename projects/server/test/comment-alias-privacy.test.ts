@@ -36,9 +36,18 @@ const PG_URL = process.env.TODOU_TEST_POSTGRES_URL;
 const MISSING = 999_999;
 const METHODS = ["GET", "HEAD"] as const;
 const TAILS = ["", "/revisions"] as const;
+const HEAD_HEADERS = [
+  ["content-security-policy", "frame-ancestors 'none'"],
+  ["content-type", "application/json"],
+  ["x-content-type-options", "nosniff"],
+  ["x-frame-options", "DENY"],
+];
 const JSON_HEADERS = [
+  ["content-security-policy", "frame-ancestors 'none'"],
   ["content-type", "application/json"],
   ["vary", "Accept-Encoding"],
+  ["x-content-type-options", "nosniff"],
+  ["x-frame-options", "DENY"],
 ];
 const PROJECT_404 =
   '{"error":{"code":"not_found","message":"project not found"}}';
@@ -66,8 +75,7 @@ const expected = (status: number, body: string, method = "GET") => ({
   status,
   body: method === "HEAD" ? "" : body,
   // Compression bypasses HEAD, so only GET gains Vary: Accept-Encoding.
-  headers:
-    method === "HEAD" ? [["content-type", "application/json"]] : JSON_HEADERS,
+  headers: method === "HEAD" ? HEAD_HEADERS : JSON_HEADERS,
   redirected: false,
 });
 const issuePath = (slug: string, number: number) =>

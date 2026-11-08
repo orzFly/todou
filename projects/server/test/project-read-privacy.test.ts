@@ -85,8 +85,11 @@ describe("project existence privacy on issue reads (T-440)", () => {
           );
           expect(missing?.redirected).toBe(false);
           expect(missing?.headers).toEqual([
+            ["content-security-policy", "frame-ancestors 'none'"],
             ["content-type", "application/json"],
             ["vary", "Accept-Encoding"],
+            ["x-content-type-options", "nosniff"],
+            ["x-frame-options", "DENY"],
           ]);
         }
       }
