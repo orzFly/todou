@@ -139,6 +139,27 @@ describe.each(BACKENDS)("watch self-filter (%s)", (backend, systemUrl) => {
         })
       ).status,
     ).toBe(200);
+
+    // Another account claiming my session (T-656): the id is readable off
+    // any entry I wrote, so nothing stops a member from sending it.
+    const spoofed = {
+      "content-type": "application/json",
+      ...bob.headers,
+      "x-todou-agent-context": JSON.stringify({
+        agent: "claude-code",
+        session_id: SENTINEL,
+      }),
+    };
+    await comment(spoofed, "spoof");
+    expect(
+      (
+        await t.app.request(`/api/projects/${slug}/issues/${number}`, {
+          method: "PATCH",
+          headers: spoofed,
+          body: JSON.stringify({ title: "Who hides from whom" }),
+        })
+      ).status,
+    ).toBe(200);
   });
 
   afterAll(async () => {
@@ -148,13 +169,22 @@ describe.each(BACKENDS)("watch self-filter (%s)", (backend, systemUrl) => {
   it("keeps exclude_actor alone meaning the whole account", async () => {
     expect(await timeline(`after=${baseline}&exclude_actor=${meId}`)).toEqual([
       "bob",
+      "spoof",
+      "event:title_changed",
     ]);
   });
 
   it("drops one agent session and nothing else", async () => {
     expect(
       await timeline(`after=${baseline}&exclude_agent_session=${SENTINEL}`),
-    ).toEqual(["worker", "web", "blank", "bob"]);
+    ).toEqual([
+      "worker",
+      "web",
+      "blank",
+      "bob",
+      "spoof",
+      "event:title_changed",
+    ]);
   });
 
   it("composes the two axes into 'not mine'", async () => {
@@ -162,7 +192,7 @@ describe.each(BACKENDS)("watch self-filter (%s)", (backend, systemUrl) => {
     // not, and a session-less write of mine falls back to the account —
     // including one whose harness reported an empty session id.
     // The closing event carries the sentinel session too, so it goes.
-    const expected = ["worker", "bob"];
+    const expected = ["worker", "bob", "spoof", "event:title_changed"];
     const qs = `after=${baseline}&exclude_actor=${meId}&exclude_agent_session=${SENTINEL}`;
     expect(await timeline(qs)).toEqual(expected);
     expect(await activity(qs)).toEqual(expected);
@@ -171,7 +201,28 @@ describe.each(BACKENDS)("watch self-filter (%s)", (backend, systemUrl) => {
 
   it("filters events by the session that produced them", async () => {
     const qs = `after=${baseline}&exclude_actor=${meId}&exclude_agent_session=${WORKER}`;
-    expect(await timeline(qs)).toEqual(["sentinel", "bob", "event:closed"]);
+    expect(await timeline(qs)).toEqual([
+      "sentinel",
+      "bob",
+      "event:closed",
+      "spoof",
+      "event:title_changed",
+    ]);
+  });
+
+  it("matches a session only among the reader's own writes (T-656)", async () => {
+    // Bob's comment and title change both claim my session; neither is
+    // mine, so no self-filter of mine may swallow them, on any read path.
+    for (const qs of [
+      `after=${baseline}&exclude_agent_session=${SENTINEL}`,
+      `after=${baseline}&exclude_actor=${meId}&exclude_agent_session=${SENTINEL}`,
+    ]) {
+      for (const read of [timeline, activity, cross]) {
+        expect(await read(qs)).toEqual(
+          expect.arrayContaining(["spoof", "event:title_changed"]),
+        );
+      }
+    }
   });
 
   it("rejects an empty exclude_agent_session", async () => {

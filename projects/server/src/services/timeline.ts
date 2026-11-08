@@ -161,7 +161,10 @@ type Filters = {
   exclude_actor?: number;
   exclude_agent_session?: string;
   scope?: string;
-  /** Whose scope `scope` means: the caller, never a query parameter. */
+  /**
+   * Who is reading: whose entries `scope` and `exclude_agent_session` are
+   * about, taken from the caller and never from a query parameter.
+   */
   viewer?: number;
 };
 
@@ -278,6 +281,12 @@ export function redactEventPayloads<T extends TimelineItem>(
  * entries that carry none (web writes, clients without a harness), where it
  * remains the only available answer to "was this me?".
  *
+ * A session matches only among the reader's own entries (T-656). Session
+ * ids are self-reported and readable off any entry, so without the bound
+ * another member could send a watcher's id and hide their own writes from
+ * it. The reader rather than `exclude_actor` is the bound because the query
+ * parameter is as freely chosen as the session it would vouch for.
+ *
  * The empty string is normalized to "no session": a harness that reports
  * `session_id: ""` has told us nothing to compare, and letting it match
  * would make every such entry look like everyone else's own writes.
@@ -290,8 +299,11 @@ function notSelfConditions(
   const conditions: SQL[] = [];
   const session = sql`nullif(${agentContext} ->> 'session_id', '')`;
   if (filters.exclude_agent_session !== undefined) {
+    if (filters.viewer === undefined) {
+      throw new Error("a session filter needs a viewer");
+    }
     conditions.push(
-      sql`${session} is distinct from ${filters.exclude_agent_session}::text`,
+      sql`(${session} is distinct from ${filters.exclude_agent_session}::text or ${actorId} <> ${filters.viewer})`,
     );
   }
   if (filters.exclude_actor !== undefined) {
@@ -626,7 +638,7 @@ export async function getTimeline(
   // nothing simply returns an empty page and the caller keeps its cursor.
   const visible = await visibleProjects(ctx, actor);
   const { wantComments, wantEvents, commentConditions, eventConditions } =
-    filterConditions(query, visible);
+    filterConditions({ ...query, viewer: actor.id }, visible);
   commentConditions.push(eq(comments.issueId, issue.id));
   eventConditions.push(eq(issueEvents.issueId, issue.id));
 

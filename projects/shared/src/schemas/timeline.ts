@@ -308,9 +308,9 @@ export type TimelineFilterType = z.infer<typeof TimelineFilterType>;
  * clients without a harness). So a sibling agent on the same account stays
  * visible while one's own writes stay filtered.
  *
- * `agent_context` is self-reported (see agent-context.ts), which makes this
- * a convenience filter, never a permission boundary — enough for "do not
- * wake me with my own writes".
+ * `agent_context` is self-reported (see agent-context.ts), so the session
+ * matches only among the requesting account's own entries (T-656): another
+ * account sending this session id cannot hide its writes from the watcher.
  */
 const excludeAgentSession = z.string().min(1).max(200).optional();
 
