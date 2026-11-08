@@ -1,4 +1,6 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { users } from "../src/db/system-schema.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 import { type StubIssuer, startStubIssuer } from "./stub-issuer.ts";
 
@@ -375,6 +377,127 @@ describe("oidc provisioning denials", () => {
     } finally {
       await single.cleanup();
     }
+  });
+});
+
+describe("oidc admission settings", () => {
+  let gated: TestApp;
+
+  beforeAll(async () => {
+    gated = await makeTestApp("shared", {
+      extraToml: [
+        "[auth]",
+        'mode = "oidc"',
+        "[auth.oidc]",
+        `issuer = "${idp.origin}"`,
+        `client_id = "${CLIENT_ID}"`,
+        'client_secret = "test-secret"',
+        "require_email_verified = true",
+        'allowed_email_domains = ["corp.example"]',
+        'allowed_groups = ["todou-users", "ops"]',
+      ].join("\n"),
+    });
+  });
+
+  afterAll(async () => {
+    await gated.cleanup();
+  });
+
+  async function gatedCallback() {
+    const start = await gated.app.request("/api/auth/login");
+    const flow = new URL(start.headers.get("location") ?? "");
+    const cookie = (start.headers.get("set-cookie") ?? "").split(
+      ";",
+    )[0] as string;
+    return gated.app.request(
+      `/api/auth/callback?code=c&state=${encodeURIComponent(
+        flow.searchParams.get("state") ?? "",
+      )}`,
+      { headers: { cookie } },
+    );
+  }
+
+  const admitted = {
+    email: "owner@corp.example",
+    email_verified: true,
+    groups: ["todou-users"],
+  };
+
+  async function subjectRows(subject: string) {
+    return gated.ctx.router
+      .system()
+      .select()
+      .from(users)
+      .where(eq(users.oidcSubject, subject));
+  }
+
+  it("admits the first sign-in that passes and makes it instance admin", async () => {
+    idp.subject = "owner-sub";
+    idp.idTokenClaims = { preferred_username: "owner", ...admitted };
+    const res = await gatedCallback();
+    expect(res.headers.get("location")).toBe("/");
+    const me = await gated.app.request("/api/me", {
+      headers: { cookie: sessionCookieOf(res) },
+    });
+    expect((await json(me)).is_instance_admin).toBe(true);
+  });
+
+  it.each([
+    ["an unverified email", { email_verified: false }],
+    ["no email_verified claim", { email_verified: undefined }],
+    ["an email outside the domains", { email: "mallory@evil.test" }],
+    ["a look-alike subdomain", { email: "mallory@evil.corp.example" }],
+    ["none of the groups", { groups: ["everyone"] }],
+    ["no groups claim", { groups: undefined }],
+  ])(
+    "refuses an unknown subject with %s and creates no account",
+    async (_label, override) => {
+      idp.subject = "stranger-sub";
+      idp.idTokenClaims = {
+        preferred_username: "mallory",
+        ...admitted,
+        email: "mallory@corp.example",
+        ...override,
+      };
+      const res = await gatedCallback();
+      expect(res.headers.get("location")).toBe("/login?error=admission_denied");
+      expect(sessionCookieOf(res)).toBe("");
+      expect(await subjectRows("stranger-sub")).toHaveLength(0);
+    },
+  );
+
+  it("reads claims the ID token lacks from userinfo", async () => {
+    idp.subject = "userinfo-gated-sub";
+    idp.idTokenClaims = { preferred_username: "dana" };
+    idp.userinfoClaims = {
+      email: "Dana@CORP.example",
+      email_verified: true,
+      groups: ["ops"],
+    };
+    const res = await gatedCallback();
+    expect(res.headers.get("location")).toBe("/");
+    expect(await subjectRows("userinfo-gated-sub")).toHaveLength(1);
+  });
+
+  it("re-checks an existing account on every login", async () => {
+    idp.subject = "leaver-sub";
+    idp.idTokenClaims = { preferred_username: "leaver", ...admitted };
+    const first = await gatedCallback();
+    expect(first.headers.get("location")).toBe("/");
+    const session = sessionCookieOf(first);
+
+    idp.idTokenClaims = { ...idp.idTokenClaims, groups: ["alumni"] };
+    const second = await gatedCallback();
+    expect(second.headers.get("location")).toBe(
+      "/login?error=admission_denied",
+    );
+
+    // A login gate only: the session already issued lives on until the
+    // account is disabled, which the deploy docs say in so many words.
+    const me = await gated.app.request("/api/me", {
+      headers: { cookie: session },
+    });
+    expect(me.status).toBe(200);
   });
 });
 

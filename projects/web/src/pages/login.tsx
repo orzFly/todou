@@ -21,6 +21,8 @@ export function oidcErrorText(code: string): string {
       return "The identity provider rejected the sign-in. Try again, and check the server logs if it persists.";
     case "claim_missing":
       return "The identity provider sent no usable username. Check the login_claim configuration.";
+    case "admission_denied":
+      return "Signed in, but this deployment does not admit that account. Ask an administrator to check its admission settings.";
     case "provision_denied":
       return "Signed in, but no account exists here for that identity (and auto-creation is off).";
     default:

@@ -19,6 +19,25 @@ export const CLIENT_AUTH_METHODS = [
   "client_secret_basic",
 ] as const;
 
+// ENV delivers one comma-separated string; TOML delivers an array.
+const stringList = z.preprocess(
+  (v) =>
+    typeof v === "string"
+      ? v
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s !== "")
+      : v,
+  z.array(z.string()),
+);
+
+// Matched against the part after an email's last "@", lowercased.
+const emailDomains = stringList
+  .transform((list) =>
+    list.map((d) => d.trim().toLowerCase().replace(/^@/, "")),
+  )
+  .default([]);
+
 const ConfigSchema = z.object({
   auth: z
     .object({
@@ -33,6 +52,12 @@ const ConfigSchema = z.object({
           scopes: z.string().default("openid profile email"),
           login_claim: z.string().default("preferred_username"),
           auto_create: flexibleBool.default(true),
+          // Admission, checked on every login before an account is looked
+          // up or created. Empty admits whoever the IdP authenticates.
+          require_email_verified: flexibleBool.default(false),
+          allowed_email_domains: emailDomains,
+          allowed_groups: stringList.default([]),
+          groups_claim: z.string().default("groups"),
           // Only the endpoints this server dials itself may move to a
           // cluster-internal address: the browser cannot reach one, and
           // `issuer` is compared verbatim against the ID token's `iss`.
@@ -55,6 +80,11 @@ const ConfigSchema = z.object({
           name_header: z.string().optional(),
           email_header: z.string().optional(),
           auto_create: flexibleBool.default(true),
+          // Admission, checked on every request. A proxy asserts no
+          // verified-email flag, so there is no require_email_verified.
+          groups_header: z.string().optional(),
+          allowed_email_domains: emailDomains,
+          allowed_groups: stringList.default([]),
         })
         .prefault({}),
     })
@@ -72,17 +102,7 @@ const ConfigSchema = z.object({
       // JSON, so this needs generous headroom over typical issue bodies.
       max_json_body_mb: z.coerce.number().positive().default(4),
       public_origin: z.string().optional(),
-      trusted_proxies: z.preprocess(
-        // ENV delivers one comma-separated string; TOML delivers an array.
-        (v) =>
-          typeof v === "string"
-            ? v
-                .split(",")
-                .map((s) => s.trim())
-                .filter((s) => s !== "")
-            : v,
-        z.array(z.string()).default(["127.0.0.1/32", "::1/128"]),
-      ),
+      trusted_proxies: stringList.default(["127.0.0.1/32", "::1/128"]),
     })
     .prefault({}),
   database: z
@@ -287,6 +307,16 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_OIDC_SCOPES", ["auth", "oidc", "scopes"]],
   ["TODOU_AUTH_OIDC_LOGIN_CLAIM", ["auth", "oidc", "login_claim"]],
   ["TODOU_AUTH_OIDC_AUTO_CREATE", ["auth", "oidc", "auto_create"]],
+  [
+    "TODOU_AUTH_OIDC_REQUIRE_EMAIL_VERIFIED",
+    ["auth", "oidc", "require_email_verified"],
+  ],
+  [
+    "TODOU_AUTH_OIDC_ALLOWED_EMAIL_DOMAINS",
+    ["auth", "oidc", "allowed_email_domains"],
+  ],
+  ["TODOU_AUTH_OIDC_ALLOWED_GROUPS", ["auth", "oidc", "allowed_groups"]],
+  ["TODOU_AUTH_OIDC_GROUPS_CLAIM", ["auth", "oidc", "groups_claim"]],
   ["TODOU_AUTH_OIDC_INTERNAL_ORIGIN", ["auth", "oidc", "internal_origin"]],
   ["TODOU_AUTH_OIDC_TOKEN_ENDPOINT", ["auth", "oidc", "token_endpoint"]],
   ["TODOU_AUTH_OIDC_USERINFO_ENDPOINT", ["auth", "oidc", "userinfo_endpoint"]],
@@ -299,6 +329,12 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_FORWARD_NAME_HEADER", ["auth", "forward", "name_header"]],
   ["TODOU_AUTH_FORWARD_EMAIL_HEADER", ["auth", "forward", "email_header"]],
   ["TODOU_AUTH_FORWARD_AUTO_CREATE", ["auth", "forward", "auto_create"]],
+  ["TODOU_AUTH_FORWARD_GROUPS_HEADER", ["auth", "forward", "groups_header"]],
+  [
+    "TODOU_AUTH_FORWARD_ALLOWED_EMAIL_DOMAINS",
+    ["auth", "forward", "allowed_email_domains"],
+  ],
+  ["TODOU_AUTH_FORWARD_ALLOWED_GROUPS", ["auth", "forward", "allowed_groups"]],
   ["TODOU_DATABASE_POOL_MAX", ["database", "pool", "max"]],
   [
     "TODOU_DATABASE_POOL_IDLE_TIMEOUT_MS",
@@ -372,6 +408,21 @@ export function loadConfig(options?: {
     throw new ConfigError(
       'auth.forward.user_header is required when auth.mode is "forward"',
     );
+  }
+  // Without the header to read, the setting would refuse everybody — a
+  // lockout that looks like a broken proxy rather than a config mistake.
+  if (config.auth.mode === "forward") {
+    const forward = config.auth.forward;
+    if (forward.allowed_groups.length > 0 && !forward.groups_header) {
+      throw new ConfigError(
+        "auth.forward.allowed_groups needs auth.forward.groups_header",
+      );
+    }
+    if (forward.allowed_email_domains.length > 0 && !forward.email_header) {
+      throw new ConfigError(
+        "auth.forward.allowed_email_domains needs auth.forward.email_header",
+      );
+    }
   }
   if (config.http.public_origin !== undefined) {
     config.http.public_origin = bareOrigin(

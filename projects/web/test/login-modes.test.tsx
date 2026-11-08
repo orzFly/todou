@@ -89,6 +89,7 @@ describe("oidc helpers", () => {
       "state_mismatch",
       "exchange_failed",
       "claim_missing",
+      "admission_denied",
       "provision_denied",
       "never-heard-of-it",
     ]) {

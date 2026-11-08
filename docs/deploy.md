@@ -606,7 +606,9 @@ described so far; nothing to configure.
 
 Authorization-code + PKCE against any OpenID Connect provider
 (Keycloak, Authelia, Authentik, Google, …); the callback creates the same
-30-day sliding DB session single mode uses.
+30-day sliding DB session single mode uses. On a public provider like
+Google, read [Who can sign in](#who-can-sign-in) first: unconfigured,
+every account there can sign in.
 
 ```toml
 [auth]
@@ -619,6 +621,13 @@ client_secret = "…"                  # or TODOU_AUTH_OIDC_CLIENT_SECRET
 # scopes = "openid profile email"    # defaults
 # login_claim = "preferred_username"
 # auto_create = true
+
+# Admission — unset by default, which admits anyone the IdP signs in.
+# See "Who can sign in" below before leaving these empty.
+# require_email_verified = true
+# allowed_email_domains = ["example.com"]
+# allowed_groups = ["todou-users"]
+# groups_claim = "groups"           # default
 ```
 
 Register the client with redirect URI `<origin>/api/auth/callback`. The
@@ -646,6 +655,54 @@ next sign-in from that browser sends `prompt=login`, asking the IdP for
 credentials again rather than reusing its session. An IdP that ignores
 `prompt` signs the previous account straight back in, so on shared
 machines users must also sign out at the IdP.
+
+#### Who can sign in
+
+**With the admission settings unset — the default — anyone the IdP will
+authenticate for this client can sign in, and with `auto_create` on,
+gets an account.** Every account can create projects, upload
+attachments and reach every endpoint that only asks for a signed-in
+user. Connecting an IdP is not access control by itself: the IdP's own
+rules are then the only boundary. On a public provider such as Google
+or GitLab.com, or an IdP with self-registration, that boundary is
+"anyone with an account there", which makes the deployment an open
+signup service.
+
+Narrow it at the IdP (assign the client to specific users or groups,
+turn self-registration off), or here, or both:
+
+| Setting | Admits a sign-in when |
+|---|---|
+| `require_email_verified = true` | the `email_verified` claim is `true` |
+| `allowed_email_domains = [...]` | the `email` claim's domain is one of these, matched exactly and case-insensitively (`corp.example` does not admit `dev.corp.example`) |
+| `allowed_groups = [...]` | the `groups_claim` claim (default `groups`, a list or a single string) shares at least one entry with this list, case-sensitively |
+
+Every setting given must hold. A claim missing from the ID token is
+read from userinfo; a claim the IdP sends in neither place refuses the
+sign-in, so make sure the client's scopes and claim mappers actually
+emit it (Keycloak, for one, sends `groups` only through a mapper you
+add). The refused user lands on the login page with
+`admission_denied`; the subject and the reason go to the server log.
+
+`allowed_email_domains` trusts the `email` claim as the IdP states it.
+On an IdP where users can type in any address unverified, a domain
+list without `require_email_verified` admits anyone who claims an
+address at your domain; turn both on unless your IdP only issues
+addresses it controls.
+
+The check runs on every sign-in, existing accounts included, before
+any account is looked up or created. Two things it does not reach:
+
+- **Sessions and tokens already issued.** A web session lasts 30 days
+  and slides on use; PATs, including those the CLI obtained through
+  device authorization, do not expire by themselves, and neither do
+  the agents the account owns. Removing someone from the IdP group
+  stops their next sign-in and nothing else; todou has no command yet
+  that ends a human account's existing sessions and tokens.
+- **The first instance admin.** The bootstrap below still applies, but
+  only to the first sign-in that passes admission — so set the
+  settings before the first sign-in, and make sure your own account
+  passes them.
 
 #### The first sign-in becomes instance admin
 
@@ -800,6 +857,11 @@ user_header = "Remote-User"          # Authelia; oauth2-proxy: "X-Auth-Request-U
 # name_header = "Remote-Name"        # optional, read only when creating the user
 # email_header = "Remote-Email"
 # auto_create = true
+
+# Admission — unset by default, which admits anyone the proxy lets through.
+# groups_header = "Remote-Groups"     # oauth2-proxy: "X-Auth-Request-Groups"
+# allowed_groups = ["todou-users"]    # needs groups_header
+# allowed_email_domains = ["example.com"]  # needs email_header
 ```
 
 Two hard requirements, both enforced:
@@ -836,6 +898,23 @@ username — an upstream user literally named `builtin` would match that
 account, history and admin bit included. The header namespace is the
 operator's responsibility; retire or rebind the builtin account when
 migrating (see the single-mode migration above).
+
+**Admission works the same way as oidc's, and leaving it unset carries
+the same risk**: anyone the proxy authenticates gets an account, so the
+proxy's own access rules (Authelia's access control, oauth2-proxy's
+`--allowed-group` / `--email-domain`) are the only boundary unless the
+settings above are set. `allowed_groups` reads `groups_header` as a
+comma-separated list, the form oauth2-proxy and Authelia send;
+`allowed_email_domains` reads `email_header`. The server refuses to
+start with either list set but its header not. A refused request gets a
+403, with the reason in the server log.
+
+Because forward mode has no sessions, the check runs on every request,
+so an account the proxy stops vouching for loses web access straight
+away. Bearer PATs skip the identity headers entirely and keep working,
+as they do in oidc mode. There is no `require_email_verified`: proxies
+do not forward a verified-email flag, so whether `email_header` carries
+a verified address is up to the proxy and its IdP.
 
 ## S3 attachment storage
 

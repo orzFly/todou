@@ -2,8 +2,9 @@ import type { AgentContext } from "@todou/shared";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { AppContext } from "../bootstrap.ts";
-import { UnauthorizedError } from "../errors.ts";
+import { ForbiddenError, UnauthorizedError } from "../errors.ts";
 import { peerTrust, type RequestLike } from "../http/proxy.ts";
+import { admissionRefusal, forwardAdmissionPolicy } from "./admission.ts";
 import { type UserRow, verifyPat } from "./pat.ts";
 import { normalizeLogin, provisionUser } from "./provision.ts";
 import { SESSION_COOKIE, validateSession } from "./session.ts";
@@ -99,13 +100,30 @@ async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
       `identity header ${userHeader} carries an invalid login`,
     );
   }
+  const email = forward.email_header
+    ? c.req.header(forward.email_header)
+    : null;
+  // Per request, like the identity itself, so an account the proxy stops
+  // vouching for loses access on its next request.
+  const refusal = admissionRefusal(forwardAdmissionPolicy(ctx.config), {
+    email,
+    groups: forward.groups_header ? c.req.header(forward.groups_header) : null,
+  });
+  if (refusal !== null) {
+    console.error(
+      `forward auth: admission refused ${JSON.stringify(login)}: ${refusal}`,
+    );
+    throw new ForbiddenError(
+      "this identity is not admitted by the auth.forward admission settings (the server log has the reason)",
+    );
+  }
   return provisionUser(
     ctx.router.system(),
     {
       subject: login,
       login,
       name: forward.name_header ? c.req.header(forward.name_header) : null,
-      email: forward.email_header ? c.req.header(forward.email_header) : null,
+      email,
     },
     { autoCreate: forward.auto_create },
   );

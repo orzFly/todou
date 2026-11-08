@@ -119,6 +119,58 @@ describe("loadConfig", () => {
     expect(config.auth.forward.user_header).toBe("Remote-User");
   });
 
+  it("leaves every admission setting open by default", () => {
+    const { oidc, forward } = loadConfig({ tomlSource: "", env: {} }).auth;
+    expect(oidc.require_email_verified).toBe(false);
+    expect(oidc.allowed_email_domains).toEqual([]);
+    expect(oidc.allowed_groups).toEqual([]);
+    expect(oidc.groups_claim).toBe("groups");
+    expect(forward.allowed_email_domains).toEqual([]);
+    expect(forward.allowed_groups).toEqual([]);
+  });
+
+  it("reads admission lists from ENV and normalises domains", () => {
+    const { oidc } = loadConfig({
+      tomlSource: "",
+      env: {
+        TODOU_AUTH_OIDC_ALLOWED_EMAIL_DOMAINS: "@Corp.Example, lab.example",
+        TODOU_AUTH_OIDC_ALLOWED_GROUPS: "todou-users,ops",
+        TODOU_AUTH_OIDC_REQUIRE_EMAIL_VERIFIED: "true",
+      },
+    }).auth;
+    expect(oidc.allowed_email_domains).toEqual(["corp.example", "lab.example"]);
+    expect(oidc.allowed_groups).toEqual(["todou-users", "ops"]);
+    expect(oidc.require_email_verified).toBe(true);
+  });
+
+  it("refuses forward admission lists with no header to read them from", () => {
+    const forward = (...lines: string[]) =>
+      loadConfig({
+        tomlSource: [
+          "[auth]",
+          'mode = "forward"',
+          "[auth.forward]",
+          'user_header = "Remote-User"',
+          ...lines,
+        ].join("\n"),
+        env: {},
+      });
+    expect(() => forward('allowed_groups = ["ops"]')).toThrow(
+      /allowed_groups needs auth\.forward\.groups_header/,
+    );
+    expect(() => forward('allowed_email_domains = ["corp.example"]')).toThrow(
+      /allowed_email_domains needs auth\.forward\.email_header/,
+    );
+    expect(() =>
+      forward(
+        'allowed_groups = ["ops"]',
+        'groups_header = "Remote-Groups"',
+        'allowed_email_domains = ["corp.example"]',
+        'email_header = "Remote-Email"',
+      ),
+    ).not.toThrow();
+  });
+
   it("leaves cookie_secure a tri-state (absent = per request)", () => {
     expect(
       loadConfig({ tomlSource: "", env: {} }).auth.cookie_secure,

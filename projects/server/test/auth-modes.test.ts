@@ -272,6 +272,94 @@ describe("forward mode", () => {
   });
 });
 
+describe("forward mode admission settings", () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await makeTestApp("shared", {
+      extraToml: [
+        FORWARD_TOML,
+        'groups_header = "Remote-Groups"',
+        'allowed_groups = ["todou-users", "ops"]',
+        'allowed_email_domains = ["corp.example"]',
+      ].join("\n"),
+    });
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  const me = (headers: Record<string, string>) =>
+    t.app.request("/api/me", { headers }, fromPeer("127.0.0.1"));
+
+  const subjectRows = (subject: string) =>
+    t.ctx.router
+      .system()
+      .select()
+      .from(users)
+      .where(eq(users.oidcSubject, subject));
+
+  it("admits the first request that passes and makes it instance admin", async () => {
+    const res = await me({
+      "Remote-User": "owner",
+      "Remote-Email": "owner@CORP.example",
+      "Remote-Groups": "everyone, ops",
+    });
+    expect(res.status).toBe(200);
+    expect((await json(res)).is_instance_admin).toBe(true);
+  });
+
+  it.each([
+    ["no groups header", { "Remote-Email": "m@corp.example" }],
+    [
+      "none of the groups",
+      { "Remote-Email": "m@corp.example", "Remote-Groups": "everyone" },
+    ],
+    ["no email header", { "Remote-Groups": "ops" }],
+    [
+      "an email outside the domains",
+      { "Remote-Email": "m@evil.test", "Remote-Groups": "ops" },
+    ],
+  ])(
+    "403s an unknown user with %s and creates no account",
+    async (_label, extra) => {
+      const res = await me({ "Remote-User": "mallory", ...extra });
+      expect(res.status).toBe(403);
+      expect(await subjectRows("mallory")).toHaveLength(0);
+    },
+  );
+
+  it("re-checks an existing account on every request, PATs excepted", async () => {
+    const admitted = {
+      "Remote-User": "leaver",
+      "Remote-Email": "leaver@corp.example",
+      "Remote-Groups": "todou-users",
+    };
+    expect((await me(admitted)).status).toBe(200);
+    const minted = await t.app.request(
+      "/api/me/tokens",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...admitted },
+        body: JSON.stringify({ name: "cli" }),
+      },
+      fromPeer("127.0.0.1"),
+    );
+    const { token } = await json(minted);
+
+    const left = await me({ ...admitted, "Remote-Groups": "alumni" });
+    expect(left.status).toBe(403);
+
+    const viaPat = await t.app.request(
+      "/api/me",
+      { headers: { authorization: `Bearer ${token}` } },
+      {},
+    );
+    expect(viaPat.status).toBe(200);
+  });
+});
+
 describe("session cookie Secure attribute", () => {
   const login = (
     t: TestApp,

@@ -24,6 +24,10 @@ function oidcConfig(
     scopes: "openid profile email",
     login_claim: "preferred_username",
     auto_create: true,
+    require_email_verified: false,
+    allowed_email_domains: [],
+    allowed_groups: [],
+    groups_claim: "groups",
     ...overrides,
   };
 }
