@@ -242,7 +242,7 @@ describe.each(PLACEMENTS)(
 
       const moved = await req(
         `/projects/${A}/issues/${oldNumber}/move`,
-        author,
+        admin,
         { method: "POST", body: JSON.stringify({ to_project: B }) },
       );
       expect(moved.status).toBe(200);

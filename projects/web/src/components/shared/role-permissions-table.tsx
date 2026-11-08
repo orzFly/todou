@@ -166,11 +166,6 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Collaborate",
-    label: "Move an issue to another project",
-    caps: ["issue.move", "issue.move_in"],
-  },
-  {
-    group: "Collaborate",
     label: "Record that one issue is waiting for another",
     caps: ["issue.block"],
   },
@@ -197,6 +192,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
     caps: ["member.set", "member.remove"],
   },
   { group: "Administer", label: "Manage statuses", caps: ["status.manage"] },
+  {
+    group: "Administer",
+    label: "Move an issue to another project",
+    caps: ["issue.move", "issue.move_in"],
+  },
   {
     group: "Administer",
     label: "Manage reference rules",

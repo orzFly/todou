@@ -12,7 +12,6 @@ import {
 } from "../../db/project-schema.ts";
 import { projectMembers } from "../../db/system-schema.ts";
 import {
-  ForbiddenError,
   IssueDeletedError,
   IssueMovedError,
   IssueMovingError,
@@ -79,11 +78,6 @@ export async function planMove(
   const row = await loadIssueRow(sourceDb, source.id, number);
   // Trash, tombstone and freeze all refuse here, with their own codes.
   assertIssueWritable(row, actor, role);
-  if (role !== "admin" && row.authorId !== actor.id) {
-    throw new ForbiddenError(
-      "only the author or a project admin may move an issue",
-    );
-  }
 
   // A project the mover cannot see is a 404 from here, same as anywhere.
   const { project: target } = await requireCapability(

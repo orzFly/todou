@@ -149,6 +149,7 @@ function mount({ full }: { full: boolean }, issue: Issue = CARD) {
       allLabels={[BUG]}
       members={[{ user, role: "writer" }] as unknown as Member[]}
       canDelete={true}
+      canMove={true}
       trashed={false}
     />,
     seed({ full }),
@@ -292,6 +293,7 @@ describe("the Latest spec heading", () => {
         allLabels={[BUG]}
         members={[]}
         canDelete={true}
+        canMove={true}
         trashed={false}
       />,
       client,

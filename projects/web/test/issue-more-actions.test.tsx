@@ -53,15 +53,18 @@ const issue = {
 } satisfies Issue;
 
 /** The suite is offline by default, so both queries here degrade on a 404. */
-async function mount() {
+async function mount({ canMove = true } = {}) {
   const client = testQueryClient();
   client.setQueryData(referenceConfigQuery(SLUG).queryKey, prefixedConfig);
-  renderWithProviders(<IssueMoreActions slug={SLUG} issue={issue} />, client);
+  renderWithProviders(
+    <IssueMoreActions slug={SLUG} issue={issue} canMove={canMove} />,
+    client,
+  );
   return await screen.findByRole("button", { name: "More actions" });
 }
 
-async function openMenu() {
-  const trigger = await mount();
+async function openMenu(options?: { canMove?: boolean }) {
+  const trigger = await mount(options);
   fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
   await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
   return trigger;
@@ -100,6 +103,16 @@ describe("IssueMoreActions", () => {
     expect(entries[0]?.dataset.variant).toBe("default");
     expect(entries[1]?.dataset.variant).toBe("default");
     expect(entries[2]?.dataset.variant).toBe("destructive");
+  });
+
+  // Moving is an admin's (T-626); an author who is only a writer still
+  // reaches this menu, for the trash.
+  it("leaves the move out for someone who may not move", async () => {
+    await openMenu({ canMove: false });
+    expect(screen.getAllByRole("menuitem").map((e) => e.textContent)).toEqual([
+      "All references",
+      "Move to trash…",
+    ]);
   });
 
   it("opens the references dialog from the first entry", async () => {

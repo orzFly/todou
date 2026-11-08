@@ -167,7 +167,7 @@ const restoreIssueRoute = createRoute({
 const moveIssueRoute = createRoute({
   method: "post",
   path: "/{slug}/issues/{number}/move",
-  summary: "Move an issue to another project (author or project admin)",
+  summary: "Move an issue to another project (admin of both projects)",
   description:
     "The card takes a new number in the destination and the old address " +
     "becomes a permanent tombstone that redirects: every link to it — " +

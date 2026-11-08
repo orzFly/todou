@@ -99,11 +99,16 @@ export const CAPABILITIES = [
   { id: "issue.update", minRole: "reporter", enforce: "gate", ownerOnly: true },
   { id: "issue.triage", minRole: "writer", enforce: "gate" },
   { id: "issue.trash", minRole: "reporter", enforce: "gate", ownerOnly: true },
-  { id: "issue.move", minRole: "writer", enforce: "gate", ownerOnly: true },
+  // Admin at both ends (T-626). A move carries everyone's comments along, and
+  // whether you may rewrite someone else's comment is judged by your role
+  // where the card now is — so a writer able to move could take a card to a
+  // project of their own, rewrite it there, and bring it home onto its old
+  // number. Either end left at writer reopens that round trip.
+  { id: "issue.move", minRole: "admin", enforce: "gate" },
   // Deliberately not shared with `issue.create`: this is the gate on the
   // destination project, so borrowing the create gate would let someone who
   // is merely a reporter in B drag other people's cards into B.
-  { id: "issue.move_in", minRole: "writer", enforce: "gate" },
+  { id: "issue.move_in", minRole: "admin", enforce: "gate" },
   // Declaring what a card waits for (T-377). At `issue.triage`'s level and
   // deliberately not `ownerOnly`: saying "this one waits for that one" is an
   // orchestrator's move over other people's cards, so a gate scoped to your

@@ -70,7 +70,8 @@ describe.each(PLACEMENTS)("relocation behind a proxy (%s)", (placement) => {
       `/api/projects/${A}/issues/${from.number}/move`,
       {
         method: "POST",
-        headers: { ...author.headers, "content-type": "application/json" },
+        // Moving is an admin's (T-626); the author only reads afterwards.
+        headers: admin,
         body: JSON.stringify({ to_project: B }),
       },
     );

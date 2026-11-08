@@ -150,6 +150,7 @@ deployment. Text written before then parses exactly as it did, so
 A card can be moved between projects. It takes a **new number** in the
 destination — numbers belong to a project, and the one it had may already be
 taken — and its old address becomes a permanent tombstone that redirects.
+Moving takes the admin role in both projects.
 
 ```
 todou issue transfer T-123 --to b        # asks first, showing the mapping

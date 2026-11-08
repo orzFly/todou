@@ -340,6 +340,7 @@ function renderSidebar() {
       allLabels={[{ id: 10, name: "bug", color: "#ff0000" }]}
       members={[]}
       canDelete={false}
+      canMove={false}
       trashed={false}
     />,
     client,
@@ -737,6 +738,7 @@ describe("the sidebar's assignees reach their own pages (T-391)", () => {
           owner_role: null,
         }))}
         canDelete={false}
+        canMove={false}
         trashed={false}
       />,
       client,

@@ -63,7 +63,8 @@ const DEMO = {
   name: "Demo",
   description: "",
   created_at: "2026-01-01T00:00:00Z",
-  viewer_role: "writer" as const,
+  // Admin, because the one move this file performs is an admin's (T-626).
+  viewer_role: "admin" as const,
   former_slugs: [],
   icon_url: null,
 };
@@ -303,8 +304,25 @@ function appFixture() {
       };
     }
     if (path.endsWith("/statuses")) return { status: 200, body: [TODO, DOING] };
-    if (path.endsWith("/labels") || path.endsWith("/members")) {
-      return { status: 200, body: [] };
+    if (path.endsWith("/labels")) return { status: 200, body: [] };
+    if (path.endsWith("/members")) {
+      return {
+        status: 200,
+        body: [
+          {
+            user: {
+              id: ME.id,
+              login: ME.login,
+              display_name: ME.display_name,
+              kind: ME.kind,
+              avatar_url: ME.avatar_url,
+              owner: ME.owner,
+            },
+            role: "admin",
+            created_at: ME.created_at,
+          },
+        ],
+      };
     }
     if (path.endsWith("/search/facets")) {
       return { status: 200, body: { harnesses: [], sessions: [] } };

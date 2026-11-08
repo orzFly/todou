@@ -425,6 +425,7 @@ function Samples({ data }: { data: Data }) {
           allLabels={data.untouched.labels}
           members={data.untouched.members}
           canDelete={false}
+          canMove={false}
           trashed={false}
         />
       </section>

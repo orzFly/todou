@@ -58,10 +58,13 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
   let t: TestApp;
   let cookie: string;
   let admin: Who;
-  /** Writer in both projects, and the author of the cards under test. */
+  /**
+   * Writer in every project and the author of the cards under test, neither
+   * of which lets them move a card (T-626) — so `move` defaults to the admin.
+   */
   let author: Who;
   let authorId = 0;
-  /** Writer in A only: may move nothing into B. */
+  /** Admin in A, no member of B: may move nothing into B. */
   let outsider: Who;
   const A = `mv-a-${placement}`;
   const B = `mv-b-${placement}`;
@@ -103,7 +106,7 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     from: string,
     number: number,
     to: string,
-    who: Who = author,
+    who: Who = admin,
     dryRun = false,
   ) =>
     req(`/projects/${from}/issues/${number}/move`, who, {
@@ -115,7 +118,7 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     from: string,
     number: number,
     to: string,
-    who = author,
+    who = admin,
   ) => {
     const res = await move(from, number, to, who);
     expect(res.status).toBe(200);
@@ -300,15 +303,15 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     author = alice.headers;
     authorId = alice.user.id;
     outsider = bob.headers;
-    for (const [user, slugs] of [
-      [alice, [A, B, C]],
-      [bob, [A]],
+    for (const [user, role, slugs] of [
+      [alice, "writer", [A, B, C]],
+      [bob, "admin", [A]],
     ] as const) {
       for (const slug of slugs) {
         const res = await req(
           `/projects/${slug}/members/${user.user.id}`,
           admin,
-          { method: "PUT", body: JSON.stringify({ role: "writer" }) },
+          { method: "PUT", body: JSON.stringify({ role }) },
         );
         expect(res.status).toBe(204);
       }
@@ -783,7 +786,7 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     expect((await json(twice)).error.code).toBe("issue_moved");
   });
 
-  it("refuses a mover who is neither the author nor an admin", async () => {
+  it("refuses a writer moving someone else's card", async () => {
     const bystander = await addUserWithToken(
       t.ctx,
       `mv-bystander-${placement}`,
@@ -799,6 +802,79 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     expect(res.status).toBe(403);
   });
 
+  // T-626: a writer who could move their own card took it to a project they
+  // had just created, rewrote and deleted an admin's comments there, and
+  // moved it home onto its old number.
+  it("refuses a writer moving their own card out, even into a project of their own", async () => {
+    const own = `mv-own-${placement}`;
+    expect(
+      (
+        await req("/projects", author, {
+          method: "POST",
+          body: JSON.stringify({ slug: own, name: own }),
+        })
+      ).status,
+    ).toBe(201);
+    const source = await createIssue(A, "an admin will comment here");
+    const comment = await req(
+      `/projects/${A}/issues/${source.number}/comments`,
+      admin,
+      { method: "POST", body: JSON.stringify({ body: "rejected" }) },
+    );
+    expect(comment.status).toBe(201);
+
+    expect((await move(A, source.number, own, author, true)).status).toBe(403);
+    expect((await move(A, source.number, own, author)).status).toBe(403);
+    const still = await req(`/projects/${A}/issues/${source.number}`, author);
+    expect(still.status).toBe(200);
+  });
+
+  it("lets an agent that is admin at both ends move, and only then", async () => {
+    const me = await json(await req("/me", admin));
+    const agent = await addUserWithToken(t.ctx, `mv-agent-${placement}`, {
+      kind: "machine",
+      ownerId: me.id,
+    });
+    const setRole = async (slug: string, role: string) => {
+      const res = await req(
+        `/projects/${slug}/members/${agent.user.id}`,
+        admin,
+        {
+          method: "PUT",
+          body: JSON.stringify({ role }),
+        },
+      );
+      expect(res.status).toBe(204);
+    };
+    await setRole(A, "admin");
+    await setRole(B, "writer");
+    const source = await createIssue(A, "the agent's to move");
+    expect((await move(A, source.number, B, agent.headers)).status).toBe(403);
+    await setRole(B, "admin");
+    const result = await moved(A, source.number, B, agent.headers);
+    expect(result.moved_to.slug).toBe(B);
+  });
+
+  it("refuses an admin of the source moving into a project where they only write", async () => {
+    const mover = await addUserWithToken(t.ctx, `mv-half-admin-${placement}`);
+    for (const [slug, role] of [
+      [A, "admin"],
+      [B, "writer"],
+    ] as const) {
+      const res = await req(
+        `/projects/${slug}/members/${mover.user.id}`,
+        admin,
+        {
+          method: "PUT",
+          body: JSON.stringify({ role }),
+        },
+      );
+      expect(res.status).toBe(204);
+    }
+    const source = await createIssue(A, "stays in A");
+    expect((await move(A, source.number, B, mover.headers)).status).toBe(403);
+  });
+
   it("maps the status and reports what it dropped", async () => {
     const label = await json(
       await req(`/projects/${A}/labels`, admin, {
@@ -812,7 +888,7 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
       body: JSON.stringify({ label_ids: [label.id], assignee_ids: [authorId] }),
     });
 
-    const previewRes = await move(A, source.number, B, author, true);
+    const previewRes = await move(A, source.number, B, admin, true);
     expect(previewRes.status).toBe(200);
     const preview = await json(previewRes);
     expect(preview.issue).toBeNull();
@@ -830,7 +906,7 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
       (await json(await req(`/projects/${B}/issues?limit=100`, author))).items
         .length;
     const before = await countB();
-    const res = await move(A, source.number, B, author, true);
+    const res = await move(A, source.number, B, admin, true);
     expect(res.status).toBe(200);
     expect(await countB()).toBe(before);
     expect(

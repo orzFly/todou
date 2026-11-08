@@ -162,6 +162,10 @@ describe("can", () => {
     expect(can("writer", "label.update")).toBe(true);
     expect(can("writer", "label.delete")).toBe(true);
 
+    // Either end at writer lets a card be rewritten abroad and brought
+    // home (T-626).
+    expect(can("writer", "issue.move")).toBe(false);
+    expect(can("writer", "issue.move_in")).toBe(false);
     expect(can("writer", "project.update")).toBe(false);
     expect(can("writer", "member.set")).toBe(false);
     expect(can("writer", "status.manage")).toBe(false);

@@ -5,7 +5,13 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { formatRef, type Issue, type Member, type Status } from "@todou/shared";
+import {
+  can,
+  formatRef,
+  type Issue,
+  type Member,
+  type Status,
+} from "@todou/shared";
 import { CheckIcon, PencilIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -287,6 +293,7 @@ export function IssueDetailPage() {
         allLabels={labels.data}
         members={members.data}
         canDelete={isAdmin || issue.data.author.id === me.data.id}
+        canMove={can(viewer.role, "issue.move")}
         trashed={trashed}
       />
     </div>
@@ -671,6 +678,7 @@ export function Sidebar({
   allLabels,
   members,
   canDelete,
+  canMove,
   trashed,
 }: {
   slug: string;
@@ -679,6 +687,7 @@ export function Sidebar({
   allLabels: Array<{ id: number; name: string; color: string }>;
   members: Member[];
   canDelete: boolean;
+  canMove: boolean;
   trashed: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -840,7 +849,9 @@ export function Sidebar({
 
       <MetadataSection slug={slug} issueNumber={issue.number} />
 
-      {canDelete && !trashed && <IssueMoreActions slug={slug} issue={issue} />}
+      {canDelete && !trashed && (
+        <IssueMoreActions slug={slug} issue={issue} canMove={canMove} />
+      )}
     </aside>
   );
 }

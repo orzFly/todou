@@ -33,9 +33,11 @@ import {
 export function IssueMoreActions({
   slug,
   issue,
+  canMove,
 }: {
   slug: string;
   issue: Issue;
+  canMove: boolean;
 }) {
   const navigate = useNavigate();
   const refPrefix = useRefPrefix(slug);
@@ -76,10 +78,12 @@ export function IssueMoreActions({
               <LinkIcon className="size-3.5" />
               All references
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setMoving(true)}>
-              <FolderInputIcon className="size-3.5" />
-              Move to another project…
-            </DropdownMenuItem>
+            {canMove && (
+              <DropdownMenuItem onSelect={() => setMoving(true)}>
+                <FolderInputIcon className="size-3.5" />
+                Move to another project…
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             {/* What the retired "Danger zone" heading used to say: the rule
                 above and the red below are all that is left to say it. */}
@@ -103,15 +107,17 @@ export function IssueMoreActions({
           returnFocus(next);
         }}
       />
-      <MoveIssueDialog
-        slug={slug}
-        issueNumber={issue.number}
-        open={moving}
-        onOpenChange={(next) => {
-          setMoving(next);
-          returnFocus(next);
-        }}
-      />
+      {canMove && (
+        <MoveIssueDialog
+          slug={slug}
+          issueNumber={issue.number}
+          open={moving}
+          onOpenChange={(next) => {
+            setMoving(next);
+            returnFocus(next);
+          }}
+        />
+      )}
       <ConfirmDialog
         open={confirming}
         onOpenChange={(next) => {
