@@ -27,6 +27,7 @@ import {
   ilike,
   inArray,
   isNotNull,
+  isNull,
   lt,
   notInArray,
   or,
@@ -50,6 +51,8 @@ import { projectMembers } from "../db/system-schema.ts";
 import {
   ConflictError,
   ForbiddenError,
+  IssueMovedError,
+  IssueMovingError,
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
@@ -1325,27 +1328,38 @@ async function setTrashed(
     "issue.trash",
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
+  const gate = (row: IssueRow) => {
+    // A card that moved, or is being copied, belongs to the move (T-666):
+    // trashing it here would answer 204 while the copy lives on elsewhere.
+    if (row.movedAt !== null) throw new IssueMovedError(row, true, true);
+    if (row.movingSince !== null) throw new IssueMovingError();
+    // Visibility before permission: to someone who may not see this card in
+    // the trash it must look like it was never there.
+    if (row.deletedAt !== null && !seesTrashed(row, actor, role)) {
+      throw new NotFoundError("issue not found");
+    }
+    if (role !== "admin" && row.authorId !== actor.id) {
+      throw new ForbiddenError(
+        "only the author or a project admin may delete or restore an issue",
+      );
+    }
+    if (trashed && row.deletedAt !== null) {
+      throw new ConflictError("this issue is already in the trash");
+    }
+    if (!trashed && row.deletedAt === null) {
+      throw new ConflictError("this issue is not in the trash");
+    }
+  };
   const row = await loadIssueRow(db, project.id, number);
-
-  // Visibility before permission: to someone who may not see this card in
-  // the trash it must look like it was never there.
-  if (row.deletedAt !== null && !seesTrashed(row, actor, role)) {
-    throw new NotFoundError("issue not found");
-  }
-  if (role !== "admin" && row.authorId !== actor.id) {
-    throw new ForbiddenError(
-      "only the author or a project admin may delete or restore an issue",
-    );
-  }
-  if (trashed && row.deletedAt !== null) {
-    throw new ConflictError("this issue is already in the trash");
-  }
-  if (!trashed && row.deletedAt === null) {
-    throw new ConflictError("this issue is not in the trash");
-  }
+  gate(row);
+  await ctx.testHooks?.beforeTrashWrite?.();
 
   const events: ChangeEvent[] = [];
   const after = await db.transaction(async (tx) => {
+    // The gate read a snapshot, so the write carries its state half as a
+    // predicate. A colocated move holds this row until it commits, and the
+    // freeze is guarded the same way, so of a move and a trash exactly one
+    // lands.
     const updated = await tx
       .update(issues)
       .set(
@@ -1353,10 +1367,20 @@ async function setTrashed(
           ? { deletedAt: new Date(), deletedBy: actor.id }
           : { deletedAt: null, deletedBy: null },
       )
-      .where(eq(issues.id, row.id))
+      .where(
+        and(
+          eq(issues.id, row.id),
+          isNull(issues.movedAt),
+          isNull(issues.movingSince),
+          trashed ? isNull(issues.deletedAt) : isNotNull(issues.deletedAt),
+        ),
+      )
       .returning();
     const next = updated[0];
-    if (!next) throw new Error("issue update returned no row");
+    if (!next) {
+      gate(await loadIssueRow(tx, project.id, number));
+      throw new Error("trash write matched no row the gate let through");
+    }
 
     const inserted = await tx
       .insert(issueEvents)

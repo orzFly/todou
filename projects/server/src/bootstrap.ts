@@ -47,6 +47,14 @@ export type AppContext = {
 export type TestHooks = DbTestHooks & {
   afterMoveStep?(step: 1 | 2 | 3 | 4 | 5 | 6): Promise<void>;
   /**
+   * The two gaps a competing write can land in (T-666): between a move's
+   * plan and the point where it takes the card, and between the trash's
+   * checks and its write. Racing real requests cannot pick which side of
+   * the gap the competitor commits on; these let a test put it there.
+   */
+  afterMovePlan?(): Promise<void>;
+  beforeTrashWrite?(): Promise<void>;
+  /**
    * The two points in the prefix-mirror protocol (T-511) where a test needs
    * to run something of its own *before* the next write: after the pending
    * mark has committed but before the authoritative history row does, and

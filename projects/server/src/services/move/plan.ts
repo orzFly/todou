@@ -11,7 +11,13 @@ import {
   statuses,
 } from "../../db/project-schema.ts";
 import { projectMembers } from "../../db/system-schema.ts";
-import { ForbiddenError, ValidationFailedError } from "../../errors.ts";
+import {
+  ForbiddenError,
+  IssueDeletedError,
+  IssueMovedError,
+  IssueMovingError,
+  ValidationFailedError,
+} from "../../errors.ts";
 import { type ProjectRow, requireCapability, routeInfoOf } from "../access.ts";
 import { loadIssueRow } from "../issues.ts";
 import { lineageOf, tombstoneNumberOf } from "../relocation.ts";
@@ -93,7 +99,12 @@ export async function planMove(
 
   const status = await mapStatus(sourceDb, targetDb, source.id, target.id, row);
   const labelMap = await mapLabels(sourceDb, targetDb, target.id, row);
-  const assigneeMap = await mapAssignees(ctx, sourceDb, target.id, row);
+  const assigneeMap = await mapAssignees(
+    ctx.router.system(),
+    sourceDb,
+    target.id,
+    row,
+  );
 
   const lineage = await lineageOf(ctx.router.system(), source.id, number);
   const reinhabit =
@@ -122,6 +133,60 @@ export async function planMove(
     movedAt: new Date(),
     sameProjectDb: sourceUrl === targetUrl,
     systemColocated: sourceUrl === systemUrl && targetUrl === systemUrl,
+  };
+}
+
+/**
+ * `planMove` reads the card before anything holds it, so a second move or
+ * the trash that committed in between has to be answered again once the
+ * move does hold it (T-666). The refusals are `planMove`'s own: the mover is
+ * the author or an admin, so a trashed card is one they see.
+ */
+export function assertStillMovable(row: IssueRow): void {
+  if (row.movedAt !== null) throw new IssueMovedError(row, true, true);
+  if (row.movingSince !== null) throw new IssueMovingError();
+  if (row.deletedAt !== null) throw new IssueDeletedError();
+}
+
+/**
+ * The row-derived half of the plan, decided again from the held row,
+ * because that row is what gets copied: an edit that committed after
+ * `planMove` read the card would otherwise be dropped by the copy, or carry
+ * the status and labels it had before. Each handle has to be the one the
+ * caller holds the card through — a colocated move passes its transaction
+ * for all three.
+ */
+export async function replanHeld(
+  plan: MovePlan,
+  row: IssueRow,
+  handles: { source: Db; target: Db; system: Db },
+): Promise<MovePlan> {
+  const status = await mapStatus(
+    handles.source,
+    handles.target,
+    plan.source.project.id,
+    plan.target.project.id,
+    row,
+  );
+  const labelMap = await mapLabels(
+    handles.source,
+    handles.target,
+    plan.target.project.id,
+    row,
+  );
+  const assigneeMap = await mapAssignees(
+    handles.system,
+    handles.source,
+    plan.target.project.id,
+    row,
+  );
+  return {
+    ...plan,
+    row,
+    status,
+    labelIds: labelMap.ids,
+    assigneeIds: assigneeMap.ids,
+    dropped: { labels: labelMap.dropped, assignees: assigneeMap.dropped },
   };
 }
 
@@ -195,7 +260,7 @@ async function mapLabels(
 }
 
 async function mapAssignees(
-  ctx: AppContext,
+  system: Db,
   sourceDb: Db,
   targetId: number,
   row: IssueRow,
@@ -207,8 +272,7 @@ async function mapAssignees(
   if (current.length === 0) return { ids: [], dropped: [] };
 
   const ids = current.map((a) => a.userId);
-  const members = await ctx.router
-    .system()
+  const members = await system
     .select({ userId: projectMembers.userId })
     .from(projectMembers)
     .where(
@@ -221,7 +285,7 @@ async function mapAssignees(
   // reported as dropped rather than blocking the move.
   const keep = new Set(members.map((m) => m.userId));
   const droppedIds = ids.filter((id) => !keep.has(id));
-  const refs = await getUserRefs(ctx.router.system(), droppedIds);
+  const refs = await getUserRefs(system, droppedIds);
   return {
     ids: ids.filter((id) => keep.has(id)),
     dropped: droppedIds.map(
