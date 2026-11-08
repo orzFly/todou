@@ -1,0 +1,1 @@
+CREATE INDEX "cli_auth_requests_expires_at_idx" ON "cli_auth_requests" USING btree ("expires_at");

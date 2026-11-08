@@ -120,6 +120,13 @@
       "when": 1794136801801,
       "tag": "0016_cli-auth-requester",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794140717240,
+      "tag": "0017_cli-auth-expiry-index",
+      "breakpoints": true
     }
   ]
 }

@@ -12,7 +12,7 @@ import type { AppEnv } from "../auth/middleware.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { RateLimitedError } from "../errors.ts";
 import { clientAddress } from "../http/proxy.ts";
-import { SlidingWindowLimiter } from "../http/rate-limit.ts";
+import { rateLimitKey, SlidingWindowLimiter } from "../http/rate-limit.ts";
 import {
   approveCliAuthRequest,
   createCliAuthRequest,
@@ -109,7 +109,7 @@ export function cliAuthPublicRoutes(ctx: AppContext) {
 
   app.openapi(createRequestRoute, async (c) => {
     const ip = clientAddress(c, ctx.config);
-    const wait = ip === null ? 0 : limiter.take(ip);
+    const wait = ip === null ? 0 : limiter.take(rateLimitKey(ip));
     if (wait > 0) {
       c.header("Retry-After", String(wait));
       throw new RateLimitedError(

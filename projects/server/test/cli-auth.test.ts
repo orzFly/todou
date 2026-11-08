@@ -1,5 +1,5 @@
 import type { CliAuthTarget } from "@todou/shared";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PAT_PREFIX } from "../src/auth/pat.ts";
 import { cliAuthRequests, tokens, users } from "../src/db/system-schema.ts";
@@ -400,6 +400,29 @@ describe("cli device authorization", () => {
 
     // Somebody else's login is not caught up in it.
     expect((await createFrom("203.0.113.21")).status).toBe(201);
+  });
+
+  it("counts an IPv6 client's whole /64 as one address", async () => {
+    for (let i = 0; i < CLI_AUTH_CREATE_LIMIT; i++) {
+      expect((await createFrom(`2001:db8:0:7::${i + 1}`)).status).toBe(201);
+    }
+    expect((await createFrom("2001:db8:0:7:ffff::9")).status).toBe(429);
+    expect((await createFrom("2001:db8:0:8::1")).status).toBe(201);
+  });
+
+  it("sweeps expired requests through an index, not the whole table", async () => {
+    const system = t.ctx.router.system();
+    await system.execute(sql`set enable_seqscan = off`);
+    try {
+      const plan = await system.execute(
+        sql`explain delete from cli_auth_requests where expires_at < now()`,
+      );
+      expect(JSON.stringify(plan)).toContain(
+        "cli_auth_requests_expires_at_idx",
+      );
+    } finally {
+      await system.execute(sql`reset enable_seqscan`);
+    }
   });
 
   it("keeps the OpenAPI document generatable", async () => {

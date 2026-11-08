@@ -113,7 +113,13 @@ export const cliAuthRequests = pgTable(
     createdAt: createdAt(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },
-  (t) => [uniqueIndex("cli_auth_requests_code_idx").on(t.code)],
+  (t) => [
+    uniqueIndex("cli_auth_requests_code_idx").on(t.code),
+    // Every create sweeps expired rows first, and create is public: without
+    // this the sweep scans the whole table, so a flood makes each create
+    // dearer for everyone (T-649).
+    index("cli_auth_requests_expires_at_idx").on(t.expiresAt),
+  ],
 );
 
 export const userPrefs = pgTable("user_prefs", {
