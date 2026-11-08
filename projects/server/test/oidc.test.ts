@@ -170,6 +170,62 @@ describe("oidc login flow", () => {
     expect(done.headers.get("location")).toBe("/");
   });
 
+  /** Where the browser lands after the callback, resolved as it would be. */
+  async function landingFor(redirect: string) {
+    const flow = await startLogin(redirect);
+    const done = await t.app.request(
+      `/api/auth/callback?code=stub-code&state=${encodeURIComponent(
+        flow.location.searchParams.get("state") ?? "",
+      )}`,
+      { headers: { cookie: flow.cookie } },
+    );
+    expect(done.status).toBe(302);
+    const location = done.headers.get("location") ?? "";
+    return {
+      location,
+      resolved: new URL(location, "https://todou.example/api/auth/callback"),
+    };
+  }
+
+  for (const payload of [
+    "/\\evil.example/x",
+    "/\\/evil.example/x",
+    "/\t/evil.example/x",
+    "/\n/evil.example/x",
+  ]) {
+    it(`keeps ${JSON.stringify(payload)} on this site (T-630)`, async () => {
+      const { location, resolved } = await landingFor(payload);
+      expect(resolved.host).toBe("todou.example");
+      expect(location).toBe("/");
+    });
+  }
+
+  it("resumes in-app return-to links unchanged", async () => {
+    for (const path of [
+      "/cli-auth?port=4711&state=abc",
+      "/projects/todou/issues/12?tab=timeline",
+      "/projects/todou/issues?q=a%5Cb",
+    ]) {
+      expect((await landingFor(path)).location).toBe(path);
+    }
+  });
+
+  it("rechecks a resume path planted in the transient cookie", async () => {
+    const flow = await startLogin();
+    const [, value] = flow.cookie.split("=") as [string, string];
+    const payload = JSON.parse(Buffer.from(value, "base64url").toString());
+    const forged = Buffer.from(
+      JSON.stringify({ ...payload, redirect: "/\\evil.example/x" }),
+    ).toString("base64url");
+    const done = await t.app.request(
+      `/api/auth/callback?code=stub-code&state=${encodeURIComponent(
+        flow.location.searchParams.get("state") ?? "",
+      )}`,
+      { headers: { cookie: `todou_oidc=${forged}` } },
+    );
+    expect(done.headers.get("location")).toBe("/");
+  });
+
   it("400s the POST login endpoint in oidc mode", async () => {
     const res = await t.app.request("/api/auth/login", { method: "POST" });
     expect(res.status).toBe(400);

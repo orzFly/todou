@@ -9,6 +9,7 @@ export * from "./ownership.ts";
 export * from "./paginate.ts";
 export * from "./permissions.ts";
 export * from "./question-answers.ts";
+export * from "./redirect.ts";
 export * from "./ref-shapes.ts";
 export * from "./references-grammar.ts";
 export * from "./resolve-links.ts";

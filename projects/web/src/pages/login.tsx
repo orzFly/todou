@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { isSameSitePath } from "@todou/shared";
 import { useEffect, useRef } from "react";
 import { api, authModeQuery } from "@/api/queries.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
@@ -8,11 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 
 /** Only same-site paths may be resumed after login (no open redirects). */
 export function safeRedirect(value: unknown): string | undefined {
-  return typeof value === "string" &&
-    value.startsWith("/") &&
-    !value.startsWith("//")
-    ? value
-    : undefined;
+  return isSameSitePath(value) ? value : undefined;
 }
 
 /** Human-readable face of the oidc callback's ?error= codes. */
