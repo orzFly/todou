@@ -1,4 +1,9 @@
-import type { AgentContext, WatcherKind, WatcherScope } from "@todou/shared";
+import type {
+  AgentContext,
+  ConnectionWatcherKind,
+  WatcherKind,
+  WatcherScope,
+} from "@todou/shared";
 import type { EventBus } from "./bus.ts";
 
 /**
@@ -39,7 +44,7 @@ export type WatcherScopes =
 export type WatcherRegistration = {
   userId: number;
   agentContext: AgentContext;
-  kind: WatcherKind;
+  kind: ConnectionWatcherKind;
   /** Stands in for the session when the harness reported none. */
   connectionId: string;
   scopes: WatcherScopes;
@@ -57,6 +62,16 @@ export type WatcherView = {
   kind: WatcherKind;
   scope: WatcherScope;
   since: Date;
+  /** Set on marks only. */
+  expiresAt?: Date;
+};
+
+/** Who a mark belongs to, and on which card (T-669). */
+export type WatchMarkTarget = {
+  userId: number;
+  agentContext: AgentContext;
+  projectId: number;
+  number: number;
 };
 
 export type WatcherHandle = {
@@ -74,7 +89,10 @@ type Entry = {
   since: number;
   /** The scopes of every live connection holding this entry, newest last. */
   holders: WatcherScopes[];
-  linger: unknown;
+  /** The linger of a released entry, or a mark's expiry. */
+  timer: unknown;
+  /** Set on marks only. */
+  expiresAt: number | null;
   /** The projects this entry was last published to — what `touch` diffs. */
   touched: Set<number>;
 };
@@ -87,6 +105,20 @@ function scopeKey(scopes: WatcherScopes): string {
   ]
     .sort()
     .join(",");
+}
+
+/**
+ * `marked` in the kind slot keeps a mark apart from the same session's own
+ * `issue watch` connection, so the two are listed side by side.
+ */
+function markKey(target: WatchMarkTarget): string {
+  return JSON.stringify([
+    target.userId,
+    target.agentContext.agent,
+    target.agentContext.session_id ?? "",
+    "marked",
+    `i${target.projectId}/${target.number}`,
+  ]);
 }
 
 function touchedBy(scopes: WatcherScopes): Set<number> {
@@ -102,7 +134,7 @@ function byAge(a: WatcherView, b: WatcherView): number {
  * Who is watching what, live, in memory (T-540). Single-process for the same
  * reason `EventBus` is, and replaceable behind the same kind of interface.
  * A connection's lifetime is the watch's lifetime, so there is no sweeper:
- * a drop releases the entry, and the linger is the only timer.
+ * a drop releases the entry. The linger and a mark's expiry are the only timers.
  */
 export class WatcherRegistry {
   #bus: EventBus;
@@ -132,9 +164,9 @@ export class WatcherRegistry {
     if (entry !== undefined) {
       // A take-over within the linger or a twin connection: same watcher,
       // original `since`, nothing for anyone to redraw.
-      if (entry.linger !== null) {
-        this.#clock.clearTimeout(entry.linger);
-        entry.linger = null;
+      if (entry.timer !== null) {
+        this.#clock.clearTimeout(entry.timer);
+        entry.timer = null;
       }
       entry.holders.push(reg.scopes);
       entry.scopes = reg.scopes;
@@ -148,7 +180,8 @@ export class WatcherRegistry {
         scopes: reg.scopes,
         since: this.#clock.now(),
         holders: [reg.scopes],
-        linger: null,
+        timer: null,
+        expiresAt: null,
         touched: touchedBy(reg.scopes),
       };
       this.#entries.set(key, entry);
@@ -188,8 +221,8 @@ export class WatcherRegistry {
       this.#entries.delete(entry.key);
       return;
     }
-    entry.linger = this.#clock.setTimeout(() => {
-      entry.linger = null;
+    entry.timer = this.#clock.setTimeout(() => {
+      entry.timer = null;
       if (this.#entries.get(entry.key) !== entry) return;
       if (entry.holders.length > 0) return;
       this.#entries.delete(entry.key);
@@ -197,12 +230,74 @@ export class WatcherRegistry {
     }, this.#lingerMs);
   }
 
-  /** Clears every pending linger, so shutdown and tests never wait it out. */
+  /**
+   * Sets or renews a mark: a card-level watcher no connection holds, gone
+   * once `ttlMs` passes without a renewal (T-669). The TTL is already the
+   * grace period, so there is no linger. A renewal changes nothing listed
+   * but `expires_at`, so it publishes nothing.
+   */
+  mark(target: WatchMarkTarget & { ttlMs: number }): {
+    since: Date;
+    expiresAt: Date;
+  } {
+    const key = markKey(target);
+    const now = this.#clock.now();
+    let entry = this.#entries.get(key);
+    const fresh = entry === undefined;
+    if (entry === undefined) {
+      const scopes: WatcherScopes = {
+        projects: [],
+        issues: [[target.projectId, target.number]],
+      };
+      entry = {
+        key,
+        userId: target.userId,
+        agentContext: target.agentContext,
+        kind: "marked",
+        scopes,
+        since: now,
+        holders: [],
+        timer: null,
+        expiresAt: null,
+        touched: touchedBy(scopes),
+      };
+      this.#entries.set(key, entry);
+    } else {
+      if (entry.timer !== null) this.#clock.clearTimeout(entry.timer);
+      entry.agentContext = target.agentContext;
+    }
+    const owned = entry;
+    owned.expiresAt = now + target.ttlMs;
+    owned.timer = this.#clock.setTimeout(() => {
+      owned.timer = null;
+      if (this.#entries.get(owned.key) !== owned) return;
+      this.#entries.delete(owned.key);
+      this.#publish(owned, owned.touched);
+    }, target.ttlMs);
+    if (fresh) this.#publish(owned, owned.touched);
+    return {
+      since: new Date(owned.since),
+      expiresAt: new Date(owned.expiresAt),
+    };
+  }
+
+  /** Drops a mark at once; false when there was none. */
+  unmark(target: WatchMarkTarget): boolean {
+    const entry = this.#entries.get(markKey(target));
+    if (entry === undefined) return false;
+    if (entry.timer !== null) this.#clock.clearTimeout(entry.timer);
+    entry.timer = null;
+    this.#entries.delete(entry.key);
+    this.#publish(entry, entry.touched);
+    return true;
+  }
+
+  /** Clears every pending linger and mark, so shutdown and tests never wait them out. */
   dispose(): void {
     this.#disposed = true;
     for (const entry of this.#entries.values()) {
-      if (entry.linger !== null) this.#clock.clearTimeout(entry.linger);
-      entry.linger = null;
+      if (entry.timer !== null) this.#clock.clearTimeout(entry.timer);
+      entry.timer = null;
       if (entry.holders.length === 0) this.#entries.delete(entry.key);
     }
   }
@@ -248,6 +343,9 @@ export class WatcherRegistry {
       kind: entry.kind,
       scope,
       since: new Date(entry.since),
+      ...(entry.expiresAt === null
+        ? {}
+        : { expiresAt: new Date(entry.expiresAt) }),
     };
   }
 

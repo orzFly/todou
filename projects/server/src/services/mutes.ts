@@ -185,11 +185,11 @@ export function silenced(
 }
 
 /**
- * The live row behind one card address, for the mute writes. Trash 404s for
- * the same reason markIssueRead's does: nothing in the trash is ever
- * unread, so there is nothing to quiet either.
+ * The live row behind one card address, for the mute writes and a watch
+ * mark (T-669). Trash 404s for the same reason markIssueRead's does: nothing
+ * in the trash is ever unread, so there is nothing to quiet either.
  */
-async function liveIssueId(
+export async function liveIssueId(
   db: Db,
   projectId: number,
   number: number,

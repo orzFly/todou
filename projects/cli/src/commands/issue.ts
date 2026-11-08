@@ -1,15 +1,18 @@
 import type {
+  AgentContext,
   BlockRef,
   Issue,
   IssueListItem,
   IssueReferenceEntry,
   IssueUpdateInput,
+  IssueWatchMark,
   Label,
   MoveIssueResult,
   TimelineItem,
   TodouClient,
 } from "@todou/shared";
 import {
+  AgentContext as AgentContextSchema,
   formatRef,
   MovedError,
   TimelineFilterType,
@@ -1514,6 +1517,157 @@ async function arrivalCursor(
     limit: 1,
   });
   return page.next_cursor ?? null;
+}
+
+/**
+ * A mark belongs to an agent session, named by the header every write
+ * carries (T-669). `--agent-context` is how one process marks a card for
+ * another, so it stands in for the detected context on every request.
+ */
+abstract class IssueWatchMarkCommandBase extends ProjectCommand {
+  numbers = Option.Rest({ required: 1 });
+  agentContextFlag = Option.String("--agent-context", {
+    description:
+      'Mark as this agent session (JSON, e.g. \'{"agent":"claude-code","session_id":"…"}\') instead of the detected one',
+  });
+
+  protected override agentContextOverride(): AgentContext | undefined {
+    if (this.agentContextFlag === undefined) return undefined;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(this.agentContextFlag);
+    } catch {
+      throw new CliError(
+        "--agent-context is not valid JSON",
+        `pass an object such as '{"agent":"claude-code","session_id":"…"}'`,
+      );
+    }
+    const parsed = AgentContextSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new CliError(
+        "--agent-context does not match the agent context shape",
+        'it takes "agent" (required), "session_id" and "model"',
+      );
+    }
+    return parsed.data;
+  }
+
+  /** Before any request: with no session to belong to, there is nothing to send. */
+  protected requireAgentContext(): void {
+    if (this.agentContext !== null) return;
+    throw new CliError(
+      "no agent context to watch as",
+      `pass --agent-context '{"agent":…,"session_id":…}'`,
+    );
+  }
+}
+
+export class IssueWatchAddCommand extends IssueWatchMarkCommandBase {
+  static paths = [
+    ["issue", "watch-add"],
+    ["issue", "watch-renew"],
+  ];
+  static usage = Command.Usage({
+    description: "Mark cards as being worked on by an agent session",
+    details: `
+      Each \`<number>\` also accepts \`<project>/<number>\` or a full issue
+      URL; all of them must be in one project. \`issue watch-renew\` is the
+      same command under a second name.
+
+      **A mark expires unless it is renewed.** Running this again before it
+      does resets the expiry to now + \`--ttl\` (default 900 seconds, at
+      most 3600); it never adds to what was left. Marks live in the
+      server's memory, so a server restart drops them until the next
+      renewal.
+
+      The mark belongs to the agent session this process runs in, or to the
+      one \`--agent-context\` names.
+    `,
+    examples: [
+      [
+        "Mark a card for an agent this process runs",
+        `todou issue watch-add 16 --agent-context '{"agent":"claude-code","session_id":"s-demo"}'`,
+      ],
+      [
+        "Renew several cards for ten minutes",
+        "todou issue watch-renew 16 17 23 --ttl 600",
+      ],
+    ],
+  });
+
+  ttl = Option.String("--ttl", {
+    description: "Seconds until the mark expires (default 900, at most 3600)",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    this.requireAgentContext();
+    let ttl: number | undefined;
+    if (this.ttl !== undefined) {
+      ttl = Number(this.ttl);
+      if (!Number.isInteger(ttl)) {
+        throw new CliError(
+          `--ttl must be a whole number of seconds, got "${this.ttl}"`,
+        );
+      }
+    }
+    const { project, numbers } = await this.resolveIssueRefs(
+      client,
+      this.numbers,
+    );
+    const refPrefix = await fetchRefPrefix(client, project);
+    const marks: IssueWatchMark[] = [];
+    for (const number of numbers) {
+      const mark = await client.watchIssue(
+        project,
+        number,
+        ttl === undefined ? {} : { ttl_seconds: ttl },
+      );
+      marks.push(mark);
+      // Streamed, so a batch that fails on card three has said which landed.
+      if (!this.json) {
+        this.context.stdout.write(
+          `${formatRef(refPrefix, number)} watched until ${mark.expires_at}\n`,
+        );
+      }
+    }
+    if (this.json) this.output(marks, () => "");
+  }
+}
+
+export class IssueWatchRemoveCommand extends IssueWatchMarkCommandBase {
+  static paths = [["issue", "watch-remove"]];
+  static usage = Command.Usage({
+    description: "Remove an agent session's mark from cards",
+    details: `
+      Each \`<number>\` also accepts \`<project>/<number>\` or a full issue
+      URL; all of them must be in one project. Removing a mark that is not
+      there succeeds.
+    `,
+    examples: [
+      [
+        "Remove the mark set for an agent",
+        `todou issue watch-remove 16 --agent-context '{"agent":"claude-code","session_id":"s-demo"}'`,
+      ],
+    ],
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    this.requireAgentContext();
+    const { project, numbers } = await this.resolveIssueRefs(
+      client,
+      this.numbers,
+    );
+    const refPrefix = await fetchRefPrefix(client, project);
+    for (const number of numbers) {
+      await client.unwatchIssue(project, number);
+      if (!this.json) {
+        this.context.stdout.write(
+          `${formatRef(refPrefix, number)} watch removed\n`,
+        );
+      }
+    }
+    if (this.json) this.output([], () => "");
+  }
 }
 
 export class IssueCreateCommand extends ProjectCommand {

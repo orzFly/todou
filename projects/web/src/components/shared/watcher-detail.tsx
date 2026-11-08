@@ -25,9 +25,22 @@ import { cn } from "@/lib/utils";
 export function watchingWhat(watcher: Watcher): string {
   if (watcher.kind === "spec_wait") return "spec wait";
   if (watcher.kind === "question_wait") return "question wait";
+  if (watcher.kind === "marked") return "marked";
   if (watcher.scope === "all_projects") return "all projects";
   if (watcher.scope === "project") return "whole project";
   return "this card";
+}
+
+/** How long a mark has left; a mark past its expiry is about to drop, not overdue. */
+export function compactRemaining(
+  iso: string,
+  now: number = Date.now(),
+): string {
+  const seconds = Math.max(0, Math.round((Date.parse(iso) - now) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.round(minutes / 60)}h`;
 }
 
 /** One row per session, oldest first. */
@@ -58,7 +71,10 @@ export function WatcherDetail({
             </span>
             <AgentContextBadge context={watcher.agent_context} />
             <span className="ms-auto shrink-0 ps-2 text-xs whitespace-nowrap text-muted-foreground">
-              {watchingWhat(watcher)} · {compactAge(watcher.since)}
+              {watchingWhat(watcher)} ·{" "}
+              {watcher.expires_at === undefined
+                ? compactAge(watcher.since)
+                : `${compactRemaining(watcher.expires_at)} left`}
             </span>
           </li>
         ))}

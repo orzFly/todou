@@ -52,6 +52,8 @@ import type {
   IssueReadInput,
   IssueReferences,
   IssueUpdateInput,
+  IssueWatchMark,
+  IssueWatchMarkInput,
   Label,
   LabelCreateInput,
   LabelUpdateInput,
@@ -933,6 +935,16 @@ export class TodouClient {
     });
   unmuteIssue = (slug: string, number: number) =>
     this.request<void>("DELETE", `/projects/${slug}/issues/${number}/mute`);
+  watchIssue = (slug: string, number: number, input: IssueWatchMarkInput) =>
+    this.request<IssueWatchMark>(
+      "PUT",
+      `/projects/${slug}/issues/${number}/watch`,
+      {
+        json: input,
+      },
+    );
+  unwatchIssue = (slug: string, number: number) =>
+    this.request<void>("DELETE", `/projects/${slug}/issues/${number}/watch`);
   muteProject = (slug: string) =>
     this.request<void>("PUT", `/projects/${slug}/mute`);
   unmuteProject = (slug: string) =>

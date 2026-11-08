@@ -26,3 +26,10 @@ export const watcher = (who: UserRef, over: Partial<Watcher> = {}): Watcher => {
     ...over,
   };
 };
+
+/** A card mark set through `PUT …/watch` (T-669), held by no connection. */
+export const marked = (
+  who: UserRef,
+  expiresAt: string,
+  over: Partial<Watcher> = {},
+): Watcher => watcher(who, { kind: "marked", expires_at: expiresAt, ...over });

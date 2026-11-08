@@ -31,6 +31,7 @@ import {
 import { cliDistRoutes } from "./routes/cli-dist.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { insightsRoutes } from "./routes/insights.ts";
+import { issueWatchRoutes } from "./routes/issue-watch.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
@@ -208,6 +209,8 @@ export function createApp(ctx: AppContext) {
   api.route("/", sseRoutes());
   // Both /watchers and /projects/{slug}/watchers (T-540).
   api.route("/", watcherRoutes());
+  // PUT/DELETE /projects/{slug}/issues/{number}/watch (T-669).
+  api.route("/", issueWatchRoutes());
 
   app.route("/", api);
   if (ctx.config.http.static_dir) {

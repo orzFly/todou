@@ -90,6 +90,9 @@ async function toWatchers(
           kind: view.kind,
           scope: view.scope,
           since: view.since.toISOString(),
+          ...(view.expiresAt === undefined
+            ? {}
+            : { expires_at: view.expiresAt.toISOString() }),
         },
       ];
     });

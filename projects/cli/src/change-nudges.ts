@@ -2,9 +2,9 @@ import {
   AGENT_CONTEXT_HEADER,
   type AgentContext,
   type ChangeStream,
+  type ConnectionWatcherKind,
   type TodouClient,
   TodouError,
-  type WatcherKind,
 } from "@todou/shared";
 import type { Clock } from "./clock.ts";
 import { isTransientError } from "./watch-loop.ts";
@@ -68,7 +68,7 @@ export async function openChangeNudges(opts: {
    * List this connection as a live watcher of what it follows (T-540).
    * Absent for `--invisible`: the feed is the same, nobody sees it.
    */
-  declare?: { kind: WatcherKind };
+  declare?: { kind: ConnectionWatcherKind };
   /**
    * The agent context to open each stream with, asked afresh on every
    * (re)connect so a rotated harness session is reported as the new one.

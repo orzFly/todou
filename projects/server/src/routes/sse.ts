@@ -2,6 +2,8 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   type ChangeEntity,
   type ChangeEvent,
+  type ConnectionWatcherKind,
+  ConnectionWatcherKind as ConnectionWatcherKindSchema,
   type CrossChangeEvent,
   type InboxRowState,
   type MeEvent,
@@ -10,8 +12,6 @@ import {
   SSE_CHANGE_EVENT,
   SSE_ME_EVENT,
   SSE_PING_EVENT,
-  type WatcherKind,
-  WatcherKind as WatcherKindSchema,
 } from "@todou/shared";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -199,9 +199,9 @@ export function parseWatchParam(raw: string): WatchDeclaration {
   return { all: false, projects, issues };
 }
 
-function parseWatchKind(raw: string | undefined): WatcherKind {
+function parseWatchKind(raw: string | undefined): ConnectionWatcherKind {
   if (raw === undefined) return "watch";
-  const parsed = WatcherKindSchema.safeParse(raw);
+  const parsed = ConnectionWatcherKindSchema.safeParse(raw);
   if (!parsed.success) {
     throw new InvalidWatchError(`unknown watch_kind: ${raw}`);
   }
@@ -269,7 +269,7 @@ function streamChanges(
   wantMetadata: MetadataNamespaceSelector | undefined,
   wantPresence: boolean,
   /** What the connection declared it watches; null = not listed (T-540). */
-  declared: { what: WatchDeclaration; kind: WatcherKind } | null,
+  declared: { what: WatchDeclaration; kind: ConnectionWatcherKind } | null,
 ) {
   let user = initialUser;
   const heartbeatMs = ctx.testHooks?.sse?.heartbeatMs ?? HEARTBEAT_MS;

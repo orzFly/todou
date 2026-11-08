@@ -127,6 +127,8 @@ describe("/api/events watch declaration (T-540)", () => {
     for (const query of [
       "watch=all,project:seen",
       "watch=all&watch_kind=nope",
+      // A mark is set by `PUT …/watch`; no connection may claim to be one.
+      "watch=issue:seen/1&watch_kind=marked",
     ]) {
       const res = await t.app.request(`/api/events?${query}`, {
         headers: { cookie, ...agent("s-bad") },

@@ -179,6 +179,15 @@ export abstract class ApiCommand extends Command<CliContext> {
   // biome-ignore lint/suspicious/noConfusingVoidType: `undefined` would force every void-returning command to change its signature
   protected abstract run(client: TodouClient): Promise<number | void>;
 
+  /**
+   * A context the command was handed rather than one detected here, sent in
+   * the header in place of this process's own (T-669: kela marking a card
+   * for an agent it runs). May throw to refuse a malformed one.
+   */
+  protected agentContextOverride(): AgentContext | undefined {
+    return undefined;
+  }
+
   /** Overridden by ProjectCommand; the base has no -p flag. */
   protected projectFlag(): string | undefined {
     return undefined;
@@ -236,12 +245,14 @@ export abstract class ApiCommand extends Command<CliContext> {
             "run `todou config show` to see what is configured",
         );
       }
-      this.agentContext = detectAgentContext(
-        this.context.env,
-        this.context.home,
-        undefined,
-        this.context.processTree,
-      );
+      this.agentContext =
+        this.agentContextOverride() ??
+        detectAgentContext(
+          this.context.env,
+          this.context.home,
+          undefined,
+          this.context.processTree,
+        );
       this.liveSession = liveSessionIdReader({
         env: this.context.env,
         home: this.context.home,

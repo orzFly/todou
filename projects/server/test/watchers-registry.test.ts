@@ -246,3 +246,97 @@ describe("WatcherRegistry (T-540)", () => {
     expect(registry.size()).toBe(0);
   });
 });
+
+describe("WatcherRegistry marks (T-669)", () => {
+  const MIN = 60_000;
+  const target = {
+    userId: 1,
+    agentContext: { agent: "claude-code", session_id: "s1" },
+    projectId: 10,
+    number: 3,
+  };
+  const cardEvent: [number, ChangeEvent] = [
+    10,
+    { entity: "watchers", action: "updated", id: 10, issue_number: 3 },
+  ];
+
+  it("lists a mark under its card and publishes once", () => {
+    const { registry, published, time } = setup();
+    const { since, expiresAt } = registry.mark({ ...target, ttlMs: 15 * MIN });
+    expect(expiresAt.getTime() - since.getTime()).toBe(15 * MIN);
+    expect(published).toEqual([cardEvent]);
+    expect(registry.issueWatchers(10).get(3)).toEqual([
+      {
+        userId: 1,
+        agentContext: target.agentContext,
+        kind: "marked",
+        scope: "issue",
+        since,
+        expiresAt,
+      },
+    ]);
+    expect(registry.projectWatchers(10)).toEqual([]);
+    expect(time.pending()).toBe(1);
+  });
+
+  it("renews quietly, keeping since, and expires at the renewed time", () => {
+    const { registry, published, time } = setup();
+    const first = registry.mark({ ...target, ttlMs: 15 * MIN });
+    time.advance(10 * MIN);
+    published.length = 0;
+    const renewed = registry.mark({
+      ...target,
+      agentContext: { ...target.agentContext, model: "claude-opus-5-5" },
+      ttlMs: 15 * MIN,
+    });
+    expect(published).toEqual([]);
+    expect(renewed.since).toEqual(first.since);
+    expect(renewed.expiresAt.getTime()).toBe(first.since.getTime() + 25 * MIN);
+    expect(registry.issueWatchers(10).get(3)?.[0]?.agentContext.model).toBe(
+      "claude-opus-5-5",
+    );
+
+    time.advance(14 * MIN);
+    expect(registry.issueWatchers(10).get(3)).toHaveLength(1);
+    expect(published).toEqual([]);
+    time.advance(1 * MIN);
+    expect(registry.issueWatchers(10).get(3)).toBeUndefined();
+    expect(published).toEqual([cardEvent]);
+    expect(registry.size()).toBe(0);
+  });
+
+  it("unmarks at once, publishing and clearing the expiry", () => {
+    const { registry, published, time } = setup();
+    registry.mark({ ...target, ttlMs: 15 * MIN });
+    published.length = 0;
+    expect(registry.unmark(target)).toBe(true);
+    expect(registry.issueWatchers(10).get(3)).toBeUndefined();
+    expect(published).toEqual([cardEvent]);
+    expect(time.pending()).toBe(0);
+    expect(registry.unmark(target)).toBe(false);
+    expect(published).toHaveLength(1);
+  });
+
+  it("keeps a mark apart from the same session's own watch on the card", () => {
+    const { registry } = setup();
+    registry.mark({ ...target, ttlMs: 15 * MIN });
+    registry.register(reg({ scopes: { projects: [], issues: [[10, 3]] } }));
+    expect(
+      registry
+        .issueWatchers(10)
+        .get(3)
+        ?.map((w) => w.kind),
+    ).toEqual(["marked", "watch"]);
+    expect(registry.size()).toBe(2);
+  });
+
+  it("clears mark timers and drops marks on dispose", () => {
+    const { registry, time } = setup();
+    registry.mark({ ...target, ttlMs: 15 * MIN });
+    registry.mark({ ...target, number: 4, ttlMs: 15 * MIN });
+    expect(time.pending()).toBe(2);
+    registry.dispose();
+    expect(time.pending()).toBe(0);
+    expect(registry.size()).toBe(0);
+  });
+});
