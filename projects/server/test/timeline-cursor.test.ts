@@ -247,4 +247,126 @@ describe("timeline cursors across sub-millisecond rows", () => {
     );
     expect(page.items.map(keyOf)).toEqual(order.slice(0, 5));
   });
+
+  it("per-item cursors resume inside a shared millisecond (T-667)", async () => {
+    await expectItemCursorsResume(timeline, keyOf);
+  });
+});
+
+/**
+ * Per-item cursors (T-667) on one endpoint: resuming from any item delivers
+ * exactly what follows it, forward and backward pages alike, and the forward
+ * page's last item is its `next_cursor`. `read` takes a query string.
+ */
+async function expectItemCursorsResume(
+  // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
+  read: (qs: string) => Promise<any>,
+  keyOf: (i: Item) => string,
+): Promise<void> {
+  const page = await read("?limit=100");
+  const all: (Item & { cursor?: string })[] = page.items;
+  expect(all.length).toBeGreaterThanOrEqual(3);
+  const keys = all.map(keyOf);
+  for (const [k, item] of all.entries()) {
+    expect(item.cursor).toMatch(/^3:/);
+    const after = await read(`?limit=100&after=${item.cursor}`);
+    expect(after.items.map(keyOf)).toEqual(keys.slice(k + 1));
+  }
+  expect(all.at(-1)?.cursor).toBe(page.next_cursor);
+
+  const tail = await read("?last=1&limit=2");
+  expect(tail.items.map(keyOf)).toEqual(keys.slice(-2));
+  for (const [j, item] of (tail.items as Item[]).entries()) {
+    const k = keys.length - 2 + j;
+    expect((item as Item & { cursor?: string }).cursor).toBe(all[k]?.cursor);
+  }
+}
+
+describe("per-item cursors (T-667)", () => {
+  let t: TestApp;
+  let cookie: string;
+  const slug = "item-cursors";
+  const headers = () => ({ "content-type": "application/json", cookie });
+
+  const read = (path: string) => async (qs: string) => {
+    const res = await t.app.request(`/api/projects/${slug}${path}${qs}`, {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    return json(res);
+  };
+  const timeline = read("/issues/1/timeline");
+  const activity = read("/activity");
+
+  beforeAll(async () => {
+    t = await makeTestApp("shared");
+    cookie = await t.login();
+    let res = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug, name: "Item cursors" }),
+    });
+    expect(res.status).toBe(201);
+    res = await t.app.request(`/api/projects/${slug}/issues`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ title: "Cursors per entry" }),
+    });
+    expect(res.status).toBe(201);
+    const statuses: { id: number; name: string }[] = await json(
+      await t.app.request(`/api/projects/${slug}/statuses`, {
+        headers: { cookie },
+      }),
+    );
+    const doing = statuses.find((s) => s.name === "In Progress");
+    const writes: [string, unknown][] = [
+      ["comments", { body: "x1" }],
+      // One transaction: the comment and the status change share a
+      // timestamp, so only the (kind, id) tie-break orders them.
+      [
+        "commands",
+        { body: "x2", commands: [{ type: "status", status_id: doing?.id }] },
+      ],
+      ["comments", { body: "x3" }],
+    ];
+    for (const [path, body] of writes) {
+      res = await t.app.request(`/api/projects/${slug}/issues/1/${path}`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(body),
+      });
+      expect(res.ok).toBe(true);
+    }
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  it("orders a comment and an event written by one request", async () => {
+    const items: Item[] = (await timeline("?limit=100")).items;
+    expect(items.map(keyOf)).toEqual([
+      "event:opened",
+      "x1",
+      "x2",
+      "event:status_changed",
+      "x3",
+    ]);
+    expect(items[2]?.created_at).toBe(items[3]?.created_at);
+  });
+
+  it("issue timeline: every item resumes right after itself", async () => {
+    await expectItemCursorsResume(timeline, keyOf);
+  });
+
+  it("project activity: every item resumes right after itself", async () => {
+    await expectItemCursorsResume(activity, keyOf);
+  });
+
+  it("before= an item's cursor pages back from it", async () => {
+    const items: (Item & { cursor: string })[] = (await timeline("?limit=100"))
+      .items;
+    const page = await timeline(`?before=${items[3]?.cursor}&limit=100`);
+    expect(page.items.map(keyOf)).toEqual(items.slice(0, 3).map(keyOf));
+  });
 });

@@ -22,6 +22,19 @@ export type Transport = "stdout" | "uds" | "codex";
 export const FOLLOW_DEBOUNCE_SEC = 60;
 
 /**
+ * `--debounce` when none was given. The per-message cost above is a
+ * model's; a script reading `--json` lines off stdout pays nothing per
+ * line, so batching would only delay it.
+ */
+export function defaultDebounceSec(
+  transport: Transport | null,
+  json: boolean,
+): number | undefined {
+  if (transport === null) return undefined;
+  return transport === "stdout" && json ? 0 : FOLLOW_DEBOUNCE_SEC;
+}
+
+/**
  * The display label a push attests to, `<prefix>-<subject>`. It only decides
  * how the receiving session names the sender and takes no part in its
  * admission check, so unlike the permission mode there is nothing here to

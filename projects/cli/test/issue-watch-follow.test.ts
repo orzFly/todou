@@ -136,6 +136,51 @@ describe("issue watch --follow=stdout (T-254)", () => {
     ]);
     expect(clock.elapsed()).toBe(0);
   });
+
+  it("delivers under --json without a debounce window (T-667)", async () => {
+    // A live entry and then a fatal drain: inside a debounce window the
+    // entry would die with the watch instead of reaching stdout.
+    const clock = virtualClock();
+    const { fetchImpl } = timelineRoutes([
+      ...batch([comment(9, clock.iso())], "c1"),
+    ]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--since", "c0", "--json", "--follow=stdout"],
+      { fetchImpl, env: loggedInEnv("todou"), clock },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(bodyLines(result.stdout)[0] as string)).toMatchObject({
+      id: 9,
+    });
+  });
+
+  it("keeps stdout parseable while quiet under --json (T-667)", async () => {
+    const clock = virtualClock();
+    const { fetchImpl } = timelineRoutes([
+      ...batch([comment(9, clock.iso())], "c1"),
+      ...Array.from({ length: 20 }, () => quiet),
+    ]);
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--since",
+        "c0",
+        "--json",
+        "--follow=stdout",
+        "--timeout",
+        "10",
+      ],
+      { fetchImpl, env: loggedInEnv("todou"), clock },
+    );
+    expect(result.exitCode).toBe(1);
+    const lines = bodyLines(result.stdout);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
+    expect(result.stdout).not.toContain("still watching");
+    expect(result.stderr).toContain("still watching");
+  });
 });
 
 describe("issue watch --follow=uds (T-254)", () => {

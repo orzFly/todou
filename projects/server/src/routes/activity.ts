@@ -12,7 +12,9 @@ const crossActivityRoute = createRoute({
     "readable project when absent) and merged, each entry tagged with its " +
     "project slug. `after` takes the envelope minted by this endpoint " +
     "(per-project resume) or a plain single-project cursor (the common " +
-    "starting position everywhere); `last=1` bootstraps a now-envelope.",
+    "starting position everywhere); `last=1` bootstraps a now-envelope. " +
+    "Each item's `cursor` (T-667) is the envelope as of that item, so " +
+    "`after=<cursor>` resumes right after it.",
   request: { query: CrossActivityQuery },
   responses: {
     200: {

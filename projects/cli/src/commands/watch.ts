@@ -25,7 +25,7 @@ import {
 import { BARE_SUMMARY_CHARS, renderActivityLine } from "../timeline.ts";
 import {
   cursorLines,
-  FOLLOW_DEBOUNCE_SEC,
+  defaultDebounceSec,
   followOption,
   followTransport,
   openFollow,
@@ -33,6 +33,7 @@ import {
 } from "../watch-follow.ts";
 import {
   checkPrintCursor,
+  checkRendered,
   fixedSelfFilter,
   normalizeTypes,
   printableCursor,
@@ -168,6 +169,15 @@ export class WatchCommand extends ProjectCommand {
       from the **last** cursor record seen: item lines no cursor record
       follows yet are replayed on the next run, never dropped.
 
+      Each item line also carries \`cursor\`, its own resume position: a
+      plain cursor single-project, an envelope across projects, either one
+      resuming right after that entry — so a consumer can persist its place
+      per entry rather than per batch. A server predating T-667 sends none,
+      and the line then has no \`cursor\`; the batch's cursor record is
+      unchanged either way. \`--rendered\` adds \`rendered\`: the block the
+      same entry prints without \`--json\`, \`--summary\` included, with no
+      colour and without the batch's \`since:\`/\`cursor:\` lines.
+
       stdout carries data only — retry progress and other notes go to
       stderr — so redirect them apart (\`> feed.ndjson 2> feed.err\`)
       rather than merging them with \`2>&1\`.
@@ -221,7 +231,9 @@ export class WatchCommand extends ProjectCommand {
       stays resident and delivers every batch as it arrives, which spares an
       agent a tool call per batch — and spares it forgetting to re-open the
       watch at all. It implies \`--forever\` and defaults \`--debounce\` to
-      60 seconds; conflicts with \`--poll\` and \`--print-cursor\`.
+      60 seconds — 0 under \`--json\` on stdout, where a script reading lines
+      pays nothing per batch; conflicts with \`--poll\` and
+      \`--print-cursor\`.
 
       The transport is explicit, never guessed. \`--follow\` and
       \`--follow=stdout\` write each batch to stdout in the format above,
@@ -307,6 +319,10 @@ export class WatchCommand extends ProjectCommand {
         "todou watch -p todou --follow --debounce 0",
       ],
       [
+        "Stay resident and stream one JSON line per entry, with its text",
+        "todou watch -p todou --json --rendered --follow",
+      ],
+      [
         "Feed a script, line by line",
         'todou watch -p todou --poll --since "$CURSOR" --json | jq -r \'select(.type=="comment") | .issue_ref + ": " + .body\'',
       ],
@@ -357,6 +373,10 @@ export class WatchCommand extends ProjectCommand {
   printCursor = Option.Boolean("--print-cursor", false, {
     description: "With --poll: print the next cursor alone and exit 0",
   });
+  rendered = Option.Boolean("--rendered", false, {
+    description:
+      "With --json: add each entry's human-readable block as `rendered`",
+  });
   follow = followOption();
 
   protected bindWatchOwner(): boolean {
@@ -382,6 +402,7 @@ export class WatchCommand extends ProjectCommand {
       codex: messaging.codex,
     });
     checkPrintCursor(this.printCursor, { poll: this.poll, json: this.json });
+    checkRendered(this.rendered, this.json);
     const slugs = this.resolveSlugs();
     // A standing watch is a `--forever` watch with somewhere to deliver to:
     // it must never come back empty-handed either, and the conflict with
@@ -405,9 +426,7 @@ export class WatchCommand extends ProjectCommand {
         ? // `zero` because a standing watch needs a way back to immediate
           // delivery, and 0 already names it: "return on the first entry".
           parseSeconds(this.debounce, "--debounce", { zero: true })
-        : transport === null
-          ? undefined
-          : FOLLOW_DEBOUNCE_SEC;
+        : defaultDebounceSec(transport, this.json);
     const summaryChars =
       this.summary === undefined || this.summary === false
         ? 0
@@ -498,11 +517,14 @@ export class WatchCommand extends ProjectCommand {
       this.note(quietNote("still watching", timeoutSec, totalMs));
     // A batch nobody will read as prose pays for no card titles. `--json`
     // item lines carry no title — putting fields on what a script parses is
-    // its own decision, the line T-283 drew — and `--print-cursor` writes a
-    // position and nothing else. A uds push body is prose either way, which
-    // is why the transport and not just `--json` decides this.
+    // its own decision, the line T-283 drew — unless `--rendered` asks for
+    // the prose too, and `--print-cursor` writes a position and nothing
+    // else. A uds push body is prose either way, which is why the transport
+    // and not just `--json` decides this.
     const wantsCards =
-      opts.transport === "uds" || (!this.json && !this.printCursor);
+      opts.transport === "uds" ||
+      this.rendered ||
+      (!this.json && !this.printCursor);
     // A push body is read by a model, never by a terminal: makePainter with
     // no stream sees no isTTY and hands back the identity function.
     const plain = makePainter(undefined, this.context.env);
@@ -532,7 +554,20 @@ export class WatchCommand extends ProjectCommand {
 
       // One renderer behind all three consumers — the one-shot batch, a
       // standing batch on stdout, and a push body — so no reader ever has
-      // to reconcile two spellings of the same entry.
+      // to reconcile two spellings of the same entry. `--rendered` is a
+      // fourth, which is why the per-entry half stands on its own.
+      const renderOne = (
+        item: ActivityItem,
+        pen: ReturnType<typeof makePainter>,
+      ) =>
+        renderActivityLine(item, pen, {
+          ...spelling,
+          refLabel: formatRef(refPrefix, item.issue_number),
+          issueNumber: item.issue_number,
+          summaryChars,
+          project,
+          cardOf: cards.cardOf,
+        });
       const renderHuman = (
         items: ActivityItem[],
         since: string | undefined,
@@ -540,16 +575,7 @@ export class WatchCommand extends ProjectCommand {
         pen: ReturnType<typeof makePainter>,
       ) =>
         [
-          ...items.map((item) =>
-            renderActivityLine(item, pen, {
-              ...spelling,
-              refLabel: formatRef(refPrefix, item.issue_number),
-              issueNumber: item.issue_number,
-              summaryChars,
-              project,
-              cardOf: cards.cardOf,
-            }),
-          ),
+          ...items.map((item) => renderOne(item, pen)),
           ...cursorLines(since, cursor, pen),
         ].join("\n");
       const emit = (
@@ -562,6 +588,7 @@ export class WatchCommand extends ProjectCommand {
             ...items.map((item) => ({
               ...withIssueRef(item, refPrefix),
               project,
+              ...(this.rendered ? { rendered: renderOne(item, plain) } : {}),
             })),
             cursorRecord(cursor, ref_format),
           ],
@@ -693,6 +720,18 @@ export class WatchCommand extends ProjectCommand {
       ).next_cursor ??
       undefined;
 
+    const renderOne = (
+      item: CrossActivityItem,
+      pen: ReturnType<typeof makePainter>,
+    ) =>
+      renderActivityLine(item, pen, {
+        ...spellingOf(item.project),
+        refLabel: spell(item),
+        issueNumber: item.issue_number,
+        summaryChars,
+        project: item.project,
+        cardOf: cards.cardOf,
+      });
     const renderHuman = (
       items: CrossActivityItem[],
       since: string | undefined,
@@ -700,16 +739,7 @@ export class WatchCommand extends ProjectCommand {
       pen: ReturnType<typeof makePainter>,
     ) =>
       [
-        ...items.map((item) =>
-          renderActivityLine(item, pen, {
-            ...spellingOf(item.project),
-            refLabel: spell(item),
-            issueNumber: item.issue_number,
-            summaryChars,
-            project: item.project,
-            cardOf: cards.cardOf,
-          }),
-        ),
+        ...items.map((item) => renderOne(item, pen)),
         ...cursorLines(since, cursor, pen),
       ].join("\n");
     const emit = (
@@ -721,9 +751,10 @@ export class WatchCommand extends ProjectCommand {
       // that may each spell refs differently, so the format lives per item.
       this.outputBatch(
         [
-          ...items.map((item) =>
-            withIssueRef(item, spellingOf(item.project).refPrefix),
-          ),
+          ...items.map((item) => ({
+            ...withIssueRef(item, spellingOf(item.project).refPrefix),
+            ...(this.rendered ? { rendered: renderOne(item, plain) } : {}),
+          })),
           cursorRecord(cursor),
         ],
         () => renderHuman(items, since, cursor, paint),

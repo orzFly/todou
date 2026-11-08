@@ -316,6 +316,41 @@ describe.each(["shared", "dedicated"] as const)(
       expect(drained).toEqual(itemsOf(full).map(keyOf));
     });
 
+    it("gives every item the envelope as of that item (T-667)", async () => {
+      // Every item's own plain position, as each project's stream mints it.
+      const plainOf = new Map<string, string>();
+      for (const slug of [pa, pb]) {
+        const res = await t.app.request(
+          `/api/projects/${slug}/activity?limit=100`,
+          { headers: asBob() },
+        );
+        for (const item of itemsOf(await json(res)) as (XItem & {
+          cursor: string;
+        })[]) {
+          plainOf.set(keyOf({ ...item, project: slug }), item.cursor);
+        }
+      }
+
+      const incoming = (await decodeMultiCursor(env1)) ?? {};
+      const body = await json(
+        await cross({ projects: `${pa},${pb}`, after: env1 }),
+      );
+      const items = itemsOf(body) as (XItem & { cursor: string })[];
+      expect(new Set(items.map((i) => i.project))).toEqual(new Set([pa, pb]));
+      const keys = items.map(keyOf);
+
+      const running = { ...incoming };
+      for (const [k, item] of items.entries()) {
+        running[item.project] = plainOf.get(keyOf(item)) ?? "missing";
+        expect(await decodeMultiCursor(item.cursor)).toEqual(running);
+        const rest = await json(
+          await cross({ projects: `${pa},${pb}`, after: item.cursor }),
+        );
+        expect(itemsOf(rest).map(keyOf)).toEqual(keys.slice(k + 1));
+      }
+      expect(items.at(-1)?.cursor).toBe(body.next_cursor);
+    });
+
     it("rejects malformed and foreign-version cursors loudly", async () => {
       for (const bad of ["2:AAAA", "3:abcd", "!!!"]) {
         const res = await cross({ projects: pa, after: bad });

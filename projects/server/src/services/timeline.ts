@@ -7,6 +7,7 @@ import type {
   MultiCursorPositions,
   TimelineItem,
   TimelinePage,
+  TimelinePageItem,
   TimelineQuery,
   UserRef,
 } from "@todou/shared";
@@ -709,8 +710,11 @@ export async function getTimeline(
   merged = backward ? merged.slice(-query.limit) : merged.slice(0, query.limit);
 
   const refs = await actorRefs(ctx, merged);
-  const items: TimelineItem[] = redactEventPayloads(
-    merged.map((m) => toItem(m, refs, !query.include_hidden)),
+  const items: TimelinePageItem[] = redactEventPayloads(
+    merged.map((m) => ({
+      ...toItem(m, refs, !query.include_hidden),
+      cursor: encodeCursor(cursorOf(m)),
+    })),
     visible,
   );
 
@@ -994,6 +998,7 @@ export async function getProjectActivity(
     page.map((m) => ({
       ...toItem(m, refs, !query.include_hidden),
       issue_number: m.number,
+      cursor: encodeCursor(cursorOf(m)),
     })),
     visible,
   );
@@ -1217,21 +1222,27 @@ export async function getCrossActivity(
 
   const positions: MultiCursorPositions = {};
   for (const p of watched) positions[p.ref] = p.position;
-  // Later rows overwrite earlier ones, leaving each project's position on
-  // its last *delivered* row — undelivered projects keep their incoming
-  // position, so the cut point can fall anywhere without losing entries.
-  for (const row of page) positions[row.ref] = encodeCursor(cursorOf(row));
+  // Each row advances only its own project, so the envelope recorded for a
+  // row holds every project at its last row *delivered so far* — undelivered
+  // projects keep their incoming position, which is what lets a consumer
+  // resume from any item, and lets the page cut fall anywhere, without
+  // losing entries.
+  const cursors: string[] = [];
+  for (const row of page) {
+    positions[row.ref] = encodeCursor(cursorOf(row));
+    cursors.push(await encodeMultiCursor({ ...positions }));
+  }
 
   const refs = await actorRefs(ctx, page);
   const items = redactEventPayloads(
-    page.map((m) => ({
+    page.map((m, i) => ({
       ...toItem(m, refs, !query.include_hidden),
       issue_number: m.number,
       project: m.ref,
+      cursor: cursors[i],
     })),
     visible,
   );
-  const next_cursor =
-    page.length > 0 ? await encodeMultiCursor(positions) : null;
+  const next_cursor = cursors.at(-1) ?? null;
   return { items, next_cursor, has_more: hasMore, ...appliedScope(query) };
 }

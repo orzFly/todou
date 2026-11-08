@@ -257,6 +257,64 @@ describe("watch --follow=stdout (T-252)", () => {
     ]);
     expect(clock.elapsed()).toBe(0);
   });
+
+  /**
+   * Whether an entry that happened `ageSec` ago reaches stdout when the very
+   * next drain is fatal. The window is anchored on when the entry happened,
+   * so it is printed at once exactly when the window has already closed —
+   * and dies with the watch while the window is still open.
+   */
+  const printedAtOnce = async (ageSec: number, ...flags: string[]) => {
+    const clock = virtualClock();
+    const { fetchImpl } = activityRoutes([
+      ...batch([comment(9, 3, clock.iso(-ageSec * 1000))], "a1"),
+    ]);
+    const result = await runCli(
+      ["watch", "-p", "todou", "--since", "a0", "--follow=stdout", ...flags],
+      { fetchImpl, env: loggedInEnv(), clock },
+    );
+    expect(result.exitCode).toBe(1);
+    return result.stdout.includes("comment 9");
+  };
+
+  it("delivers under --json without a debounce window (T-667)", async () => {
+    expect(await printedAtOnce(0, "--json")).toBe(true);
+  });
+
+  it("still batches for 60s without --json, and an explicit --debounce wins (T-667)", async () => {
+    expect(await printedAtOnce(59)).toBe(false);
+    expect(await printedAtOnce(61)).toBe(true);
+    expect(await printedAtOnce(29, "--json", "--debounce", "30")).toBe(false);
+    expect(await printedAtOnce(31, "--json", "--debounce", "30")).toBe(true);
+  });
+
+  it("keeps stdout parseable while quiet under --json (T-667)", async () => {
+    const clock = virtualClock();
+    const { fetchImpl } = activityRoutes([
+      ...batch([comment(9, 3, clock.iso())], "a1"),
+      ...Array.from({ length: 20 }, () => quiet),
+    ]);
+    const result = await runCli(
+      [
+        "watch",
+        "-p",
+        "todou",
+        "--since",
+        "a0",
+        "--json",
+        "--follow=stdout",
+        "--timeout",
+        "10",
+      ],
+      { fetchImpl, env: loggedInEnv(), clock },
+    );
+    expect(result.exitCode).toBe(1);
+    const lines = bodyLines(result.stdout);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
+    expect(result.stdout).not.toContain("still watching");
+    expect(result.stderr).toContain("still watching");
+  });
 });
 
 describe("watch --follow=uds (T-252)", () => {

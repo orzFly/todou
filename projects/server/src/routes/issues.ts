@@ -184,6 +184,9 @@ const timelineRoute = createRoute({
   method: "get",
   path: "/{slug}/issues/{number}/timeline",
   summary: "Merged comments × events stream with bidirectional cursors",
+  description:
+    "Each item's `cursor` (T-667) is that entry's own position: " +
+    "`after=<cursor>` resumes right after it.",
   request: { params: issueParams, query: TimelineQuery },
   responses: {
     200: { description: "Page", ...jsonBody(TimelinePage) },
@@ -212,6 +215,9 @@ const activityRoute = createRoute({
   path: "/{slug}/activity",
   summary:
     "Project-wide activity stream (forward cursor poll across all issues)",
+  description:
+    "Each item's `cursor` (T-667) is that entry's own position: " +
+    "`after=<cursor>` resumes right after it.",
   request: { params: slugParam, query: ActivityQuery },
   responses: { 200: { description: "Page", ...jsonBody(ActivityPage) } },
 });

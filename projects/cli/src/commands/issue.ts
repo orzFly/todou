@@ -74,13 +74,14 @@ import {
 } from "../timeline.ts";
 import {
   cursorLines,
-  FOLLOW_DEBOUNCE_SEC,
+  defaultDebounceSec,
   followOption,
   followTransport,
   openFollow,
 } from "../watch-follow.ts";
 import {
   checkPrintCursor,
+  checkRendered,
   fixedSelfFilter,
   normalizeTypes,
   printableCursor,
@@ -1006,6 +1007,14 @@ export class IssueWatchCommand extends ProjectCommand {
       \`ref_format\` (\`{prefix, token}\`) is where this project's ref
       spelling comes from: \`token + number\`.
 
+      Each item line also carries \`cursor\`, its own resume position, so a
+      consumer can persist its place per entry rather than per batch. A
+      server predating T-667 sends none, and the line then has no
+      \`cursor\`; the batch's cursor record is unchanged either way.
+      \`--rendered\` adds \`rendered\`: the block the same entry prints
+      without \`--json\`, \`--summary\` included, with no colour and without
+      the batch's \`since:\`/\`cursor:\` lines.
+
       stdout carries data only — retry progress and other notes go to
       stderr — so redirect them apart (\`> feed.ndjson 2> feed.err\`)
       rather than merging them with \`2>&1\`. Migrating off the old
@@ -1046,7 +1055,9 @@ export class IssueWatchCommand extends ProjectCommand {
       stays resident and delivers every batch as it arrives, which spares an
       agent a tool call per batch — and spares it forgetting to re-open the
       watch at all. It implies \`--forever\` and defaults \`--debounce\` to
-      60 seconds; conflicts with \`--poll\` and \`--print-cursor\`.
+      60 seconds — 0 under \`--json\` on stdout, where a script reading lines
+      pays nothing per batch; conflicts with \`--poll\` and
+      \`--print-cursor\`.
 
       The transport is explicit, never guessed. \`--follow\` and
       \`--follow=stdout\` write each batch to stdout in the format above,
@@ -1123,6 +1134,10 @@ export class IssueWatchCommand extends ProjectCommand {
         "todou issue watch 33 --follow=uds",
       ],
       [
+        "Stay resident and stream one JSON line per entry, with its text",
+        "todou issue watch 33 --json --rendered --follow",
+      ],
+      [
         "Feed a script, line by line",
         'todou issue watch 33 --poll --since "$CURSOR" --json | jq -r \'select(.type=="comment").body\'',
       ],
@@ -1170,6 +1185,10 @@ export class IssueWatchCommand extends ProjectCommand {
   printCursor = Option.Boolean("--print-cursor", false, {
     description: "With --poll: print the next cursor alone and exit 0",
   });
+  rendered = Option.Boolean("--rendered", false, {
+    description:
+      "With --json: add each entry's human-readable block as `rendered`",
+  });
   follow = followOption();
 
   protected bindWatchOwner(): boolean {
@@ -1195,6 +1214,7 @@ export class IssueWatchCommand extends ProjectCommand {
       codex: messaging.codex,
     });
     checkPrintCursor(this.printCursor, { poll: this.poll, json: this.json });
+    checkRendered(this.rendered, this.json);
     const { project, number } = await this.resolveIssueRef(client, this.number);
     // A standing watch is a `--forever` watch with somewhere to deliver to:
     // it must never come back empty-handed either, and the conflict with
@@ -1219,9 +1239,7 @@ export class IssueWatchCommand extends ProjectCommand {
         ? // `zero` because a standing watch needs a way back to immediate
           // delivery, and 0 already names it: "return on the first entry".
           parseSeconds(this.debounce, "--debounce", { zero: true })
-        : transport === null
-          ? undefined
-          : FOLLOW_DEBOUNCE_SEC;
+        : defaultDebounceSec(transport, this.json);
     const summaryChars =
       this.summary === undefined || this.summary === false
         ? 0
@@ -1280,7 +1298,8 @@ export class IssueWatchCommand extends ProjectCommand {
     const ref_format = refFormat(refPrefix);
     // A batch nobody will read as prose pays for no card titles; see the
     // same predicate in commands/watch.ts.
-    const wantsCards = transport === "uds" || (!this.json && !this.printCursor);
+    const wantsCards =
+      transport === "uds" || this.rendered || (!this.json && !this.printCursor);
     // Resolved by the drain below, read at render time (T-286).
     const cards = activityCards(client);
     // A push body is read by a model, never by a terminal: makePainter with
@@ -1288,7 +1307,20 @@ export class IssueWatchCommand extends ProjectCommand {
     const plain = makePainter(undefined, this.context.env);
     // One renderer behind all three consumers — the one-shot batch, a
     // standing batch on stdout, and a push body — so no reader ever has to
-    // reconcile two spellings of the same entry.
+    // reconcile two spellings of the same entry. `--rendered` is a fourth,
+    // which is why the per-entry half stands on its own.
+    const renderOne = (
+      item: TimelineItem,
+      pen: ReturnType<typeof makePainter>,
+    ) =>
+      renderActivityLine(item, pen, {
+        ...spelling,
+        refLabel: formatRef(refPrefix, number),
+        issueNumber: number,
+        summaryChars,
+        project,
+        cardOf: cards.cardOf,
+      });
     const renderHuman = (
       items: TimelineItem[],
       since: string | undefined,
@@ -1296,16 +1328,7 @@ export class IssueWatchCommand extends ProjectCommand {
       pen: ReturnType<typeof makePainter>,
     ) =>
       [
-        ...items.map((item) =>
-          renderActivityLine(item, pen, {
-            ...spelling,
-            refLabel: formatRef(refPrefix, number),
-            issueNumber: number,
-            summaryChars,
-            project,
-            cardOf: cards.cardOf,
-          }),
-        ),
+        ...items.map((item) => renderOne(item, pen)),
         ...cursorLines(since, cursor, pen),
       ].join("\n");
     const emit = (
@@ -1313,8 +1336,17 @@ export class IssueWatchCommand extends ProjectCommand {
       since: string | undefined,
       cursor: string | undefined,
     ) =>
-      this.outputBatch([...items, cursorRecord(cursor, ref_format)], () =>
-        renderHuman(items, since, cursor, paint),
+      this.outputBatch(
+        [
+          ...(this.rendered
+            ? items.map((item) => ({
+                ...item,
+                rendered: renderOne(item, plain),
+              }))
+            : items),
+          cursorRecord(cursor, ref_format),
+        ],
+        () => renderHuman(items, since, cursor, paint),
       );
     const emitCursorOnly = (cursor: string | undefined) => {
       this.context.stdout.write(

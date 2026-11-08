@@ -115,6 +115,16 @@ export function checkPrintCursor(
   }
 }
 
+/** `--rendered` is a field on `--json` item lines; alone it has no home. */
+export function checkRendered(rendered: boolean, json: boolean): void {
+  if (rendered && !json) {
+    throw new CliError(
+      "--rendered only makes sense with --json",
+      "add --json — without it every entry already prints as rendered text",
+    );
+  }
+}
+
 /**
  * The bare cursor `--print-cursor` writes, or the refusal to write an empty
  * one: stdout carries the cursor and nothing else, so the whole output is

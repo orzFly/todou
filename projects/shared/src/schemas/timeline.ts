@@ -257,8 +257,19 @@ export const TimelineItem = z.discriminatedUnion("type", [
 ]);
 export type TimelineItem = z.infer<typeof TimelineItem>;
 
+/**
+ * A timeline entry as a page delivers it. `cursor` is the entry's own
+ * position, so `after=<cursor>` resumes with the entry that follows it;
+ * absent from a server predating T-667.
+ */
+export const TimelinePageItem = z.discriminatedUnion("type", [
+  TimelineComment.extend({ cursor: Cursor.optional() }),
+  TimelineEvent.extend({ cursor: Cursor.optional() }),
+]);
+export type TimelinePageItem = z.infer<typeof TimelinePageItem>;
+
 export const TimelinePage = z.object({
-  items: z.array(TimelineItem),
+  items: z.array(TimelinePageItem),
   prev_cursor: Cursor.nullable(),
   next_cursor: Cursor.nullable(),
   /**
@@ -346,10 +357,14 @@ const activityScope = z.string().optional();
 export const ActivityScope = z.enum(["assigned", "mentioned"]);
 export type ActivityScope = z.infer<typeof ActivityScope>;
 
-/** Timeline entries annotated with their issue, for project-wide polling. */
+/**
+ * Timeline entries annotated with their issue, for project-wide polling.
+ * `cursor` is the entry's own plain position, as on `TimelinePageItem`;
+ * absent from a server predating T-667.
+ */
 export const ActivityItem = z.discriminatedUnion("type", [
-  TimelineComment.extend({ issue_number: Id }),
-  TimelineEvent.extend({ issue_number: Id }),
+  TimelineComment.extend({ issue_number: Id, cursor: Cursor.optional() }),
+  TimelineEvent.extend({ issue_number: Id, cursor: Cursor.optional() }),
 ]);
 export type ActivityItem = z.infer<typeof ActivityItem>;
 
@@ -388,10 +403,25 @@ export const ActivityQuery = z.object({
 });
 export type ActivityQuery = z.infer<typeof ActivityQuery>;
 
-/** Activity entries tagged with their project, for cross-project polling. */
+/**
+ * Activity entries tagged with their project, for cross-project polling.
+ * `cursor` is a multi-project envelope: this entry's project at this entry,
+ * every other project where it stood as of this entry in the page's
+ * delivery order, so resuming from it neither repeats nor skips anything.
+ * The last item's equals `next_cursor`. Absent from a server predating
+ * T-667.
+ */
 export const CrossActivityItem = z.discriminatedUnion("type", [
-  TimelineComment.extend({ issue_number: Id, project: ProjectSlug }),
-  TimelineEvent.extend({ issue_number: Id, project: ProjectSlug }),
+  TimelineComment.extend({
+    issue_number: Id,
+    project: ProjectSlug,
+    cursor: Cursor.optional(),
+  }),
+  TimelineEvent.extend({
+    issue_number: Id,
+    project: ProjectSlug,
+    cursor: Cursor.optional(),
+  }),
 ]);
 export type CrossActivityItem = z.infer<typeof CrossActivityItem>;
 
