@@ -192,3 +192,123 @@ describe("search facets", () => {
     expect(sessions[0]?.session_id).toBe("bulk-050");
   });
 });
+
+describe("search facets across a cross-project reference T-658", () => {
+  const SRC = "facet-src";
+  const DST = "facet-dst";
+  let t: TestApp;
+  let cookie: string;
+  /** Reader of the referenced project only. */
+  let outsider: Record<string, string>;
+  /** Reader of both, so the referring write is theirs to see. */
+  let insider: Record<string, string>;
+
+  const write = async (path: string, body: object, agent: Ctx) => {
+    const res = await t.app.request(`/api/projects/${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie,
+        ...(agent === null
+          ? {}
+          : { "x-todou-agent-context": JSON.stringify(agent) }),
+      },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(201);
+    return json(res);
+  };
+
+  const facetsFor = async (who: Record<string, string>) => {
+    const res = await t.app.request(`/api/projects/${DST}/search/facets`, {
+      headers: who,
+    });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    return {
+      sessions: new Map(
+        (body.sessions as Array<{ session_id: string; count: number }>).map(
+          (s) => [s.session_id, s.count],
+        ),
+      ),
+      agents: new Map(
+        (body.harnesses as Array<{ agent: string | null; count: number }>).map(
+          (h) => [h.agent, h.count],
+        ),
+      ),
+    };
+  };
+
+  beforeAll(async () => {
+    t = await makeTestApp();
+    cookie = await t.login();
+    for (const slug of [SRC, DST]) {
+      const res = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ slug, name: slug }),
+      });
+      expect(res.status).toBe(201);
+    }
+    const bob = await addUserWithToken(t.ctx, "facet-outsider");
+    const carol = await addUserWithToken(t.ctx, "facet-insider");
+    outsider = bob.headers;
+    insider = carol.headers;
+    for (const [user, slugs] of [
+      [bob, [DST]],
+      [carol, [SRC, DST]],
+    ] as const) {
+      for (const slug of slugs) {
+        const res = await t.app.request(
+          `/api/projects/${slug}/members/${user.user.id}`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json", cookie },
+            body: JSON.stringify({ role: "reader" }),
+          },
+        );
+        expect(res.status).toBe(204);
+      }
+    }
+
+    const target = (
+      await write(`${DST}/issues`, { title: "被引用", body: "" }, null)
+    ).number as number;
+    // A reference written inside DST itself: every reader of DST reads the
+    // project it came from.
+    await write(
+      `${DST}/issues`,
+      { title: "本地引用", body: `see #${target}` },
+      { agent: "local-harness", session_id: "LOCAL" },
+    );
+    await write(
+      `${SRC}/issues`,
+      { title: "跨项目引用", body: `see ${DST}#${target}` },
+      { agent: "secret-harness", session_id: "SECRET-A" },
+    );
+  });
+
+  afterAll(async () => {
+    await t?.cleanup();
+  });
+
+  it("keeps the referring write from a reader who cannot read its project", async () => {
+    const { sessions, agents } = await facetsFor(outsider);
+    expect(sessions.has("SECRET-A")).toBe(false);
+    expect(agents.has("secret-harness")).toBe(false);
+  });
+
+  it("still counts a reference written inside the project", async () => {
+    const { sessions, agents } = await facetsFor(outsider);
+    // The card's `opened` event and the `referenced` event it left on the
+    // target: the second is the one the cross-project filter judges.
+    expect(sessions.get("LOCAL")).toBe(2);
+    expect(agents.get("local-harness")).toBe(2);
+  });
+
+  it("shows the referring write to a reader of both projects", async () => {
+    const { sessions, agents } = await facetsFor(insider);
+    expect(sessions.get("SECRET-A")).toBe(1);
+    expect(agents.get("secret-harness")).toBe(1);
+  });
+});

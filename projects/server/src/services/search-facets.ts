@@ -12,11 +12,17 @@ import {
   specVersions,
 } from "../db/project-schema.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
+import {
+  crossRefVisibleCondition,
+  visibleProjects,
+} from "./cross-references.ts";
 import { live } from "./trash.ts";
 
 /** One table that records who wrote a row, and how to reach its card. */
 type Source = {
   table: typeof comments | typeof issueEvents | typeof specVersions;
+  /** Reference events carry the context of a write in another project. */
+  crossProject?: true;
   agentContext: AnyPgColumn;
   issueId: AnyPgColumn;
   createdAt: AnyPgColumn;
@@ -31,6 +37,7 @@ const SOURCES: Source[] = [
   },
   {
     table: issueEvents,
+    crossProject: true,
     agentContext: issueEvents.agentContext,
     issueId: issueEvents.issueId,
     createdAt: issueEvents.createdAt,
@@ -82,8 +89,17 @@ export async function searchFacets(
     { agent: string | null; count: number; last_seen: string }
   >();
 
+  // T-658: a `referenced` row lives here but was written in the referring
+  // project, by its writer — the same rows the timeline hides.
+  const readable = await visibleProjects(ctx, actor);
+
   for (const source of SOURCES) {
-    const where = visible(project.id);
+    const where = source.crossProject
+      ? (and(
+          visible(project.id),
+          crossRefVisibleCondition(readable.slugs, readable.ids),
+        ) as SQL)
+      : visible(project.id);
 
     const agents = await db
       .select({
