@@ -18,6 +18,8 @@ function describeLines(): string[] {
       "--",
       ".",
       ":!docs/releases/",
+      // The pattern above is itself a match once this file is tracked.
+      ":!projects/shared/test/describe-abbrev.guard.test.ts",
     ],
     { cwd: root, encoding: "utf8" },
   );
