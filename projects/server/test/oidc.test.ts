@@ -743,3 +743,49 @@ describe("oidc client authentication method", () => {
     }
   });
 });
+
+describe("oidc login mapping", () => {
+  async function loginAs(subject: string, claims: Record<string, unknown>) {
+    idp.subject = subject;
+    idp.idTokenClaims = claims;
+    const res = await completeCallback();
+    expect(res.status).toBe(302);
+    const me = await t.app.request("/api/me", {
+      headers: { cookie: sessionCookieOf(res) },
+    });
+    expect(me.status).toBe(200);
+    return json(me);
+  }
+
+  async function seed(login: string, oidcSubject: string) {
+    const rows = await t.ctx.router
+      .system()
+      .insert(users)
+      .values({ kind: "human", login, displayName: login, oidcSubject })
+      .returning();
+    const row = rows[0];
+    if (!row) throw new Error("insert returned no row");
+    return row;
+  }
+
+  it("suffixes an all-digit login on the first sign-in", async () => {
+    const body = await loginAs("digits-sub", { preferred_username: "12345" });
+    expect(body.login).toMatch(/^12345-[a-z0-9]{4}$/);
+  });
+
+  it("keeps an existing user on its subject, whatever the claim says", async () => {
+    const erin = await seed("erin", "erin-sub");
+    const body = await loginAs("erin-sub", {
+      preferred_username: "somebody-else",
+    });
+    expect(body.id).toBe(erin.id);
+    expect(body.login).toBe("erin");
+  });
+
+  it("keeps an existing all-digit login as it is", async () => {
+    const old = await seed("4242", "s-4242");
+    const body = await loginAs("s-4242", { preferred_username: "4242" });
+    expect(body.id).toBe(old.id);
+    expect(body.login).toBe("4242");
+  });
+});

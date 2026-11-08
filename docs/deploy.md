@@ -646,7 +646,8 @@ lowercase letters, digits, dashes). Accounts are matched by the IdP's
 `sub` claim alone — an asserted username is a public, re-registrable
 name, never proof of owning an existing account, so it never matches
 one. Unknown subjects are auto-created when `auto_create` is on, with
-the username as the login; a taken login (human or machine alike) gets
+the username as the login; a taken login (human or machine alike), or
+one made only of digits (which `/users/<id>` would read as an id), gets
 a random `-xxxx` suffix instead.
 
 Logging out ends the todou session only; the IdP session stays, so a
@@ -853,7 +854,9 @@ UI hides its logout button.
 mode = "forward"
 
 [auth.forward]
-user_header = "Remote-User"          # Authelia; oauth2-proxy: "X-Auth-Request-User"
+user_header = "Remote-User"          # Authelia
+# subject_header = "X-Auth-Request-User"  # a stable id; see "Stable subjects"
+# migrate_legacy_subjects = false
 # name_header = "Remote-Name"        # optional, read only when creating the user
 # email_header = "Remote-Email"
 # auto_create = true
@@ -890,9 +893,10 @@ belong to another reverse proxy, so it never appears in a response.
 Provisioning follows the same rules as oidc (subject keying, auto-create
 with suffixing, and [the first sign-in becomes instance
 admin](#the-first-sign-in-becomes-instance-admin) — here any request the
-proxy authenticates counts as one): the header value doubles as the
-stored subject, so renaming a login inside todou never detaches the
-identity. One caveat comes with that: an ex-single-mode builtin account
+proxy authenticates counts as one). Without `subject_header` the
+`user_header` value, lowercased, doubles as the stored subject, so
+renaming a login inside todou never detaches the identity. One caveat
+comes with that: an ex-single-mode builtin account
 is tracked by the sentinel subject `builtin`, which is also a valid
 username — an upstream user literally named `builtin` would match that
 account, history and admin bit included. The header namespace is the
@@ -915,6 +919,69 @@ away. Bearer PATs skip the identity headers entirely and keep working,
 as they do in oidc mode. There is no `require_email_verified`: proxies
 do not forward a verified-email flag, so whether `email_header` carries
 a verified address is up to the proxy and its IdP.
+
+#### Stable subjects
+
+Without `subject_header`, the username is the identity: whoever the
+upstream later hands the same username to — after the original holder
+left, or in different capitals, since it is lowercased — signs in to the
+original holder's account. That is safe only while the upstream never
+reissues usernames. A proxy that can forward a stable per-user id should
+send it in a second header and name that header `subject_header`. Its
+value is stored and compared exactly as sent, case included, like an
+oidc `sub`; `user_header` still supplies the login. A request without it
+gets the same 401 as a missing `user_header` — never a fall-back to the
+username.
+
+oauth2-proxy with an OIDC provider (and `--set-xauthrequest`):
+
+```toml
+user_header = "X-Auth-Request-Preferred-Username"
+subject_header = "X-Auth-Request-User"
+```
+
+With an OIDC provider, `X-Auth-Request-User` is the IdP's `sub`, not a
+username. With oauth2-proxy's GitHub provider it is the GitHub handle,
+which can be renamed and re-registered by someone else, so it is no
+stable id there.
+
+Authentik:
+
+```toml
+user_header = "X-authentik-username"
+subject_header = "X-authentik-uid"
+```
+
+The uid changes if Authentik is reinstalled; rebind each account then
+with `user bind-subject`.
+
+Authelia and Tailscale serve forward no stable id. Behind them, the only
+protection is an upstream that never reissues usernames.
+
+#### Moving an existing deployment onto a stable subject
+
+Every account an existing forward deployment created is keyed by its old
+subject, so configuring `subject_header` alone makes each person a new,
+empty, suffixed account on their next request. Move them across:
+
+1. Set `subject_header`, set `migrate_legacy_subjects = true`, restart.
+2. Have everybody sign in once. Each first request re-keys that account
+   onto the stable id (matched by the lowercased username or the
+   lowercased old subject); the server log reports every one, by login
+   and account id.
+3. Remove `migrate_legacy_subjects` and restart.
+4. Anyone who missed the window: `todou-server user bind-subject <login>
+   --subject <id> --force`.
+
+While the switch is on, a username can still claim any account that has
+not been re-keyed yet, which is the hole this closes; the server warns at
+startup until the switch is off.
+
+Deployments that followed earlier versions of this guide and set
+`user_header = "X-Auth-Request-User"` for oauth2-proxy have the IdP's
+`sub` (a UUID or a long number) as everybody's login. After switching to
+the configuration above, users can change their login in their profile
+settings.
 
 ## S3 attachment storage
 

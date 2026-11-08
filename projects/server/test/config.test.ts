@@ -171,6 +171,62 @@ describe("loadConfig", () => {
     ).not.toThrow();
   });
 
+  it("leaves the forward subject on the username by default", () => {
+    const { forward } = loadConfig({ tomlSource: "", env: {} }).auth;
+    expect(forward.subject_header).toBeUndefined();
+    expect(forward.migrate_legacy_subjects).toBe(false);
+  });
+
+  it("reads the forward subject settings from ENV", () => {
+    const { forward } = loadConfig({
+      tomlSource: "",
+      env: {
+        TODOU_AUTH_FORWARD_SUBJECT_HEADER: "X-Uid",
+        TODOU_AUTH_FORWARD_MIGRATE_LEGACY_SUBJECTS: "true",
+      },
+    }).auth;
+    expect(forward.subject_header).toBe("X-Uid");
+    expect(forward.migrate_legacy_subjects).toBe(true);
+  });
+
+  describe("forward subject settings that cannot work", () => {
+    const forward = (...lines: string[]) =>
+      loadConfig({
+        tomlSource: [
+          "[auth]",
+          'mode = "forward"',
+          "[auth.forward]",
+          'user_header = "Remote-User"',
+          ...lines,
+        ].join("\n"),
+        env: {},
+      });
+
+    it("refuses subject_header naming user_header in another case", () => {
+      expect(() => forward('subject_header = "remote-user"')).toThrow(
+        ConfigError,
+      );
+      expect(() => forward('subject_header = "remote-user"')).toThrow(
+        /subject_header must name a different header than user_header/,
+      );
+    });
+
+    it("refuses migrate_legacy_subjects without subject_header", () => {
+      expect(() => forward("migrate_legacy_subjects = true")).toThrow(
+        ConfigError,
+      );
+      expect(() => forward("migrate_legacy_subjects = true")).toThrow(
+        /migrate_legacy_subjects requires auth\.forward\.subject_header/,
+      );
+    });
+
+    it("accepts a distinct subject_header with the migration on", () => {
+      expect(() =>
+        forward('subject_header = "X-Uid"', "migrate_legacy_subjects = true"),
+      ).not.toThrow();
+    });
+  });
+
   it("leaves cookie_secure a tri-state (absent = per request)", () => {
     expect(
       loadConfig({ tomlSource: "", env: {} }).auth.cookie_secure,

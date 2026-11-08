@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { users } from "../src/db/system-schema.ts";
+import { adoptUser, bindSubject } from "../src/services/user-admin.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -504,5 +505,273 @@ describe("proxy header trace on the login endpoint", () => {
       errSpy.mockRestore();
       await t.cleanup();
     }
+  });
+});
+
+/** A forward-mode app on an empty database, for first-admin and id checks. */
+function freshForward(...extra: string[]): Promise<TestApp> {
+  return makeTestApp("shared", {
+    extraToml: [FORWARD_TOML, ...extra].join("\n"),
+  });
+}
+
+const SUBJECT_TOML = 'subject_header = "X-Uid"';
+const MIGRATE_TOML = "migrate_legacy_subjects = true";
+
+async function seedUser(
+  t: TestApp,
+  values: Partial<typeof users.$inferInsert> & { login: string },
+) {
+  const rows = await t.ctx.router
+    .system()
+    .insert(users)
+    .values({ kind: "human", displayName: values.login, ...values })
+    .returning();
+  const row = rows[0];
+  if (!row) throw new Error("insert returned no row");
+  return row;
+}
+
+async function userRow(t: TestApp, id: number) {
+  const rows = await t.ctx.router
+    .system()
+    .select()
+    .from(users)
+    .where(eq(users.id, id));
+  return rows[0];
+}
+
+const forwardMe = (t: TestApp, headers: Record<string, string>) =>
+  t.app.request("/api/me", { headers }, fromPeer("127.0.0.1"));
+
+describe("forward mode all-digit usernames", () => {
+  it("suffixes the login so /users/<login> cannot shadow /users/<id>", async () => {
+    const t = await freshForward();
+    try {
+      const admin = await json(await forwardMe(t, { "Remote-User": "alice" }));
+      expect(admin.id).toBe(1);
+
+      const res = await forwardMe(t, { "Remote-User": "1" });
+      expect(res.status).toBe(200);
+      const digit = await json(res);
+      expect(digit.login).toMatch(/^1-[a-z0-9]{4}$/);
+
+      const asAdmin = { "Remote-User": "alice" };
+      const byLogin = await t.app.request(
+        `/api/users/${digit.login}`,
+        { headers: asAdmin },
+        fromPeer("127.0.0.1"),
+      );
+      expect((await json(byLogin)).id).toBe(digit.id);
+      const byId = await t.app.request(
+        "/api/users/1",
+        { headers: asAdmin },
+        fromPeer("127.0.0.1"),
+      );
+      expect((await json(byId)).login).toBe("alice");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("still makes an all-digit first human the instance admin", async () => {
+    const t = await freshForward();
+    try {
+      const body = await json(await forwardMe(t, { "Remote-User": "42" }));
+      expect(body.login).toMatch(/^42-[a-z0-9]{4}$/);
+      expect(body.is_instance_admin).toBe(true);
+    } finally {
+      await t.cleanup();
+    }
+  });
+});
+
+describe("forward mode without subject_header", () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await freshForward();
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  it("finds an existing account by its lowercased username, as before", async () => {
+    const dave = await seedUser(t, { login: "dave", oidcSubject: "dave" });
+    const body = await json(await forwardMe(t, { "Remote-User": "Dave" }));
+    expect(body.id).toBe(dave.id);
+    expect(body.login).toBe("dave");
+    expect((await userRow(t, dave.id))?.oidcSubject).toBe("dave");
+
+    const extra = await json(
+      await forwardMe(t, { "Remote-User": "dave", "X-Uid": "d-1" }),
+    );
+    expect(extra.id).toBe(dave.id);
+  });
+
+  it("keeps an existing all-digit login as it is", async () => {
+    const old = await seedUser(t, { login: "12345", oidcSubject: "12345" });
+    const body = await json(await forwardMe(t, { "Remote-User": "12345" }));
+    expect(body.id).toBe(old.id);
+    expect(body.login).toBe("12345");
+  });
+});
+
+describe("forward mode with subject_header", () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await freshForward(SUBJECT_TOML);
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  it("makes the first request the instance admin and no other", async () => {
+    const first = await json(
+      await forwardMe(t, { "Remote-User": "owner", "X-Uid": "o-1" }),
+    );
+    expect(first.is_instance_admin).toBe(true);
+    const second = await json(
+      await forwardMe(t, { "Remote-User": "other", "X-Uid": "o-2" }),
+    );
+    expect(second.is_instance_admin).toBe(false);
+  });
+
+  it("gives a reissued username a new account", async () => {
+    const first = await json(
+      await forwardMe(t, { "Remote-User": "bob", "X-Uid": "u-1" }),
+    );
+    const second = await json(
+      await forwardMe(t, { "Remote-User": "bob", "X-Uid": "u-2" }),
+    );
+    expect(second.id).not.toBe(first.id);
+    expect(second.login).toMatch(/^bob-[a-z0-9]{4}$/);
+  });
+
+  it("compares the subject exactly, case included", async () => {
+    const upper = await json(
+      await forwardMe(t, { "Remote-User": "Kim", "X-Uid": "K-1" }),
+    );
+    const lower = await json(
+      await forwardMe(t, { "Remote-User": "kim", "X-Uid": "k-1" }),
+    );
+    expect(lower.id).not.toBe(upper.id);
+  });
+
+  it("401s when the subject header is missing or empty, creating nothing", async () => {
+    const cases: Record<string, string>[] = [
+      { "Remote-User": "nosub" },
+      { "Remote-User": "nosub", "X-Uid": "" },
+    ];
+    for (const headers of cases) {
+      const res = await forwardMe(t, headers);
+      expect(res.status).toBe(401);
+      expect((await json(res)).error.message).toBe(
+        "identity header X-Uid missing (the proxy must set it)",
+      );
+    }
+    const rows = await t.ctx.router
+      .system()
+      .select()
+      .from(users)
+      .where(eq(users.login, "nosub"));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("matches an account bound with bind-subject", async () => {
+    const frank = await seedUser(t, { login: "frank", oidcSubject: "frank" });
+    await bindSubject(t.ctx.router.system(), {
+      login: "frank",
+      subject: "f-1",
+      force: true,
+    });
+    const body = await json(
+      await forwardMe(t, { "Remote-User": "frank", "X-Uid": "f-1" }),
+    );
+    expect(body.id).toBe(frank.id);
+  });
+
+  it("resolves an adopted identity to the history account", async () => {
+    const history = await seedUser(t, { login: "historic" });
+    const shell = await json(
+      await forwardMe(t, { "Remote-User": "grace", "X-Uid": "g-1" }),
+    );
+    expect(shell.login).toBe("grace");
+    await adoptUser(t.ctx.router.system(), { into: "historic", from: "grace" });
+
+    const body = await json(
+      await forwardMe(t, { "Remote-User": "grace", "X-Uid": "g-1" }),
+    );
+    expect(body.id).toBe(history.id);
+    expect((await userRow(t, shell.id))?.disabledAt).not.toBeNull();
+  });
+});
+
+describe("forward mode legacy subject migration", () => {
+  let t: TestApp;
+  let warned: string[];
+
+  beforeAll(async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      t = await freshForward(SUBJECT_TOML, MIGRATE_TOML);
+      warned = warnSpy.mock.calls.map((args) => String(args[0]));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  const migrate = async (headers: Record<string, string>) => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      return await json(await forwardMe(t, headers));
+    } finally {
+      logSpy.mockRestore();
+    }
+  };
+
+  it("warns at startup while the switch is on", () => {
+    expect(
+      warned.some((line) => line.includes("migrate_legacy_subjects")),
+    ).toBe(true);
+  });
+
+  it("re-keys an account whose legacy subject is the username", async () => {
+    const admin = await seedUser(t, {
+      login: "boss",
+      oidcSubject: "boss",
+      isInstanceAdmin: true,
+    });
+    const plain = await seedUser(t, { login: "pleb", oidcSubject: "pleb" });
+
+    const a = await migrate({ "Remote-User": "Boss", "X-Uid": "b-1" });
+    expect(a.id).toBe(admin.id);
+    expect(a.is_instance_admin).toBe(true);
+    const p = await migrate({ "Remote-User": "pleb", "X-Uid": "p-1" });
+    expect(p.id).toBe(plain.id);
+    expect(p.is_instance_admin).toBe(false);
+    expect((await userRow(t, plain.id))?.oidcSubject).toBe("p-1");
+  });
+
+  it("re-keys an account whose legacy subject is the lowercased subject", async () => {
+    const old = await seedUser(t, { login: "okta-user", oidcSubject: "ab-cd" });
+    const body = await migrate({ "Remote-User": "someone", "X-Uid": "AB-CD" });
+    expect(body.id).toBe(old.id);
+    expect((await userRow(t, old.id))?.oidcSubject).toBe("AB-CD");
+  });
+
+  it("re-keys an all-digit login without renaming it", async () => {
+    const old = await seedUser(t, { login: "777", oidcSubject: "777" });
+    const body = await migrate({ "Remote-User": "777", "X-Uid": "s-777" });
+    expect(body.id).toBe(old.id);
+    expect(body.login).toBe("777");
+    expect((await userRow(t, old.id))?.oidcSubject).toBe("s-777");
   });
 });

@@ -1,7 +1,8 @@
 import { randomInt } from "node:crypto";
-import { Login } from "@todou/shared";
-import { eq, sql } from "drizzle-orm";
+import { Login, LoginInput } from "@todou/shared";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { BUILTIN_SUBJECT } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { users } from "../db/system-schema.ts";
 import { ForbiddenError } from "../errors.ts";
@@ -29,6 +30,11 @@ export class ProvisionError extends ForbiddenError {
  * header). Returns null when the value cannot be a todou login — the CALLER
  * decides the status: 401 for forward (identity not establishable), a
  * claim_missing redirect for the oidc callback.
+ *
+ * A forward deployment without auth.forward.subject_header stores this
+ * output as the durable subject, so for every value it accepts today the
+ * output must never change — or those accounts stop matching. Widening
+ * what it accepts (T-676) is safe only for inputs that now return null.
  */
 export function normalizeLogin(raw: string): string | null {
   const login = raw.trim().toLowerCase();
@@ -36,12 +42,24 @@ export function normalizeLogin(raw: string): string | null {
 }
 
 export type IdentityInput = {
-  /** IdP `sub` claim; in forward mode, the asserted username itself. */
+  /**
+   * IdP `sub` claim; in forward mode the subject_header value, or the
+   * normalized username when none is configured.
+   */
   subject: string;
-  /** Already normalized via normalizeLogin. */
+  /**
+   * Already normalized via normalizeLogin, which does not make it a login
+   * a new account may take as is (all digits would shadow /users/<id>).
+   */
   login: string;
   name?: string | null;
   email?: string | null;
+  /**
+   * Subjects the account held before it was re-keyed onto `subject`. Tried
+   * in order only when `subject` matches nothing; a match is re-keyed to
+   * `subject`, so each one can claim an account at most once.
+   */
+  legacySubjects?: string[];
 };
 
 const SUFFIX_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -93,6 +111,8 @@ export type ProvisionOptions = {
   suffix?: () => string;
   /** Test seam: runs before each JIT attempt, to construct races. */
   beforeAttempt?: () => Promise<void>;
+  /** Test seam: runs before the legacy re-key update, to construct races. */
+  beforeRekey?: () => Promise<void>;
 };
 
 /**
@@ -100,8 +120,8 @@ export type ProvisionOptions = {
  * subject ALONE. The IdP/proxy is fully trusted for WHO the request is —
  * but an asserted username is a public, re-registrable name, never proof
  * of ownership of an existing account, so it must not match one (T-86).
- * Unknown subjects are JIT-created; a taken login gets a random suffix
- * instead of adopting or refusing.
+ * Unknown subjects are JIT-created; a taken or all-digit login gets a
+ * random suffix instead of adopting or refusing.
  */
 export async function provisionUser(
   db: Db,
@@ -110,6 +130,9 @@ export async function provisionUser(
 ): Promise<UserRow> {
   const found = await findBySubject(db, input.subject);
   if (found) return liveOrThrow(found);
+
+  const rekeyed = await rekeyLegacy(db, input, opts);
+  if (rekeyed) return rekeyed;
 
   if (!opts.autoCreate) {
     throw new ProvisionError(
@@ -125,8 +148,11 @@ export async function provisionUser(
       ? input.email
       : null;
   const suffix = opts.suffix ?? randomLoginSuffix;
+  // JIT is the one path that skips the LoginInput rules renames obey; a
+  // suffixed login always contains "-", so starting there satisfies them.
+  const first = LoginInput.safeParse(input.login).success ? 0 : 1;
 
-  for (let attempt = 0; attempt <= SUFFIX_ATTEMPTS; attempt++) {
+  for (let attempt = first; attempt <= SUFFIX_ATTEMPTS; attempt++) {
     const login =
       attempt === 0
         ? input.login
@@ -181,6 +207,56 @@ export async function provisionUser(
   throw new Error(
     `could not allocate a login for "${input.login}" after ${SUFFIX_ATTEMPTS} suffix attempts`,
   );
+}
+
+/**
+ * The migration path of auth.forward.migrate_legacy_subjects: an account
+ * still keyed by a pre-subject_header value moves onto the stable subject
+ * the first time its owner signs in. Until then the legacy value — often a
+ * reissuable username — can still claim it, which is why the switch is
+ * meant to be on only for the migration window.
+ */
+async function rekeyLegacy(
+  db: Db,
+  input: IdentityInput,
+  opts: ProvisionOptions,
+): Promise<UserRow | undefined> {
+  for (const legacy of new Set(input.legacySubjects ?? [])) {
+    // The single-mode sentinel is a marker, not anybody's identity; an
+    // upstream username "builtin" must not walk off with the admin account
+    // (T-627 moves the marker out of this column and makes this redundant).
+    if (legacy === BUILTIN_SUBJECT || legacy === input.subject) continue;
+    const row = await findBySubject(db, legacy);
+    if (!row || row.kind !== "human") continue;
+    liveOrThrow(row);
+    await opts.beforeRekey?.();
+    let updated: UserRow[];
+    try {
+      updated = await db
+        .update(users)
+        .set({ oidcSubject: input.subject })
+        .where(and(eq(users.id, row.id), eq(users.oidcSubject, legacy)))
+        .returning();
+    } catch (cause) {
+      if (uniqueViolation(cause) !== "users_oidc_subject_idx") throw cause;
+      // A concurrent request of this identity re-keyed or created first.
+      const winner = await findBySubject(db, input.subject);
+      if (winner) return liveOrThrow(winner);
+      throw cause;
+    }
+    const done = updated[0];
+    if (done) {
+      console.log(
+        `provision: re-keyed account "${done.login}" (id ${done.id}) from its legacy subject`,
+      );
+      return done;
+    }
+    // Zero rows: the legacy subject moved under us, most likely onto this
+    // very identity by a concurrent login.
+    const winner = await findBySubject(db, input.subject);
+    if (winner) return liveOrThrow(winner);
+  }
+  return undefined;
 }
 
 async function findBySubject(

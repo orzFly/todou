@@ -81,6 +81,14 @@ export async function bootstrap(
   if (config.auth.mode === "single") {
     await ensureBuiltinUser(router.system());
   }
+  if (
+    config.auth.mode === "forward" &&
+    config.auth.forward.migrate_legacy_subjects
+  ) {
+    console.warn(
+      "auth.forward.migrate_legacy_subjects is on: until an account is re-keyed, its legacy subject (usually the username) can still claim it — turn this off once everybody has signed in",
+    );
+  }
   const bus = new EventBus();
   const watchers = new WatcherRegistry(bus);
   const shutdown = new AbortController();

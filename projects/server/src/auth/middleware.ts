@@ -2,6 +2,7 @@ import type { AgentContext } from "@todou/shared";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { AppContext } from "../bootstrap.ts";
+import type { Config } from "../config.ts";
 import { ForbiddenError, UnauthorizedError } from "../errors.ts";
 import { peerTrust, type RequestLike } from "../http/proxy.ts";
 import { admissionRefusal, forwardAdmissionPolicy } from "./admission.ts";
@@ -59,9 +60,10 @@ export function authMiddleware(ctx: AppContext) {
 
 /**
  * Forward mode: the reverse proxy authenticated the human; every request is
- * resolved from the identity header alone — no session, no cookie. The
- * asserted username doubles as the durable subject key, so renaming a login
- * inside todou never detaches the identity. The 401s stay distinguishable
+ * resolved from the identity headers alone — no session, no cookie. The
+ * durable subject key is auth.forward.subject_header when configured, else
+ * the asserted username itself; either way renaming a login inside todou
+ * never detaches the identity. The 401s stay distinguishable
  * on purpose — untrusted peer (points at http.trusted_proxies, observed
  * address only in the log), no peer address at all (no configuration can
  * help), identity header missing or unusable — because "which side is
@@ -100,6 +102,7 @@ async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
       `identity header ${userHeader} carries an invalid login`,
     );
   }
+  const subject = forwardSubject(c, forward, login);
   const email = forward.email_header
     ? c.req.header(forward.email_header)
     : null;
@@ -120,11 +123,35 @@ async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
   return provisionUser(
     ctx.router.system(),
     {
-      subject: login,
+      subject,
       login,
       name: forward.name_header ? c.req.header(forward.name_header) : null,
       email,
+      legacySubjects: forward.migrate_legacy_subjects
+        ? [normalizeLogin(subject), login].filter((s) => s !== null)
+        : undefined,
     },
     { autoCreate: forward.auto_create },
   );
+}
+
+/**
+ * The stable id is taken verbatim and compared exactly, like an oidc `sub`.
+ * A missing one is a 401 rather than a fall-back to the username: falling
+ * back would let one proxy misconfiguration reopen the reissued-username
+ * hole subject_header exists to close.
+ */
+function forwardSubject(
+  c: RequestLike,
+  forward: Config["auth"]["forward"],
+  login: string,
+): string {
+  if (!forward.subject_header) return login;
+  const subject = c.req.header(forward.subject_header);
+  if (subject === undefined || subject === "") {
+    throw new UnauthorizedError(
+      `identity header ${forward.subject_header} missing (the proxy must set it)`,
+    );
+  }
+  return subject;
 }

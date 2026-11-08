@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeLogin,
   ProvisionError,
@@ -335,5 +335,186 @@ describe("provisionUser", () => {
     expect(error).toBeInstanceOf(ProvisionError);
     expect(error.status).toBe(403);
     expect(error.code).toBe("forbidden");
+  });
+});
+
+// /users/<all-digits> resolves as an id only, so JIT must not mint a login
+// a rename would refuse (T-637).
+describe("provisionUser all-digit logins", () => {
+  it("suffixes an all-digit login even when it is free", async () => {
+    const row = await provisionUser(
+      db,
+      { subject: "12345", login: "12345" },
+      { autoCreate: true },
+    );
+    expect(row.login).toMatch(/^12345-[a-z0-9]{4}$/);
+    expect(row.oidcSubject).toBe("12345");
+  });
+
+  it("keeps an existing all-digit login matched by its subject", async () => {
+    const old = await insertUser({ login: "12345", oidcSubject: "12345" });
+    const row = await provisionUser(
+      db,
+      { subject: "12345", login: "12345" },
+      { autoCreate: true },
+    );
+    expect(row.id).toBe(old.id);
+    expect(row.login).toBe("12345");
+  });
+});
+
+describe("provisionUser legacy subjects", () => {
+  it("re-keys the account its legacy subject names, once", async () => {
+    await insertUser({ login: "first", oidcSubject: "first" });
+    const old = await insertUser({ login: "carol", oidcSubject: "carol" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const row = await provisionUser(
+        db,
+        { subject: "c-1", login: "carol", legacySubjects: ["carol"] },
+        { autoCreate: true },
+      );
+      expect(row.id).toBe(old.id);
+      expect(row.oidcSubject).toBe("c-1");
+      expect(await rowById(old.id)).toEqual({ ...old, oidcSubject: "c-1" });
+      const lines = logSpy.mock.calls.map((args) => String(args[0]));
+      expect(lines).toContain(
+        `provision: re-keyed account "carol" (id ${old.id}) from its legacy subject`,
+      );
+      expect(lines.join("\n")).not.toContain("c-1");
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    // The username claims nothing any more: the legacy subject is gone.
+    const reissued = await provisionUser(
+      db,
+      { subject: "c-2", login: "carol", legacySubjects: ["carol"] },
+      { autoCreate: true },
+    );
+    expect(reissued.id).not.toBe(old.id);
+    expect(reissued.login).toMatch(/^carol-[a-z0-9]{4}$/);
+  });
+
+  it("never matches a legacy subject it was not given", async () => {
+    const old = await insertUser({ login: "carol", oidcSubject: "carol" });
+    const row = await provisionUser(
+      db,
+      { subject: "c-1", login: "carol" },
+      { autoCreate: true },
+    );
+    expect(row.id).not.toBe(old.id);
+    expect(row.login).toMatch(/^carol-[a-z0-9]{4}$/);
+    expect(await rowById(old.id)).toEqual(old);
+  });
+
+  it("takes the first candidate that matches", async () => {
+    const a = await insertUser({ login: "a-user", oidcSubject: "cand-a" });
+    const b = await insertUser({ login: "b-user", oidcSubject: "cand-b" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const row = await provisionUser(
+        db,
+        {
+          subject: "s-1",
+          login: "whoever",
+          legacySubjects: ["cand-a", "cand-b"],
+        },
+        { autoCreate: true },
+      );
+      expect(row.id).toBe(a.id);
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(await rowById(b.id)).toEqual(b);
+  });
+
+  it("never re-keys the single-mode builtin account", async () => {
+    await ensureBuiltinUser(db);
+    const seeded = await db
+      .select()
+      .from(users)
+      .where(eq(users.oidcSubject, BUILTIN_SUBJECT));
+    const builtin = seeded[0];
+    if (!builtin) throw new Error("builtin user was not seeded");
+
+    const row = await provisionUser(
+      db,
+      { subject: "x-1", login: "builtin", legacySubjects: [BUILTIN_SUBJECT] },
+      { autoCreate: true },
+    );
+    expect(row.id).not.toBe(builtin.id);
+    expect(await rowById(builtin.id)).toEqual(builtin);
+  });
+
+  it("never re-keys a machine account", async () => {
+    const bot = await insertUser({
+      login: "bot",
+      kind: "machine",
+      oidcSubject: "bot",
+    });
+    const row = await provisionUser(
+      db,
+      { subject: "b-1", login: "bot", legacySubjects: ["bot"] },
+      { autoCreate: true },
+    );
+    expect(row.id).not.toBe(bot.id);
+    expect(await rowById(bot.id)).toEqual(bot);
+  });
+
+  it("refuses a disabled match without re-keying it", async () => {
+    const gone = await insertUser({
+      login: "gone",
+      oidcSubject: "gone",
+      disabledAt: new Date(),
+    });
+    await expect(
+      provisionUser(
+        db,
+        { subject: "g-1", login: "gone", legacySubjects: ["gone"] },
+        { autoCreate: true },
+      ),
+    ).rejects.toBeInstanceOf(ProvisionError);
+    expect(await rowById(gone.id)).toEqual(gone);
+  });
+
+  it("returns the concurrent re-key's row instead of creating one", async () => {
+    const old = await insertUser({ login: "carol", oidcSubject: "carol" });
+    const input = { subject: "c-1", login: "carol", legacySubjects: ["carol"] };
+    let raced = false;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const row = await provisionUser(db, input, {
+        autoCreate: true,
+        // Runs between the candidate lookup and the update — where a
+        // concurrent login of the same identity would re-key first.
+        beforeRekey: async () => {
+          if (raced) return;
+          raced = true;
+          await provisionUser(db, input, { autoCreate: true });
+        },
+      });
+      expect(raced).toBe(true);
+      expect(row.id).toBe(old.id);
+      expect(row.oidcSubject).toBe("c-1");
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(await db.select().from(users)).toHaveLength(1);
+  });
+
+  it("re-keys even when auto_create is off", async () => {
+    const old = await insertUser({ login: "carol", oidcSubject: "carol" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const row = await provisionUser(
+        db,
+        { subject: "c-1", login: "carol", legacySubjects: ["carol"] },
+        { autoCreate: false },
+      );
+      expect(row.id).toBe(old.id);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

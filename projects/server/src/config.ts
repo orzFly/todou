@@ -77,6 +77,9 @@ const ConfigSchema = z.object({
       forward: z
         .object({
           user_header: z.string().optional(),
+          // Unset keeps the normalized username as the subject.
+          subject_header: z.string().optional(),
+          migrate_legacy_subjects: flexibleBool.default(false),
           name_header: z.string().optional(),
           email_header: z.string().optional(),
           auto_create: flexibleBool.default(true),
@@ -329,6 +332,11 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_FORWARD_NAME_HEADER", ["auth", "forward", "name_header"]],
   ["TODOU_AUTH_FORWARD_EMAIL_HEADER", ["auth", "forward", "email_header"]],
   ["TODOU_AUTH_FORWARD_AUTO_CREATE", ["auth", "forward", "auto_create"]],
+  ["TODOU_AUTH_FORWARD_SUBJECT_HEADER", ["auth", "forward", "subject_header"]],
+  [
+    "TODOU_AUTH_FORWARD_MIGRATE_LEGACY_SUBJECTS",
+    ["auth", "forward", "migrate_legacy_subjects"],
+  ],
   ["TODOU_AUTH_FORWARD_GROUPS_HEADER", ["auth", "forward", "groups_header"]],
   [
     "TODOU_AUTH_FORWARD_ALLOWED_EMAIL_DOMAINS",
@@ -408,6 +416,25 @@ export function loadConfig(options?: {
     throw new ConfigError(
       'auth.forward.user_header is required when auth.mode is "forward"',
     );
+  }
+  if (config.auth.mode === "forward") {
+    const forward = config.auth.forward;
+    // Header names are case-insensitive. One header for both would make the
+    // subject a case-sensitive username — still reissuable.
+    if (
+      forward.subject_header !== undefined &&
+      forward.subject_header.toLowerCase() ===
+        forward.user_header?.toLowerCase()
+    ) {
+      throw new ConfigError(
+        "auth.forward.subject_header must name a different header than user_header",
+      );
+    }
+    if (forward.migrate_legacy_subjects && !forward.subject_header) {
+      throw new ConfigError(
+        "auth.forward.migrate_legacy_subjects requires auth.forward.subject_header",
+      );
+    }
   }
   // Without the header to read, the setting would refuse everybody — a
   // lockout that looks like a broken proxy rather than a config mistake.
