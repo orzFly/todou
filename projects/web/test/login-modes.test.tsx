@@ -16,6 +16,7 @@ import {
   oidcLoginUrl,
   safeRedirect,
 } from "../src/pages/login.tsx";
+import { router } from "../src/router.tsx";
 import { testQueryClient } from "./render.tsx";
 
 /** LoginPage reads its own search params, so the shim mounts it at /login. */
@@ -187,6 +188,58 @@ describe("LoginPage per auth mode", () => {
     expect(view.getByText("idp-sub-42")).toBeTruthy();
     expect(view.getByText(/send it to your administrator/)).toBeTruthy();
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  // T-636: the IdP's session outlives ours, so heading straight back to it
+  // would sign the account that just logged out in again.
+  it("oidc: after a logout, waits for a click instead of going to the IdP", async () => {
+    const view = renderLogin(clientWithMode("oidc"), "/login?logged_out=true");
+    const link = await view.findByRole("link", { name: "Sign in" });
+    expect(new URL((link as HTMLAnchorElement).href).pathname).toBe(
+      "/api/auth/login",
+    );
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("oidc: the post-logout sign-in still carries a same-site return-to only", async () => {
+    const kept = renderLogin(
+      clientWithMode("oidc"),
+      "/login?logged_out=true&redirect=/cli-auth",
+    );
+    const link = await kept.findByRole("link", { name: "Sign in" });
+    expect((link as HTMLAnchorElement).href).toBe(oidcLoginUrl("/cli-auth"));
+    kept.unmount();
+
+    const dropped = renderLogin(
+      clientWithMode("oidc"),
+      `/login?logged_out=true&redirect=${encodeURIComponent("/\\evil.example")}`,
+    );
+    const bare = await dropped.findByRole("link", { name: "Sign in" });
+    expect(
+      new URL((bare as HTMLAnchorElement).href).searchParams.has("redirect"),
+    ).toBe(false);
+  });
+
+  it("oidc: the logout flag survives the app router's URL round-trip", () => {
+    // The shim above uses its own route; this is the app's, serialising what
+    // the shell navigates with and handing the page what it compares against.
+    const searchStr = router.options.stringifySearch({ logged_out: true });
+    expect(searchStr).toBe("?logged_out=true");
+    const parsed = router.options.parseSearch(searchStr);
+    expect(router.matchRoutes("/login", parsed).at(-1)?.search).toEqual({
+      logged_out: true,
+    });
+  });
+
+  it("single: a logout flag changes nothing — there is no IdP to return to", async () => {
+    const login = vi.spyOn(api, "login").mockResolvedValue(me);
+    const view = renderLogin(
+      clientWithMode("single"),
+      "/login?logged_out=true",
+    );
+    await view.findByText("projects-page");
+    expect(login).toHaveBeenCalledTimes(1);
+    login.mockRestore();
   });
 
   it("forward: reaching the page at all reads as a proxy problem", async () => {

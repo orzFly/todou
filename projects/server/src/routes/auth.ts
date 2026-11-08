@@ -4,7 +4,11 @@ import { eq } from "drizzle-orm";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { sessionCookieAttrs } from "../auth/cookies.ts";
 import type { AppEnv } from "../auth/middleware.ts";
-import { oidcCallback, oidcLoginRedirect } from "../auth/oidc.ts";
+import {
+  markReauthRequired,
+  oidcCallback,
+  oidcLoginRedirect,
+} from "../auth/oidc.ts";
 import {
   createSession,
   destroySession,
@@ -70,7 +74,9 @@ const logoutRoute = createRoute({
   path: "/logout",
   summary:
     "Destroy the current session (no-op in forward mode — the proxy owns " +
-    "the login state)",
+    "the login state). In oidc mode the IdP session is left alone, but the " +
+    "next login from this browser asks the IdP to re-authenticate " +
+    "(prompt=login)",
   responses: { 204: { description: "Session destroyed" } },
 });
 
@@ -124,6 +130,8 @@ export function authRoutes(ctx: AppContext) {
       if (userId !== null) ctx.bus.publishCredentials(userId);
       deleteCookie(c, SESSION_COOKIE, { path: "/" });
     }
+    // Even with no live session here: the IdP's may still be alive.
+    if (mode === "oidc") markReauthRequired(c, ctx.config);
     return c.body(null, 204);
   });
 

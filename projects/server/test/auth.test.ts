@@ -58,6 +58,12 @@ describe("single-mode login", () => {
       headers: { cookie },
     });
     expect(out.status).toBe(204);
+    // Single mode has no IdP, so no reauth marker (T-636).
+    expect(
+      out.headers
+        .getSetCookie()
+        .some((v) => v.startsWith("todou_oidc_reauth=")),
+    ).toBe(false);
     const res = await t.app.request("/api/me", { headers: { cookie } });
     expect(res.status).toBe(401);
   });

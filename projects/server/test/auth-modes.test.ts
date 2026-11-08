@@ -267,6 +267,8 @@ describe("forward mode", () => {
       method: "POST",
     });
     expect(logout.status).toBe(204);
+    // No IdP behind it, so nothing for a reauth marker (T-636) to do.
+    expect(logout.headers.get("set-cookie")).toBeNull();
   });
 });
 

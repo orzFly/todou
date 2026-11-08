@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { Me } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { api } from "../src/api/queries.ts";
 import { AppShell } from "../src/components/shell.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -16,7 +17,7 @@ const me: Me = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-async function openUserMenu(mode: "single" | "forward") {
+async function openUserMenu(mode: "single" | "oidc" | "forward") {
   const client = testQueryClient();
   client.setQueryData(["auth-mode"], { mode });
   const view = renderWithProviders(<AppShell me={me}>x</AppShell>, client);
@@ -37,6 +38,16 @@ describe("AppShell logout visibility", () => {
     await openUserMenu("single");
     expect(screen.getByText("Log out")).toBeTruthy();
     expect(screen.getByText("@user")).toBeTruthy();
+  });
+
+  it("lands on /login flagged as logged out, so oidc does not bounce to the IdP (T-636)", async () => {
+    const logout = vi.spyOn(api, "logout").mockResolvedValue(undefined);
+    const { router } = await openUserMenu("oidc");
+    fireEvent.click(screen.getByText("Log out"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    expect(router.state.location.search).toEqual({ logged_out: true });
+    expect(logout).toHaveBeenCalledTimes(1);
+    logout.mockRestore();
   });
 
   it("hides Log out in forward mode — the proxy owns the login state", async () => {

@@ -49,10 +49,12 @@ beforeEach(() => {
   idp.userinfoClaims = {};
 });
 
-/** Drive GET /api/auth/login and pull apart the redirect + transient cookie. */
-async function startLogin(redirect = "/projects") {
+/** Drive GET /api/auth/login and pull apart the redirect + transient cookie.
+ * `jar` is whatever else the browser would replay to /api/auth. */
+async function startLogin(redirect = "/projects", jar?: string) {
   const res = await t.app.request(
     `/api/auth/login?redirect=${encodeURIComponent(redirect)}`,
+    jar ? { headers: { cookie: jar } } : undefined,
   );
   expect(res.status).toBe(302);
   const location = new URL(res.headers.get("location") ?? "");
@@ -61,13 +63,23 @@ async function startLogin(redirect = "/projects") {
   return { location, cookie };
 }
 
-async function completeCallback(options?: { state?: string; cookie?: string }) {
-  const { location, cookie } = await startLogin();
+async function completeCallback(options?: {
+  state?: string;
+  cookie?: string;
+  jar?: string;
+}) {
+  const { location, cookie } = await startLogin("/projects", options?.jar);
   const state = options?.state ?? location.searchParams.get("state") ?? "";
+  const sent = options?.cookie ?? cookie;
   return t.app.request(
     `/api/auth/callback?code=stub-code&state=${encodeURIComponent(state)}`,
-    { headers: { cookie: options?.cookie ?? cookie } },
+    { headers: { cookie: options?.jar ? `${sent}; ${options.jar}` : sent } },
   );
+}
+
+/** The Set-Cookie line (attributes included) a response wrote for `name`. */
+function setCookieFor(res: Response, name: string): string | undefined {
+  return res.headers.getSetCookie().find((v) => v.startsWith(`${name}=`));
 }
 
 describe("oidc login flow", () => {
@@ -244,6 +256,76 @@ describe("oidc login flow", () => {
       headers: { cookie: session },
     });
     expect(me.status).toBe(401);
+  });
+});
+
+// T-636: the IdP session outlives todou's, and /login goes straight back to
+// it, so without this a logout signed the next person in as the same account.
+describe("oidc login after logout", () => {
+  async function logOut(session?: string) {
+    const out = await t.app.request("/api/auth/logout", {
+      method: "POST",
+      headers: session ? { cookie: session } : {},
+    });
+    expect(out.status).toBe(204);
+    const marker = setCookieFor(out, "todou_oidc_reauth");
+    expect(marker).toBeDefined();
+    return { out, jar: (marker as string).split(";")[0] as string };
+  }
+
+  it("makes the next login ask the IdP to re-authenticate", async () => {
+    const session = sessionCookieOf(await completeCallback());
+    const { jar } = await logOut(session);
+    const { location } = await startLogin("/projects", jar);
+    expect(location.searchParams.get("prompt")).toBe("login");
+  });
+
+  it("scopes the marker to /api/auth and keeps it for longer than a session", async () => {
+    const { out } = await logOut(sessionCookieOf(await completeCallback()));
+    const line = setCookieFor(out, "todou_oidc_reauth") as string;
+    expect(line).toContain("Path=/api/auth");
+    expect(line).toContain("HttpOnly");
+    const maxAge = Number(/Max-Age=(\d+)/.exec(line)?.[1]);
+    expect(maxAge).toBeGreaterThanOrEqual(30 * 24 * 60 * 60);
+  });
+
+  it("marks even a logout that finds no session", async () => {
+    const { jar } = await logOut();
+    const { location } = await startLogin("/projects", jar);
+    expect(location.searchParams.get("prompt")).toBe("login");
+  });
+
+  it("asks nothing extra of a first login or a returning visitor", async () => {
+    const first = await startLogin();
+    expect(first.location.searchParams.has("prompt")).toBe(false);
+    // Session expired rather than logged out: no marker, so the IdP may
+    // still sign them straight back in.
+    const again = await startLogin("/projects", "todou_session=stale");
+    expect(again.location.searchParams.has("prompt")).toBe(false);
+  });
+
+  it("lets another account sign in, then drops the marker", async () => {
+    await completeCallback();
+    const { jar } = await logOut();
+    idp.subject = "stub-sub-bob";
+    idp.idTokenClaims = { preferred_username: "bob" };
+    const done = await completeCallback({ jar });
+    expect(done.status).toBe(302);
+    expect(done.headers.get("location")).toBe("/projects");
+    const cleared = setCookieFor(done, "todou_oidc_reauth") as string;
+    expect(cleared).toMatch(/Max-Age=0|Expires=Thu, 01 Jan 1970/);
+    expect(cleared).toContain("Path=/api/auth");
+    const me = await t.app.request("/api/me", {
+      headers: { cookie: sessionCookieOf(done) },
+    });
+    expect((await json(me)).login).toBe("bob");
+  });
+
+  it("keeps the marker through a login that fails at the callback", async () => {
+    const { jar } = await logOut();
+    const failed = await completeCallback({ jar, state: "tampered" });
+    expect(failed.headers.get("location")).toBe("/login?error=state_mismatch");
+    expect(setCookieFor(failed, "todou_oidc_reauth")).toBeUndefined();
   });
 });
 

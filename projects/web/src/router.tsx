@@ -86,12 +86,15 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
-  validateSearch: (search): { redirect?: string; error?: string } => ({
+  validateSearch: (
+    search,
+  ): { redirect?: string; error?: string; logged_out?: true } => ({
     ...(typeof search.redirect === "string"
       ? { redirect: search.redirect }
       : {}),
     // The oidc callback reports its failures as /login?error=<code>.
     ...(typeof search.error === "string" ? { error: search.error } : {}),
+    ...(search.logged_out === true ? { logged_out: true as const } : {}),
   }),
 });
 

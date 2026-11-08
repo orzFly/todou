@@ -640,6 +640,13 @@ one. Unknown subjects are auto-created when `auto_create` is on, with
 the username as the login; a taken login (human or machine alike) gets
 a random `-xxxx` suffix instead.
 
+Logging out ends the todou session only; the IdP session stays, so a
+user who holds several accounts there can sign back in as another. The
+next sign-in from that browser sends `prompt=login`, asking the IdP for
+credentials again rather than reusing its session. An IdP that ignores
+`prompt` signs the previous account straight back in, so on shared
+machines users must also sign out at the IdP.
+
 #### The first sign-in becomes instance admin
 
 On a database with no human accounts yet, the first account created

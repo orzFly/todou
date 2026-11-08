@@ -16,6 +16,18 @@ const TRANSIENT_MAX_AGE_S = 300;
 // Narrow path: the browser only replays it to /api/auth/login|callback.
 const TRANSIENT_PATH = "/api/auth";
 
+/**
+ * Left by an oidc logout so the next login makes the IdP ask for credentials
+ * again (T-636). Logging out ends only todou's session, and /login sends the
+ * browser straight back to the IdP, whose own session would otherwise sign
+ * whoever sits down next straight in as the account that just left. Long-lived
+ * on purpose: that IdP session can outlast any short window, and the marker
+ * only goes once a login actually completes.
+ */
+const REAUTH_COOKIE = "todou_oidc_reauth";
+// The cap browsers put on a cookie's lifetime anyway.
+const REAUTH_MAX_AGE_S = 400 * 24 * 60 * 60;
+
 export type OidcErrorCode =
   | "state_mismatch"
   | "exchange_failed"
@@ -224,6 +236,9 @@ export async function oidcLoginRedirect(
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
+    // Not select_account: the account that logged out must not be one click
+    // away. A login form still lets the next person pick any account.
+    ...(getCookie(c, REAUTH_COOKIE) ? { prompt: "login" } : {}),
   });
 
   setCookie(
@@ -337,8 +352,19 @@ export async function oidcCallback(
     secure: cookieSecure(c, ctx.config),
     expires: session.expiresAt,
   });
+  deleteCookie(c, REAUTH_COOKIE, { path: TRANSIENT_PATH });
   // The cookie is unsigned, so what it carries is checked like any input.
   return c.redirect(safeRedirect(transient.redirect), 302);
+}
+
+export function markReauthRequired(c: AnyContext, config: Config): void {
+  setCookie(c, REAUTH_COOKIE, "1", {
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: cookieSecure(c, config),
+    path: TRANSIENT_PATH,
+    maxAge: REAUTH_MAX_AGE_S,
+  });
 }
 
 function callbackUri(c: AnyContext, config: Config): string {

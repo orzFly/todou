@@ -83,7 +83,9 @@ export function AppShell({
     mutationFn: () => api.logout(),
     onSuccess: () => {
       queryClient.clear();
-      navigate({ to: "/login" });
+      // Without the flag, /login in oidc mode heads straight back to the
+      // IdP, whose session outlives ours (T-636).
+      navigate({ to: "/login", search: { logged_out: true } });
     },
   });
 
