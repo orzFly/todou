@@ -15,7 +15,7 @@ const destination = {
   name: "Destination",
   description: "",
   created_at: "2026-01-01T00:00:00Z",
-  viewer_role: "writer",
+  viewer_role: "admin",
 } as unknown as Project;
 
 const preview = (over: Partial<MoveIssueResult> = {}): MoveIssueResult => ({
