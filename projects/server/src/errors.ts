@@ -9,6 +9,7 @@ type ErrorStatus =
   | 413
   | 415
   | 422
+  | 429
   | 502
   | 503;
 
@@ -130,6 +131,13 @@ export class UnsupportedMediaTypeError extends DomainError {
 export class PayloadTooLargeError extends DomainError {
   constructor(message = "request body too large") {
     super(413, "payload_too_large", message);
+  }
+}
+
+/** `details.retry_after` is in seconds, matching the Retry-After header. */
+export class RateLimitedError extends DomainError {
+  constructor(message: string, retryAfter: number) {
+    super(429, "rate_limited", message, { retry_after: retryAfter });
   }
 }
 

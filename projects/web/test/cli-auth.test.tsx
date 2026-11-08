@@ -333,6 +333,8 @@ describe("CliAuthCodeCard", () => {
     id: 7,
     name: "cli @ bot-one",
     code: "AB3DEFGH",
+    requester_ip: "203.0.113.7",
+    requester_user_agent: "curl/8.9.1",
     created_at: "2026-08-29T10:00:00.000Z",
     expires_at: "2026-08-29T10:15:00.000Z",
   };
@@ -359,6 +361,37 @@ describe("CliAuthCodeCard", () => {
     await waitFor(() => expect(getByText(/Approved/)).toBeTruthy());
     expect(approve).toHaveBeenCalledWith(7, { kind: "agent", id: 7 });
     expect(readLastAgentId()).toBe(7);
+  });
+
+  it("says where the request came from and what approving a stranger's would do", () => {
+    const { getByText } = renderWithQuery(
+      <CliAuthCodeCard
+        request={request}
+        me={me}
+        agents={[]}
+        approve={vi.fn()}
+        refuse={vi.fn()}
+        now={() => Date.parse("2026-08-29T10:07:30.000Z")}
+      />,
+    );
+    expect(
+      getByText("203.0.113.7 · curl/8.9.1 · started 7 minutes ago"),
+    ).toBeTruthy();
+    expect(getByText(/If someone sent you this link, deny it/)).toBeTruthy();
+  });
+
+  it("leaves out what the server could not tell", () => {
+    const { getByText } = renderWithQuery(
+      <CliAuthCodeCard
+        request={{ ...request, requester_ip: null, requester_user_agent: null }}
+        me={me}
+        agents={[]}
+        approve={vi.fn()}
+        refuse={vi.fn()}
+        now={() => Date.parse("2026-08-29T10:00:20.000Z")}
+      />,
+    );
+    expect(getByText("started this minute")).toBeTruthy();
   });
 
   it("remembers an agent created at approval time", async () => {
@@ -441,6 +474,8 @@ const pageRequest: CliAuthRequestInfo = {
   id: 7,
   name: "cli @ bot-one",
   code: "AB3DEFGH",
+  requester_ip: null,
+  requester_user_agent: null,
   created_at: "2026-08-29T10:00:00.000Z",
   expires_at: "2026-08-29T10:15:00.000Z",
 };

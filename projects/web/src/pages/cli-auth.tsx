@@ -191,8 +191,38 @@ export function CliAuthCard({
   );
 }
 
+const minutesAgo = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
 /**
- * The `--no-browser` half: this browser and the waiting terminal never talk
+ * Where the request came from. A link someone else sent was started on
+ * their machine, so this is the one line on the page they cannot make
+ * match the user's own terminal (T-638).
+ */
+function RequesterLine({
+  request,
+  now,
+}: {
+  request: CliAuthRequestInfo;
+  now: () => number;
+}) {
+  const minutes = Math.max(
+    0,
+    Math.floor((now() - Date.parse(request.created_at)) / 60_000),
+  );
+  const parts = [
+    request.requester_ip,
+    request.requester_user_agent,
+    `started ${minutesAgo.format(-minutes, "minute")}`,
+  ].filter((part): part is string => part !== null);
+  return (
+    <p className="text-xs text-muted-foreground break-all">
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
+/**
+ * The `--no-browser` half:this browser and the waiting terminal never talk
  * to each other, so the one-time code is the only thing tying them together
  * — shown large, because comparing it against the terminal is what stops a
  * stranger's authorization request from being approved here.
@@ -205,13 +235,15 @@ export function CliAuthCodeCard({
   approve = (id, target) => api.approveCliAuthRequest(id, { target }),
   refuse = (id) => api.denyCliAuthRequest(id),
   refreshFailures,
+  now = Date.now,
 }: {
   request: CliAuthRequestInfo;
   me: Me;
   agents: Agent[];
   lastAgentId?: number | null;
-  /** Test seams; production talks to the API. */
+  /** Test seams; production talks to the API and the wall clock. */
   refreshFailures?: React.ReactNode;
+  now?: () => number;
   approve?: (
     id: number,
     target: AuthTarget,
@@ -273,9 +305,14 @@ export function CliAuthCodeCard({
               <span className="font-medium text-foreground">
                 {request.name}
               </span>{" "}
-              is asking for a personal access token. The token goes to whichever
-              terminal holds this code — approve only if it matches the code
-              your own terminal is showing.
+              is asking for a personal access token.
+            </p>
+            <RequesterLine request={request} now={now} />
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+              Approve only a login you started yourself, in a terminal showing
+              this same code. If someone sent you this link, deny it — approving
+              gives them a token that acts as the identity below until it is
+              revoked.
             </p>
           </div>
           <AuthTargetFieldset me={me} picker={picker} />

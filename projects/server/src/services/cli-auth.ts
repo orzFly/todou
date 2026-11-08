@@ -8,13 +8,13 @@ import type {
   CliAuthTarget,
 } from "@todou/shared";
 import { normalizeCliAuthCode } from "@todou/shared";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import { hashToken, type UserRow } from "../auth/pat.ts";
 import { uniqueViolation } from "../auth/provision.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
-import { cliAuthRequests } from "../db/system-schema.ts";
-import { ConflictError, NotFoundError } from "../errors.ts";
+import { cliAuthRequests, tokens, users } from "../db/system-schema.ts";
+import { ConflictError, DomainError, NotFoundError } from "../errors.ts";
 import { createAgent, loadAgentForToken } from "./agents.ts";
 import { issueToken } from "./tokens.ts";
 
@@ -45,9 +45,18 @@ export function generateCliAuthCode(): string {
  * after 15 minutes, every create sweeps the expired ones out first, and a
  * row carries nothing but a name until someone authorizes it.
  */
+export type CliAuthRequester = {
+  ip: string | null;
+  userAgent: string | null;
+};
+
+/** A header is attacker-chosen text; the page needs a line, not a payload. */
+const USER_AGENT_MAX = 256;
+
 export async function createCliAuthRequest(
   db: Db,
   input: CliAuthRequestCreateInput,
+  requester: CliAuthRequester,
 ): Promise<CliAuthRequestCreated> {
   const now = new Date();
   await db.delete(cliAuthRequests).where(lt(cliAuthRequests.expiresAt, now));
@@ -63,6 +72,9 @@ export async function createCliAuthRequest(
           code,
           pollSecretHash: hashToken(secret),
           name: input.name,
+          requesterIp: requester.ip,
+          requesterUserAgent:
+            requester.userAgent?.slice(0, USER_AGENT_MAX) || null,
           expiresAt,
         })
         .returning({ id: cliAuthRequests.id });
@@ -97,11 +109,43 @@ async function loadLive(db: Db, id: number): Promise<RequestRow> {
   return row;
 }
 
+/**
+ * Approval resolved the target under `loadAgentForToken`'s rules; minutes
+ * may pass before the CLI collects, so the same rules are asked again of
+ * the token that collection minted.
+ */
+async function stillEntitled(
+  ctx: AppContext,
+  row: RequestRow,
+): Promise<boolean> {
+  const { approvedUserId, approvedById } = row;
+  if (approvedUserId === null || approvedById === null) return false;
+  const db = ctx.router.system();
+  const found = await db
+    .select()
+    .from(users)
+    .where(inArray(users.id, [approvedUserId, approvedById]));
+  const target = found.find((u) => u.id === approvedUserId);
+  const approver = found.find((u) => u.id === approvedById);
+  if (!target || !approver || target.disabledAt || approver.disabledAt) {
+    return false;
+  }
+  if (target.id === approver.id) return true;
+  try {
+    await loadAgentForToken(ctx, approver, target.id);
+    return true;
+  } catch (err) {
+    if (err instanceof DomainError) return false;
+    throw err;
+  }
+}
+
 export async function pollCliAuthRequest(
-  db: Db,
+  ctx: AppContext,
   id: number,
   pollSecret: string,
 ): Promise<CliAuthPollResult> {
+  const db = ctx.router.system();
   const row = await loadLive(db, id);
   if (row.pollSecretHash !== hashToken(pollSecret)) {
     throw new NotFoundError("cli auth request not found");
@@ -122,6 +166,16 @@ export async function pollCliAuthRequest(
   const userId = claimed.approvedUserId;
   if (userId === null) throw new Error("approved cli auth request has no user");
   const minted = await issueToken(db, userId, { name: claimed.name });
+  // Checked after minting, not before: disableAgent sets disabledAt before
+  // its revocation sweep, so a token inserted too late for the sweep is one
+  // whose check here already sees the agent disabled (T-641).
+  if (!(await stillEntitled(ctx, claimed))) {
+    await db
+      .update(tokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(tokens.id, minted.id));
+    return { status: "denied" };
+  }
   return { status: "approved", token: minted.token };
 }
 
@@ -141,6 +195,8 @@ export async function readCliAuthRequestByCode(
     id: row.id,
     name: row.name,
     code: row.code,
+    requester_ip: row.requesterIp,
+    requester_user_agent: row.requesterUserAgent,
     created_at: row.createdAt.toISOString(),
     expires_at: row.expiresAt.toISOString(),
   };

@@ -55,6 +55,9 @@ export const CliAuthRequestInfo = z.object({
   id: Id,
   name: z.string(),
   code: CliAuthCode,
+  /** Null where the server could not tell, never a guess. */
+  requester_ip: z.string().nullable(),
+  requester_user_agent: z.string().nullable(),
   created_at: Timestamp,
   expires_at: Timestamp,
 });

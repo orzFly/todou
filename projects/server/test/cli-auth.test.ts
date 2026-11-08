@@ -1,8 +1,12 @@
 import type { CliAuthTarget } from "@todou/shared";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PAT_PREFIX } from "../src/auth/pat.ts";
-import { cliAuthRequests } from "../src/db/system-schema.ts";
+import { cliAuthRequests, tokens, users } from "../src/db/system-schema.ts";
+import {
+  CLI_AUTH_CREATE_LIMIT,
+  CLI_AUTH_CREATE_WINDOW_MS,
+} from "../src/routes/cli-auth.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -28,6 +32,19 @@ async function createRequest(name = "cli @ bot-one") {
   });
   expect(res.status).toBe(201);
   return json(res);
+}
+
+/** As a node server would see it: the TCP peer lives in the adapter env. */
+function createFrom(peer: string, headers: Record<string, string> = {}) {
+  return t.app.request(
+    "/api/auth/cli/requests",
+    {
+      method: "POST",
+      headers: { ...jsonHeaders, ...headers },
+      body: JSON.stringify({ name: "cli @ elsewhere" }),
+    },
+    { incoming: { socket: { remoteAddress: peer } } },
+  );
 }
 
 function poll(id: number, secret: string) {
@@ -234,6 +251,69 @@ describe("cli device authorization", () => {
     expect((await json(res)).error.message).toContain("disabled");
   });
 
+  it("keeps an approval voided by a disable voided after re-enabling", async () => {
+    const cookie = await t.login();
+    const agent = await createAgent(cookie, "paused-bot");
+    const created = await createRequest();
+    expect(
+      (await approve(created.id, { kind: "agent", id: agent.id }, cookie))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await t.app.request(`/api/agents/${agent.id}`, {
+          method: "DELETE",
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(204);
+    const enabled = await t.app.request(`/api/agents/${agent.id}/enable`, {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(enabled.status).toBe(200);
+
+    // Collected only now, with the agent enabled again: the disable has to
+    // have voided the approval itself, not merely blocked collection.
+    expect(await json(await poll(created.id, created.poll_secret))).toEqual({
+      status: "denied",
+    });
+    expect((await poll(created.id, created.poll_secret)).status).toBe(404);
+
+    // A fresh login after re-enabling is the way back, and it still works.
+    const again = await createRequest();
+    await approve(again.id, { kind: "agent", id: agent.id }, cookie);
+    const collected = await json(await poll(again.id, again.poll_secret));
+    const me = await t.app.request("/api/me", {
+      headers: { authorization: `Bearer ${collected.token}` },
+    });
+    expect((await json(me)).login).toBe("paused-bot");
+  });
+
+  it("voids an approval collected after the agent was disabled, even if the row survived", async () => {
+    const cookie = await t.login();
+    const agent = await createAgent(cookie, "racing-bot");
+    const created = await createRequest();
+    await approve(created.id, { kind: "agent", id: agent.id }, cookie);
+    // Disable without the route's request sweep, as a disable racing the
+    // poll would leave things: the row still approved, the agent disabled.
+    await t.ctx.router
+      .system()
+      .update(users)
+      .set({ disabledAt: new Date() })
+      .where(eq(users.id, agent.id));
+
+    expect(await json(await poll(created.id, created.poll_secret))).toEqual({
+      status: "denied",
+    });
+    const live = await t.ctx.router
+      .system()
+      .select()
+      .from(tokens)
+      .where(and(eq(tokens.userId, agent.id), isNull(tokens.revokedAt)));
+    expect(live).toEqual([]);
+  });
+
   it("mints for an agent the approver owns", async () => {
     const cookie = await t.login();
     const agent = await createAgent(cookie, "worker-bot");
@@ -271,6 +351,55 @@ describe("cli device authorization", () => {
       .from(cliAuthRequests)
       .where(eq(cliAuthRequests.id, stale.id));
     expect(rows).toEqual([]);
+  });
+
+  it("shows the approver where the request came from", async () => {
+    const cookie = await t.login();
+    const direct = await json(
+      await createFrom("203.0.113.7", { "user-agent": "todou-cli/0.6.7" }),
+    );
+    expect(await json(await byCode(direct.code, cookie))).toMatchObject({
+      requester_ip: "203.0.113.7",
+      requester_user_agent: "todou-cli/0.6.7",
+    });
+
+    // Behind a trusted proxy the forwarded client counts; a hop the client
+    // wrote itself, further left, does not.
+    const proxied = await json(
+      await createFrom("127.0.0.1", {
+        "x-forwarded-for": "192.0.2.66, 198.51.100.9",
+      }),
+    );
+    expect(await json(await byCode(proxied.code, cookie))).toMatchObject({
+      requester_ip: "198.51.100.9",
+      requester_user_agent: null,
+    });
+
+    // From an untrusted peer the header is the client's own claim.
+    const spoofed = await json(
+      await createFrom("203.0.113.8", { "x-forwarded-for": "198.51.100.10" }),
+    );
+    expect((await json(await byCode(spoofed.code, cookie))).requester_ip).toBe(
+      "203.0.113.8",
+    );
+  });
+
+  it("caps how many requests one address may start", async () => {
+    for (let i = 0; i < CLI_AUTH_CREATE_LIMIT; i++) {
+      expect((await createFrom("203.0.113.20")).status).toBe(201);
+    }
+    const refused = await createFrom("203.0.113.20");
+    expect(refused.status).toBe(429);
+    const retryAfter = Number(refused.headers.get("retry-after"));
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(retryAfter).toBeLessThanOrEqual(CLI_AUTH_CREATE_WINDOW_MS / 1000);
+    expect((await json(refused)).error).toMatchObject({
+      code: "rate_limited",
+      details: { retry_after: retryAfter },
+    });
+
+    // Somebody else's login is not caught up in it.
+    expect((await createFrom("203.0.113.21")).status).toBe(201);
   });
 
   it("keeps the OpenAPI document generatable", async () => {

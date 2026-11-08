@@ -10,6 +10,9 @@ import {
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import type { AppContext } from "../bootstrap.ts";
+import { RateLimitedError } from "../errors.ts";
+import { clientAddress } from "../http/proxy.ts";
+import { SlidingWindowLimiter } from "../http/rate-limit.ts";
 import {
   approveCliAuthRequest,
   createCliAuthRequest,
@@ -17,6 +20,15 @@ import {
   pollCliAuthRequest,
   readCliAuthRequestByCode,
 } from "../services/cli-auth.ts";
+
+/**
+ * Per source address. Unauthenticated creation is otherwise unbounded, and
+ * an unlimited supply of fresh codes is what lets a phishing link be
+ * re-armed forever (T-638). Ten covers a person retrying a login, and
+ * several agents bootstrapped from one machine, within the window.
+ */
+export const CLI_AUTH_CREATE_LIMIT = 10;
+export const CLI_AUTH_CREATE_WINDOW_MS = 10 * 60 * 1000;
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 // Deliberately loose: the page's URL carries the dashed display form, and
@@ -36,6 +48,7 @@ const createRequestRoute = createRoute({
   request: { body: jsonBody(CliAuthRequestCreateInput) },
   responses: {
     201: { description: "Request created", ...jsonBody(CliAuthRequestCreated) },
+    429: { description: "Too many requests from this address" },
   },
 });
 
@@ -89,17 +102,33 @@ const denyRoute = createRoute({
 /** Mounted before the auth guard: the caller is a CLI with no token yet. */
 export function cliAuthPublicRoutes(ctx: AppContext) {
   const app = new OpenAPIHono<AppEnv>();
+  const limiter = new SlidingWindowLimiter(
+    CLI_AUTH_CREATE_LIMIT,
+    CLI_AUTH_CREATE_WINDOW_MS,
+  );
 
   app.openapi(createRequestRoute, async (c) => {
+    const ip = clientAddress(c, ctx.config);
+    const wait = ip === null ? 0 : limiter.take(ip);
+    if (wait > 0) {
+      c.header("Retry-After", String(wait));
+      throw new RateLimitedError(
+        `too many authorization requests from this address; try again in ${wait}s`,
+        wait,
+      );
+    }
     const db = ctx.router.system();
-    return c.json(await createCliAuthRequest(db, c.req.valid("json")), 201);
+    const requester = { ip, userAgent: c.req.header("user-agent") ?? null };
+    return c.json(
+      await createCliAuthRequest(db, c.req.valid("json"), requester),
+      201,
+    );
   });
 
   app.openapi(pollRequestRoute, async (c) => {
-    const db = ctx.router.system();
     const { id } = c.req.valid("param");
     const { poll_secret } = c.req.valid("json");
-    return c.json(await pollCliAuthRequest(db, id, poll_secret), 200);
+    return c.json(await pollCliAuthRequest(ctx, id, poll_secret), 200);
   });
 
   return app;
