@@ -232,6 +232,9 @@ const accessHintRoute = createRoute({
     "Whether to offer me a link asking for access to `target`, and the " +
     "login and id to write into it. Always 200: it answers about my own " +
     "denial record, never about whether `target` names a project.",
+  description:
+    "Asked by an agent about a project that exists, this also records that " +
+    "it asked, which is what lets that project's members deny it.",
   request: { query: z.object({ target: z.string().min(1).max(128) }) },
   responses: {
     200: {

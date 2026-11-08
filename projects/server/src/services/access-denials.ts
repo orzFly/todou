@@ -4,10 +4,15 @@ import {
   parseRefLocator,
   resolveClaim,
 } from "@todou/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
-import { projectAccessDenials, users } from "../db/system-schema.ts";
+import {
+  projectAccessDenials,
+  projectAccessRequests,
+  projectMembers,
+  users,
+} from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { findProjectByRef, requireCapability } from "./access.ts";
 import { globalPrefixDirectory } from "./reference-directory.ts";
@@ -35,10 +40,18 @@ export async function listDenials(
     "access_denial.list",
   );
   const system = ctx.router.system();
-  const rows = await system
+  const recorded = await system
     .select()
     .from(projectAccessDenials)
     .where(eq(projectAccessDenials.projectId, project.id));
+  // A row naming an agent with no tie here is one only an older server could
+  // have written; listing it would read out a stranger's login and owner.
+  const tied = await tiedAgents(
+    ctx,
+    project.id,
+    recorded.map((row) => row.userId),
+  );
+  const rows = recorded.filter((row) => tied.has(row.userId));
   const refs = await getUserRefs(
     system,
     rows.flatMap((row) => [row.userId, row.deniedBy]),
@@ -66,17 +79,28 @@ export async function setDenial(
   );
   const system = ctx.router.system();
 
-  const target = await system
-    .select({ kind: users.kind })
-    .from(users)
-    .where(eq(users.id, userId));
-  const row = target[0];
-  if (row === undefined) throw new NotFoundError("user not found");
-  // Agents only. A human asking for access says so in words and is answered
-  // in words; this record exists to silence a hint printed by a program, and
-  // there is no such hint for a person to silence.
-  if (row.kind !== "machine") {
-    throw new ValidationFailedError("only agents can be denied access");
+  // Anyone may open a project and become its reader, so "no such account",
+  // "a person" and "an agent with no tie here" must be one answer (T-657),
+  // or this becomes a census of the instance. Only a member — someone the
+  // caller can already see on the members page — is told they are a person.
+  if (!(await tiedAgents(ctx, project.id, [userId])).has(userId)) {
+    const member = await system
+      .select({ kind: users.kind })
+      .from(projectMembers)
+      .innerJoin(users, eq(users.id, projectMembers.userId))
+      .where(
+        and(
+          eq(projectMembers.projectId, project.id),
+          eq(projectMembers.userId, userId),
+        ),
+      );
+    // Agents only. A human asking for access says so in words and is
+    // answered in words; this record exists to silence a hint printed by a
+    // program, and there is no such hint for a person to silence.
+    if (member[0]?.kind === "human") {
+      throw new ValidationFailedError("only agents can be denied access");
+    }
+    throw new NotFoundError("user not found");
   }
 
   await system
@@ -91,6 +115,64 @@ export async function setDenial(
     id: userId,
     action: "updated",
   });
+}
+
+/**
+ * Which of `userIds` are agents this project may deny: ones whose owner is a
+ * member, and ones that have asked the hint endpoint about it. The second is
+ * the case the feature exists for — an agent from outside whose owner nobody
+ * here knows — and the first lets a member pre-empt an agent of their own.
+ */
+async function tiedAgents(
+  ctx: AppContext,
+  projectId: number,
+  userIds: number[],
+): Promise<Set<number>> {
+  if (userIds.length === 0) return new Set();
+  const system = ctx.router.system();
+  const agents = await system
+    .select({ id: users.id, ownerId: users.ownerId })
+    .from(users)
+    .where(and(inArray(users.id, userIds), eq(users.kind, "machine")));
+  if (agents.length === 0) return new Set();
+  const ownerIds = agents.flatMap((a) =>
+    a.ownerId === null ? [] : [a.ownerId],
+  );
+  const members =
+    ownerIds.length === 0
+      ? []
+      : await system
+          .select({ userId: projectMembers.userId })
+          .from(projectMembers)
+          .where(
+            and(
+              eq(projectMembers.projectId, projectId),
+              inArray(projectMembers.userId, ownerIds),
+            ),
+          );
+  const asked = await system
+    .select({ userId: projectAccessRequests.userId })
+    .from(projectAccessRequests)
+    .where(
+      and(
+        eq(projectAccessRequests.projectId, projectId),
+        inArray(
+          projectAccessRequests.userId,
+          agents.map((a) => a.id),
+        ),
+      ),
+    );
+  const memberIds = new Set(members.map((m) => m.userId));
+  const askedIds = new Set(asked.map((r) => r.userId));
+  return new Set(
+    agents
+      .filter(
+        (a) =>
+          askedIds.has(a.id) ||
+          (a.ownerId !== null && memberIds.has(a.ownerId)),
+      )
+      .map((a) => a.id),
+  );
 }
 
 export async function removeDenial(
@@ -143,8 +225,17 @@ export async function accessHint(
   const self = { login: user.login, user_id: user.id };
   const project = await projectNamedBy(ctx, target);
   if (project === null) return { suppressed: false, ...self };
-  const rows = await ctx.router
-    .system()
+  const system = ctx.router.system();
+  // The CLI asks only on its way to printing an access link, so this is the
+  // agent's own "I asked", and what lets the people it asks deny it (T-657).
+  // The answer below does not depend on it, so the caller learns nothing.
+  if (user.kind === "machine") {
+    await system
+      .insert(projectAccessRequests)
+      .values({ projectId: project, userId: user.id })
+      .onConflictDoNothing();
+  }
+  const rows = await system
     .select({ userId: projectAccessDenials.userId })
     .from(projectAccessDenials)
     .where(

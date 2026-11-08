@@ -525,3 +525,24 @@ export const projectAccessDenials = pgTable(
     index("project_access_denials_user_id_idx").on(t.userId),
   ],
 );
+
+/**
+ * Agents that have asked the hint endpoint about a project (T-657): the one
+ * trace an agent from outside leaves before somebody here may deny it. Without
+ * it a denial would have to accept any account on the instance, and both the
+ * answer to `PUT` and the denial list would read out who exists and who owns
+ * which agent. Written by the agent's own request, never by the project.
+ */
+export const projectAccessRequests = pgTable(
+  "project_access_requests",
+  {
+    projectId: bigint("project_id", { mode: "number" })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.userId] })],
+);

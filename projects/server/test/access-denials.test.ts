@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { projectAccessDenials } from "../src/db/system-schema.ts";
+import { getProjectByRef } from "../src/services/access.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -47,13 +49,27 @@ describe("access denials (T-280)", () => {
     const outsider = await addUserWithToken(t.ctx, "stranger-to-denials");
     stranger = { headers: outsider.headers, id: outsider.user.id };
 
-    agent = (
-      await addUserWithToken(t.ctx, "denied-agent", {
-        kind: "machine",
-        ownerId: outsider.user.id,
-      })
-    ).user.id;
+    const machine = await addUserWithToken(t.ctx, "denied-agent", {
+      kind: "machine",
+      ownerId: outsider.user.id,
+    });
+    agent = machine.user.id;
+    // What the CLI does before printing the link a reader would follow.
+    const asked = await t.app.request(`/api/me/access-hint?target=${slug}`, {
+      headers: machine.headers,
+    });
+    expect(asked.status).toBe(200);
+
     human = (await addUserWithToken(t.ctx, "some-human")).user.id;
+    const joined = await t.app.request(
+      `/api/projects/${slug}/members/${human}`,
+      {
+        method: "PUT",
+        headers: admin(),
+        body: JSON.stringify({ role: "reader" }),
+      },
+    );
+    expect(joined.status).toBe(204);
   });
 
   afterAll(async () => {
@@ -178,12 +194,16 @@ describe.skipIf(!PG_URL)("access denials on real postgres", () => {
     });
     expect(created.status).toBe(201);
     const owner = await addUserWithToken(t.ctx, `owner-${slug}`);
-    agentId = (
-      await addUserWithToken(t.ctx, `agent-${slug}`, {
-        kind: "machine",
-        ownerId: owner.user.id,
-      })
-    ).user.id;
+    const agent = await addUserWithToken(t.ctx, `agent-${slug}`, {
+      kind: "machine",
+      ownerId: owner.user.id,
+    });
+    agentId = agent.user.id;
+    // The new table's write path rides on the same real server (T-657).
+    const asked = await t.app.request(`/api/me/access-hint?target=${slug}`, {
+      headers: agent.headers,
+    });
+    expect(asked.status).toBe(200);
   });
 
   afterAll(async () => {
@@ -222,5 +242,138 @@ describe.skipIf(!PG_URL)("access denials on real postgres", () => {
       { method: "DELETE", headers: headers() },
     );
     expect(undone.status).toBe(204);
+  });
+});
+
+/**
+ * A denial target is an agent with some tie to this project (T-657): its
+ * owner is a member, or it asked for access here. Anyone else is the
+ * same 404 as an id nobody holds, or `PUT` turns into an oracle for which
+ * accounts exist and which are agents, and the list reads out their logins
+ * and owners to someone who could not otherwise see them.
+ */
+describe("access denials only name agents tied to the project", () => {
+  let t: TestApp;
+  let cookie: string;
+  const slug = "own-probe";
+  type Caller = Awaited<ReturnType<typeof addUserWithToken>>;
+  let eve: Caller;
+  let hiddenOwner: Caller;
+  let hiddenAgent: Caller;
+  let asker: Caller;
+  let memberOwnersAgent: Caller;
+  let memberHuman: Caller;
+
+  const put = (userId: number) =>
+    t.app.request(`/api/projects/${slug}/access-denials/${userId}`, {
+      method: "PUT",
+      headers: eve.headers,
+    });
+  const list = async () => {
+    const res = await t.app.request(`/api/projects/${slug}/access-denials`, {
+      headers: eve.headers,
+    });
+    expect(res.status).toBe(200);
+    return json(res);
+  };
+
+  async function addMember(userId: number, role: string) {
+    const res = await t.app.request(`/api/projects/${slug}/members/${userId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ role }),
+    });
+    expect(res.status).toBe(204);
+  }
+
+  beforeAll(async () => {
+    t = await makeTestApp("shared");
+    cookie = await t.login();
+    eve = await addUserWithToken(t.ctx, "eve");
+    // Anyone signed in may open a project of their own, which is what makes
+    // this reachable for every account on the instance.
+    const created = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: { ...eve.headers, "content-type": "application/json" },
+      body: JSON.stringify({ slug, name: "Probe" }),
+    });
+    expect(created.status).toBe(201);
+
+    hiddenOwner = await addUserWithToken(t.ctx, "hidden-owner");
+    hiddenAgent = await addUserWithToken(t.ctx, "hidden-agent", {
+      kind: "machine",
+      ownerId: hiddenOwner.user.id,
+    });
+    const askerOwner = await addUserWithToken(t.ctx, "asker-owner");
+    asker = await addUserWithToken(t.ctx, "asker-agent", {
+      kind: "machine",
+      ownerId: askerOwner.user.id,
+    });
+    const memberOwner = await addUserWithToken(t.ctx, "member-owner");
+    await addMember(memberOwner.user.id, "reader");
+    memberOwnersAgent = await addUserWithToken(t.ctx, "member-owners-agent", {
+      kind: "machine",
+      ownerId: memberOwner.user.id,
+    });
+    memberHuman = await addUserWithToken(t.ctx, "member-human");
+    await addMember(memberHuman.user.id, "reader");
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  it("answers an unrelated agent, an unrelated human and a missing id alike", async () => {
+    const answers = [];
+    for (const id of [hiddenAgent.user.id, hiddenOwner.user.id, 999_999]) {
+      const res = await put(id);
+      const text = await res.text();
+      answers.push({ status: res.status, body: text && JSON.parse(text) });
+    }
+    expect(answers[0]).toEqual({
+      status: 404,
+      body: { error: { code: "not_found", message: "user not found" } },
+    });
+    expect(answers[1]).toEqual(answers[0]);
+    expect(answers[2]).toEqual(answers[0]);
+  });
+
+  it("leaves a recorded denial of an unrelated agent out of the list", async () => {
+    const project = await getProjectByRef(t.ctx, slug);
+    // A row from before the gate existed, which no request can make now.
+    await t.ctx.router
+      .system()
+      .insert(projectAccessDenials)
+      .values({
+        projectId: project.id,
+        userId: hiddenAgent.user.id,
+        deniedBy: eve.user.id,
+      })
+      .onConflictDoNothing();
+    expect(JSON.stringify(await list())).not.toContain("hidden-");
+  });
+
+  it("still takes an agent from outside that asked for access here", async () => {
+    const hint = await t.app.request(
+      `/api/me/access-hint?target=${encodeURIComponent(slug)}`,
+      { headers: asker.headers },
+    );
+    expect(hint.status).toBe(200);
+    expect((await put(asker.user.id)).status).toBe(204);
+    const row = (await list()).find(
+      (r: { user: { id: number } }) => r.user.id === asker.user.id,
+    );
+    expect(row.user.login).toBe("asker-agent");
+    expect(row.user.owner.login).toBe("asker-owner");
+  });
+
+  it("still takes an agent whose owner is a member, unasked", async () => {
+    expect((await put(memberOwnersAgent.user.id)).status).toBe(204);
+    const ids = (await list()).map((r: { user: { id: number } }) => r.user.id);
+    expect(ids).toContain(memberOwnersAgent.user.id);
+  });
+
+  it("still tells a member who is a person why they cannot be denied", async () => {
+    expect((await put(memberHuman.user.id)).status).toBe(422);
   });
 });

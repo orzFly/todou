@@ -183,6 +183,11 @@ const setDenialRoute = createRoute({
   summary:
     "Stop offering this agent a link asking for access here; grants and " +
     `revokes nothing ${roleTag("access_denial.set")}`,
+  description:
+    "The agent must have asked about this project through " +
+    "`GET /me/access-hint`, or have an owner who is a member here. Any " +
+    "other id is the same 404 as one that does not exist; 422 only for a " +
+    "member who is a person.",
   request: { params: memberParams },
   responses: { 204: { description: "Denial recorded" } },
 });
