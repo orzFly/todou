@@ -207,6 +207,9 @@ describe.each(PLACEMENTS)(
           .where(eq(pendingUploads.id, ticket.upload_id));
         expect(left).toEqual([]);
       }
+      // T-659: the ticket's object goes with the project, wherever the
+      // tombstone holding its row lives.
+      expect(holding("doomed bytes")).toHaveLength(0);
       const view = await api(`/projects/${B}/issues/${landed}`);
       expect(view.status).toBe(200);
     });

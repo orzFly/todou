@@ -17,6 +17,11 @@ export type FakeS3 = {
   url: string;
   bucket: string;
   objects: Map<string, Buffer>;
+  /**
+   * LastModified as listings report it, written on every PUT; a test may
+   * backdate an entry. An object set in `objects` directly lists as now.
+   */
+  modified: Map<string, Date>;
   /** Every request observed, oldest first — for retry/traffic assertions. */
   requests: Array<{ method: string; key: string }>;
   /** Make the next `n` object requests fail with `status`. */
@@ -26,6 +31,7 @@ export type FakeS3 = {
 
 export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
   const objects = new Map<string, Buffer>();
+  const modified = new Map<string, Date>();
   const requests: FakeS3["requests"] = [];
   let failures = 0;
   let failureStatus = 500;
@@ -48,6 +54,11 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
       const path = url.pathname.replace(/^\//, "");
       if (!path.startsWith(`${bucket}/`) && path !== bucket) {
         res.writeHead(404).end();
+        return;
+      }
+      if (path === bucket && url.searchParams.get("list-type") === "2") {
+        res.writeHead(200, { "content-type": "application/xml" });
+        res.end(listObjectsV2(objects, modified, url.searchParams));
         return;
       }
       // HEAD on the bare bucket is the startup probe.
@@ -78,6 +89,7 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
               return;
             }
             objects.set(key, Buffer.from(data));
+            modified.set(key, new Date());
             res.writeHead(200, { "content-type": "application/xml" });
             res.end("<CopyObjectResult></CopyObjectResult>");
             return;
@@ -94,6 +106,7 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
             }
           }
           objects.set(key, body);
+          modified.set(key, new Date());
           res.writeHead(200, {
             etag: `"${createHash("md5").update(body).digest("hex")}"`,
           });
@@ -122,6 +135,7 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
           return;
         }
         case "DELETE": {
+          modified.delete(key);
           if (!objects.delete(key)) {
             res.writeHead(404).end();
             return;
@@ -142,6 +156,7 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
     url: `http://127.0.0.1:${port}`,
     bucket,
     objects,
+    modified,
     requests,
     failNext(n, status = 500) {
       failures = n;
@@ -149,6 +164,52 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
     },
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
+}
+
+const escapeXml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+
+/**
+ * ListObjectsV2 over the map: lexical order, `prefix`, `max-keys` (default
+ * 1000), and a continuation token that is simply the last key returned.
+ */
+function listObjectsV2(
+  objects: Map<string, Buffer>,
+  modified: Map<string, Date>,
+  query: URLSearchParams,
+): string {
+  const prefix = query.get("prefix") ?? "";
+  const maxKeys = Number(query.get("max-keys") ?? 1000);
+  const after = query.get("continuation-token") ?? "";
+  const keys = [...objects.keys()]
+    .filter((k) => k.startsWith(prefix) && k > after)
+    .sort();
+  const page = keys.slice(0, maxKeys);
+  const truncated = keys.length > page.length;
+  const contents = page
+    .map(
+      (k) =>
+        `<Contents><Key>${escapeXml(k)}</Key>` +
+        `<LastModified>${(modified.get(k) ?? new Date()).toISOString()}</LastModified>` +
+        `<Size>${objects.get(k)?.byteLength ?? 0}</Size></Contents>`,
+    )
+    .join("");
+  const last = page.at(-1);
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>' +
+    "<ListBucketResult><Name>bucket</Name>" +
+    `<Prefix>${escapeXml(prefix)}</Prefix><KeyCount>${page.length}</KeyCount>` +
+    `<MaxKeys>${maxKeys}</MaxKeys><IsTruncated>${truncated}</IsTruncated>` +
+    (truncated && last
+      ? `<NextContinuationToken>${escapeXml(last)}</NextContinuationToken>`
+      : "") +
+    `${contents}</ListBucketResult>`
+  );
 }
 
 const encodeRfc3986 = (value: string) =>

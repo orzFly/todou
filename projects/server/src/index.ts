@@ -14,8 +14,11 @@ import {
 } from "./services/housekeeping.ts";
 import {
   copyMissing,
+  deleteOrphanBlobs,
   enumerateBlobKeys,
+  findOrphanBlobs,
   gcPendingUploads,
+  reapBlobs,
   reapDraftAttachments,
 } from "./services/storage-admin.ts";
 import {
@@ -203,14 +206,17 @@ class StorageGcCommand extends ConfiguredCommand {
   static paths = [["storage", "gc"]];
 
   static usage = Command.Usage({
-    description: "Reap expired direct uploads and unsent draft attachments",
+    description:
+      "Reap expired direct uploads, unsent draft attachments, and files of deleted projects",
     details:
-      "Two passes, both driven entirely by the database — the bucket is " +
+      "Three passes, all driven entirely by the database — the bucket is " +
       "never listed. On the s3 backend, walks pending_uploads rows past " +
       "expiry (plus --min-age hours of margin), deletes the orphaned " +
       "objects of uncompleted rows, and drops the rows. On every backend, " +
       "deletes draft attachments older than --min-age hours: files an " +
-      "editor uploaded for a comment or body that was never sent.",
+      "editor uploaded for a comment or body that was never sent. Last, " +
+      "deletes the files deleted projects left listed for later: ones " +
+      "whose delete failed, and upload keys whose ticket has run out.",
   });
 
   dryRun = Option.Boolean("--dry-run", false, {
@@ -263,13 +269,84 @@ class StorageGcCommand extends ConfiguredCommand {
           : `deleted ${drafts.deletedRows} draft attachment(s)\n`,
       );
       failed += drafts.failedProjects;
+      // Deadlines are written on the rows, so --min-age does not apply.
+      const left = await reapBlobs(router, storage, {
+        dryRun: this.dryRun,
+        log,
+      });
+      this.context.stdout.write(
+        this.dryRun
+          ? `[dry-run] would delete ${left.wouldDelete} object(s) left by deleted projects\n`
+          : `deleted ${left.deletedObjects} object(s) left by deleted projects\n`,
+      );
+      failed += left.failed;
       if (failed > 0) {
         this.context.stderr.write(
-          `${failed} project pass(es) failed; see FAIL lines above\n`,
+          `${failed} pass(es) failed; see FAIL lines above\n`,
         );
         return 1;
       }
       return 0;
+    } finally {
+      await router.close();
+    }
+  }
+}
+
+class StorageOrphansCommand extends ConfiguredCommand {
+  static paths = [["storage", "orphans"]];
+
+  static usage = Command.Usage({
+    description:
+      "Find stored files no database names, and optionally delete them",
+    details:
+      "Lists the whole bucket (or fs root) — cost grows with its size, which " +
+      "is why nothing runs this on a schedule. Reports objects whose key has " +
+      "the shape this server mints, that are older than --min-age hours, and " +
+      "that no avatar, icon, attachment, direct upload or pending deletion " +
+      "names: typically files of projects deleted before deletion cleaned up " +
+      "after itself. Without --delete nothing is removed. Exits 1 if any " +
+      "project database cannot be read; nothing is deleted then.",
+  });
+
+  delete = Option.Boolean("--delete", false, {
+    description: "Delete the orphans found, after checking the databases again",
+  });
+
+  minAge = Option.String("--min-age", "24", {
+    description: "Hours an object must have existed to count as an orphan",
+  });
+
+  async execute(): Promise<number | undefined> {
+    const minAgeHours = Number(this.minAge);
+    if (!Number.isFinite(minAgeHours) || minAgeHours < 0) {
+      this.context.stderr.write("--min-age must be a non-negative number\n");
+      return 1;
+    }
+    const config = this.loadConfig();
+    const storage = await makeStorage(config);
+    const router = await DbRouter.open(config);
+    const out = (line: string) => this.context.stdout.write(`${line}\n`);
+    try {
+      const orphans = await findOrphanBlobs(router, storage, { minAgeHours });
+      let bytes = 0;
+      for (const o of orphans) {
+        bytes += o.size;
+        out(`${o.key}\t${o.size}\t${o.modifiedAt.toISOString()}`);
+      }
+      out(`${orphans.length} orphan object(s), ${bytes} byte(s)`);
+      if (!this.delete) return 0;
+      const report = await deleteOrphanBlobs(router, storage, orphans, {
+        log: out,
+      });
+      out(
+        `deleted ${report.deleted}, kept ${report.skipped} named since, ` +
+          `${report.failed} failed`,
+      );
+      return report.failed > 0 ? 1 : 0;
+    } catch (cause) {
+      this.context.stderr.write(`storage orphans: ${String(cause)}\n`);
+      return 1;
     } finally {
       await router.close();
     }
@@ -557,6 +634,7 @@ cli.register(ServeCommand);
 cli.register(MigrateCommand);
 cli.register(StorageMigrateCommand);
 cli.register(StorageGcCommand);
+cli.register(StorageOrphansCommand);
 cli.register(AttachmentsRelabelCommand);
 cli.register(UserListCommand);
 cli.register(UserBindSubjectCommand);

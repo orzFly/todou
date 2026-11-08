@@ -239,18 +239,26 @@ describe("what the shadow check still refuses", () => {
     const { t, headers, patch } = await seed(["gone", "stay"]);
     try {
       await addAutolink(t, headers, "gone", "zz#");
+      const [gone] = await t.ctx.router
+        .system()
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.slug, "gone"));
       const deleted = await t.app.request("/api/projects/gone", {
         method: "DELETE",
         headers,
       });
       expect(deleted.status).toBe(204);
-      // `deleteProject` clears issues, comments, events, attachments, labels,
-      // insights settings, statuses and project_meta — autolinks survive it.
-      const orphans = await t.ctx.router
+      // Deletion takes the autolink along since T-659, but a project deleted
+      // before that, or one whose row cleanup failed, still leaves one.
+      await t.ctx.router
         .system()
-        .select({ id: autolinks.id })
-        .from(autolinks);
-      expect(orphans).toHaveLength(1);
+        .insert(autolinks)
+        .values({
+          projectId: gone?.id ?? -1,
+          prefix: "zz#",
+          urlTemplate: "https://example.com/<num>",
+        });
 
       expect((await patch("stay", { slug: "zz" })).status).toBe(200);
     } finally {

@@ -963,6 +963,38 @@ and logs `housekeeping: deleted draft attachment …`. `storage gc` runs that
 pass too, after the direct-upload one, with `--min-age` as the draft's age in
 hours.
 
+### Files of deleted projects
+
+Deleting a project deletes its attachments, its icon and its direct-upload
+objects on the spot. Before anything is removed, every one of those keys is
+written to a list in the system database, in the same transaction that takes
+the project out of the registry; a delete that fails there stays on the list.
+So does an upload key whose URL has not expired yet, because the URL keeps
+accepting writes after the project is gone. The hourly tick works through
+the list — failed deletes at once, upload keys at expiry+24h — on every
+backend, and `storage gc` runs the same pass after the other two. A key that
+a live project's attachment still names, such as one on a card moved out
+before the deletion, is dropped from the list and its file kept.
+
+If a project's database cannot be read, deleting the project fails with a
+500 and nothing is removed, rather than leaving files nobody can find again.
+
+Projects deleted before this list existed left their files behind with no
+record anywhere. `storage orphans` finds them by listing the store itself —
+the whole bucket or fs root, so it runs only when you ask:
+
+```sh
+todou-server storage orphans            # list orphans; deletes nothing
+todou-server storage orphans --delete   # delete what it lists
+```
+
+It considers only keys of the shape this server mints, older than
+`--min-age` hours (default 24), that no avatar, icon, attachment, direct
+upload or pending list entry names; other objects in a shared bucket are never
+touched. `--delete` reads the databases again before deleting and spares
+anything named by then. Read the list once without `--delete` first. It exits
+1 if any project database cannot be read, deleting nothing.
+
 ### Storing references as links, once
 
 A reference used to be a token the reader resolved on every render, under a

@@ -1,8 +1,8 @@
-import { createReadStream } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { createReadStream, type Dir } from "node:fs";
+import { mkdir, opendir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
 import { NotFoundError } from "../errors.ts";
-import type { StorageBackend } from "./types.ts";
+import type { StorageBackend, StoredObject } from "./types.ts";
 
 export class FsStorage implements StorageBackend {
   #root: string;
@@ -52,5 +52,30 @@ export class FsStorage implements StorageBackend {
 
   async urlFor(): Promise<string | null> {
     return null;
+  }
+
+  async *list(): AsyncIterable<StoredObject> {
+    yield* this.#walk(this.#root, "");
+  }
+
+  async *#walk(dir: string, prefix: string): AsyncIterable<StoredObject> {
+    let handle: Dir;
+    try {
+      handle = await opendir(dir);
+    } catch (err) {
+      // A root nothing was ever stored under does not exist yet.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
+    }
+    for await (const entry of handle) {
+      const path = join(dir, entry.name);
+      const key = `${prefix}${entry.name}`;
+      if (entry.isDirectory()) {
+        yield* this.#walk(path, `${key}/`);
+      } else if (entry.isFile()) {
+        const info = await stat(path);
+        yield { key, size: info.size, modifiedAt: info.mtime };
+      }
+    }
   }
 }

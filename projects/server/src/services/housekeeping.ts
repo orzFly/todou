@@ -7,15 +7,16 @@ import { repairBlocks } from "./blocks.ts";
 import { sweepMoves } from "./move/execute.ts";
 import { drainPendingMirrors } from "./pending-mirror.ts";
 import { syncRefPrefixMirror } from "./reference-directory.ts";
-import { gcPendingUploads, reapDraftAttachments } from "./storage-admin.ts";
+import {
+  gcPendingUploads,
+  reapBlobs,
+  reapDraftAttachments,
+  UPLOAD_GC_MIN_AGE_HOURS,
+} from "./storage-admin.ts";
 
 /** Hourly is plenty: dead rows are inert (auth re-checks expiry/revocation
  * on every request) — the sweep only reclaims storage. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
-
-/** Same margin as `storage gc`'s default: a presigned PUT still in flight
- * when its URL expires gets a day to be completed. */
-const UPLOAD_GC_MIN_AGE_HOURS = 24;
 
 /** A draft is uploaded the moment before its text is sent; a day without
  * that text means the text is not coming. */
@@ -179,6 +180,28 @@ async function reapDrafts(ctx: AppContext): Promise<void> {
 }
 
 /**
+ * Delete what deleted projects left in storage (T-659): objects whose delete
+ * failed when the project went, and upload keys whose ticket has since run
+ * out. Every backend; the s3-only upload rows are skipped inside.
+ */
+async function reapBlobList(ctx: AppContext): Promise<void> {
+  try {
+    const report = await reapBlobs(ctx.router, ctx.storage, {
+      dryRun: false,
+      log: (line) => console.log(`housekeeping: ${line}`),
+    });
+    if (report.deletedObjects > 0 || report.droppedRows > 0) {
+      console.log(
+        `housekeeping: deleted ${report.deletedObjects} object(s) of deleted projects, ` +
+          `dropped ${report.droppedRows} row(s)`,
+      );
+    }
+  } catch (err) {
+    console.error("housekeeping: deleted-project blob gc failed", err);
+  }
+}
+
+/**
  * Everything one periodic tick does. Exported so a test can run a whole tick
  * against a real context instead of asserting on a timer.
  */
@@ -188,6 +211,7 @@ export async function runHousekeepingTick(ctx: AppContext): Promise<void> {
   await repairBlockEdges(ctx);
   await reapExpiredUploads(ctx);
   await reapDrafts(ctx);
+  await reapBlobList(ctx);
   try {
     const swept = await sweepAuthRows(ctx.router.system());
     if (swept.sessions > 0 || swept.tokens > 0) {

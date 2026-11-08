@@ -18,10 +18,19 @@ import {
   comments,
   insightsSettings,
   issueEvents,
+  issueMentions,
+  issueMetadata,
+  issueMutes,
+  issueReads,
   issues,
   labels,
+  pendingUploads,
   projectMeta,
+  readFrontiers,
   refFormats,
+  revisions,
+  specVersionFiles,
+  specVersions,
   statuses,
 } from "../db/project-schema.ts";
 import { projectMembers, projects, slugHistory } from "../db/system-schema.ts";
@@ -34,6 +43,40 @@ import { type ProjectRow, requireCapability, routeInfoOf } from "./access.ts";
 import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
 import { markPendingMirror } from "./pending-mirror.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
+import {
+  type BlobReapEntry,
+  enlistBlobs,
+  reapBlobs,
+  UPLOAD_GC_MIN_AGE_HOURS,
+} from "./storage-admin.ts";
+
+/**
+ * Every table holding a project's rows, in the order a deletion empties
+ * them: `issues` first so its cascades run, then the rest. The tables the
+ * cascade already reached are still named, so that the list can be checked
+ * against the schema whole. `revisions` has no key to cascade along at all.
+ */
+export const PROJECT_OWNED_TABLES = [
+  issues,
+  comments,
+  issueEvents,
+  issueMetadata,
+  issueReads,
+  issueMutes,
+  issueMentions,
+  revisions,
+  specVersions,
+  specVersionFiles,
+  attachments,
+  pendingUploads,
+  labels,
+  autolinks,
+  refFormats,
+  readFrontiers,
+  insightsSettings,
+  statuses,
+  projectMeta,
+] as const;
 
 /**
  * The icon's URL, or null. Minted with the project's **id** although the
@@ -550,9 +593,19 @@ export async function deleteProject(
   const system = ctx.router.system();
   const url = ctx.router.resolveProjectUrl(routeInfoOf(project));
 
-  // Remove the registry row FIRST so the project stops routing; cleanup
-  // failures below only leave orphaned data behind (logged, not fatal).
-  await system.delete(projects).where(eq(projects.id, project.id));
+  // Read every key the project owns while its database is still reachable.
+  // A failure here fails the deletion: with neither the keys nor the rows
+  // in hand, reporting success would leave all of it behind unrecorded.
+  const blobs = await collectBlobs(ctx, project);
+
+  // The list and the registry row go together, so the project never stops
+  // routing with keys nobody wrote down. Once it has stopped, the failures
+  // below only leave data behind, logged rather than fatal — and the list
+  // is what the hourly tick retries from.
+  await system.transaction(async (tx) => {
+    await enlistBlobs(tx, blobs);
+    await tx.delete(projects).where(eq(projects.id, project.id));
+  });
 
   try {
     const others = (
@@ -577,24 +630,28 @@ export async function deleteProject(
       await rm(url.slice("pglite://".length), { recursive: true, force: true });
     } else {
       const db = await ctx.router.forProject(routeInfoOf(project));
-      // issues cascade to assignees/labels/comments/events/attachments.
-      await db.delete(issues).where(eq(issues.projectId, project.id));
-      await db.delete(comments).where(eq(comments.projectId, project.id));
-      await db.delete(issueEvents).where(eq(issueEvents.projectId, project.id));
-      await db.delete(attachments).where(eq(attachments.projectId, project.id));
-      await db.delete(labels).where(eq(labels.projectId, project.id));
-      await db
-        .delete(insightsSettings)
-        .where(eq(insightsSettings.projectId, project.id));
-      await db.delete(statuses).where(eq(statuses.projectId, project.id));
-      await db.delete(projectMeta).where(eq(projectMeta.projectId, project.id));
+      await db.transaction(async (tx) => {
+        for (const table of PROJECT_OWNED_TABLES) {
+          await tx.delete(table).where(eq(table.projectId, project.id));
+        }
+      });
     }
-    // The icon blob lives outside every table above, so nothing cascades to
-    // it; left behind it would be unreachable storage nobody can name.
-    if (project.iconKey) await ctx.storage.delete(project.iconKey);
   } catch (cause) {
     console.error(
       `project ${project.slug} deleted from registry but data cleanup failed`,
+      cause,
+    );
+  }
+  try {
+    await reapBlobs(ctx.router, ctx.storage, {
+      dryRun: false,
+      projectId: project.id,
+      log: (line) => console.error(`project ${project.slug}: ${line}`),
+    });
+  } catch (cause) {
+    // Every key is listed already; the hourly tick deletes what this missed.
+    console.error(
+      `project ${project.slug} deleted but its stored files were not, yet`,
       cause,
     );
   }
@@ -603,4 +660,60 @@ export async function deleteProject(
     id: project.id,
     action: "deleted",
   });
+}
+
+/**
+ * The keys of every object a project owns: its attachments (drafts too),
+ * every upload key a ticket of its may still write to, and its icon.
+ *
+ * An upload row's `attachment_key` is not read: while the attachment is
+ * still here its key is in the first list, and once its card has moved away
+ * it is the target project's.
+ */
+async function collectBlobs(
+  ctx: AppContext,
+  project: ProjectRow,
+): Promise<BlobReapEntry[]> {
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const now = new Date();
+  const entries: BlobReapEntry[] = [];
+  const attached = await db
+    .select({ key: attachments.storageKey })
+    .from(attachments)
+    .where(eq(attachments.projectId, project.id));
+  for (const { key } of attached) {
+    entries.push({
+      key,
+      kind: "attachment",
+      projectId: project.id,
+      deleteAfter: now,
+    });
+  }
+  const uploads = await db
+    .select({
+      key: pendingUploads.storageKey,
+      expiresAt: pendingUploads.expiresAt,
+    })
+    .from(pendingUploads)
+    .where(eq(pendingUploads.projectId, project.id));
+  for (const { key, expiresAt } of uploads) {
+    const last = new Date(
+      expiresAt.getTime() + UPLOAD_GC_MIN_AGE_HOURS * 3600 * 1000,
+    );
+    entries.push({
+      key,
+      kind: "upload",
+      projectId: project.id,
+      deleteAfter: last > now ? last : now,
+    });
+  }
+  if (project.iconKey) {
+    entries.push({
+      key: project.iconKey,
+      kind: "icon",
+      projectId: project.id,
+      deleteAfter: now,
+    });
+  }
+  return entries;
 }
