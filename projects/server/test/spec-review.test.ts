@@ -525,6 +525,76 @@ describe("spec review loop T-23", () => {
     ).toBe(true);
   });
 
+  it("resolves a repeated id once and counts it once (T-647)", async () => {
+    const number = await createIssueWithSpec();
+    const submitted = await json(
+      await review(number, {
+        version: 1,
+        verdict: "request_changes",
+        comments: [3, 4, 5].map((line) => ({
+          anchor: {
+            path: "design.md",
+            version: 1,
+            line_start: line,
+            line_end: line,
+          },
+          body: `line ${line}`,
+        })),
+      }),
+    );
+    const [first] = submitted.comment_ids;
+
+    const resolve = await t.app.request(
+      `/api/projects/${slug}/issues/${number}/spec/comments/resolve`,
+      {
+        method: "POST",
+        headers: asAgent(),
+        body: JSON.stringify({ comment_ids: [first, first, first] }),
+      },
+    );
+    expect(resolve.status).toBe(200);
+    expect((await json(resolve)).resolved).toEqual([first]);
+
+    const issue = await json(
+      await t.app.request(`/api/projects/${slug}/issues/${number}`, {
+        headers: headers(),
+      }),
+    );
+    expect(issue.spec_unresolved_comments).toBe(2);
+    const spec = await json(
+      await t.app.request(`/api/projects/${slug}/issues/${number}/spec`, {
+        headers: headers(),
+      }),
+    );
+    expect(spec.unresolved_comments).toBe(2);
+
+    const events = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${number}/timeline?types=spec_comments_resolved`,
+        { headers: headers() },
+      ),
+    );
+    expect(events.items[0].payload.comment_ids).toEqual([first]);
+
+    // The rest still resolve normally and land the counter on zero, not
+    // below what is really open.
+    const rest = await t.app.request(
+      `/api/projects/${slug}/issues/${number}/spec/comments/resolve`,
+      {
+        method: "POST",
+        headers: asAgent(),
+        body: JSON.stringify({ comment_ids: submitted.comment_ids.slice(1) }),
+      },
+    );
+    expect(rest.status).toBe(200);
+    const after = await json(
+      await t.app.request(`/api/projects/${slug}/issues/${number}`, {
+        headers: headers(),
+      }),
+    );
+    expect(after.spec_unresolved_comments).toBe(0);
+  });
+
   it("outdates anchors whose lines changed and remaps the rest", async () => {
     const number = await createIssueWithSpec();
     const submitted = await json(

@@ -1040,20 +1040,19 @@ export async function resolveSpecComments(
   );
 
   const events: ChangeEvent[] = [];
+  // The counter drops by one per entry, so a repeated id would zero the badge
+  // while other comments are still open (T-647) — collapsed here the way
+  // `hideCommentsInTx` collapses a hide (T-651).
+  const ids = [...new Set(input.comment_ids)];
   const resolved = await db.transaction(async (tx) => {
     const rows = await tx
       .select()
       .from(comments)
-      .where(
-        and(
-          eq(comments.issueId, issue.id),
-          inArray(comments.id, input.comment_ids),
-        ),
-      )
+      .where(and(eq(comments.issueId, issue.id), inArray(comments.id, ids)))
       .for("update");
     const byId = new Map(rows.map((r) => [r.id, r]));
     const paths: string[] = [];
-    for (const id of input.comment_ids) {
+    for (const id of ids) {
       const row = byId.get(id);
       if (!row) throw new NotFoundError(`comment ${id} not found`);
       if (row.component?.type !== "spec_comment") {
@@ -1071,7 +1070,7 @@ export async function resolveSpecComments(
     await tx
       .update(comments)
       .set({ resolvedAt: now, resolvedBy: actor.id })
-      .where(inArray(comments.id, input.comment_ids));
+      .where(inArray(comments.id, ids));
 
     const eventRows = await tx
       .insert(issueEvents)
@@ -1080,7 +1079,7 @@ export async function resolveSpecComments(
         issueId: issue.id,
         actorId: actor.id,
         type: "spec_comments_resolved",
-        payload: { comment_ids: input.comment_ids, paths },
+        payload: { comment_ids: ids, paths },
         agentContext,
       })
       .returning();
@@ -1090,7 +1089,7 @@ export async function resolveSpecComments(
     await tx
       .update(issues)
       .set({
-        specUnresolvedComments: sql`greatest(${issues.specUnresolvedComments} - ${input.comment_ids.length}, 0)`,
+        specUnresolvedComments: sql`greatest(${issues.specUnresolvedComments} - ${ids.length}, 0)`,
       })
       .where(eq(issues.id, issue.id));
 
@@ -1117,7 +1116,7 @@ export async function resolveSpecComments(
         list_row: { kind: "activity" },
       },
     );
-    return input.comment_ids;
+    return ids;
   });
 
   for (const e of events) ctx.bus.publish(project.id, e);
