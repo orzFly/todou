@@ -46,8 +46,25 @@ import {
 /**
  * For units well above the bottom: the first load renders the bottom few and
  * fills in the rest a batch per idle callback (T-602).
+ *
+ * A case that fills 100 comments takes 2.4 s on a lightly loaded machine and
+ * 10 s on a third of a core, where the fill lands one unit per idle period
+ * (T-670). A describe holding a case that waits on a fill takes `FILL_CASE`
+ * as its limit.
  */
-const FILL_WAIT = { timeout: 5_000 };
+const FILL_WAIT = { timeout: 20_000 };
+const FILL_CASE = { timeout: 40_000 };
+
+/**
+ * Waits for comment `id` to be filled in. `findByText` would scan the whole
+ * page after every fill commit, and on a third of a core those scans took
+ * twice as long as the fill itself (T-670).
+ */
+async function filledIn(container: HTMLElement, id: number) {
+  await waitFor(() => {
+    expect(container.querySelector(`[data-comment-id="${id}"]`)).not.toBeNull();
+  }, FILL_WAIT);
+}
 
 const user: UserRef = {
   id: 1,
@@ -826,7 +843,7 @@ describe("timeline answers reach the question card (T-365)", () => {
   });
 });
 
-describe("timeline load failure (T-376)", () => {
+describe("timeline load failure (T-376)", FILL_CASE, () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -1028,7 +1045,8 @@ describe("timeline load failure (T-376)", () => {
       client,
     );
     // The head's units arrive above the tail's and fill in a few at a time.
-    await view.findByText("c1", undefined, FILL_WAIT);
+    await filledIn(view.container, 1);
+    expect(view.getByText("c1")).toBeTruthy();
     expect(view.getByText("c150")).toBeTruthy();
     expect((await view.findByTestId("fold-block")).textContent).toContain(
       "50 remaining items",
@@ -1050,8 +1068,11 @@ describe("timeline load failure (T-376)", () => {
     await waitFor(() =>
       expect(calls.filter((u) => !u.includes("last=1"))).toHaveLength(3),
     );
-    await waitFor(() =>
-      expect(view.queryByText(/Couldn't refresh the timeline/)).toBeNull(),
+    // Fifty more comments render in one commit.
+    await waitFor(
+      () =>
+        expect(view.queryByText(/Couldn't refresh the timeline/)).toBeNull(),
+      FILL_WAIT,
     );
     expect(view.getByText("c1")).toBeTruthy();
     expect(view.getByText("c100")).toBeTruthy();
@@ -1061,7 +1082,7 @@ describe("timeline load failure (T-376)", () => {
   });
 });
 
-describe("one upload across the fold seam (T-404)", () => {
+describe("one upload across the fold seam (T-404)", FILL_CASE, () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -1164,16 +1185,15 @@ describe("one upload across the fold seam (T-404)", () => {
     stubCard(pageOf(items.slice(9), 59, { prev: "P" }), {
       "": pageOf(items.slice(0, 50), 59, { next: "H1" }),
     });
-    const { container, findByText, getAllByText, queryByTestId } =
-      renderWithRouter(
-        <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
-        testQueryClient(),
-      );
+    const { container, getAllByText, queryByTestId } = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+    );
 
     // Wait on an entry only the head carries. Before it lands `above` is
     // empty, all six events sit in the tail, and the page already shows one
     // group — asserting any earlier would pass without the fix.
-    await findByText("c1", undefined, FILL_WAIT);
+    await filledIn(container, 1);
     // And with the seam closed, which is what makes one group the right
     // answer: two windows still holding a fold between them may split it.
     expect(queryByTestId("fold-block")).toBeNull();
@@ -1200,17 +1220,20 @@ describe("one upload across the fold seam (T-404)", () => {
         testQueryClient(),
       );
 
-    expect((await findByTestId("fold-block")).textContent).toContain(
-      "50 remaining items",
-    );
+    expect(
+      (await findByTestId("fold-block", undefined, FILL_WAIT)).textContent,
+    ).toContain("50 remaining items");
     await waitFor(() => {
       const split = attachedGroups(container);
       expect(split).toHaveLength(1);
       expect(split[0]?.textContent).toContain("attached 3 files");
-    });
+    }, FILL_WAIT);
 
     fireEvent.click(await findByRole("button", { name: "Load more" }));
-    await waitFor(() => expect(queryByTestId("fold-block")).toBeNull());
+    await waitFor(
+      () => expect(queryByTestId("fold-block")).toBeNull(),
+      FILL_WAIT,
+    );
 
     const groups = attachedGroups(container);
     expect(groups).toHaveLength(1);
@@ -1232,7 +1255,7 @@ describe("one upload across the fold seam (T-404)", () => {
       testQueryClient(),
     );
 
-    await findByTestId("fold-block");
+    await findByTestId("fold-block", undefined, FILL_WAIT);
     await waitFor(() => {
       const groups = attachedGroups(container);
       expect(groups).toHaveLength(2);
@@ -1240,7 +1263,7 @@ describe("one upload across the fold seam (T-404)", () => {
         expect.stringContaining("attached 2 files"),
         expect.stringContaining("attached 2 files"),
       ]);
-    });
+    }, FILL_WAIT);
   });
 });
 

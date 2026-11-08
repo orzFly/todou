@@ -1,6 +1,8 @@
 import {
   cleanup,
+  configure,
   fireEvent,
+  getConfig,
   screen,
   waitFor,
   within,
@@ -8,6 +10,7 @@ import {
 import {
   afterAll,
   afterEach,
+  beforeAll,
   beforeEach,
   describe,
   expect,
@@ -545,6 +548,15 @@ function entryNow(): {
   const held = state === null ? undefined : state.todouReturn;
   return (held ?? {}) as ReturnType<typeof entryNow>;
 }
+
+// Every wait here is a whole page rendering through the real router: the
+// slowest takes ~1 s on a lightly loaded machine, all of testing-library's
+// default, and up to 3 s on a third of a core. A case walks through up to six
+// of them (T-670).
+vi.setConfig({ testTimeout: 30_000 });
+const defaultWait = getConfig().asyncUtilTimeout;
+beforeAll(() => configure({ asyncUtilTimeout: 10_000 }));
+afterAll(() => configure({ asyncUtilTimeout: defaultWait }));
 
 beforeEach(() => {
   vi.stubGlobal("ResizeObserver", NoopResizeObserver);
