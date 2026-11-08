@@ -120,7 +120,8 @@ export function authRoutes(ctx: AppContext) {
     if (mode === "forward") return c.body(null, 204);
     const cookie = getCookie(c, SESSION_COOKIE);
     if (cookie) {
-      await destroySession(ctx.router.system(), cookie);
+      const userId = await destroySession(ctx.router.system(), cookie);
+      if (userId !== null) ctx.bus.publishCredentials(userId);
       deleteCookie(c, SESSION_COOKIE, { path: "/" });
     }
     return c.body(null, 204);

@@ -19,6 +19,11 @@ import type { AppEnv } from "../auth/middleware.ts";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { DomainError } from "../errors.ts";
+import {
+  recheckStreamCredential,
+  type StreamCredential,
+  streamCredentialOf,
+} from "../events/stream-credential.ts";
 import type { WatcherHandle, WatcherScopes } from "../events/watchers.ts";
 import {
   accessibleProjectRows,
@@ -199,7 +204,9 @@ const userEventsRoute = createRoute({
     "absent where the write path gave no answer, and a client must then " +
     "refetch the lists unconditionally. The subscription follows membership " +
     "changes live: being added to a project starts its events mid-stream, " +
-    "being removed silences them.",
+    "being removed silences them. The stream closes once its credential " +
+    "would no longer authenticate a request (revoked, expired, logged out, " +
+    "account disabled), checked on every heartbeat.",
   request: {
     query: z.object({
       inbox: inboxParam,
@@ -219,7 +226,8 @@ const projectEventsRoute = createRoute({
     "SSE change feed for one project — a filtered view of /events. Events " +
     "carry pointers ({entity, id, action, issue_number?, project}) plus " +
     "`list_row` on an issue event (T-279, see /events); clients refetch via " +
-    "REST. The stream closes when the caller loses access to the project.",
+    "REST. The stream closes when the caller loses access to the project " +
+    "or its credential stops authenticating (see /events).",
   request: {
     params: z.object({ slug: ProjectRef }),
     query: z.object({
@@ -234,7 +242,9 @@ const projectEventsRoute = createRoute({
 function streamChanges(
   c: Context<AppEnv>,
   ctx: AppContext,
-  user: UserRow,
+  /** Replaced by every credential re-check, so a demotion takes effect too. */
+  initialUser: UserRow,
+  credential: StreamCredential,
   scope: Scope,
   wantInbox: boolean,
   /** Undefined = this connection asked for no metadata at all. */
@@ -243,6 +253,8 @@ function streamChanges(
   /** What the connection declared it watches; null = not listed (T-540). */
   declared: { what: WatchDeclaration; kind: WatcherKind } | null,
 ) {
+  let user = initialUser;
+  const heartbeatMs = ctx.testHooks?.sse?.heartbeatMs ?? HEARTBEAT_MS;
   return streamSSE(c, async (stream) => {
     // The visible set decides delivery per event; each row carries the slug
     // stamped into the payload and the route to that project's database.
@@ -282,6 +294,14 @@ function streamChanges(
           wake?.();
         })
       : null;
+    // Set by a credential signal and by every heartbeat; honoured before the
+    // next frame goes out, so nothing is written past a revocation the
+    // stream has already heard about.
+    let recheckDue = false;
+    const unsubscribeCredentials = ctx.bus.subscribeCredentials(user.id, () => {
+      recheckDue = true;
+      wake?.();
+    });
     // Process shutdown must end the stream from the server side: SSE
     // responses never finish on their own, and every one of them would
     // otherwise hold `server.close()` open until it is severed (T-56).
@@ -455,6 +475,44 @@ function streamChanges(
     // in the drain loop share the loop's single exit (and its cleanup).
     let closed = false;
 
+    /**
+     * Would this request still authenticate (T-624)? Closing is the whole
+     * answer to "no": the client's reconnect then meets the 401 the REST
+     * API already gives. A failed lookup closes too — the reconnect rebuilds
+     * everything, and an error is no proof the credential is still good.
+     */
+    const recheck = async () => {
+      if (!recheckDue) return;
+      recheckDue = false;
+      let fresh: UserRow | null;
+      try {
+        fresh = await recheckStreamCredential(
+          ctx.router.system(),
+          credential,
+          user.id,
+        );
+      } catch {
+        fresh = null;
+      }
+      if (fresh === null) {
+        closed = true;
+        return;
+      }
+      const demoted = fresh.isInstanceAdmin !== user.isInstanceAdmin;
+      user = fresh;
+      if (!demoted) return;
+      try {
+        await recompute();
+      } catch {
+        closed = true;
+        return;
+      }
+      // Admin visibility was all that held a pinned project open.
+      if (scope.kind === "project" && !visible.has(scope.row.id)) {
+        closed = true;
+      }
+    };
+
     try {
       if (declared !== null && agentContext !== null) await resolveDeclared();
       // Lets clients (and tests) know the subscription is live.
@@ -463,6 +521,8 @@ function streamChanges(
 
       while (!closed && !stream.aborted && !shutdown.aborted) {
         while (meQueue.length > 0 && !stream.aborted && !closed) {
+          await recheck();
+          if (closed) break;
           const event = meQueue.shift() as MeEvent;
           await stream.writeSSE({
             event: SSE_ME_EVENT,
@@ -470,6 +530,8 @@ function streamChanges(
           });
         }
         while (queue.length > 0 && !stream.aborted && !closed) {
+          await recheck();
+          if (closed) break;
           const { projectId, event } = queue.shift() as {
             projectId: number;
             event: ChangeEvent;
@@ -568,12 +630,16 @@ function streamChanges(
           wake = resolve;
           heartbeat = setTimeout(() => {
             pingDue = true;
+            recheckDue = true;
             resolve();
-          }, HEARTBEAT_MS);
+          }, heartbeatMs);
         });
         clearTimeout(heartbeat);
         wake = null;
-        if (pingDue && !stream.aborted && !shutdown.aborted) {
+        // Also the only re-check for what publishes no signal: expiry, and
+        // writes made by another process (the admin CLI).
+        await recheck();
+        if (pingDue && !closed && !stream.aborted && !shutdown.aborted) {
           await stream.writeSSE({ event: SSE_PING_EVENT, data: "{}" });
         }
       }
@@ -582,6 +648,7 @@ function streamChanges(
       (watcher as WatcherHandle | null)?.release();
       unsubscribe();
       unsubscribeMe?.();
+      unsubscribeCredentials();
       shutdown.removeEventListener("abort", onShutdown);
     }
   });
@@ -605,6 +672,7 @@ export function sseRoutes() {
       c,
       c.get("appCtx"),
       c.get("user"),
+      streamCredentialOf(c),
       { kind: "all" },
       query.inbox === "1",
       query.metadata,
@@ -626,6 +694,7 @@ export function sseRoutes() {
       c,
       ctx,
       user,
+      streamCredentialOf(c),
       { kind: "project", row: project },
       c.req.valid("query").inbox === "1",
       c.req.valid("query").metadata,

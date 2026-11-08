@@ -152,6 +152,7 @@ export async function disableAgent(
     .update(tokens)
     .set({ revokedAt: now })
     .where(and(eq(tokens.userId, agent.id), isNull(tokens.revokedAt)));
+  ctx.bus.publishCredentials(agent.id);
 }
 
 /**
@@ -220,6 +221,7 @@ export async function revokeAgentToken(
 ): Promise<void> {
   const agent = await loadManagedAgent(ctx, actor, agentId);
   await revokeToken(ctx.router.system(), agent.id, tokenId);
+  ctx.bus.publishCredentials(agent.id);
 }
 
 /** Most privileged first, which is the reverse of the comparison order. */

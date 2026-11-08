@@ -83,4 +83,39 @@ export class EventBus {
   hasMeSubscriber(userId: number): boolean {
     return this.#meSubscribers.has(userId);
   }
+
+  /**
+   * "Some credential of this user stopped working" (T-624): a token revoked,
+   * a session destroyed, the account disabled. Carries nothing because the
+   * receiver re-checks its own credential rather than trusting the signal —
+   * revoking one token must not close streams opened with another. It only
+   * cuts the wait to zero; streams re-check on every heartbeat anyway, which
+   * is what covers expiry and writes made outside this process.
+   */
+  #credentialSubscribers = new Map<number, Set<() => void>>();
+
+  subscribeCredentials(userId: number, fn: () => void): () => void {
+    let set = this.#credentialSubscribers.get(userId);
+    if (set === undefined) {
+      set = new Set();
+      this.#credentialSubscribers.set(userId, set);
+    }
+    set.add(fn);
+    return () => {
+      const current = this.#credentialSubscribers.get(userId);
+      if (current === undefined) return;
+      current.delete(fn);
+      if (current.size === 0) this.#credentialSubscribers.delete(userId);
+    };
+  }
+
+  publishCredentials(userId: number): void {
+    for (const fn of this.#credentialSubscribers.get(userId) ?? []) {
+      try {
+        fn();
+      } catch {
+        // One broken subscriber must never break the others.
+      }
+    }
+  }
 }

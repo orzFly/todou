@@ -62,6 +62,8 @@ export type TestHooks = DbTestHooks & {
    * here — `onQuery` already throws from the statement's call site.
    */
   beforeMirrorStep?(step: "history" | "unmark"): Promise<void>;
+  /** Shrinks the SSE stream's timers, which are tens of seconds in production. */
+  sse?: { heartbeatMs?: number };
 };
 
 /**

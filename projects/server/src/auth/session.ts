@@ -48,6 +48,14 @@ export async function validateSession(
   return row.user;
 }
 
-export async function destroySession(db: Db, value: string): Promise<void> {
-  await db.delete(sessions).where(eq(sessions.tokenHash, hashToken(value)));
+/** Returns whose session it was, or null when there was none. */
+export async function destroySession(
+  db: Db,
+  value: string,
+): Promise<number | null> {
+  const rows = await db
+    .delete(sessions)
+    .where(eq(sessions.tokenHash, hashToken(value)))
+    .returning({ userId: sessions.userId });
+  return rows[0]?.userId ?? null;
 }

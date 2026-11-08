@@ -394,9 +394,10 @@ export function meRoutes() {
   });
 
   app.openapi(revokeTokenRoute, async (c) => {
-    const db = c.get("appCtx").router.system();
+    const ctx = c.get("appCtx");
     const { id } = c.req.valid("param");
-    await revokeToken(db, c.get("user").id, id);
+    await revokeToken(ctx.router.system(), c.get("user").id, id);
+    ctx.bus.publishCredentials(c.get("user").id);
     return c.body(null, 204);
   });
 
