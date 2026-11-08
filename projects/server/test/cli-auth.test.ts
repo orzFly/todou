@@ -1,8 +1,8 @@
 import type { CliAuthTarget } from "@todou/shared";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PAT_PREFIX } from "../src/auth/pat.ts";
-import { cliAuthRequests } from "../src/db/system-schema.ts";
+import { cliAuthRequests, tokens, users } from "../src/db/system-schema.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -232,6 +232,69 @@ describe("cli device authorization", () => {
     );
     expect(res.status).toBe(409);
     expect((await json(res)).error.message).toContain("disabled");
+  });
+
+  it("keeps an approval voided by a disable voided after re-enabling", async () => {
+    const cookie = await t.login();
+    const agent = await createAgent(cookie, "paused-bot");
+    const created = await createRequest();
+    expect(
+      (await approve(created.id, { kind: "agent", id: agent.id }, cookie))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await t.app.request(`/api/agents/${agent.id}`, {
+          method: "DELETE",
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(204);
+    const enabled = await t.app.request(`/api/agents/${agent.id}/enable`, {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(enabled.status).toBe(200);
+
+    // Collected only now, with the agent enabled again: the disable has to
+    // have voided the approval itself, not merely blocked collection.
+    expect(await json(await poll(created.id, created.poll_secret))).toEqual({
+      status: "denied",
+    });
+    expect((await poll(created.id, created.poll_secret)).status).toBe(404);
+
+    // A fresh login after re-enabling is the way back, and it still works.
+    const again = await createRequest();
+    await approve(again.id, { kind: "agent", id: agent.id }, cookie);
+    const collected = await json(await poll(again.id, again.poll_secret));
+    const me = await t.app.request("/api/me", {
+      headers: { authorization: `Bearer ${collected.token}` },
+    });
+    expect((await json(me)).login).toBe("paused-bot");
+  });
+
+  it("voids an approval collected after the agent was disabled, even if the row survived", async () => {
+    const cookie = await t.login();
+    const agent = await createAgent(cookie, "racing-bot");
+    const created = await createRequest();
+    await approve(created.id, { kind: "agent", id: agent.id }, cookie);
+    // Disable without the route's request sweep, as a disable racing the
+    // poll would leave things: the row still approved, the agent disabled.
+    await t.ctx.router
+      .system()
+      .update(users)
+      .set({ disabledAt: new Date() })
+      .where(eq(users.id, agent.id));
+
+    expect(await json(await poll(created.id, created.poll_secret))).toEqual({
+      status: "denied",
+    });
+    const live = await t.ctx.router
+      .system()
+      .select()
+      .from(tokens)
+      .where(and(eq(tokens.userId, agent.id), isNull(tokens.revokedAt)));
+    expect(live).toEqual([]);
   });
 
   it("mints for an agent the approver owns", async () => {

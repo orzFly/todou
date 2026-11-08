@@ -96,10 +96,9 @@ export function cliAuthPublicRoutes(ctx: AppContext) {
   });
 
   app.openapi(pollRequestRoute, async (c) => {
-    const db = ctx.router.system();
     const { id } = c.req.valid("param");
     const { poll_secret } = c.req.valid("json");
-    return c.json(await pollCliAuthRequest(db, id, poll_secret), 200);
+    return c.json(await pollCliAuthRequest(ctx, id, poll_secret), 200);
   });
 
   return app;

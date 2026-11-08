@@ -14,6 +14,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import {
+  cliAuthRequests,
   projectMembers,
   projects,
   tokens,
@@ -135,7 +136,11 @@ export async function deleteAgentAvatar(
   return toAgent(ctx, await deleteAvatar(ctx, agent));
 }
 
-/** Soft-disable: blocks all authentication and revokes every active PAT. */
+/**
+ * Soft-disable: blocks all authentication, revokes every active PAT, and
+ * voids CLI authorizations approved for the agent but not yet collected —
+ * those would otherwise mint once the agent is enabled again (T-641).
+ */
 export async function disableAgent(
   ctx: AppContext,
   actor: UserRow,
@@ -152,6 +157,15 @@ export async function disableAgent(
     .update(tokens)
     .set({ revokedAt: now })
     .where(and(eq(tokens.userId, agent.id), isNull(tokens.revokedAt)));
+  await system
+    .update(cliAuthRequests)
+    .set({ status: "denied" })
+    .where(
+      and(
+        eq(cliAuthRequests.approvedUserId, agent.id),
+        eq(cliAuthRequests.status, "approved"),
+      ),
+    );
   ctx.bus.publishCredentials(agent.id);
 }
 
