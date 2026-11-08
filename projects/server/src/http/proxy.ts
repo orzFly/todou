@@ -173,3 +173,26 @@ export function selfHosts(c: RequestLike, config: Config): Set<string> {
   hosts.add((c.req.header("host") ?? new URL(c.req.url).host).toLowerCase());
   return hosts;
 }
+
+/**
+ * The address the request came from, for showing to a person and for
+ * keying a rate limit. X-Forwarded-For is read right to left: each trusted
+ * proxy appended the peer it saw, so the first entry that is not itself a
+ * trusted proxy is the furthest hop anyone vouched for — entries further
+ * left are whatever the client wrote. Without a trusted peer the header is
+ * ignored, and a malformed entry ends the walk at the proxy that sent it.
+ */
+export function clientAddress(c: RequestLike, config: Config): string | null {
+  const peer = remoteAddrOf(c);
+  if (peer === null) return null;
+  let client = normalizeMapped(peer);
+  if (!config.isTrustedPeer(client)) return client;
+  const hops = (c.req.header("x-forwarded-for") ?? "").split(",").reverse();
+  for (const raw of hops) {
+    const hop = normalizeMapped(raw.trim());
+    if (familyOf(hop) === null) break;
+    client = hop;
+    if (!config.isTrustedPeer(hop)) break;
+  }
+  return client;
+}

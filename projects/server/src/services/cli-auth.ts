@@ -45,9 +45,18 @@ export function generateCliAuthCode(): string {
  * after 15 minutes, every create sweeps the expired ones out first, and a
  * row carries nothing but a name until someone authorizes it.
  */
+export type CliAuthRequester = {
+  ip: string | null;
+  userAgent: string | null;
+};
+
+/** A header is attacker-chosen text; the page needs a line, not a payload. */
+const USER_AGENT_MAX = 256;
+
 export async function createCliAuthRequest(
   db: Db,
   input: CliAuthRequestCreateInput,
+  requester: CliAuthRequester,
 ): Promise<CliAuthRequestCreated> {
   const now = new Date();
   await db.delete(cliAuthRequests).where(lt(cliAuthRequests.expiresAt, now));
@@ -63,6 +72,9 @@ export async function createCliAuthRequest(
           code,
           pollSecretHash: hashToken(secret),
           name: input.name,
+          requesterIp: requester.ip,
+          requesterUserAgent:
+            requester.userAgent?.slice(0, USER_AGENT_MAX) || null,
           expiresAt,
         })
         .returning({ id: cliAuthRequests.id });
@@ -183,6 +195,8 @@ export async function readCliAuthRequestByCode(
     id: row.id,
     name: row.name,
     code: row.code,
+    requester_ip: row.requesterIp,
+    requester_user_agent: row.requesterUserAgent,
     created_at: row.createdAt.toISOString(),
     expires_at: row.expiresAt.toISOString(),
   };

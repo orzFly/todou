@@ -506,8 +506,12 @@ Forward everything on one origin to `:8637` — do not split `/api` from the
 static files, or the session cookie and SSE stream stop being same-origin.
 
 Have the proxy set `X-Forwarded-Proto` (and `X-Forwarded-Host` if it
-rewrites hosts). Forwarded headers are only believed when the TCP peer
-matches `http.trusted_proxies`, which defaults to loopback:
+rewrites hosts), and append the client to `X-Forwarded-For`: the CLI
+authorization page shows that address, and `todou login --no-browser` is
+capped at 10 new codes per address per 10 minutes. A proxy the server does
+not trust puts every user behind its one address, sharing that cap.
+Forwarded headers are only believed when the TCP peer matches
+`http.trusted_proxies`, which defaults to loopback:
 
 ```toml
 [http]

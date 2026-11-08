@@ -96,6 +96,10 @@ export const cliAuthRequests = pgTable(
     code: text("code").notNull(),
     pollSecretHash: text("poll_secret_hash").notNull(),
     name: text("name").notNull(),
+    // Where the request came from, shown on the approval page so a request
+    // the user did not start has something to give it away (T-638).
+    requesterIp: text("requester_ip"),
+    requesterUserAgent: text("requester_user_agent"),
     status: text("status", { enum: ["pending", "approved", "denied"] })
       .notNull()
       .default("pending"),

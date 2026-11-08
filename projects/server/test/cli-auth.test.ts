@@ -3,6 +3,10 @@ import { and, eq, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PAT_PREFIX } from "../src/auth/pat.ts";
 import { cliAuthRequests, tokens, users } from "../src/db/system-schema.ts";
+import {
+  CLI_AUTH_CREATE_LIMIT,
+  CLI_AUTH_CREATE_WINDOW_MS,
+} from "../src/routes/cli-auth.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -28,6 +32,19 @@ async function createRequest(name = "cli @ bot-one") {
   });
   expect(res.status).toBe(201);
   return json(res);
+}
+
+/** As a node server would see it: the TCP peer lives in the adapter env. */
+function createFrom(peer: string, headers: Record<string, string> = {}) {
+  return t.app.request(
+    "/api/auth/cli/requests",
+    {
+      method: "POST",
+      headers: { ...jsonHeaders, ...headers },
+      body: JSON.stringify({ name: "cli @ elsewhere" }),
+    },
+    { incoming: { socket: { remoteAddress: peer } } },
+  );
 }
 
 function poll(id: number, secret: string) {
@@ -334,6 +351,55 @@ describe("cli device authorization", () => {
       .from(cliAuthRequests)
       .where(eq(cliAuthRequests.id, stale.id));
     expect(rows).toEqual([]);
+  });
+
+  it("shows the approver where the request came from", async () => {
+    const cookie = await t.login();
+    const direct = await json(
+      await createFrom("203.0.113.7", { "user-agent": "todou-cli/0.6.7" }),
+    );
+    expect(await json(await byCode(direct.code, cookie))).toMatchObject({
+      requester_ip: "203.0.113.7",
+      requester_user_agent: "todou-cli/0.6.7",
+    });
+
+    // Behind a trusted proxy the forwarded client counts; a hop the client
+    // wrote itself, further left, does not.
+    const proxied = await json(
+      await createFrom("127.0.0.1", {
+        "x-forwarded-for": "192.0.2.66, 198.51.100.9",
+      }),
+    );
+    expect(await json(await byCode(proxied.code, cookie))).toMatchObject({
+      requester_ip: "198.51.100.9",
+      requester_user_agent: null,
+    });
+
+    // From an untrusted peer the header is the client's own claim.
+    const spoofed = await json(
+      await createFrom("203.0.113.8", { "x-forwarded-for": "198.51.100.10" }),
+    );
+    expect((await json(await byCode(spoofed.code, cookie))).requester_ip).toBe(
+      "203.0.113.8",
+    );
+  });
+
+  it("caps how many requests one address may start", async () => {
+    for (let i = 0; i < CLI_AUTH_CREATE_LIMIT; i++) {
+      expect((await createFrom("203.0.113.20")).status).toBe(201);
+    }
+    const refused = await createFrom("203.0.113.20");
+    expect(refused.status).toBe(429);
+    const retryAfter = Number(refused.headers.get("retry-after"));
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(retryAfter).toBeLessThanOrEqual(CLI_AUTH_CREATE_WINDOW_MS / 1000);
+    expect((await json(refused)).error).toMatchObject({
+      code: "rate_limited",
+      details: { retry_after: retryAfter },
+    });
+
+    // Somebody else's login is not caught up in it.
+    expect((await createFrom("203.0.113.21")).status).toBe(201);
   });
 
   it("keeps the OpenAPI document generatable", async () => {
