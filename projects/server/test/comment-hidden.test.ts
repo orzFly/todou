@@ -664,6 +664,65 @@ describe("hidden comments", () => {
       await expectOpenQuestions(number, 0);
     });
 
+    it("settles a repeated id once, leaving the other questions open (T-651)", async () => {
+      for (const route of ["hide", "commands"] as const) {
+        const number = await newCard(`hide a repeated id via ${route}`);
+        const id = await ask(number);
+        const other = await ask(number);
+        await expectOpenQuestions(number, 4);
+
+        const res =
+          route === "hide"
+            ? await setHidden(number, [id, id, id], true)
+            : await req(`/projects/${slug}/issues/${number}/commands`, writer, {
+                method: "POST",
+                body: JSON.stringify({
+                  commands: [
+                    {
+                      type: "comments_hide",
+                      hidden: true,
+                      comment_ids: [id, id, id],
+                    },
+                  ],
+                }),
+              });
+        expect(res.status).toBe(200);
+        const body = await json(res);
+        const result = route === "hide" ? body : body.hide;
+        expect(result.hidden).toEqual([id]);
+        expect(result.settled).toEqual({
+          declined_questions: [id],
+          resolved_annotations: [],
+        });
+
+        expect(await answered(number)).toHaveLength(1);
+        const status = await expectOpenQuestions(number, 2);
+        expect(
+          status.items
+            .filter((item: { answer: unknown }) => item.answer === null)
+            .map((item: { comment_id: number }) => item.comment_id),
+        ).toEqual([other]);
+      }
+    });
+
+    it("resolves a repeated annotation id once (T-651)", async () => {
+      const number = await newCard("hide a repeated annotation id");
+      const id = await annotate(number, owner, writer);
+
+      const result = await hide(number, [id, id]);
+      expect(result.settled).toEqual({
+        declined_questions: [],
+        resolved_annotations: [id],
+      });
+      const events = await resolvedEvents(number);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toEqual({
+        comment_ids: [id],
+        paths: ["design.md"],
+        via: "hide",
+      });
+    });
+
     it("rolls back the hide provenance and counter with its transaction", async () => {
       const number = await newCard("failed hide settlement");
       const id = await ask(number);
