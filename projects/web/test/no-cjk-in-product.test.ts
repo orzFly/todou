@@ -95,6 +95,12 @@ const UNPARSED: Array<{ file: string; reason: string }> = [
       "the block-marker regex matches a backtick fence that opens an action",
   },
   {
+    file: "web/src/lib/harness.ts",
+    reason:
+      "`sessionCopy` nests a template inside its own interpolation, which " +
+      "closes the outer one early",
+  },
+  {
     file: "web/src/lib/slash-commands.ts",
     reason: "the markdown fence regex matches a run of backticks",
   },
