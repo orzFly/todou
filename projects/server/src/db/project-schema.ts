@@ -518,7 +518,15 @@ export const pendingUploads = pgTable(
     contentType: text("content_type").notNull(),
     declaredSize: bigint("declared_size", { mode: "number" }).notNull(),
     sha256: text("sha256"),
+    /** Where the presigned PUT writes; never an attachment's key (T-653). */
     storageKey: text("storage_key").notNull(),
+    /**
+     * The attachment's own key, a copy `complete` made of `storageKey`. The
+     * ticket stays valid long after complete, so the attachment must not live
+     * where it writes. Null on rows completed before T-653, whose attachment
+     * took `storageKey` itself.
+     */
+    attachmentKey: text("attachment_key"),
     /** Carried onto the attachment `complete` creates. */
     draft: boolean("draft").notNull().default(false),
     createdAt: createdAt(),

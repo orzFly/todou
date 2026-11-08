@@ -102,9 +102,8 @@ export type GcReport = {
 
 /**
  * Walks pending_uploads rows past their expiry (plus a safety margin so a
- * slow-but-legitimate upload is never reaped mid-flight): uncompleted rows
- * are orphan candidates whose objects get deleted; completed rows just get
- * dropped — their object is a registered attachment now.
+ * slow-but-legitimate upload is never reaped mid-flight) and deletes the
+ * object at each row's upload key, unless an attachment still lives there.
  *
  * Runs from the hourly housekeeping tick on every instance as well as from
  * `storage gc`, so several passes may walk the same rows at once. Deleting
@@ -148,7 +147,12 @@ export async function gcPendingUploads(
         .from(pendingUploads)
         .where(lt(pendingUploads.expiresAt, cutoff));
       for (const row of expired) {
-        const orphan = row.completedAt === null;
+        // Completed since T-653, the attachment is a copy elsewhere and the
+        // upload key holds at most what a replayed ticket wrote. Completed
+        // before it, the attachment lives at the upload key itself, and may
+        // since have moved to another project's database where
+        // `isRegistered` cannot see it — so those objects are left alone.
+        const orphan = row.completedAt === null || row.attachmentKey !== null;
         if (opts.dryRun) {
           report.wouldDelete++;
           opts.log(
@@ -159,9 +163,10 @@ export async function gcPendingUploads(
           );
           continue;
         }
-        // A complete that commits after the select above registers the
-        // object while this row still reads as an orphan; the attachment
-        // row is what says the object is no longer ours to delete.
+        // A complete from a server older than T-653 that commits after the
+        // select above registers the object while this row still reads as
+        // an orphan; the attachment row is what says the object is no
+        // longer ours to delete.
         if (orphan && !(await isRegistered(db, row.storageKey))) {
           const head = await storage.head(row.storageKey);
           if (head) {

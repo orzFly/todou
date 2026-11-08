@@ -66,6 +66,22 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
 
       switch (method) {
         case "PUT": {
+          const copySource = req.headers["x-amz-copy-source"];
+          if (typeof copySource === "string") {
+            const source = decodeURIComponent(copySource).replace(/^\//, "");
+            const data = source.startsWith(`${bucket}/`)
+              ? objects.get(source.slice(bucket.length + 1))
+              : undefined;
+            if (!data) {
+              res.writeHead(404, { "content-type": "application/xml" });
+              res.end("<Error><Code>NoSuchKey</Code></Error>");
+              return;
+            }
+            objects.set(key, Buffer.from(data));
+            res.writeHead(200, { "content-type": "application/xml" });
+            res.end("<CopyObjectResult></CopyObjectResult>");
+            return;
+          }
           const declared = req.headers["x-amz-checksum-sha256"];
           if (typeof declared === "string") {
             const actual = createHash("sha256").update(body).digest("base64");

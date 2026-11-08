@@ -931,9 +931,12 @@ up anything uploaded to s3 since the switch) plus flipping
 ### Reaping abandoned direct uploads
 
 A direct upload that is requested but never completed leaves an object
-with no attachment row. Every issued upload is recorded in the database,
-so cleanup is database-driven, and the server does it on its own: the
-hourly housekeeping tick deletes orphans older than expiry+24h and logs
+with no attachment row. A completed one can too: completing copies the
+file to the attachment's own key and deletes the uploaded object, but the
+upload URL keeps accepting writes until it expires. Every issued upload is
+recorded in the database, so cleanup is database-driven, and the server
+does it on its own: the hourly housekeeping tick deletes what is left at
+the upload key once it is older than expiry+24h and logs
 each one as `housekeeping: deleted orphan object …`. The tick only runs
 this on the s3 backend; rows left over from an earlier s3 deployment are
 kept, since they name objects in a bucket the server no longer uses.

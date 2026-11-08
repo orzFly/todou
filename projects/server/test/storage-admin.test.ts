@@ -368,7 +368,9 @@ describe("housekeeping tick reaps pending uploads", () => {
     await runHousekeepingTick(t.ctx);
 
     expect(fake.objects.has(orphan.storageKey)).toBe(false);
-    expect(fake.objects.has(completed.storageKey)).toBe(true);
+    const completedKey = completed.attachmentKey as string;
+    expect(completedKey).not.toBe(completed.storageKey);
+    expect(fake.objects.has(completedKey)).toBe(true);
     expect(fake.objects.has(fresh.storageKey)).toBe(true);
     expect(fake.objects.has(inMargin.storageKey)).toBe(true);
     const left = (await db.select().from(pendingUploads)).map((r) => r.id);
@@ -376,13 +378,35 @@ describe("housekeeping tick reaps pending uploads", () => {
     const registered = await db
       .select({ key: attachments.storageKey })
       .from(attachments);
-    expect(registered.map((r) => r.key)).toContain(completed.storageKey);
+    expect(registered.map((r) => r.key)).toContain(completedKey);
   });
 
+  /**
+   * Before T-653 the attachment took the upload key itself; rows written
+   * that way are still in the table for a day after the upgrade.
+   */
+  async function asCompletedBeforeT653(
+    row: typeof pendingUploads.$inferSelect,
+  ) {
+    const key = row.attachmentKey as string;
+    fake.objects.set(row.storageKey, fake.objects.get(key) as Buffer);
+    fake.objects.delete(key);
+    await db
+      .update(attachments)
+      .set({ storageKey: row.storageKey })
+      .where(eq(attachments.storageKey, key));
+    await db
+      .update(pendingUploads)
+      .set({ attachmentKey: null })
+      .where(eq(pendingUploads.id, row.id));
+  }
+
   it("keeps an object a late complete registered after the row was read", async () => {
-    // What gc sees when a complete commits between its select and its
-    // delete: the row still reads uncompleted, the attachment already exists.
+    // What gc sees when an older server's complete commits between its
+    // select and its delete: the row still reads uncompleted, the
+    // attachment already exists at the upload key.
     const raced = await upload("raced.txt", "raced bytes", true);
+    await asCompletedBeforeT653(raced);
     await db
       .update(pendingUploads)
       .set({ completedAt: null })
@@ -396,6 +420,70 @@ describe("housekeeping tick reaps pending uploads", () => {
       .select()
       .from(pendingUploads)
       .where(eq(pendingUploads.id, raced.id));
+    expect(row).toEqual([]);
+  });
+
+  it("leaves the object of an upload completed before T-653 alone", async () => {
+    const old = await upload("moved-away.txt", "moved bytes", true);
+    await asCompletedBeforeT653(old);
+    // As after a move to a project in another database: the copy there
+    // names this key, and nothing in this database does.
+    await db
+      .delete(attachments)
+      .where(eq(attachments.storageKey, old.storageKey));
+    await expireHoursAgo(old.id, 72);
+
+    await runHousekeepingTick(t.ctx);
+
+    expect(fake.objects.has(old.storageKey)).toBe(true);
+  });
+
+  // T-653: the ticket stays valid after the attachment is deleted, so a
+  // replay puts an object back that no attachment row names.
+  it("collects what a replayed ticket wrote after its attachment was deleted", async () => {
+    const res = await t.app.request(
+      `/api/projects/${slug}/attachments/direct-uploads`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          issue_number: 1,
+          filename: "replayed.txt",
+          content_type: "text/plain",
+          size: "replay bytes".length,
+        }),
+      },
+    );
+    const ticket = await json(res);
+    await fetch(ticket.url, { method: "PUT", body: "replay bytes" });
+    const attachment = await json(
+      await t.app.request(
+        `/api/projects/${slug}/attachments/direct-uploads/${ticket.upload_id}/complete`,
+        { method: "POST", headers: { cookie } },
+      ),
+    );
+    const deleted = await t.app.request(
+      `/api/projects/${slug}/attachments/${attachment.id}`,
+      { method: "DELETE", headers: { cookie } },
+    );
+    expect(deleted.status).toBe(204);
+    const replay = await fetch(ticket.url, {
+      method: "PUT",
+      body: "replay bytes",
+    });
+    expect(replay.status).toBe(200);
+    const unowned = () =>
+      [...fake.objects.values()].filter((b) => b.toString() === "replay bytes");
+    expect(unowned()).toHaveLength(1);
+    await expireHoursAgo(ticket.upload_id, 72);
+
+    await runHousekeepingTick(t.ctx);
+
+    expect(unowned()).toHaveLength(0);
+    const row = await db
+      .select()
+      .from(pendingUploads)
+      .where(eq(pendingUploads.id, ticket.upload_id));
     expect(row).toEqual([]);
   });
 

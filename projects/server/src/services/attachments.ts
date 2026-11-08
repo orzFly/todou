@@ -206,6 +206,15 @@ function newStorageKey(): string {
   return `${uuid.slice(0, 2)}/${uuid.slice(2, 4)}/${uuid}`;
 }
 
+/** For objects no attachment reads: a failed delete leaks bytes, not data. */
+async function deleteQuietly(ctx: AppContext, key: string): Promise<void> {
+  try {
+    await ctx.storage.delete(key);
+  } catch (cause) {
+    console.error(`unreferenced object ${key} was not deleted`, cause);
+  }
+}
+
 /**
  * Insert the row under a name free on this card (T-269).
  *
@@ -424,22 +433,36 @@ export async function completeDirectUpload(
     throw new ForbiddenError("only the requesting uploader may complete");
   }
 
-  const byKey = () =>
-    db
+  // Read afresh, because a concurrent complete may have committed since
+  // `pending` was: whichever complete won, its row says where the file is.
+  const settled = async (): Promise<AttachmentRow | null> => {
+    const current = (
+      await db
+        .select()
+        .from(pendingUploads)
+        .where(eq(pendingUploads.id, pending.id))
+    )[0];
+    if (!current?.completedAt) return null;
+    const rows = await db
       .select()
       .from(attachments)
       .where(
         and(
-          eq(attachments.storageKey, pending.storageKey),
+          eq(
+            attachments.storageKey,
+            current.attachmentKey ?? current.storageKey,
+          ),
           eq(attachments.projectId, project.id),
         ),
       );
+    if (!rows[0]) throw new NotFoundError("attachment not found");
+    return rows[0];
+  };
 
   if (pending.completedAt) {
     // Replay after a lost response: the attachment already exists.
-    const existing = (await byKey())[0];
-    if (!existing) throw new NotFoundError("attachment not found");
-    return toAttachment(ctx, slug, existing);
+    const existing = await settled();
+    if (existing) return toAttachment(ctx, slug, existing);
   }
   // `gcPendingUploads` deletes the object of an uncompleted row once it is
   // a day past expiry, and a complete that headed the object just before
@@ -450,8 +473,15 @@ export async function completeDirectUpload(
     throw new DirectUploadIncompleteError("expired");
   }
 
+  // A concurrent complete that won deletes the uploaded object right after
+  // committing, so a missing object may mean done rather than never sent.
+  const missing = async () => {
+    const existing = await settled();
+    if (existing) return toAttachment(ctx, slug, existing);
+    throw new DirectUploadIncompleteError("missing");
+  };
   const head = await ctx.storage.head(pending.storageKey);
-  if (!head) throw new DirectUploadIncompleteError("missing");
+  if (!head) return missing();
   if (head.size !== pending.declaredSize) {
     throw new DirectUploadIncompleteError("size_mismatch");
   }
@@ -466,37 +496,72 @@ export async function completeDirectUpload(
   if (!issue) throw new NotFoundError("issue not found");
   assertIssueWritable(issue, actor, role);
 
+  // The ticket keeps accepting PUTs until it expires, long after this
+  // returns, so the attachment gets bytes the ticket cannot reach (T-653).
+  // The key is fresh per attempt: a complete that loses the claim below
+  // deletes its own copy, never one the winner registered.
+  const attachmentKey = newStorageKey();
+  try {
+    await ctx.storage.copy(pending.storageKey, attachmentKey);
+  } catch (err) {
+    if (err instanceof NotFoundError) return missing();
+    throw err;
+  }
+
   if (pending.draft) await markDraftAttachments(ctx, project);
-  let row: AttachmentRow;
+  let row: AttachmentRow | null = null;
+  let failure: unknown = null;
   try {
     row = await retryNaming(() =>
       db.transaction(async (tx) => {
+        // Claimed before the insert: a concurrent complete blocks on this
+        // row until the winner commits, then matches nothing.
+        const claimed = await tx
+          .update(pendingUploads)
+          .set({ completedAt: new Date(), attachmentKey })
+          .where(
+            and(
+              eq(pendingUploads.id, pending.id),
+              isNull(pendingUploads.completedAt),
+            ),
+          )
+          .returning({ id: pendingUploads.id });
+        if (claimed.length === 0) return null;
         const attachment = await insertNamed(tx, pending.filename, {
           projectId: project.id,
           issueId: pending.issueId,
           uploaderId: pending.uploaderId,
           contentType: pending.contentType,
           size: pending.declaredSize,
-          storageKey: pending.storageKey,
+          storageKey: attachmentKey,
           draft: pending.draft,
         });
         if (!pending.draft) {
           await announceInTx(tx, attachment, actor.id, agentContext);
         }
-        await tx
-          .update(pendingUploads)
-          .set({ completedAt: new Date() })
-          .where(eq(pendingUploads.id, pending.id));
         return attachment;
       }),
     );
   } catch (err) {
-    // A concurrent complete of the same upload hit the storage_key unique
-    // index first; converge on its row instead of surfacing the race.
-    const existing = (await byKey())[0];
-    if (!existing) throw err;
-    return toAttachment(ctx, slug, existing);
+    failure = err;
   }
+  if (!row) {
+    // Lost the claim, or the transaction failed — possibly after its commit
+    // landed, which is why the copy is only ours to drop if no row names it.
+    let existing: AttachmentRow | null = null;
+    try {
+      existing = await settled();
+    } finally {
+      if (existing?.storageKey !== attachmentKey) {
+        await deleteQuietly(ctx, attachmentKey);
+      }
+    }
+    if (existing) return toAttachment(ctx, slug, existing);
+    throw failure ?? new Error("direct upload claim lost with no winner");
+  }
+  // A replay can put this back until the ticket expires; `gcPendingUploads`
+  // collects it then.
+  await deleteQuietly(ctx, pending.storageKey);
 
   if (!row.draft) {
     publishAttachmentEvents(

@@ -140,6 +140,25 @@ export class S3Storage implements StorageBackend {
     });
   }
 
+  /** Server-side CopyObject; the bytes never pass through this process. */
+  async copy(from: string, to: string): Promise<void> {
+    const source = `/${this.#settings.bucket}/${this.#settings.key_prefix}${from}`;
+    const res = await this.#call("copy", to, {
+      method: "PUT",
+      headers: { "x-amz-copy-source": encodeURI(source) },
+    });
+    // CopyObject can fail after the 200 status line has gone out, in which
+    // case the error only shows up in the body.
+    const body = await res.text();
+    if (body.includes("<Error>")) {
+      console.error(`s3 copy failed for ${to}: ${body.slice(0, 200)}`);
+      throw new UpstreamError("storage copy failed", {
+        op: "copy",
+        upstream: "error in 200 response",
+      });
+    }
+  }
+
   async getStream(key: string) {
     const res = await this.#call("get", key, { method: "GET" });
     if (!res.body) throw new UpstreamError("storage get returned no body");

@@ -1063,6 +1063,80 @@ describe("attachments (s3 backend)", () => {
     expect((await json(res)).error.details).toEqual({ reason: "expired" });
   });
 
+  async function downloadText(url: string): Promise<string> {
+    const res = await t.app.request(url, { headers: { cookie } });
+    expect(res.status).toBe(302);
+    return (await fetch(res.headers.get("location") as string)).text();
+  }
+
+  // The ticket outlives the complete by most of an hour, and without a
+  // sha256 it pins only the length (T-653).
+  it("keeps a completed attachment's bytes when its ticket is replayed", async () => {
+    const body = "approved content";
+    const ticket = await json(
+      await requestDirect({
+        filename: "approved.txt",
+        content_type: "text/plain",
+        size: body.length,
+      }),
+    );
+    expect((await fetch(ticket.url, { method: "PUT", body })).status).toBe(200);
+    const attachment = await json(await complete(ticket.upload_id));
+    expect(await downloadText(attachment.url)).toBe(body);
+
+    const swapped = "SWAPPED content!";
+    expect(swapped.length).toBe(body.length);
+    await fetch(ticket.url, { method: "PUT", body: swapped });
+
+    expect(await downloadText(attachment.url)).toBe(body);
+    // A replayed complete still answers with the same file, unchanged.
+    const again = await json(await complete(ticket.upload_id));
+    expect(again.id).toBe(attachment.id);
+    expect(await downloadText(attachment.url)).toBe(body);
+  });
+
+  it("does not leave the uploaded object behind once complete copied it", async () => {
+    const body = "copied away";
+    const ticket = await json(
+      await requestDirect({
+        filename: "copied.txt",
+        content_type: "text/plain",
+        size: body.length,
+      }),
+    );
+    await fetch(ticket.url, { method: "PUT", body });
+    const attachment = await json(await complete(ticket.upload_id));
+    expect(fake.objects.has(keyOf(ticket.url))).toBe(false);
+    expect(
+      [...fake.objects.values()].filter((b) => b.toString() === body),
+    ).toHaveLength(1);
+    expect(await downloadText(attachment.url)).toBe(body);
+  });
+
+  it("settles two concurrent completes on one attachment and one object", async () => {
+    const body = "raced complete";
+    const ticket = await json(
+      await requestDirect({
+        filename: "raced.txt",
+        content_type: "text/plain",
+        size: body.length,
+      }),
+    );
+    await fetch(ticket.url, { method: "PUT", body });
+    const [a, b] = await Promise.all([
+      complete(ticket.upload_id),
+      complete(ticket.upload_id),
+    ]);
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    const [first, second] = [await json(a), await json(b)];
+    expect(second.id).toBe(first.id);
+    expect(
+      [...fake.objects.values()].filter((x) => x.toString() === body),
+    ).toHaveLength(1);
+    expect(await downloadText(first.url)).toBe(body);
+  });
+
   it("enforces the size cap at request time", async () => {
     const res = await requestDirect({
       filename: "huge.bin",

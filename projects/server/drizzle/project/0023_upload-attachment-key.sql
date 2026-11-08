@@ -1,0 +1,1 @@
+ALTER TABLE "pending_uploads" ADD COLUMN "attachment_key" text;
