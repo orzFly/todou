@@ -17,6 +17,7 @@ import { compressMiddleware } from "./middleware/compress.ts";
 import { crossOriginGuard } from "./middleware/cross-origin.ts";
 import { jsonContentType } from "./middleware/json-content-type.ts";
 import { forwardedHeaderTrace } from "./middleware/proxy-trace.ts";
+import { securityHeaders } from "./middleware/security-headers.ts";
 import { activityRoutes } from "./routes/activity.ts";
 import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
@@ -114,6 +115,7 @@ export function createApp(ctx: AppContext) {
     await next();
   });
   app.use("*", forwardedHeaderTrace(ctx));
+  app.use("*", securityHeaders(ctx.config.http.static_dir));
   if (ctx.config.http.compression) {
     app.use("*", compressMiddleware());
   }

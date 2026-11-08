@@ -114,7 +114,7 @@ describe("attachments (fs backend)", () => {
       // The document must never run with the API's origin: opaque origin
       // even when the URL is opened as a top-level tab.
       expect(view.headers.get("content-security-policy")).toBe(
-        "sandbox allow-scripts",
+        "sandbox allow-scripts; frame-ancestors 'self'",
       );
       expect(view.headers.get("content-type")).toBe("text/html");
       expect(view.headers.get("x-content-type-options")).toBe("nosniff");
@@ -127,7 +127,9 @@ describe("attachments (fs backend)", () => {
       headers: { cookie },
     });
     expect(download.headers.get("content-disposition")).toContain("attachment");
-    expect(download.headers.get("content-security-policy")).toBeNull();
+    expect(download.headers.get("content-security-policy")).toBe(
+      "frame-ancestors 'none'",
+    );
     expect(download.headers.get("content-type")).toBe(
       "text/plain; charset=utf-8",
     );
@@ -259,7 +261,7 @@ describe("attachments (fs backend)", () => {
       `inline; filename="${ascii}"; filename*=UTF-8''${encoded}`,
     );
     expect(view.headers.get("content-security-policy")).toBe(
-      "sandbox allow-scripts",
+      "sandbox allow-scripts; frame-ancestors 'self'",
     );
   });
 
@@ -815,7 +817,7 @@ describe("attachments (s3 backend)", () => {
     expect(view.status).toBe(200);
     expect(await view.text()).toBe("<b>inline</b>");
     expect(view.headers.get("content-security-policy")).toBe(
-      "sandbox allow-scripts",
+      "sandbox allow-scripts; frame-ancestors 'self'",
     );
   });
 
