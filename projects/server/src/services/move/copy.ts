@@ -12,7 +12,6 @@ import {
   issueMutes,
   issueReads,
   issues,
-  pendingUploads,
   revisions,
   specVersionFiles,
   specVersions,
@@ -47,12 +46,15 @@ export type IdMap = {
  * row survives as a tombstone, so none of these cascade, and a table missed
  * on the delete side leaves rows under a tombstone forever.
  *
- * `issue_reads` and `pending_uploads` are on the list precisely because they
- * are NOT copied: a read position is per reader and does not follow a card
- * across projects, and an upload in flight cannot complete against a frozen
- * card anyway. Both still have to be deleted. Dropping the object behind a
- * pending upload is not this code's job — it never became an attachment, and
- * `gcPendingUploads` collects it on expiry exactly as before.
+ * `issue_reads` is on the list precisely because it is NOT copied: a read
+ * position is per reader and does not follow a card across projects, and it
+ * still has to be deleted.
+ *
+ * `pending_uploads` is neither copied nor cleared — the one exception to a
+ * bare tombstone. A ticket keeps accepting PUTs until it expires, wherever
+ * the card has gone, and its row is the only inventory of what it writes:
+ * `gcPendingUploads` reaps the upload key from it a day past expiry (T-671).
+ * Completing against the tombstone is refused as a write to a moved card.
  */
 export const ISSUE_CHILD_TABLES: ReadonlyArray<{
   name: string;
@@ -175,15 +177,17 @@ export const ISSUE_CHILD_TABLES: ReadonlyArray<{
       db.delete(issueMentions).where(eq(issueMentions.issueId, id)),
   },
   {
+    // Listed so the schema coverage test counts it as considered; kept for
+    // the reaper, as the header explains. Moving back in walks this list
+    // over the tombstone again, which must not clear it either.
     name: "pending_uploads",
     copied: false,
-    clearSource: (db, id) =>
-      db.delete(pendingUploads).where(eq(pendingUploads.issueId, id)),
+    clearSource: async () => {},
   },
 ];
 
 /**
- * Delete every child row of a source issue, leaving the tombstone bare.
+ * Delete every child row of a source issue but its pending uploads.
  * Walks the same list the copy does, so the two cannot drift apart.
  *
  * Revisions come before comments: they are found through the comment rows

@@ -394,8 +394,16 @@ describe("copyIssueTree", () => {
     expect(copied.attachments.size).toBe(0);
   });
 
-  it("leaves nothing under the source once the children are cleared", async () => {
+  it("leaves nothing under the source but its pending uploads once the children are cleared", async () => {
     await clearIssueChildren(db, issue.id);
+
+    // The one exception: a ticket outlives the move, and its row is what
+    // the reaper finds the upload key by (T-671).
+    const kept = await db
+      .select()
+      .from(pendingUploads)
+      .where(eq(pendingUploads.issueId, issue.id));
+    expect(kept).toHaveLength(1);
 
     const counts = await Promise.all([
       db.select().from(comments).where(eq(comments.issueId, issue.id)),
@@ -403,10 +411,6 @@ describe("copyIssueTree", () => {
       db.select().from(attachments).where(eq(attachments.issueId, issue.id)),
       db.select().from(specVersions).where(eq(specVersions.issueId, issue.id)),
       db.select().from(issueReads).where(eq(issueReads.issueId, issue.id)),
-      db
-        .select()
-        .from(pendingUploads)
-        .where(eq(pendingUploads.issueId, issue.id)),
       db
         .select()
         .from(revisions)

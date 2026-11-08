@@ -630,7 +630,7 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     expect(carried[1].hidden_at).toBeNull();
   });
 
-  it("leaves the source with a bare tombstone", async () => {
+  it("leaves the source with a tombstone bare of all but pending uploads", async () => {
     const source = await createIssue(A, "leaves nothing behind", "body");
     await req(`/projects/${A}/issues/${source.number}/comments`, author, {
       method: "POST",
@@ -668,13 +668,15 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
       db.select().from(comments).where(eq(comments.issueId, source.id)),
       db.select().from(attachments).where(eq(attachments.issueId, source.id)),
       db.select().from(issueReads).where(eq(issueReads.issueId, source.id)),
-      db
-        .select()
-        .from(pendingUploads)
-        .where(eq(pendingUploads.issueId, source.id)),
     ])) {
       expect(rows).toHaveLength(0);
     }
+    // Kept for the reaper: the ticket stays valid after the move (T-671).
+    const kept = await db
+      .select()
+      .from(pendingUploads)
+      .where(eq(pendingUploads.issueId, source.id));
+    expect(kept).toHaveLength(1);
     // Everything but the one event that says where the card went.
     const events = await db
       .select({ type: issueEvents.type })
