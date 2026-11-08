@@ -532,6 +532,29 @@ true|false` if a proxy setup confuses the detection.
 For SSE (`/api/projects/:slug/events`), response buffering must be off.
 Traefik and Caddy stream by default; nginx needs `proxy_buffering off`.
 
+### Cross-origin writes
+
+In every auth mode the server refuses a state-changing request (anything
+but GET, HEAD and OPTIONS) that a browser sent from another site's page,
+with 403 `cross_origin_request`. Requests carrying a Bearer token are
+exempt, so the CLI and agents are unaffected wherever they connect from.
+
+The browser's `Sec-Fetch-Site` header decides: `same-origin` and `none`
+pass, `same-site` and `cross-site` do not. The proxy must pass that header
+through, which every common proxy does by default. Browsers too old to send
+it fall back to `Origin`, whose host must be the request's `Host`, a
+trusted proxy's `X-Forwarded-Host`, or the host of `http.public_origin`. A
+proxy that rewrites `Host` without saying so therefore needs one of the
+other two for those browsers.
+
+Writes that name an `application/json` body must send it as
+`application/json`; any other content type is 415.
+
+A path-prefix mount shares its origin with everything else served on that
+host, so another application under the same origin counts as this
+deployment's own pages. Give todou its own hostname if those applications
+are not trusted with your users' sessions.
+
 ### Mounted under a subpath
 
 Serving the API under a path prefix (`https://todou.example/tracker/api/…`)
@@ -748,6 +771,15 @@ Two hard requirements, both enforced:
 - **the proxy must strip/overwrite the identity header on every route** —
   a client that can reach the backend port directly, or a proxy that
   passes the header through, is an impersonation hole.
+
+The proxy attaches the identity to whatever the browser sends it, so a
+request another site's page triggers arrives authenticated. todou refuses
+those writes itself (see [Cross-origin writes](#cross-origin-writes)),
+which covers proxies without any cookie, such as Tailscale serve. Still set
+the proxy's own session cookie to `SameSite=Lax` or `Strict`
+(oauth2-proxy: `--cookie-samesite=lax`): oauth2-proxy sets no SameSite by
+default, and the server-side check cannot help a browser that sends neither
+`Sec-Fetch-Site` nor `Origin`.
 
 The 401 messages keep the failure modes distinguishable. "Untrusted peer"
 (check `http.trusted_proxies`), "identity header missing" (the proxy must

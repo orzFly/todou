@@ -150,3 +150,26 @@ export function requestOrigin(c: RequestLike, config: Config): string {
     new URL(c.req.url).host;
   return `${requestProto(c, config)}://${host}`;
 }
+
+/**
+ * Every host this request may legitimately call its own: the declared
+ * public origin, a trusted proxy's X-Forwarded-Host and the Host header,
+ * all at once rather than requestOrigin's first match. A proxy that rewrites
+ * Host without saying so still leaves the declared origin, and a deployment
+ * that declares nothing still has the Host the browser sent. Lowercased,
+ * port kept, as URL.host renders them.
+ */
+export function selfHosts(c: RequestLike, config: Config): Set<string> {
+  const hosts = new Set<string>();
+  if (config.http.public_origin !== undefined) {
+    hosts.add(new URL(config.http.public_origin).host);
+  }
+  const forwardedHost = isTrustedRequest(c, config)
+    ? c.req.header("x-forwarded-host")
+    : undefined;
+  if (forwardedHost !== undefined) {
+    hosts.add(firstToken(forwardedHost).toLowerCase());
+  }
+  hosts.add((c.req.header("host") ?? new URL(c.req.url).host).toLowerCase());
+  return hosts;
+}

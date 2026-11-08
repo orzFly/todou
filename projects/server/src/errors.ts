@@ -42,6 +42,23 @@ export class ForbiddenError extends DomainError {
   }
 }
 
+/**
+ * A browser-borne state change that did not come from this deployment's own
+ * pages (T-620). A code of its own: "forbidden" would send the reader to
+ * check roles, which have nothing to do with it.
+ */
+export class CrossOriginRequestError extends DomainError {
+  constructor() {
+    super(
+      403,
+      "cross_origin_request",
+      "cross-origin request refused: a state-changing request from a browser " +
+        "must come from this deployment's own pages; scripts and tools " +
+        "authenticate with a Bearer token instead",
+    );
+  }
+}
+
 export class NotFoundError extends DomainError {
   constructor(message = "not found") {
     super(404, "not_found", message);

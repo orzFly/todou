@@ -14,6 +14,8 @@ import {
 } from "./middleware/body-limit.ts";
 import { canonicalSlugMiddleware } from "./middleware/canonical-slug.ts";
 import { compressMiddleware } from "./middleware/compress.ts";
+import { crossOriginGuard } from "./middleware/cross-origin.ts";
+import { jsonContentType } from "./middleware/json-content-type.ts";
 import { forwardedHeaderTrace } from "./middleware/proxy-trace.ts";
 import { activityRoutes } from "./routes/activity.ts";
 import { agentRoutes } from "./routes/agents.ts";
@@ -119,6 +121,13 @@ export function createApp(ctx: AppContext) {
   // basePath (rather than a prefixed mount) so the generated OpenAPI
   // document carries the /api prefix in its paths.
   const api = new OpenAPIHono<AppEnv>({ defaultHook }).basePath("/api");
+  // Both refuse on headers alone, so they go ahead of anything that reads
+  // the body — and ahead of /auth, whose login is a state change too (T-620).
+  api.use("*", crossOriginGuard(ctx.config));
+  api.use(
+    "*",
+    jsonContentType(() => app),
+  );
   // Body limits come before every route — including the unauthenticated
   // /auth ones — so nothing buffers an oversized request (T-70). The scoped
   // upload limits must register ahead of the API-wide JSON limit, which
