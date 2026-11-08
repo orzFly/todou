@@ -7,9 +7,15 @@ import {
   adoptUser,
   bindSubject,
   listUsers,
+  setInstanceAdmin,
   UserAdminError,
 } from "../src/services/user-admin.ts";
-import { makeRouter } from "./helpers.ts";
+import {
+  addUserWithToken,
+  makeRouter,
+  makeTestApp,
+  type TestApp,
+} from "./helpers.ts";
 
 let router: DbRouter;
 let db: Db;
@@ -217,5 +223,88 @@ describe("adoptUser", () => {
     });
     expect(result.into.oidcSubject).toBe("sub-new");
     expect(result.into.login).toBe("donor");
+  });
+});
+
+describe("setInstanceAdmin", () => {
+  it("promotes and demotes, reporting what is left", async () => {
+    const first = await insertUser({ login: "first", isInstanceAdmin: true });
+    const alice = await insertUser({ login: "alice" });
+
+    const up = await setInstanceAdmin(db, "alice", true);
+    expect(up).toMatchObject({ changed: true, admins: 2 });
+    expect((await rowById(alice.id)).isInstanceAdmin).toBe(true);
+
+    const down = await setInstanceAdmin(db, "first", false);
+    expect(down).toMatchObject({ changed: true, admins: 1 });
+    expect((await rowById(first.id)).isInstanceAdmin).toBe(false);
+  });
+
+  it("is a no-op on an account already in that state", async () => {
+    const alice = await insertUser({ login: "alice" });
+    const result = await setInstanceAdmin(db, "alice", false);
+    expect(result).toMatchObject({ changed: false, admins: 0 });
+    expect(await rowById(alice.id)).toEqual(alice);
+  });
+
+  it("refuses machines, disabled accounts and unknown logins", async () => {
+    await insertUser({ login: "bot", kind: "machine" });
+    await expect(setInstanceAdmin(db, "bot", true)).rejects.toThrow(
+      /machine account/,
+    );
+    await insertUser({ login: "gone", disabledAt: new Date() });
+    await expect(setInstanceAdmin(db, "gone", true)).rejects.toThrow(
+      /disabled/,
+    );
+    await expect(setInstanceAdmin(db, "nobody", true)).rejects.toThrow(
+      UserAdminError,
+    );
+  });
+
+  it("lets a disabled account be demoted", async () => {
+    const gone = await insertUser({
+      login: "gone",
+      isInstanceAdmin: true,
+      disabledAt: new Date(),
+    });
+    await setInstanceAdmin(db, "gone", false);
+    expect((await rowById(gone.id)).isInstanceAdmin).toBe(false);
+  });
+});
+
+describe("instance admin bit on a running app", () => {
+  let t: TestApp;
+
+  beforeEach(async () => {
+    t = await makeTestApp();
+  });
+
+  afterEach(() => t.cleanup());
+
+  it("opens and closes every private project on the next request", async () => {
+    const owner = {
+      cookie: await t.login(),
+      "content-type": "application/json",
+    };
+    const created = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: owner,
+      body: JSON.stringify({ slug: "secret", name: "secret" }),
+    });
+    expect(created.status).toBe(201);
+    const mallory = await addUserWithToken(t.ctx, "mallory");
+    const system = t.ctx.router.system();
+    const sees = async () => {
+      const res = await t.app.request("/api/projects/secret", {
+        headers: mallory.headers,
+      });
+      return res.status;
+    };
+
+    expect(await sees()).toBe(404);
+    await setInstanceAdmin(system, "mallory", true);
+    expect(await sees()).toBe(200);
+    await setInstanceAdmin(system, "mallory", false);
+    expect(await sees()).toBe(404);
   });
 });
