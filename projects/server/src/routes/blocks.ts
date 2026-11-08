@@ -26,7 +26,9 @@ const addDescription =
   "replays. The answer carries every edge this card has in this direction, " +
   "not only the new one. An issue may not block itself (422); a far end in " +
   "the trash or mid-move takes no new edge (409); longer cycles are " +
-  "allowed, and show up as the cards involved all reading as blocked.";
+  "allowed, and show up as the cards involved all reading as blocked. A " +
+  "far end you are making wait needs `issue.block` in its own project " +
+  "(403); a far end you are only waiting on has to be readable, no more.";
 
 const removeDescription =
   "The edge must belong to this card, on this side of it: a `blocked-by` " +

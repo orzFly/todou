@@ -17,7 +17,9 @@
 
 import type { AgentContext, BlockRef, ChangeEvent } from "@todou/shared";
 import {
+  can,
   formatRef,
+  minRoleOf,
   parseInternalHref,
   parseRefLocator,
   resolveClaim,
@@ -35,6 +37,7 @@ import {
 import { issueBlocks, projects } from "../db/system-schema.ts";
 import {
   BlockSelfError,
+  ForbiddenError,
   IssueNotReferenceableError,
   NotFoundError,
 } from "../errors.ts";
@@ -198,8 +201,11 @@ async function namedProject(
  * the section is what the caller does next, and one edge would only make it
  * ask again.
  *
- * The gate is `issue.block` on the card the route names. The far end needs
- * nothing beyond being readable, which resolving it already proves.
+ * The gate is `issue.block` on the card the route names, and again on the
+ * far project when the far card is the one being blocked (T-663): whether a
+ * card waits is that card's project's state, so a writer elsewhere must not
+ * be able to set it for someone who is only a reader there. A far blocker
+ * needs nothing beyond being readable, which resolving it already proves.
  */
 export async function addIssueBlock(
   ctx: AppContext,
@@ -212,6 +218,18 @@ export async function addIssueBlock(
 ): Promise<BlockSets> {
   const { project, card } = await writableCard(ctx, actor, slug, number);
   const target = await resolveBlockTarget(ctx, actor, project, ref);
+  if (direction === "blocks" && target.projectId !== project.id) {
+    const far = await findProjectByRef(ctx, String(target.projectId));
+    if (far === null) throw new NotFoundError("issue not found");
+    // Named, because the caller already holds `issue.block` on the card in
+    // the URL and the catalog's own wording would read as a contradiction.
+    if (!can(await projectRoleOf(ctx, far.project, actor), "issue.block")) {
+      throw new ForbiddenError(
+        `requires ${minRoleOf("issue.block")} role in ${far.project.slug} ` +
+          "to block its cards (issue.block)",
+      );
+    }
+  }
   await addBlock(
     ctx,
     actor,

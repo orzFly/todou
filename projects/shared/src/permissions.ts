@@ -108,7 +108,8 @@ export const CAPABILITIES = [
   // deliberately not `ownerOnly`: saying "this one waits for that one" is an
   // orchestrator's move over other people's cards, so a gate scoped to your
   // own rows would refuse exactly the caller it exists for. Judged on the
-  // card the route names — the far end only has to be readable.
+  // card the route names, and on the blocked card's project as well when
+  // that is the far end (T-663) — a far blocker only has to be readable.
   { id: "issue.block", minRole: "writer", enforce: "gate" },
 
   { id: "comment.read", minRole: "reader", enforce: "addressed" },
