@@ -46,7 +46,7 @@ jobs:
 
   # A correctness check rather than an artifact build, so it runs on the same
   # events as `checks`. No fetch-depth: the nix version string comes from
-  # inputs.self.shortRev, which needs no tags.
+  # inputs.self.rev, which needs no tags.
   nix:
     runs-on: ubuntu-24.04
     steps:

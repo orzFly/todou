@@ -128,6 +128,18 @@ if [ -f $(rq "$DEPLOY_SCRIPT") ]; then
     *) echo \"note: $DEPLOY_SCRIPT has no cli-dist activation step - this drop\
  will stay staged (see docs/deploy.md, Updating)\" ;;
   esac
+  # Fatal, unlike the note above: when each side picks its own abbreviation
+  # length, deploy.sh refuses this drop as staged for another commit, so it is
+  # better stopped before the build than left on the host to be refused. Line by
+  # line, because a script fixed at TARGET but not at DEPLOYED only fails after
+  # the restart.
+  while IFS= read -r line; do
+    case \"\$line\" in
+      *'git describe'*--abbrev=9*) ;;
+      *'git describe'*) echo \"missing: --abbrev=9 in $DEPLOY_SCRIPT's git describe\
+ (see docs/deploy.md, Updating)\"; break ;;
+    esac
+  done < $(rq "$DEPLOY_SCRIPT")
 fi"
 fi
 
@@ -159,7 +171,7 @@ fi
 
 VERSION="${TODOU_BUILD_VERSION:-}"
 if [ -z "$VERSION" ]; then
-  VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+  VERSION="$(git describe --tags --always --abbrev=9 --dirty 2>/dev/null || echo unknown)"
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/todou-push-cli.XXXXXX")"
@@ -291,7 +303,7 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 deployed=""
-deployed="$(ssh "$HOST" "git -C $(rq "$CHECKOUT") describe --tags --always")" || deployed=""
+deployed="$(ssh "$HOST" "git -C $(rq "$CHECKOUT") describe --tags --always --abbrev=9")" || deployed=""
 served=""
 # Connections are refused until the restarted server listens; only the last
 # attempt's error says anything.

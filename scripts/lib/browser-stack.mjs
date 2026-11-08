@@ -41,9 +41,13 @@ function commandOutput(command, args, options = {}) {
 
 function sourceVersion(root) {
   try {
-    return commandOutput("git", ["describe", "--tags", "--always", "--dirty"], {
-      cwd: root,
-    });
+    return commandOutput(
+      "git",
+      ["describe", "--tags", "--always", "--abbrev=9", "--dirty"],
+      {
+        cwd: root,
+      },
+    );
   } catch {
     return "unknown";
   }

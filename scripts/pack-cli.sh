@@ -22,7 +22,7 @@ command -v zstd >/dev/null || {
 
 VERSION="${TODOU_BUILD_VERSION:-}"
 if [ -z "$VERSION" ]; then
-  VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+  VERSION="$(git describe --tags --always --abbrev=9 --dirty 2>/dev/null || echo unknown)"
 fi
 
 # name:os:arch:kind:runtime — the five names are build-cli.sh's own contract.

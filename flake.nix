@@ -23,11 +23,13 @@
           common = import ./.nix/common.nix { inherit pkgs; };
 
           # `git describe` needs tags, which a flake does not carry, so
-          # package.json's version is the base. The result — 0.3.1-g76a0a88 —
+          # package.json's version is the base. The result — 0.3.1-g76a0a88c4 —
           # is deliberately distinguishable from build-cli.sh's
-          # v0.3.1-65-g76a0a88, so the string says which build produced it.
+          # v0.3.1-65-g76a0a88c4, so the string says which build produced it.
           version = "${(pkgs.lib.importJSON ./package.json).version}-g${
-            inputs.self.shortRev or inputs.self.dirtyShortRev or "unknown"
+            if inputs.self ? rev then builtins.substring 0 9 inputs.self.rev
+            else if inputs.self ? dirtyRev then "${builtins.substring 0 9 inputs.self.dirtyRev}-dirty"
+            else "unknown"
           }";
 
           # projects/server and projects/web are left out: the CLI's only

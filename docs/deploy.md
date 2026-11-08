@@ -204,7 +204,10 @@ remote home, or whatever `--deploy-script` names — and warns when it carries
 no `cli-dist` activation step. That host takes the upload and then never
 swaps it in, so `/api/cli` goes on serving the previous build; a stale
 manifest answers exactly like a current one, and without this warning
-nothing in the pipeline is in a position to notice.
+nothing in the pipeline is in a position to notice. A `git describe` in that
+script without `--abbrev=9` is fatal instead: the host would compute the
+version with its own abbreviation length and refuse the drop as staged for
+another commit.
 
 `--activate` performs the swap, the restart and the version check from here
 instead, for a CLI refresh with no deploy behind it — it additionally wants
@@ -381,7 +384,7 @@ fi
 # Fetched rather than pulled, so the drop can be judged against the commit this
 # run is about to move to while the checkout is still untouched.
 git fetch origin
-TARGET="$(git describe --tags --always origin/master)"
+TARGET="$(git describe --tags --always --abbrev=9 origin/master)"
 
 # Refuse before anything moves. A deploy with no drop for TARGET succeeds at
 # everything it was asked to do and still leaves /api/cli handing out an older
@@ -432,7 +435,7 @@ systemctl --user restart todou
 # The check before the build read a manifest; this one asks the process that
 # had to boot on it. cli-dist.old outlives the restart for exactly this window.
 if [ "$CLI" = 1 ]; then
-  DEPLOYED="$(git describe --tags --always)"
+  DEPLOYED="$(git describe --tags --always --abbrev=9)"
   SERVED=""
   # The server needs a few seconds to listen after the restart, so refused
   # connections are expected here; only the last attempt's error is worth showing.

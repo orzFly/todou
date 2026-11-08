@@ -6,10 +6,10 @@ WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile --filter '@todou/web...'
 # The context excludes .git (.dockerignore), so the version arrives as a build
-# arg: docker.yaml passes `git describe --tags --always --dirty`; a local
-# build may pass the same or accept "unknown" in the footer. Declared after
-# the install so version churn never busts that layer's cache. ARG doubles as
-# the env var vite reads.
+# arg: docker.yaml passes `git describe --tags --always --abbrev=9 --dirty`; a
+# local build may pass the same or accept "unknown" in the footer. Declared
+# after the install so version churn never busts that layer's cache. ARG
+# doubles as the env var vite reads.
 ARG TODOU_BUILD_VERSION=""
 RUN pnpm --filter @todou/web build
 

@@ -25,7 +25,7 @@ jobs:
       # catches a release cut without bumping the five package.json files.
       - name: Assert tag, tree and manifests agree
         run: |
-          [ "$(git describe --tags --always --dirty)" = "$GITHUB_REF_NAME" ]
+          [ "$(git describe --tags --always --abbrev=9 --dirty)" = "$GITHUB_REF_NAME" ]
           v="${GITHUB_REF_NAME#v}"
           for f in package.json projects/*/package.json; do
             [ "$(node -p "require('./$f').version")" = "$v" ]

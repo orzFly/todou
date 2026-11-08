@@ -42,7 +42,7 @@ jobs:
           platform="${{ matrix.platform }}"
           echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
           echo "REGISTRY_IMAGE=$(scripts/docker-image-ref.sh)" >> "$GITHUB_ENV"
-          echo "TODOU_BUILD_VERSION=$(git describe --tags --always --dirty)" >> "$GITHUB_ENV"
+          echo "TODOU_BUILD_VERSION=$(git describe --tags --always --abbrev=9 --dirty)" >> "$GITHUB_ENV"
       # Tags come from the merge job; this instance only supplies the OCI
       # labels, which have to be baked in at build time.
       - id: meta
@@ -92,6 +92,8 @@ jobs:
           merge-multiple: true
       - id: meta
         uses: docker/metadata-action@v6
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 9
         with:
           images: ${{ env.REGISTRY_IMAGE }}
           # In the date tag the timestamp leads, zero-padded and UTC, so that
@@ -101,7 +103,8 @@ jobs:
           # dispatching an older ref reproduces the earlier tag instead of
           # stamping today onto old code. Its priority stays at raw's default
           # 200 — under edge's 700 and semver's 900 — to keep the `version`
-          # output, and the OCI version label, off the timestamp.
+          # output, and the OCI version label, off the timestamp. Its sha, like
+          # `sha-*`, is as long as the one in TODOU_BUILD_VERSION (T-672).
           tags: |
             type=edge,branch=master
             type=semver,pattern={{version}}

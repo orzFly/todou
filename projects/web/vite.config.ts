@@ -16,7 +16,7 @@ function buildVersion(): string {
   try {
     const out = execFileSync(
       "git",
-      ["describe", "--tags", "--always", "--dirty"],
+      ["describe", "--tags", "--always", "--abbrev=9", "--dirty"],
       {
         cwd: fileURLToPath(new URL(".", import.meta.url)),
         stdio: ["ignore", "pipe", "ignore"],

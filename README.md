@@ -273,9 +273,10 @@ the proxy variables and the colour variables all pass through.
 `bin/`, and the caller supplies a node-compatible runtime — the behaviour of
 that combination is not something this project promises.
 
-The version string is `0.3.1-g<shortRev>` rather than the release builds'
-`v0.3.1-65-g<shortRev>`, because a flake carries no tags: seeing which form a
-binary prints tells you which build produced it.
+The version string is `0.3.1-g<sha>` rather than the release builds'
+`v0.3.1-65-g<sha>`, because a flake carries no tags: seeing which form a
+binary prints tells you which build produced it. Both forms take the first 9
+characters of the commit hash.
 
 ### Production
 

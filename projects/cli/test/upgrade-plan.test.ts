@@ -87,6 +87,14 @@ describe("version order", () => {
     expect(isNewer("v0.6.5", "2cc59bb")).toBe(true);
     expect(isNewer("2cc59bb", "v0.6.5")).toBe(false);
   });
+
+  it("treats one commit abbreviated to different lengths as the same version", () => {
+    expect(compareVersions("v0.6.5-12-g2cc59bb1", "v0.6.5-12-g2cc59bb")).toBe(
+      0,
+    );
+    expect(isNewer("v0.6.5-12-g2cc59bb1", "v0.6.5-12-g2cc59bb")).toBe(false);
+    expect(isNewer("v0.6.5-12-g2cc59bb", "v0.6.5-12-g2cc59bb1")).toBe(false);
+  });
 });
 
 describe("the T-570 decision table, --from auto", () => {

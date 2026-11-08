@@ -9,15 +9,15 @@ heavy lifting.
 One command is the whole rule, everywhere:
 
 ```bash
-git describe --tags --always --dirty
+git describe --tags --always --abbrev=9 --dirty
 ```
 
 | Form | Example | When |
 |---|---|---|
 | release | `v0.2.0` | exactly on a tag, clean tree |
-| everyday | `v0.1.0-49-g79b2ac8` | 49 commits past the tag, short sha |
+| everyday | `v0.1.0-49-g79b2ac8e1` | 49 commits past the tag, short sha |
 | local changes | `…-dirty` | uncommitted tracked edits (they *do* enter local builds) |
-| no tag reachable | `79b2ac8` | shallow or tagless clones |
+| no tag reachable | `79b2ac8e1` | shallow or tagless clones |
 | nothing available | `unknown` | no build injection and no git at runtime |
 
 Git tags are the single source of truth. The five `package.json` versions are

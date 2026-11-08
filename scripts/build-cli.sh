@@ -38,7 +38,7 @@ windows-amd64:x86_64-pc-windows-msvc
 # builds where git cannot answer — the docker stage has no .git and no git.
 VERSION="${TODOU_BUILD_VERSION:-}"
 if [ -z "$VERSION" ]; then
-  VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+  VERSION="$(git describe --tags --always --abbrev=9 --dirty 2>/dev/null || echo unknown)"
 fi
 
 rm -rf "$OUT"
