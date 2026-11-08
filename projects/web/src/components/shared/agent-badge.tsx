@@ -3,7 +3,7 @@ import { Bot } from "lucide-react";
 import type { CSSProperties } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { harnessMeta } from "@/lib/harness";
+import { harnessMeta, sessionCopy } from "@/lib/harness";
 import { cn } from "@/lib/utils";
 
 /* FNV-1a over the full session id: one-char differences must land on
@@ -74,7 +74,8 @@ export function AgentContextBadge({
     className,
   );
 
-  if (!sessionId) {
+  const copy = sessionId ? sessionCopy(context.agent, sessionId) : null;
+  if (!sessionId || !copy) {
     return (
       <Badge
         variant="secondary"
@@ -87,9 +88,7 @@ export function AgentContextBadge({
     );
   }
 
-  const resume = harnessMeta(context.agent)?.resume;
-  const copyText = resume ? resume(sessionId) : sessionId;
-  const copyLabel = resume ? "the resume command" : "the session id";
+  const { text: copyText, label: copyLabel } = copy;
   return (
     <Badge
       variant="secondary"
