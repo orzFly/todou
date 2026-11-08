@@ -1,5 +1,9 @@
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
 import { type Readable, Writable } from "node:stream";
@@ -8,40 +12,116 @@ import { type Clock, systemClock } from "./clock.ts";
 import { CliError } from "./errors.ts";
 
 /**
+ * Tells the web page this listener takes the token as a form POST. A page
+ * that predates the flag ignores it and keeps navigating with the token in
+ * the query, which is still accepted (T-634).
+ */
+export const POST_DELIVERY_PARAM = ["delivery", "post"] as const;
+
+const LOGGED_IN_PAGE =
+  '<!doctype html><meta charset="utf-8"><title>todou</title>' +
+  '<body style="font-family: system-ui; text-align: center; padding-top: 4rem">' +
+  "<h1>🥔 Logged in</h1><p>You can close this page and return to the terminal.</p>";
+
+/** Far above any token and state; a local client must not make us buffer without end. */
+const MAX_FORM_BYTES = 8 * 1024;
+
+function readForm(req: IncomingMessage): Promise<URLSearchParams | null> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_FORM_BYTES) {
+        req.removeAllListeners("data");
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () =>
+      resolve(new URLSearchParams(Buffer.concat(chunks).toString("utf8"))),
+    );
+    req.on("error", () => resolve(null));
+  });
+}
+
+/**
  * One-shot loopback listener for the browser's token delivery. Requests with
  * a wrong state or missing token get a 400 and the wait continues — a stray
  * or hostile local request must not consume the pending login.
+ *
+ * A delivery is answered with a redirect to `/done`, so the address the
+ * browser settles on — and keeps in its history — carries no token (T-634).
+ * The login completes once `/done` is served, or after `doneGraceMs` for a
+ * browser that never follows: closing the listener before then would leave
+ * the browser on a connection error instead of the confirmation.
  */
 export function waitForCallback(options: {
   state: string;
   timeoutMs: number;
+  doneGraceMs?: number;
   onListening: (port: number) => void;
 }): Promise<string> {
   return new Promise((resolve, reject) => {
+    let received: string | null = null;
+    let grace: ReturnType<typeof setTimeout> | undefined;
     const finish = (settle: () => void) => {
       clearTimeout(timer);
+      clearTimeout(grace);
       server.close();
       settle();
     };
-    const server = createServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      const token = url.searchParams.get("token");
+    const refuse = (res: ServerResponse) => {
+      res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+      res.end("invalid callback\n");
+    };
+    const accept = (
+      res: ServerResponse,
+      status: 302 | 303,
+      fields: URLSearchParams,
+    ) => {
+      const token = fields.get("token");
       if (
-        url.pathname !== "/callback" ||
-        url.searchParams.get("state") !== options.state ||
+        received !== null ||
+        fields.get("state") !== options.state ||
         !token
       ) {
-        res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
-        res.end("invalid callback\n");
+        refuse(res);
         return;
       }
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(
-        '<!doctype html><meta charset="utf-8"><title>todou</title>' +
-          '<body style="font-family: system-ui; text-align: center; padding-top: 4rem">' +
-          "<h1>🥔 Logged in</h1><p>You can close this page and return to the terminal.</p>",
+      received = token;
+      clearTimeout(timer);
+      grace = setTimeout(
+        () => finish(() => resolve(token)),
+        options.doneGraceMs ?? 5_000,
       );
-      finish(() => resolve(token));
+      res.writeHead(status, { location: "/done" });
+      res.end();
+    };
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/callback" && req.method === "GET") {
+        accept(res, 302, url.searchParams);
+      } else if (url.pathname === "/callback" && req.method === "POST") {
+        // 303, not 302: the follow-up must be a GET that cannot re-submit.
+        void readForm(req).then((form) =>
+          form ? accept(res, 303, form) : refuse(res),
+        );
+      } else if (
+        url.pathname === "/done" &&
+        req.method === "GET" &&
+        received !== null
+      ) {
+        const token = received;
+        res.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          connection: "close",
+        });
+        res.end(LOGGED_IN_PAGE, () => finish(() => resolve(token)));
+      } else {
+        refuse(res);
+      }
     });
     const timer = setTimeout(() => {
       finish(() =>

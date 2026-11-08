@@ -20,6 +20,7 @@ import { CliError, reportError } from "../errors.ts";
 import { detectAgentContext } from "../harness/index.ts";
 import {
   openBrowser,
+  POST_DELIVERY_PARAM,
   pollForApproval,
   promptHidden,
   waitForCallback,
@@ -212,6 +213,7 @@ export class LoginCommand extends Command<CliContext> {
         url.searchParams.set("port", String(port));
         url.searchParams.set("state", state);
         url.searchParams.set("name", this.tokenName());
+        url.searchParams.set(...POST_DELIVERY_PARAM);
         this.context.stderr.write(
           `Authorize the CLI in your browser:\n  ${url}\n`,
         );

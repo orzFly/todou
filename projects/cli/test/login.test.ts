@@ -46,24 +46,122 @@ const callTo = (calls: Captured[], path: string): Captured | undefined =>
   calls.find((call) => new URL(call.url, "http://stub.test").pathname === path);
 
 describe("waitForCallback", () => {
-  it("resolves the token and rejects wrong states without giving up", async () => {
-    const token = await waitForCallback({
-      state: "good-state",
-      timeoutMs: 10_000,
-      onListening: (port) => {
-        void (async () => {
-          const bad = await fetch(
-            `http://127.0.0.1:${port}/callback?token=stolen&state=evil`,
-          );
-          expect(bad.status).toBe(400);
-          const good = await fetch(
-            `http://127.0.0.1:${port}/callback?token=todou_pat_ok&state=good-state`,
-          );
-          expect(good.status).toBe(200);
-          expect(await good.text()).toContain("close this page");
-        })();
-      },
+  /** What a browser does with the answer: no auto-follow, so the hop is visible. */
+  const send = (url: string, init?: RequestInit) =>
+    fetch(url, { redirect: "manual", ...init });
+  const post = (url: string, fields: Record<string, string>) =>
+    send(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields).toString(),
     });
+
+  /**
+   * Runs one listener through `script` and returns what it resolved with,
+   * or the error it rejected with. Assertions inside `script` that fail
+   * surface as that error instead of an unhandled rejection.
+   */
+  async function listen(
+    script: (base: string) => Promise<void>,
+    doneGraceMs = 10_000,
+  ): Promise<string> {
+    let scripted: Promise<void> = Promise.resolve();
+    let fail: (error: unknown) => void = () => {};
+    const failed = new Promise<never>((_, reject) => {
+      fail = reject;
+    });
+    const token = await Promise.race([
+      waitForCallback({
+        state: "good-state",
+        timeoutMs: 10_000,
+        doneGraceMs,
+        onListening: (port) => {
+          scripted = script(`http://127.0.0.1:${port}`);
+          scripted.catch(fail);
+        },
+      }),
+      failed,
+    ]);
+    await scripted;
+    return token;
+  }
+
+  // An old web page, or any page without the flag: the token arrives in the
+  // query. The answer must move the browser off that address (T-634).
+  it("takes a GET delivery and redirects to an address without the token", async () => {
+    const token = await listen(async (base) => {
+      const bad = await send(`${base}/callback?token=stolen&state=evil`);
+      expect(bad.status).toBe(400);
+      const good = await send(
+        `${base}/callback?token=todou_pat_ok&state=good-state`,
+      );
+      expect(good.status).toBe(302);
+      const location = good.headers.get("location") ?? "";
+      expect(location).not.toContain("todou_pat_ok");
+      expect(location).not.toContain("state");
+      const done = await send(new URL(location, base).toString());
+      expect(done.status).toBe(200);
+      expect(await done.text()).toContain("close this page");
+    });
+    expect(token).toBe("todou_pat_ok");
+  });
+
+  it("takes a POST delivery and redirects to an address without the token", async () => {
+    const token = await listen(async (base) => {
+      const bad = await post(`${base}/callback`, {
+        token: "stolen",
+        state: "evil",
+      });
+      expect(bad.status).toBe(400);
+      // The state belongs in the body; a query copy does not stand in for it.
+      const split = await post(`${base}/callback?state=good-state`, {
+        token: "stolen",
+      });
+      expect(split.status).toBe(400);
+      const good = await post(`${base}/callback`, {
+        token: "todou_pat_ok",
+        state: "good-state",
+      });
+      expect(good.status).toBe(303);
+      const location = good.headers.get("location") ?? "";
+      expect(location).not.toContain("todou_pat_ok");
+      const done = await send(new URL(location, base).toString());
+      expect(done.status).toBe(200);
+      expect(await done.text()).toContain("close this page");
+    });
+    expect(token).toBe("todou_pat_ok");
+  });
+
+  it("refuses a second delivery once one has landed", async () => {
+    const token = await listen(async (base) => {
+      const first = await send(
+        `${base}/callback?token=todou_pat_ok&state=good-state`,
+      );
+      expect(first.status).toBe(302);
+      const second = await post(`${base}/callback`, {
+        token: "todou_pat_late",
+        state: "good-state",
+      });
+      expect(second.status).toBe(400);
+      await send(`${base}/done`);
+    });
+    expect(token).toBe("todou_pat_ok");
+  });
+
+  it("does not answer /done before a token arrived", async () => {
+    const token = await listen(async (base) => {
+      expect((await send(`${base}/done`)).status).toBe(400);
+      await send(`${base}/callback?token=todou_pat_ok&state=good-state`);
+      await send(`${base}/done`);
+    });
+    expect(token).toBe("todou_pat_ok");
+  });
+
+  // A browser that never follows the redirect must not hold the login hostage.
+  it("completes after the grace period when /done is never fetched", async () => {
+    const token = await listen(async (base) => {
+      await send(`${base}/callback?token=todou_pat_ok&state=good-state`);
+    }, 20);
     expect(token).toBe("todou_pat_ok");
   });
 
@@ -638,6 +736,10 @@ describe("todou login (browser flow)", () => {
     expect(result.stderr).toContain("state=");
     expect(result.stderr).toContain("login timed out");
     expect(opened[0]).toContain("http://stub.test/cli-auth?port=");
+    // Tells the page this listener takes the token as a form POST (T-634).
+    expect(
+      new URL(opened[0] ?? "http://x.test").searchParams.get("delivery"),
+    ).toBe("post");
   });
 
   it("prints and opens the public address, the same URL both times", async () => {

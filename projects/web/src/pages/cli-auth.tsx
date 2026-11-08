@@ -29,7 +29,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { classifyReadFailure } from "@/lib/http-status.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 
-export type CliAuthRequest = { port: number; state: string; name: string };
+export type CliAuthRequest = {
+  port: number;
+  state: string;
+  name: string;
+  /** The CLI's listener takes a form POST; an older one only reads the query. */
+  post?: boolean;
+};
 
 /**
  * Two ways in, and they never mix: the loopback link a same-machine login
@@ -60,14 +66,57 @@ export function parseCliAuthSearch(
     typeof search.name === "string" && search.name.trim() !== ""
       ? search.name
       : "todou CLI";
-  return { kind: "loopback", port, state, name: name.slice(0, 100) };
+  return {
+    kind: "loopback",
+    port,
+    state,
+    name: name.slice(0, 100),
+    post: search.delivery === "post",
+  };
 }
 
-export function callbackUrl(request: CliAuthRequest, token: string): string {
+export type CallbackDelivery =
+  | { method: "GET"; url: string }
+  | { method: "POST"; url: string; fields: { token: string; state: string } };
+
+/**
+ * A token in the query outlives the login in the browser's history and its
+ * sync (T-634), so it travels there only to a CLI that cannot read a POST.
+ */
+export function callbackDelivery(
+  request: CliAuthRequest,
+  token: string,
+): CallbackDelivery {
   const url = new URL(`http://127.0.0.1:${request.port}/callback`);
+  if (request.post) {
+    return {
+      method: "POST",
+      url: url.toString(),
+      fields: { token, state: request.state },
+    };
+  }
   url.searchParams.set("token", token);
   url.searchParams.set("state", request.state);
-  return url.toString();
+  return { method: "GET", url: url.toString() };
+}
+
+export function deliverToLoopback(delivery: CallbackDelivery) {
+  if (delivery.method === "GET") {
+    window.location.assign(delivery.url);
+    return;
+  }
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = delivery.url;
+  for (const [name, value] of Object.entries(delivery.fields)) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.append(input);
+  }
+  document.body.append(form);
+  form.submit();
 }
 
 async function mintToken(
@@ -116,7 +165,7 @@ export function CliAuthCard({
   onCancel,
   mint = mintToken,
   refreshFailure,
-  deliver = (url) => window.location.assign(url),
+  deliver = deliverToLoopback,
 }: {
   request: CliAuthRequest;
   me: Me;
@@ -129,7 +178,7 @@ export function CliAuthCard({
     target: AuthTarget,
     tokenName: string,
   ) => Promise<{ token: string; agentId?: number }>;
-  deliver?: (url: string) => void;
+  deliver?: (delivery: CallbackDelivery) => void;
 }) {
   const picker = useTargetSelection(agents, lastAgentId);
 
@@ -138,7 +187,7 @@ export function CliAuthCard({
     onSuccess: (minted, target) => {
       const agentId = target.kind === "agent" ? target.id : minted.agentId;
       if (agentId !== undefined) rememberLastAgent(agentId);
-      deliver(callbackUrl(request, minted.token));
+      deliver(callbackDelivery(request, minted.token));
     },
   });
 

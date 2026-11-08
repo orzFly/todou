@@ -17,7 +17,8 @@ import {
   CliAuthCard,
   CliAuthCodeCard,
   CliAuthPage,
-  callbackUrl,
+  callbackDelivery,
+  deliverToLoopback,
   parseCliAuthSearch,
 } from "../src/pages/cli-auth.tsx";
 import { safeRedirect } from "../src/pages/login.tsx";
@@ -79,6 +80,7 @@ describe("parseCliAuthSearch", () => {
       port: 4321,
       state: "abc",
       name: "todou CLI",
+      post: false,
     });
     expect(
       parseCliAuthSearch({ port: "4321", state: "abc", name: "cli @ bot-one" }),
@@ -87,7 +89,17 @@ describe("parseCliAuthSearch", () => {
       port: 4321,
       state: "abc",
       name: "cli @ bot-one",
+      post: false,
     });
+  });
+
+  it("reads the POST flag only when the CLI announced it", () => {
+    expect(
+      parseCliAuthSearch({ port: 4321, state: "abc", delivery: "post" }),
+    ).toMatchObject({ kind: "loopback", post: true });
+    expect(
+      parseCliAuthSearch({ port: 4321, state: "abc", delivery: "get" }),
+    ).toMatchObject({ kind: "loopback", post: false });
   });
 
   it("rejects bad ports and missing state", () => {
@@ -117,11 +129,59 @@ describe("parseCliAuthSearch", () => {
   });
 });
 
-describe("callbackUrl", () => {
-  it("targets loopback with encoded token and state", () => {
+describe("callbackDelivery", () => {
+  // An older CLI announces nothing and only reads the query.
+  it("puts the token in the query for a CLI without the flag", () => {
     expect(
-      callbackUrl({ port: 4321, state: "a b", name: "n" }, "todou_pat_x/y"),
-    ).toBe("http://127.0.0.1:4321/callback?token=todou_pat_x%2Fy&state=a+b");
+      callbackDelivery(
+        { port: 4321, state: "a b", name: "n" },
+        "todou_pat_x/y",
+      ),
+    ).toEqual({
+      method: "GET",
+      url: "http://127.0.0.1:4321/callback?token=todou_pat_x%2Fy&state=a+b",
+    });
+  });
+
+  it("keeps the token out of the address for a CLI that takes a POST", () => {
+    const delivery = callbackDelivery(
+      { port: 4321, state: "a b", name: "n", post: true },
+      "todou_pat_x/y",
+    );
+    expect(delivery).toEqual({
+      method: "POST",
+      url: "http://127.0.0.1:4321/callback",
+      fields: { token: "todou_pat_x/y", state: "a b" },
+    });
+  });
+});
+
+describe("deliverToLoopback", () => {
+  it("submits a POST delivery as a form carrying token and state", () => {
+    const submitted: HTMLFormElement[] = [];
+    const submit = vi
+      .spyOn(HTMLFormElement.prototype, "submit")
+      .mockImplementation(function (this: HTMLFormElement) {
+        submitted.push(this);
+      });
+    try {
+      deliverToLoopback({
+        method: "POST",
+        url: "http://127.0.0.1:4321/callback",
+        fields: { token: "todou_pat_x", state: "s3cret" },
+      });
+    } finally {
+      submit.mockRestore();
+    }
+    expect(submitted).toHaveLength(1);
+    const form = submitted[0] as HTMLFormElement;
+    expect(form.method.toUpperCase()).toBe("POST");
+    expect(form.action).toBe("http://127.0.0.1:4321/callback");
+    expect(Object.fromEntries(new FormData(form))).toEqual({
+      token: "todou_pat_x",
+      state: "s3cret",
+    });
+    form.remove();
   });
 });
 
@@ -175,10 +235,33 @@ describe("CliAuthCard", () => {
     fireEvent.click(getByRole("button", { name: "Authorize" }));
     await waitFor(() => expect(deliver).toHaveBeenCalledTimes(1));
     expect(mint).toHaveBeenCalledWith({ kind: "agent", id: 7 }, "cli @ test");
-    expect(deliver).toHaveBeenCalledWith(
-      "http://127.0.0.1:4321/callback?token=todou_pat_minted&state=s3cret",
-    );
+    expect(deliver).toHaveBeenCalledWith({
+      method: "GET",
+      url: "http://127.0.0.1:4321/callback?token=todou_pat_minted&state=s3cret",
+    });
     expect(readLastAgentId()).toBe(7);
+  });
+
+  it("posts the token to a CLI that announced it takes a POST", async () => {
+    const mint = vi.fn().mockResolvedValue({ token: "todou_pat_minted" });
+    const deliver = vi.fn();
+    const { getByRole } = renderWithQuery(
+      <CliAuthCard
+        request={{ ...request, post: true }}
+        me={me}
+        agents={[agent(7, "bot-one")]}
+        onCancel={() => {}}
+        mint={mint}
+        deliver={deliver}
+      />,
+    );
+    fireEvent.click(getByRole("button", { name: "Authorize" }));
+    await waitFor(() => expect(deliver).toHaveBeenCalledTimes(1));
+    expect(deliver).toHaveBeenCalledWith({
+      method: "POST",
+      url: "http://127.0.0.1:4321/callback",
+      fields: { token: "todou_pat_minted", state: "s3cret" },
+    });
   });
 
   it("preselects the remembered agent and hides disabled ones", () => {
