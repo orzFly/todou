@@ -633,8 +633,33 @@ lowercase letters, digits, dashes). Accounts are matched by the IdP's
 name, never proof of owning an existing account, so it never matches
 one. Unknown subjects are auto-created when `auto_create` is on, with
 the username as the login; a taken login (human or machine alike) gets
-a random `-xxxx` suffix instead. The first created human becomes
-instance admin.
+a random `-xxxx` suffix instead.
+
+#### The first sign-in becomes instance admin
+
+On a database with no human accounts yet, the first account created
+becomes instance admin: implicitly admin of every project, private ones
+included, and able to manage every agent. That is whoever completes a
+sign-in first, and nothing ties it to the operator — on an IdP that
+lets other people in (a public provider such as Google, open
+registration, a shared tenant), anyone who reaches a freshly started
+deployment before you do takes the bit, and with it every project you
+create afterwards.
+
+So on a new deployment:
+
+1. Sign in yourself before the deployment is reachable by anyone else,
+   or before the IdP admits anyone but you.
+2. Check `todou-server user list`: the `admin` column should name your
+   account and nobody else.
+3. Only then open the IdP or the deployment up.
+
+`todou-server user promote <login>` grants the bit and
+`todou-server user demote <login>` revokes it, effective from that
+account's next request; stop the server first on PGlite. Demoting keeps
+the project memberships the account holds in its own right. A
+deployment migrated from `single` mode already has its admin (the
+builtin account), so no sign-in becomes one.
 
 Discovery publishes one set of addresses, but two different parties
 dial them. The browser is sent to `authorization_endpoint`, and
@@ -789,7 +814,9 @@ address the server observed is written to the server log only — it may
 belong to another reverse proxy, so it never appears in a response.
 
 Provisioning follows the same rules as oidc (subject keying, auto-create
-with suffixing, first-human-is-admin): the header value doubles as the
+with suffixing, and [the first sign-in becomes instance
+admin](#the-first-sign-in-becomes-instance-admin) — here any request the
+proxy authenticates counts as one): the header value doubles as the
 stored subject, so renaming a login inside todou never detaches the
 identity. One caveat comes with that: an ex-single-mode builtin account
 is tracked by the sentinel subject `builtin`, which is also a valid

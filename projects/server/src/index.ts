@@ -22,6 +22,7 @@ import {
   adoptUser,
   bindSubject,
   listUsers,
+  setInstanceAdmin,
   UserAdminError,
 } from "./services/user-admin.ts";
 import { FsStorage } from "./storage/fs.ts";
@@ -492,6 +493,60 @@ class UserAdoptCommand extends UserAdminCommand {
   }
 }
 
+abstract class UserAdminBitCommand extends UserAdminCommand {
+  abstract readonly admin: boolean;
+
+  login = Option.String();
+
+  async execute(): Promise<number | undefined> {
+    return this.withSystemDb(async (db) => {
+      const result = await setInstanceAdmin(db, this.login, this.admin);
+      const outcome = this.admin
+        ? result.changed
+          ? "is now an instance admin"
+          : "is already an instance admin"
+        : result.changed
+          ? "is no longer an instance admin"
+          : "was not an instance admin";
+      this.context.stdout.write(`"${result.user.login}" ${outcome}\n`);
+      if (result.admins === 0) {
+        this.context.stdout.write(
+          "no instance admin remains — `todou-server user promote <login>` restores one\n",
+        );
+      }
+      return 0;
+    });
+  }
+}
+
+class UserPromoteCommand extends UserAdminBitCommand {
+  static paths = [["user", "promote"]];
+
+  static usage = Command.Usage({
+    description: "Make an account an instance admin",
+    details:
+      "An instance admin is implicitly admin of every project, private ones " +
+      "included, and can manage every agent. Takes effect on the account's " +
+      "next request. PGlite deployments must stop the server first.",
+  });
+
+  readonly admin = true;
+}
+
+class UserDemoteCommand extends UserAdminBitCommand {
+  static paths = [["user", "demote"]];
+
+  static usage = Command.Usage({
+    description: "Revoke an account's instance-admin status",
+    details:
+      "Project memberships the account holds in its own right are kept. " +
+      "Takes effect on the account's next request. PGlite deployments must " +
+      "stop the server first.",
+  });
+
+  readonly admin = false;
+}
+
 const cli = new Cli({
   binaryLabel: "todou server",
   binaryName: "todou-server",
@@ -506,6 +561,8 @@ cli.register(AttachmentsRelabelCommand);
 cli.register(UserListCommand);
 cli.register(UserBindSubjectCommand);
 cli.register(UserAdoptCommand);
+cli.register(UserPromoteCommand);
+cli.register(UserDemoteCommand);
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 cli.runExit(process.argv.slice(2));

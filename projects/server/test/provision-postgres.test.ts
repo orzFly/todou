@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { provisionUser } from "../src/auth/provision.ts";
 import type { Db } from "../src/db/driver.ts";
@@ -87,5 +89,69 @@ describe.skipIf(!PG_URL)("subject-keyed provisioning on real postgres", () => {
       { autoCreate: true, suffix: () => seq.shift() ?? "zzzz" },
     );
     expect(row.login).toBe(`${tag}-bob-bbbb`);
+  });
+});
+
+/**
+ * The first-human-is-admin check needs an empty users table, which the shared
+ * database above never is again after its first run — so this suite creates a
+ * disposable database (the role needs CREATEDB) and drops it afterwards.
+ */
+describe.skipIf(!PG_URL)("concurrent first logins on real postgres", () => {
+  const name = `t632_${randomUUID().replaceAll("-", "")}`;
+  let admin: pg.Client;
+  let router: DbRouter | undefined;
+
+  beforeAll(async () => {
+    admin = new pg.Client({ connectionString: PG_URL });
+    await admin.connect();
+    await admin.query(`CREATE DATABASE "${name}"`);
+    const url = new URL(PG_URL as string);
+    url.pathname = `/${name}`;
+    url.searchParams.delete("database");
+    url.searchParams.delete("dbname");
+    ({ router } = await makeRouter("shared", { systemUrl: url.toString() }));
+  });
+
+  afterAll(async () => {
+    await router?.close();
+    await admin.query(`DROP DATABASE IF EXISTS "${name}"`);
+    await admin.end();
+  });
+
+  it("makes exactly one of them instance admin", async () => {
+    const db = (router as DbRouter).system();
+    const racers = 8;
+    // Open one pool connection per racer first, so every transaction below
+    // starts on its own connection instead of queueing behind a connect.
+    await Promise.all(
+      Array.from({ length: racers }, () => db.execute("select 1")),
+    );
+    let arrived = 0;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rows = await Promise.all(
+      Array.from({ length: racers }, (_, i) =>
+        provisionUser(
+          db,
+          { subject: `first-${i}`, login: `first${i}` },
+          {
+            autoCreate: true,
+            beforeAttempt: async () => {
+              if (++arrived === racers) release();
+              await gate;
+            },
+          },
+        ),
+      ),
+    );
+    expect(rows.filter((row) => row.isInstanceAdmin)).toHaveLength(1);
+    const stored = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.isInstanceAdmin, true));
+    expect(stored).toHaveLength(1);
   });
 });

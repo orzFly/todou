@@ -1,3 +1,4 @@
+import { isSameSitePath } from "@todou/shared";
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import * as oidc from "openid-client";
@@ -23,11 +24,7 @@ export type OidcErrorCode =
 
 /** Only same-site paths may be resumed after login (mirrors the web rule). */
 export function safeRedirect(value: unknown): string {
-  return typeof value === "string" &&
-    value.startsWith("/") &&
-    !value.startsWith("//")
-    ? value
-    : "/";
+  return isSameSitePath(value) ? value : "/";
 }
 
 const discoveries = new WeakMap<Config, Promise<oidc.Configuration>>();
@@ -340,7 +337,8 @@ export async function oidcCallback(
     secure: cookieSecure(c, ctx.config),
     expires: session.expiresAt,
   });
-  return c.redirect(transient.redirect, 302);
+  // The cookie is unsigned, so what it carries is checked like any input.
+  return c.redirect(safeRedirect(transient.redirect), 302);
 }
 
 function callbackUri(c: AnyContext, config: Config): string {

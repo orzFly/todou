@@ -150,6 +150,58 @@ export async function adoptUser(
   });
 }
 
+export type SetInstanceAdminResult = {
+  user: UserRow;
+  /** False when the account already stood where it was asked to. */
+  changed: boolean;
+  /** Instance admins left once the write is done. */
+  admins: number;
+};
+
+/**
+ * Grant or revoke the instance-admin bit — the only way to move it after the
+ * first human took it at sign-up, short of editing the database by hand.
+ */
+export async function setInstanceAdmin(
+  db: Db,
+  login: string,
+  admin: boolean,
+): Promise<SetInstanceAdminResult> {
+  const target = await byLogin(db, login);
+  if (admin && target.kind !== "human") {
+    // Instance admin is implicit admin of every project; a machine account
+    // gets its reach from explicit memberships, which an owner can see.
+    throw new UserAdminError(
+      `"${login}" is a machine account — grant it project memberships instead`,
+    );
+  }
+  if (admin && target.disabledAt) {
+    throw new UserAdminError(`"${login}" is disabled`);
+  }
+  return db.transaction(async (tx) => {
+    let user = target;
+    if (target.isInstanceAdmin !== admin) {
+      const rows = await tx
+        .update(users)
+        .set({ isInstanceAdmin: admin })
+        .where(eq(users.id, target.id))
+        .returning();
+      const row = rows[0];
+      if (!row) throw new Error("admin update matched no row");
+      user = row;
+    }
+    const admins = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.isInstanceAdmin, true));
+    return {
+      user,
+      changed: target.isInstanceAdmin !== admin,
+      admins: admins.length,
+    };
+  });
+}
+
 /**
  * The single-mode sentinel is a marker, not an IdP binding — adopting into
  * the ex-builtin account is THE canonical migration and must not demand the

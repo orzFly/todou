@@ -63,6 +63,12 @@ describe("safeRedirect", () => {
     expect(safeRedirect("https://evil.example")).toBeUndefined();
     expect(safeRedirect(undefined)).toBeUndefined();
   });
+
+  it("refuses paths the browser would resolve off-site (T-630)", () => {
+    expect(safeRedirect("/\\evil.example")).toBeUndefined();
+    expect(safeRedirect("/\\/evil.example")).toBeUndefined();
+    expect(safeRedirect("/\t/evil.example")).toBeUndefined();
+  });
 });
 
 describe("oidc helpers", () => {
@@ -107,6 +113,51 @@ describe("LoginPage per auth mode", () => {
     await view.findByText("projects-page");
     expect(login).toHaveBeenCalledTimes(1);
     login.mockRestore();
+  });
+
+  const me = {
+    id: 1,
+    login: "user",
+    display_name: "User",
+    kind: "human" as const,
+    avatar_url: null,
+    owner: null,
+    email: null,
+    is_instance_admin: true,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("single: resumes an in-app return-to link", async () => {
+    const login = vi.spyOn(api, "login").mockResolvedValue(me);
+    renderLogin(
+      clientWithMode("single"),
+      `/login?redirect=${encodeURIComponent("/cli-auth?port=4711&state=abc")}`,
+    );
+    await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
+    expect(assign).toHaveBeenCalledWith("/cli-auth?port=4711&state=abc");
+    login.mockRestore();
+  });
+
+  it("single: lands in the app, not off-site, for /\\evil.example", async () => {
+    const login = vi.spyOn(api, "login").mockResolvedValue(me);
+    const view = renderLogin(
+      clientWithMode("single"),
+      `/login?redirect=${encodeURIComponent("/\\evil.example/x")}`,
+    );
+    await view.findByText("projects-page");
+    expect(assign).not.toHaveBeenCalled();
+    login.mockRestore();
+  });
+
+  it("oidc: drops an off-site return-to before going to the IdP", async () => {
+    renderLogin(
+      clientWithMode("oidc"),
+      `/login?redirect=${encodeURIComponent("/\\evil.example/x")}`,
+    );
+    await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
+    const target = new URL(assign.mock.calls[0]?.[0] as string);
+    expect(target.pathname).toBe("/api/auth/login");
+    expect(target.searchParams.has("redirect")).toBe(false);
   });
 
   it("oidc: navigates to the API login URL exactly once", async () => {

@@ -1,11 +1,14 @@
 import { randomInt } from "node:crypto";
 import { Login } from "@todou/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/driver.ts";
 import { users } from "../db/system-schema.ts";
 import { ForbiddenError } from "../errors.ts";
 import type { UserRow } from "./pat.ts";
+
+/** Arbitrary, fixed key for the first-human-is-admin advisory lock. */
+const FIRST_ADMIN_LOCK = 631_632;
 
 /**
  * Kept as a class (not a bare 403) so the oidc callback can turn the reason
@@ -135,6 +138,14 @@ export async function provisionUser(
       // admin). A unique violation aborts the whole transaction, so the
       // retry loop wraps it.
       return await db.transaction(async (tx) => {
+        // The transaction alone is not enough: under READ COMMITTED two
+        // first logins on different pool connections each count zero
+        // humans, and with distinct logins and subjects no unique index
+        // stops the second insert. The lock serialises count-then-insert;
+        // it is released at commit, and PGlite is single-connection anyway.
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(${FIRST_ADMIN_LOCK}::bigint)`,
+        );
         const humans = await tx
           .select({ id: users.id })
           .from(users)
