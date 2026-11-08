@@ -74,8 +74,8 @@ export class ConflictError extends DomainError {
 
 /**
  * Taking a slug a project used to hold needs an explicit `reclaim` (T-156).
- * The details name the slug and nothing else: who held it before is not a
- * fact a non-member of that project may learn.
+ * Raised only to someone who can read that project — to anyone else the
+ * slug is simply taken (T-662) — and the details still name the slug alone.
  */
 export class SlugReservedError extends DomainError {
   constructor(slug: string) {

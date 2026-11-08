@@ -114,13 +114,28 @@ export function toProject(row: ProjectRow, viewerRole?: MemberRole): Project {
 }
 
 /**
+ * The one refusal a slug held by someone else gets, whether it is held now,
+ * held by a project we only route to, or lost to a concurrent write. Every
+ * path shares it because any difference between them tells a caller which
+ * slugs a private project uses and used (T-662).
+ */
+function slugTakenError(slug: string): ConflictError {
+  return new ConflictError(`slug "${slug}" is already taken`);
+}
+
+/**
  * The three states a target slug can be in, as one check shared by creation
  * and rename: held by someone else (409), held by nobody but still routing
  * to a previous holder (409 unless reclaimed), or free. "Free" includes a
  * slug this very project used to hold, so renaming A→B→A needs no ceremony.
+ *
+ * Only someone who can read the previous holder learns that the slug is
+ * reserved rather than taken: everyone else gets the plain "taken" refusal,
+ * so the slug's history stays as private as the project it points to.
  */
 async function checkSlugAvailable(
   system: Db,
+  actor: UserRow,
   slug: string,
   forProjectId: number | null,
   reclaim: boolean,
@@ -132,7 +147,7 @@ async function checkSlugAvailable(
   const holder = current[0];
   if (holder !== undefined) {
     if (holder.id === forProjectId) return;
-    throw new ConflictError(`slug "${slug}" is already taken`);
+    throw slugTakenError(slug);
   }
   if (reclaim) return;
   const previous = await system
@@ -142,9 +157,35 @@ async function checkSlugAvailable(
     .orderBy(desc(slugHistory.effectiveFrom), desc(slugHistory.id))
     .limit(1);
   const last = previous[0];
-  if (last !== undefined && last.projectId !== forProjectId) {
+  if (last === undefined || last.projectId === forProjectId) return;
+  if (await canSeeProject(system, actor, last.projectId)) {
     throw new SlugReservedError(slug);
   }
+  throw slugTakenError(slug);
+}
+
+/**
+ * The membership test `rolesByProject` makes, on the handle the caller is
+ * already using: inside the colocated create that is a transaction, and a
+ * second handle beside it would wait on it.
+ */
+async function canSeeProject(
+  system: Db,
+  actor: UserRow,
+  projectId: number,
+): Promise<boolean> {
+  if (actor.isInstanceAdmin) return true;
+  const rows = await system
+    .select({ projectId: projectMembers.projectId })
+    .from(projectMembers)
+    .where(
+      and(
+        eq(projectMembers.projectId, projectId),
+        eq(projectMembers.userId, actor.id),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 /**
@@ -241,7 +282,7 @@ async function insertRegistryRow(
     .returning()
     .catch((cause: unknown) => {
       if (uniqueViolation(cause) === null) throw cause;
-      throw new ConflictError(`slug "${input.slug}" is already taken`);
+      throw slugTakenError(input.slug);
     });
   const row = inserted[0];
   if (!row) throw new Error("project insert returned no row");
@@ -260,7 +301,13 @@ export async function createProject(
     // makes the same comparison and returns without a statement, and calling
     // it from inside the transaction would take a second handle.
     const created = await system.transaction(async (tx) => {
-      await checkSlugAvailable(tx, input.slug, null, input.reclaim ?? false);
+      await checkSlugAvailable(
+        tx,
+        actor,
+        input.slug,
+        null,
+        input.reclaim ?? false,
+      );
       const row = await insertRegistryRow(tx, input);
       // The transaction is only sound while both tiers are this one
       // database; a route that says otherwise means rolling the whole
@@ -281,7 +328,13 @@ export async function createProject(
     return toProject(created);
   }
 
-  await checkSlugAvailable(system, input.slug, null, input.reclaim ?? false);
+  await checkSlugAvailable(
+    system,
+    actor,
+    input.slug,
+    null,
+    input.reclaim ?? false,
+  );
 
   // The check above races anyone creating the same slug concurrently; the
   // unique index is what actually decides, so translate its verdict rather
@@ -490,6 +543,7 @@ export async function updateProject(
   if (rename !== null) {
     await checkSlugAvailable(
       system,
+      actor,
       rename,
       project.id,
       input.reclaim ?? false,
@@ -546,11 +600,19 @@ export async function updateProject(
               .insert(slugHistory)
               .values({ projectId: project.id, slug: rename });
           }
+          // The availability check ran outside this transaction, so a
+          // concurrent create or rename can still win the unique index.
           return tx
             .update(projects)
             .set(registryPatch)
             .where(eq(projects.id, project.id))
-            .returning();
+            .returning()
+            .catch((cause: unknown) => {
+              if (rename === null || uniqueViolation(cause) === null) {
+                throw cause;
+              }
+              throw slugTakenError(rename);
+            });
         });
   const row = updated[0];
   if (!row) throw new Error("project update returned no row");

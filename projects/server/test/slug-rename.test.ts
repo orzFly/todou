@@ -1,6 +1,10 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { projects, slugHistory } from "../src/db/system-schema.ts";
+import {
+  projectMembers,
+  projects,
+  slugHistory,
+} from "../src/db/system-schema.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -246,6 +250,156 @@ describe("project slug rename", () => {
     });
     expect(res.status).toBe(404);
     expect(res.headers.get(CANONICAL)).toBeNull();
+  });
+});
+
+describe("slug refusals seen from outside the previous holder (T-662)", () => {
+  let t: TestApp;
+  let owner: { authorization: string };
+  let stranger: { authorization: string };
+
+  // Neither is an instance admin: what either may learn has to come from a
+  // membership row, not from being able to see every project.
+  beforeAll(async () => {
+    t = await makeTestApp("shared");
+    owner = (await addUserWithToken(t.ctx, "slug-owner")).headers;
+    stranger = (await addUserWithToken(t.ctx, "slug-prober")).headers;
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  const send = (
+    who: { authorization: string },
+    method: "POST" | "PATCH",
+    path: string,
+    body: Record<string, unknown>,
+  ) =>
+    t.app.request(path, {
+      method,
+      headers: { ...who, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  const create = (
+    who: { authorization: string },
+    slug: string,
+    extra: Record<string, unknown> = {},
+  ) => send(who, "POST", "/api/projects", { slug, name: slug, ...extra });
+
+  const rename = (
+    who: { authorization: string },
+    from: string,
+    slug: string,
+    extra: Record<string, unknown> = {},
+  ) => send(who, "PATCH", `/api/projects/${from}`, { slug, ...extra });
+
+  const taken = (slug: string) => ({
+    error: { code: "conflict", message: `slug "${slug}" is already taken` },
+  });
+
+  /** `old` only routes to the owner's project afterwards; `now` holds it. */
+  async function retire(old: string, now: string) {
+    expect((await create(owner, old)).status).toBe(201);
+    expect((await rename(owner, old, now)).status).toBe(200);
+  }
+
+  it("refuses a slug in use and a slug that only routes alike", async () => {
+    await retire("hidden-old", "hidden-now");
+    expect((await create(stranger, "prober-own")).status).toBe(201);
+
+    for (const slug of ["hidden-now", "hidden-old"]) {
+      const created = await create(stranger, slug);
+      expect(created.status).toBe(409);
+      expect(await json(created)).toEqual(taken(slug));
+
+      const renamed = await rename(stranger, "prober-own", slug);
+      expect(renamed.status).toBe(409);
+      expect(await json(renamed)).toEqual(taken(slug));
+    }
+  });
+
+  it("still tells any member of the previous holder, who can reclaim", async () => {
+    await retire("keep-a", "keep-a2");
+    await retire("keep-b", "keep-b2");
+    expect((await create(owner, "keep-c")).status).toBe(201);
+
+    // A reader, not only the admin that created it: any role can see the
+    // project, so any role may learn that the slug still routes there.
+    const reader = await addUserWithToken(t.ctx, "slug-reader");
+    const [held] = await t.ctx.router
+      .system()
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.slug, "keep-b2"));
+    await t.ctx.router
+      .system()
+      .insert(projectMembers)
+      .values({
+        projectId: held?.id as number,
+        userId: reader.user.id,
+        role: "reader",
+      });
+    const asReader = await create(reader.headers, "keep-b");
+    expect(asReader.status).toBe(409);
+    expect((await json(asReader)).error.code).toBe("slug_reserved");
+
+    const refusedRename = await rename(owner, "keep-c", "keep-a");
+    expect(refusedRename.status).toBe(409);
+    expect((await json(refusedRename)).error.code).toBe("slug_reserved");
+    expect(
+      (await rename(owner, "keep-c", "keep-a", { reclaim: true })).status,
+    ).toBe(200);
+
+    const refusedCreate = await create(owner, "keep-b");
+    expect(refusedCreate.status).toBe(409);
+    expect((await json(refusedCreate)).error.code).toBe("slug_reserved");
+    expect((await create(owner, "keep-b", { reclaim: true })).status).toBe(201);
+  });
+
+  it("still lets anyone take a slug nobody has used", async () => {
+    expect((await create(stranger, "free-a")).status).toBe(201);
+    expect((await rename(stranger, "free-a", "free-b")).status).toBe(200);
+  });
+
+  it("refuses a create or rename that loses the race the same way", async () => {
+    // Plays the concurrent writer: after the availability check has passed,
+    // and just before the losing statement lands, another project takes the
+    // slug.
+    const system = t.ctx.router.system();
+    await system.execute(sql`
+      create function t662_race() returns trigger language plpgsql as $$
+      begin
+        if NEW.slug like 'race-%' and NEW.name <> 'race winner'
+          and not exists (select 1 from projects where slug = NEW.slug) then
+          insert into projects (slug, name) values (NEW.slug, 'race winner');
+        end if;
+        return NEW;
+      end $$
+    `);
+    await system.execute(sql`
+      create trigger t662_race_insert before insert on projects
+      for each row execute function t662_race()
+    `);
+    await system.execute(sql`
+      create trigger t662_race_update before update of slug on projects
+      for each row execute function t662_race()
+    `);
+    try {
+      const created = await create(stranger, "race-a");
+      expect(created.status).toBe(409);
+      expect(await json(created)).toEqual(taken("race-a"));
+
+      expect((await create(stranger, "lost-race")).status).toBe(201);
+      const renamed = await rename(stranger, "lost-race", "race-b");
+      expect(renamed.status).toBe(409);
+      expect(await json(renamed)).toEqual(taken("race-b"));
+    } finally {
+      await system.execute(sql`drop trigger t662_race_insert on projects`);
+      await system.execute(sql`drop trigger t662_race_update on projects`);
+      await system.execute(sql`drop function t662_race()`);
+    }
   });
 });
 
