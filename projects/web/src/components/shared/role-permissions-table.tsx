@@ -1,10 +1,10 @@
 import {
   type CapabilityId,
   can,
-  capabilityOf,
   MEMBER_ROLES,
   type MemberRole,
   minRoleOf,
+  ownOnly,
   ROLE_RANK,
 } from "@todou/shared";
 import { Button } from "@/components/ui/button";
@@ -207,8 +207,9 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
 /** Columns run the way the ladder does, so each one adds to the last. */
 const COLUMNS: readonly MemberRole[] = [...MEMBER_ROLES].reverse();
 
-const ownerOnly = (row: DisplayRow): boolean =>
-  row.caps.some((cap) => capabilityOf(cap).ownerOnly === true);
+/** Per cell, because where the author gate lifts differs by row (T-650). */
+const ownerOnly = (role: MemberRole, row: DisplayRow): boolean =>
+  row.caps.some((cap) => ownOnly(role, cap));
 
 /** A row is granted only where every capability behind it is. */
 const grants = (role: MemberRole, row: DisplayRow): boolean =>
@@ -248,9 +249,6 @@ export function RolePermissionsTable() {
                   </div>
                 )}
                 <span>{row.label}</span>
-                {ownerOnly(row) && (
-                  <span className="text-muted-foreground"> *</span>
-                )}
               </TableCell>
               {COLUMNS.map((role) => (
                 <TableCell
@@ -259,6 +257,9 @@ export function RolePermissionsTable() {
                   aria-label={`${row.label} · ${role}`}
                 >
                   {grants(role, row) ? "✓" : "—"}
+                  {grants(role, row) && ownerOnly(role, row) && (
+                    <span className="text-muted-foreground"> *</span>
+                  )}
                 </TableCell>
               ))}
             </TableRow>
@@ -288,8 +289,7 @@ export function RolePermissionsDialog() {
         <DialogHeader>
           <DialogTitle>What each role can do</DialogTitle>
           <DialogDescription>
-            Rows marked * only apply to what you posted yourself; a project
-            admin may act on anyone's.
+            ✓ * only reaches what you posted yourself.
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto">

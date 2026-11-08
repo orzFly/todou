@@ -70,6 +70,23 @@ describe("the rendered table", () => {
     expect(cell(container, row, "admin")).toBe("✓");
   });
 
+  // The server lets a writer rewrite anyone's title and body — triaging
+  // other people's cards is what an orchestrator does — so only the
+  // reporter's cell may claim "your own" (T-650).
+  it("marks own-only per role, not per row", () => {
+    const { container } = render(<RolePermissionsTable />);
+    const edit = "Edit the title and body of an issue";
+    expect(cell(container, edit, "reader")).toBe("—");
+    expect(cell(container, edit, "reporter")).toBe("✓ *");
+    expect(cell(container, edit, "writer")).toBe("✓");
+    expect(cell(container, edit, "admin")).toBe("✓");
+
+    const trash = "Move an issue to the trash";
+    expect(cell(container, trash, "reporter")).toBe("✓ *");
+    expect(cell(container, trash, "writer")).toBe("✓ *");
+    expect(cell(container, trash, "admin")).toBe("✓");
+  });
+
   it("reads its roles off the catalog rather than a list of its own", () => {
     const { container } = render(<RolePermissionsTable />);
     // Renaming the project is an admin gate; if the table hardcoded a role

@@ -233,7 +233,7 @@ const DECLARED: Readonly<Record<string, string>> = {
   "projects/server/src/services/insights/aggregate.ts :: mapping result #1":
     "Closed server metric catalog: finishFlow maps local FLOW_KEYS literals to measured counts. Its result is spread into the Flow response, not indexed by an incoming enum discriminator.",
   "projects/shared/src/permissions.ts :: read BY_ID[id] #1":
-    "Closed capability catalog: BY_ID is built from local CAPABILITIES. capabilityOf is called by role-permissions-table's ownerOnly with literal capability ids from local DISPLAY_ROWS.caps; no wire role value supplies this key.",
+    "Closed capability catalog: BY_ID is built from local CAPABILITIES. capabilityOf is called with literal capability ids, and by ownOnly with ids from role-permissions-table's local DISPLAY_ROWS.caps; no wire role value supplies this key.",
   "projects/shared/src/permissions.ts :: read BY_ID[id] #2":
     "Closed capability ids: minRoleOf callers use local literals, DISPLAY_ROWS.caps, or wrappers can/useCan/roleTag/requireCapability that forward those ids. members.targetOf chooses between literal capability arguments. Wire role strings are separately handled by roleRankOf and never index BY_ID.",
   "projects/web/src/lib/activity-calendar-search.ts :: mapping values #1":

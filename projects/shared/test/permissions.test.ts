@@ -5,6 +5,7 @@ import {
   can,
   capabilityOf,
   minRoleOf,
+  ownOnly,
   ROLE_RANK,
   roleRankOf,
 } from "../src/permissions.ts";
@@ -61,6 +62,32 @@ describe("CAPABILITIES", () => {
   it("names a real role in every minRole", () => {
     for (const cap of CAPABILITIES) {
       expect(MEMBER_ROLES).toContain(cap.minRole);
+    }
+  });
+});
+
+describe("ownOnly", () => {
+  it("lifts the author gate on title and body exactly where triage begins", () => {
+    // `assertMayEditFields` lets anyone who may triage through before it
+    // looks at the author, so the table must not say otherwise (T-650).
+    for (const role of MEMBER_ROLES) {
+      expect(ownOnly(role, "issue.update"), role).toBe(
+        can(role, "issue.update") && !can(role, "issue.triage"),
+      );
+    }
+  });
+
+  it("keeps everyone short of an admin to their own trash", () => {
+    expect(ownOnly("reporter", "issue.trash")).toBe(true);
+    expect(ownOnly("writer", "issue.trash")).toBe(true);
+    expect(ownOnly("admin", "issue.trash")).toBe(false);
+  });
+
+  it("is never true where the role is not granted at all", () => {
+    for (const cap of CAPABILITIES) {
+      for (const role of MEMBER_ROLES) {
+        if (!can(role, cap.id)) expect(ownOnly(role, cap.id)).toBe(false);
+      }
     }
   });
 });

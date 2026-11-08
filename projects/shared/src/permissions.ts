@@ -39,10 +39,10 @@ type Capability = {
   enforce: "gate" | "addressed";
   /**
    * Orthogonal to the role order: reaching `minRole` still only reaches your
-   * own rows, unless you are an admin. Without this flag the permission table
+   * own rows, until you reach `until`. Without this flag the permission table
    * would read "writers may delete issues" where the code means "their own".
    */
-  ownerOnly?: true;
+  ownerOnly?: { until: MemberRole };
 };
 
 /**
@@ -95,10 +95,23 @@ export const CAPABILITIES = [
   { id: "issue.create", minRole: "reporter", enforce: "gate" },
   // `PATCH issue` carries five fields behind one gate, so it takes two
   // entries: `issue.update` opens the endpoint, `issue.triage` is what the
-  // three fields a reporter must not touch are checked against.
-  { id: "issue.update", minRole: "reporter", enforce: "gate", ownerOnly: true },
+  // three fields a reporter must not touch are checked against. Whoever may
+  // triage may also retitle anyone's card — fixing a placeholder title is
+  // part of triage — so the author gate lifts at `issue.triage`'s role
+  // (T-650).
+  {
+    id: "issue.update",
+    minRole: "reporter",
+    enforce: "gate",
+    ownerOnly: { until: "writer" },
+  },
   { id: "issue.triage", minRole: "writer", enforce: "gate" },
-  { id: "issue.trash", minRole: "reporter", enforce: "gate", ownerOnly: true },
+  {
+    id: "issue.trash",
+    minRole: "reporter",
+    enforce: "gate",
+    ownerOnly: { until: "admin" },
+  },
   // Admin at both ends (T-626). A move carries everyone's comments along, and
   // whether you may rewrite someone else's comment is judged by your role
   // where the card now is — so a writer able to move could take a card to a
@@ -123,7 +136,7 @@ export const CAPABILITIES = [
     id: "comment.modify",
     minRole: "reporter",
     enforce: "gate",
-    ownerOnly: true,
+    ownerOnly: { until: "admin" },
   },
   { id: "comment.commands", minRole: "writer", enforce: "gate" },
   // Hiding settled discussion (T-281). Deliberately not `ownerOnly`: tidying
@@ -149,7 +162,7 @@ export const CAPABILITIES = [
     id: "attachment.delete",
     minRole: "reporter",
     enforce: "gate",
-    ownerOnly: true,
+    ownerOnly: { until: "admin" },
   },
   { id: "attachment.delete_any", minRole: "writer", enforce: "gate" },
 
@@ -209,6 +222,18 @@ export function minRoleOf(id: CapabilityId): MemberRole {
     throw new TypeError(`Unknown minimum role for capability "${id}": ${role}`);
   }
   return role;
+}
+
+/** Whether `role` holds `id` only over the rows it authored. */
+export function ownOnly(role: string | null, id: CapabilityId): boolean {
+  const scope = capabilityOf(id).ownerOnly;
+  if (scope === undefined || !can(role, id)) return false;
+  const until = roleRankOf(scope.until);
+  if (until === undefined) {
+    throw new TypeError(`Unknown owner scope for capability "${id}"`);
+  }
+  // `can` just vouched for the role, so its rank exists.
+  return (roleRankOf(role as string) as number) < until;
 }
 
 /** Null is a non-member, who holds nothing — not even the reader floor. */
