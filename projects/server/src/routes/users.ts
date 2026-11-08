@@ -84,7 +84,9 @@ const userProjectsRoute = createRoute({
 const avatarRoute = createRoute({
   method: "get",
   path: "/users/{id}/avatar",
-  summary: "A user's avatar image (any signed-in user)",
+  summary:
+    "A user's avatar image. Visible to the same callers as GET /users/{ref}; " +
+    "everyone else gets the 404 an unknown id gets.",
   request: {
     params: z.object({ id: z.coerce.number().int().positive() }),
   },
@@ -192,6 +194,9 @@ export function userRoutes() {
   app.openapi(avatarRoute, async (c) => {
     const { id } = c.req.valid("param");
     const ctx = c.get("appCtx");
+    // Ids are sequential, so without this any account could walk 1..N and
+    // collect every uploaded photo, including ones whose profile 404s (T-665).
+    await resolveVisibleUser(ctx, c.get("user"), String(id));
     const avatar = await openAvatar(ctx, id);
     const { stream, size } = await ctx.storage.getStream(avatar.key);
 

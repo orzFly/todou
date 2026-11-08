@@ -301,3 +301,61 @@ describe("agent profile management (owner)", () => {
     expect(avatar.status).toBe(403);
   });
 });
+
+describe("avatar visibility T-665", () => {
+  let t: TestApp;
+  let alice: Awaited<ReturnType<typeof addUserWithToken>>;
+  let mate: Awaited<ReturnType<typeof addUserWithToken>>;
+  let stranger: Awaited<ReturnType<typeof addUserWithToken>>;
+  let avatarUrl: string;
+
+  beforeAll(async () => {
+    t = await makeTestApp();
+    const cookie = await t.login();
+    const headers = { "content-type": "application/json", cookie };
+    const project = await t.app.request("/api/projects", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ slug: "faces", name: "Faces" }),
+    });
+    expect(project.status).toBe(201);
+    alice = await addUserWithToken(t.ctx, "avatar-alice");
+    mate = await addUserWithToken(t.ctx, "avatar-mate");
+    stranger = await addUserWithToken(t.ctx, "avatar-stranger");
+    for (const u of [alice, mate]) {
+      const seat = await t.app.request(
+        `/api/projects/faces/members/${u.user.id}`,
+        { method: "PUT", headers, body: JSON.stringify({ role: "writer" }) },
+      );
+      expect(seat.status).toBe(204);
+    }
+    const uploaded = await t.app.request("/api/me/avatar", {
+      method: "POST",
+      headers: alice.headers,
+      body: avatarForm(),
+    });
+    expect(uploaded.status).toBe(200);
+    avatarUrl = (await json(uploaded)).avatar_url;
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  it("serves the image to someone sharing a project", async () => {
+    const res = await t.app.request(avatarUrl, { headers: mate.headers });
+    expect(res.status).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG_BYTES);
+  });
+
+  it("answers a stranger exactly as it answers an unknown id", async () => {
+    const hidden = await t.app.request(avatarUrl, {
+      headers: stranger.headers,
+    });
+    const unknown = await t.app.request("/api/users/99999/avatar", {
+      headers: stranger.headers,
+    });
+    expect(hidden.status).toBe(404);
+    expect(await hidden.json()).toEqual(await unknown.json());
+  });
+});
