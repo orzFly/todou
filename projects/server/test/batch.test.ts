@@ -1,7 +1,11 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AppContext } from "../src/bootstrap.ts";
-import { batchRoutes, rejectBatchTarget } from "../src/routes/batch.ts";
+import {
+  batchItemKey,
+  batchRoutes,
+  rejectBatchTarget,
+} from "../src/routes/batch.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 /**
@@ -14,8 +18,10 @@ function batchFakeApp(
     Response.json({ ok: 1 }),
 ) {
   const fake = {
-    fetch: (req: Request, _env?: unknown) =>
-      respond(new URL(req.url).pathname.replace(/^\/api/, "")),
+    fetch: (req: Request, _env?: unknown) => {
+      const url = new URL(req.url);
+      return respond(url.pathname.replace(/^\/api/, "") + url.search);
+    },
   };
   // Only what forwardedHeaderNames reads: auth mode decides the header set.
   const appCtx = { config: { auth: { mode: "single" } } } as AppContext;
@@ -284,5 +290,97 @@ describe("batch OpenAPI document (T-368)", () => {
       "application/json",
       "text/event-stream",
     ]);
+  });
+});
+
+describe("batch coalescing (T-628)", () => {
+  /** The fake app, counting how often each target is actually dispatched. */
+  function countingApp() {
+    const calls: string[] = [];
+    const app = batchFakeApp((url) => {
+      calls.push(url);
+      return Response.json({ url });
+    });
+    return { app, calls };
+  }
+
+  function post(
+    app: ReturnType<typeof batchFakeApp>,
+    urls: string[],
+    accept?: string,
+  ) {
+    return app.request("/api/batch", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(accept === undefined ? {} : { accept }),
+      },
+      body: JSON.stringify({ requests: urls.map((url) => ({ url })) }),
+    });
+  }
+
+  it("runs a target repeated up to the cap once, answering every slot", async () => {
+    const { app, calls } = countingApp();
+    const res = await post(app, Array(50).fill("/openapi.json"));
+    expect(res.status).toBe(200);
+    const { responses } = await json(res);
+    expect(calls).toEqual(["/openapi.json"]);
+    expect(responses).toHaveLength(50);
+    for (const r of responses) {
+      expect(r).toEqual({ status: 200, body: { url: "/openapi.json" } });
+    }
+  });
+
+  it("treats reordered query parameters as the same target", async () => {
+    const { app, calls } = countingApp();
+    const res = await post(app, [
+      "/projects/p/issues?status=1&limit=5",
+      "/projects/p/issues?limit=5&status=1",
+    ]);
+    const { responses } = await json(res);
+    expect(calls).toHaveLength(1);
+    expect(responses[1]).toEqual(responses[0]);
+  });
+
+  it("still dispatches the same path with different parameters", async () => {
+    const { app, calls } = countingApp();
+    const urls = [
+      "/projects/p/issues?status=1",
+      "/projects/p/issues?status=2",
+      "/projects/p/issues",
+      "/projects/q/issues?status=1",
+      "/projects/p/issues?status=a&status=b",
+      "/projects/p/issues?status=b&status=a",
+    ];
+    const res = await post(app, urls);
+    const { responses } = await json(res);
+    expect(calls.sort()).toEqual([...urls].sort());
+    expect(responses.map((r: { body: { url: string } }) => r.body.url)).toEqual(
+      urls,
+    );
+  });
+
+  it("streams a frame for every index of a coalesced target", async () => {
+    const { app, calls } = countingApp();
+    const res = await post(
+      app,
+      ["/me", "/auth/mode", "/me"],
+      "text/event-stream",
+    );
+    const text = await res.text();
+    const items = [...text.matchAll(/^event: item\ndata: (.+)$/gm)].map(
+      (m) => JSON.parse(m[1] as string) as { index: number; body: unknown },
+    );
+    expect(calls.sort()).toEqual(["/auth/mode", "/me"]);
+    expect(items.map((i) => i.index).sort()).toEqual([0, 1, 2]);
+    expect(items.find((i) => i.index === 2)?.body).toEqual({ url: "/me" });
+    expect(text).toMatch(/event: done\ndata: \{"count":3\}/);
+  });
+
+  it("keys on path plus sorted parameters", () => {
+    expect(batchItemKey("/x?b=2&a=1")).toBe(batchItemKey("/x?a=1&b=2"));
+    expect(batchItemKey("/x?")).toBe(batchItemKey("/x"));
+    expect(batchItemKey("/x?a=1&a=2")).not.toBe(batchItemKey("/x?a=2&a=1"));
+    expect(batchItemKey("/x/")).not.toBe(batchItemKey("/x"));
   });
 });

@@ -36,6 +36,7 @@ import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
 import { metadataRoutes } from "./routes/metadata.ts";
 import { muteRoutes } from "./routes/mutes.ts";
+import { serveOpenAPIDocument } from "./routes/openapi-doc.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { referenceRoutes } from "./routes/references.ts";
 import { searchRoutes } from "./routes/search.ts";
@@ -158,7 +159,7 @@ export function createApp(ctx: AppContext) {
     "/",
     batchRoutes(() => app),
   );
-  api.doc31("/openapi.json", {
+  serveOpenAPIDocument(api, "/openapi.json", {
     openapi: "3.1.0",
     info: {
       title: "todou",

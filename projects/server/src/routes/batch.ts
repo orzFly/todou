@@ -31,7 +31,9 @@ const batchRoute = createRoute({
     'followed by a `done` trailer frame, data: {"count":<item frames ' +
     "sent>}. Frames arrive in completion order, not request order, so `index` " +
     "is the only correlation key. Any other Accept gets the JSON envelope " +
-    "below, positionally matched to the requests array.",
+    "below, positionally matched to the requests array. Items naming the " +
+    "same path with the same query parameters, in any order, are dispatched " +
+    "once and every one of them receives that result.",
   request: { body: jsonBody(BatchInput) },
   responses: {
     200: {
@@ -88,6 +90,23 @@ export function rejectBatchTarget(url: string): BatchItemResult | null {
   return null;
 }
 
+/**
+ * Identity of a sub-request for coalescing (T-628): two items with one key
+ * would be the same GET, so only the first is dispatched. Parameter order
+ * does not distinguish targets, but the relative order of a repeated
+ * parameter does — URLSearchParams.sort is stable, which keeps
+ * `?a=1&a=2` and `?a=2&a=1` apart.
+ */
+export function batchItemKey(url: string): string {
+  try {
+    const parsed = new URL(`/api${url}`, "http://batch.internal");
+    parsed.searchParams.sort();
+    return parsed.pathname + parsed.search;
+  } catch {
+    return url;
+  }
+}
+
 /** Only these travel to sub-requests. No accept-encoding: forwarding it
  *  would let the compression middleware encode bodies the gateway then
  *  has to decode to re-envelope. */
@@ -131,6 +150,18 @@ export function batchRoutes(getApp: () => Dispatcher) {
       const value = c.req.raw.headers.get(name);
       if (value !== null) headers.set(name, value);
     }
+    // Without this, one public but expensive target repeated up to the
+    // envelope cap runs that many times on a single unauthenticated request.
+    const runs = new Map<string, Promise<BatchItemResult>>();
+    const dispatch = (url: string): Promise<BatchItemResult> => {
+      const key = batchItemKey(url);
+      let run = runs.get(key);
+      if (run === undefined) {
+        run = dispatchItem(getApp, headers, c.env, url);
+        runs.set(key, run);
+      }
+      return run;
+    };
     if (wantsEventStream(c.req.header("accept"))) {
       return streamSSE(c, async (stream) => {
         // Every sub-request is already in flight here; the loop only decides
@@ -149,7 +180,7 @@ export function batchRoutes(getApp: () => Dispatcher) {
               Promise<{ index: number; result: BatchItemResult }>,
             ] => [
               index,
-              dispatchItem(getApp, headers, c.env, url).then((result) => ({
+              dispatch(url).then((result) => ({
                 index,
                 result,
               })),
@@ -176,9 +207,7 @@ export function batchRoutes(getApp: () => Dispatcher) {
       });
     }
     const responses = await Promise.all(
-      requests.map(({ url }: BatchRequestItem) =>
-        dispatchItem(getApp, headers, c.env, url),
-      ),
+      requests.map(({ url }: BatchRequestItem) => dispatch(url)),
     );
     return c.json({ responses }, 200);
   });
