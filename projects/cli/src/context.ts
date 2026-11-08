@@ -39,6 +39,8 @@ export function gitToplevel(cwd: string): string | null {
 export type TokenSource =
   | "flag-profile"
   | "env-token"
+  /** TODOU_TOKEN is set, but not for this server (T-618); token stays unset. */
+  | "env-token-withheld"
   | "env-profile"
   | "auto-harness"
   | "auto-harness-shared"
@@ -94,6 +96,7 @@ function pickToken(
   env: Env,
   server: string | undefined,
   entry: ServerEntry | undefined,
+  envTokenFits: boolean,
 ): PickedToken {
   const lookup = (
     name: string,
@@ -121,6 +124,10 @@ function pickToken(
   if (server === undefined) return { token: undefined, tokenSource: null };
   if (flagProfile) return lookup(flagProfile, "flag-profile");
   if (env.TODOU_TOKEN) {
+    // Refused rather than skipped: falling through to a stored token would
+    // quietly swap the identity the caller set TODOU_TOKEN to choose.
+    if (!envTokenFits)
+      return { token: undefined, tokenSource: "env-token-withheld" };
     return { token: env.TODOU_TOKEN, tokenSource: "env-token" };
   }
   if (env.TODOU_PROFILE) return lookup(env.TODOU_PROFILE, "env-profile");
@@ -229,11 +236,21 @@ export function resolveContext(input: {
         : config.default_server
           ? "default_server"
           : null;
+  // A directory config travels with a checkout, so whoever wrote it — the
+  // author of a PR an agent is reviewing — can name any server. TODOU_TOKEN
+  // carries no server of its own, so it only goes where the user's own word
+  // points: a flag, TODOU_SERVER, their config's binding or default_server,
+  // or a server they have an entry for in their config (T-618).
+  const envTokenFits =
+    serverSource !== "dir-config" ||
+    server === asBase(config.default_server)?.server ||
+    (server !== undefined && config.servers[server] !== undefined);
   const picked = pickToken(
     flags.profile,
     env,
     server,
     server ? config.servers[server] : undefined,
+    envTokenFits,
   );
   // A local project pinned to a server belongs to that server; when
   // --server/TODOU_SERVER points elsewhere, silently reusing the slug

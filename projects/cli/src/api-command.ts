@@ -15,7 +15,7 @@ import {
   type ResolvedContext,
   resolveContext,
 } from "./context.ts";
-import { discoverDirConfig } from "./dir-config.ts";
+import { discoverDirConfig, displayPath } from "./dir-config.ts";
 import { CliError, NoAccessError, reportError } from "./errors.ts";
 import { type GrantAccessKind, grantAccessLines } from "./grant-access.ts";
 import { detectAgentContext, liveSessionIdReader } from "./harness/index.ts";
@@ -213,6 +213,15 @@ export abstract class ApiCommand extends Command<CliContext> {
       // plain Command, still prints the full report naming the input.
       if (this.ctx.serverUnknownName) {
         throw unknownServerError(this.ctx.server, buildNameTable(this.config));
+      }
+      if (this.ctx.tokenSource === "env-token-withheld") {
+        const file = this.ctx.dirConfig
+          ? displayPath(this.ctx.dirConfig.path, this.context.cwd)
+          : "a directory config";
+        throw new CliError(
+          `TODOU_TOKEN is not sent to ${this.ctx.server}, which only ${file} names`,
+          `if that server is the one TODOU_TOKEN belongs to, set TODOU_SERVER=${this.ctx.server} or pass --server ${this.ctx.server}`,
+        );
       }
       if (!this.ctx.token) {
         // Both hints name `config show` because these two failures are

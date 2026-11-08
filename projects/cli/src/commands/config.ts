@@ -266,6 +266,8 @@ export function tokenLine(report: ConfigReport): string {
       return `${profile} (auto-detected harness, no profile of its own)`;
     case "env-token":
       return "TODOU_TOKEN (env)";
+    case "env-token-withheld":
+      return `none (TODOU_TOKEN is not sent to a server only a directory config names; set TODOU_SERVER=${server} to send it)`;
     case "default":
       return "default token";
     default:

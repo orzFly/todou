@@ -186,6 +186,9 @@ todou config show
 
 # Agents/CI need no config file, and every command takes --json:
 TODOU_SERVER=… TODOU_TOKEN=todou_pat_… TODOU_PROJECT=… todou issue list --json
+# Set the two together. A directory config travels with the checkout, so
+# TODOU_TOKEN is never sent to a server only it names — unless that is
+# default_server or a server you have logged in to.
 
 # Store a separate identity per agent: inside Claude Code (CLAUDECODE=1)
 # the "claude-code" profile is picked automatically, and every write is
