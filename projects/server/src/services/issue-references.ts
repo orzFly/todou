@@ -32,10 +32,15 @@ type Occurrence = {
 /**
  * Every address in `addresses` followed to where that card lives now. An
  * address with no row has never moved and stands for itself.
+ *
+ * A card that moved into a project outside `visibleIds` also stands at the
+ * address it was written with: that address's tombstone says "moved" without
+ * saying where, the line the timeline draws for moved_out (T-242).
  */
 async function currentAddresses(
   system: Db,
   addresses: readonly Address[],
+  visibleIds: ReadonlySet<number>,
 ): Promise<Map<string, Address>> {
   const wanted = new Map(addresses.map((a) => [keyOf(a), a]));
   const found = new Map<string, Address>();
@@ -62,6 +67,7 @@ async function currentAddresses(
         ),
       );
     for (const row of rows) {
+      if (!visibleIds.has(row.currentProjectId)) continue;
       found.set(keyOf(row), {
         projectId: row.currentProjectId,
         number: row.currentNumber,
@@ -215,10 +221,11 @@ export async function getIssueReferences(
     }
   }
 
-  const current = await currentAddresses(system, [
-    ...linkedFrom.map((o) => o.address),
-    ...linksTo.map((o) => o.address),
-  ]);
+  const current = await currentAddresses(
+    system,
+    [...linkedFrom.map((o) => o.address), ...linksTo.map((o) => o.address)],
+    visible.ids,
+  );
   return {
     linked_from: group(linkedFrom, current, self, false),
     links_to: group(linksTo, current, self, true),

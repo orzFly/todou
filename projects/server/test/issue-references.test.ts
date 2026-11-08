@@ -194,6 +194,38 @@ describe("issue references T-553", () => {
     ]);
   });
 
+  it("keeps a card moved out of the reader's sight at the address they were given T-646", async () => {
+    const card = await createIssue(HOME);
+    const target = await createIssue(HOME);
+    const source = await createIssue(HOME, `see #${card}`);
+    await setBody(HOME, card, `see #${target}`);
+    const targetNow = await move(HOME, target, SECRET);
+    const sourceNow = await move(HOME, source, SECRET);
+
+    expect(await refs(HOME, card)).toEqual({
+      links_to: [expect.objectContaining(at(SECRET, targetNow))],
+      linked_from: [expect.objectContaining(at(SECRET, sourceNow))],
+    });
+    const seenByBob = await refs(HOME, card, bob);
+    expect(seenByBob).toEqual({
+      links_to: [expect.objectContaining(at(HOME, target))],
+      linked_from: [expect.objectContaining(at(HOME, source))],
+    });
+    expect(JSON.stringify(seenByBob)).not.toContain(
+      `"project_id":${projectId[SECRET]}`,
+    );
+  });
+
+  it("follows a move the reader can see to its current address", async () => {
+    const card = await createIssue(HOME);
+    const target = await createIssue(HOME);
+    await setBody(HOME, card, `see #${target}`);
+    const now = await move(HOME, target, AWAY);
+    expect((await refs(HOME, card, bob)).links_to).toEqual([
+      expect.objectContaining(at(AWAY, now)),
+    ]);
+  });
+
   it("reads hidden comments and skips spec files", async () => {
     const target = await createIssue(HOME);
     const specced = await createIssue(HOME);
