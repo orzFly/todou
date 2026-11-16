@@ -100,6 +100,20 @@ function pointsElsewhere(row: JumpRow, slug: string): boolean {
  */
 const OPTION = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm";
 
+/**
+ * A row's leading glyph, centred where an avatar would sit and in a column as
+ * wide as an avatar's (T-677). People appear in this panel as avatars, and a
+ * column fitted to the 14px icons would start their text 12px right of every
+ * other row's.
+ */
+function Glyph({ children }: { children: React.ReactNode }) {
+  return (
+    <span className={AVATAR_SLOT}>
+      <span className="flex w-5 justify-center">{children}</span>
+    </span>
+  );
+}
+
 /** Nothing highlighted. Enter then submits what was typed, not an offer. */
 const NONE = -1;
 
@@ -635,15 +649,19 @@ export function SearchBox({
                     }}
                   >
                     {blank ? (
-                      <ArrowRightIcon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
+                      <Glyph>
+                        <ArrowRightIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
                     ) : (
-                      <SearchIcon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
+                      <Glyph>
+                        <SearchIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
                     )}
                     <span className="truncate">
                       {blank ? (
@@ -671,16 +689,18 @@ export function SearchBox({
                     onMouseMove={() => setHighlight(idx)}
                     onClick={() => accept(row.row.apply)}
                   >
-                    <Icon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
                     {/* A person is drawn as in every user picker (T-677),
                         login first: it is the value being completed. The
-                        avatar follows the panel's 14px glyph column rather
-                        than replacing it, as a project row's icon does, so
-                        the glyphs stay in one column down the panel. */}
-                    {row.row.user !== undefined && (
+                        avatar takes the glyph column the other rows' icons
+                        sit in, which is sized for it (Glyph). */}
+                    {row.row.user === undefined ? (
+                      <Glyph>
+                        <Icon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
+                    ) : (
                       <span className={AVATAR_SLOT}>
                         <UserAvatar user={row.row.user} badge aria-hidden />
                       </span>
@@ -735,10 +755,12 @@ export function SearchBox({
                         closeUnlessNewTab(e);
                       }}
                     >
-                      <ClockIcon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
+                      <Glyph>
+                        <ClockIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
                       <span className="truncate">
                         {highlightParts(row.q, parseSearchQuery(row.q), known)}
                       </span>
@@ -771,10 +793,12 @@ export function SearchBox({
                   >
                     <JumpRowBody
                       icon={
-                        <ArrowRightIcon
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden
-                        />
+                        <Glyph>
+                          <ArrowRightIcon
+                            className="size-3.5 text-muted-foreground"
+                            aria-hidden
+                          />
+                        </Glyph>
                       }
                       spelled={row.spelled}
                       // What the reader typed, not a card: nothing to take
@@ -814,7 +838,7 @@ export function SearchBox({
                         /* Where the arrow goes on every other row. These cards
                            are offered rather than asked for, and the empty
                            column is what says so — one indent, no new glyph. */
-                        <span className="size-3.5 shrink-0" aria-hidden />
+                        <span className={AVATAR_SLOT} aria-hidden />
                       }
                       spelled={row.spelled}
                       // The reader's own spelling carried on, not a format:
@@ -847,10 +871,12 @@ export function SearchBox({
                   >
                     <JumpRowBody
                       icon={
-                        <ExternalLinkIcon
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden
-                        />
+                        <Glyph>
+                          <ExternalLinkIcon
+                            className="size-3.5 text-muted-foreground"
+                            aria-hidden
+                          />
+                        </Glyph>
                       }
                       spelled={row.text}
                       // An autolink's own text, which todou never spelled.
@@ -874,10 +900,12 @@ export function SearchBox({
                     aria-label="Looking up the card…"
                     className={cn(OPTION, idx === hl && "bg-accent")}
                   >
-                    <ArrowRightIcon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
+                    <Glyph>
+                      <ArrowRightIcon
+                        className="size-3.5 text-muted-foreground"
+                        aria-hidden
+                      />
+                    </Glyph>
                     <Skeleton className="h-4 w-40" />
                   </div>
                 );
@@ -900,10 +928,12 @@ export function SearchBox({
                 >
                   <JumpRowBody
                     icon={
-                      <ArrowRightIcon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
+                      <Glyph>
+                        <ArrowRightIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
                     }
                     spelled={row.spelled}
                     identity={{
