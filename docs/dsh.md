@@ -21,8 +21,8 @@ shows and what a reader copies.
 DSH publishes no model variable. todou reads the live pair from the session
 projection cache DSH keeps for its desktop UI:
 
-`$DSH_HOME/storages/session_projcache/sessions/<session_id>.json`, row
-`modelSelection.lastUsed.model`.
+`$DSH_HOME/storages/session_projcache/sessions/<session_id>.json`, field
+`record.rows.modelSelection.val.lastUsed.model`.
 
 That cache is an internal format and may move. When it is missing, stale, or
 unreadable, the write still reports `dsh` and the session id; only the model is

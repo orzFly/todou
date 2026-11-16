@@ -76,6 +76,11 @@ describe("dsh", () => {
   });
 
   it("never follows a path-shaped session id", () => {
+    // Plant a readable cache where the traversal lands, so only the id guard
+    // stands between the lookup and a model.
+    writeProjectionCache(join(home, ".dsh"), {
+      "../../evil": cacheWithModel("deepseek-evil"),
+    });
     expect(detectAgentContext({ DSH_SESSION_ID: "../../evil" }, home)).toEqual({
       agent: "dsh",
       session_id: "../../evil",
