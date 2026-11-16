@@ -1,4 +1,4 @@
-import { ACT_AS_HEADER, LoginInput, type TokenActAs } from "@todou/shared";
+import { ACT_AS_HEADER, LoginInput, type TokenScope } from "@todou/shared";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { users } from "../db/system-schema.ts";
@@ -29,12 +29,12 @@ export function canActAs(holder: UserRow, agent: UserRow): boolean {
 export async function resolveActAs(
   db: Db,
   holder: UserRow,
-  actAs: TokenActAs,
+  scopes: readonly TokenScope[],
   rawHeader: string,
 ): Promise<UserRow> {
   const login = rawHeader.trim();
   if (login === "") throw new UnauthorizedError(`${ACT_AS_HEADER} is empty`);
-  if (holder.kind !== "human" || actAs === "off") {
+  if (holder.kind !== "human" || !scopes.includes("agents:act")) {
     throw new UnauthorizedError("this token cannot act as an agent");
   }
   const notMine = () =>
@@ -42,7 +42,7 @@ export async function resolveActAs(
 
   let agent = await findByLogin(db, login);
   if (!agent) {
-    if (actAs !== "create") throw notMine();
+    if (!scopes.includes("agents:create")) throw notMine();
     if (!LoginInput.safeParse(login).success) {
       throw new UnauthorizedError(`"${login}" is not a valid agent login`);
     }

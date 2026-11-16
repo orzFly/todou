@@ -1,5 +1,5 @@
 {
-  "id": "fa68d91a-40e5-43f5-844f-21eed4e1ee70",
+  "id": "f28a1c9d-ed86-4846-9c38-df6149888fd5",
   "prevId": "e55c1e05-e2a3-4745-9d9d-f731434bcb8a",
   "version": "7",
   "dialect": "postgresql",
@@ -1672,12 +1672,12 @@
           "primaryKey": false,
           "notNull": false
         },
-        "act_as": {
-          "name": "act_as",
-          "type": "text",
+        "scopes": {
+          "name": "scopes",
+          "type": "text[]",
           "primaryKey": false,
           "notNull": true,
-          "default": "'off'"
+          "default": "'{}'::text[]"
         }
       },
       "indexes": {

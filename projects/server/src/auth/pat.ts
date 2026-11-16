@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { TokenActAs } from "@todou/shared";
+import type { TokenScope } from "@todou/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { tokens, users } from "../db/system-schema.ts";
@@ -35,7 +35,7 @@ export type UserRow = typeof users.$inferSelect;
 export async function verifyPat(
   db: Db,
   token: string,
-): Promise<{ user: UserRow; actAs: TokenActAs } | null> {
+): Promise<{ user: UserRow; scopes: TokenScope[] } | null> {
   if (!token.startsWith(PAT_PREFIX)) return null;
   const now = new Date();
   const rows = await db
@@ -57,5 +57,5 @@ export async function verifyPat(
       .set({ lastUsedAt: now })
       .where(eq(tokens.id, row.token.id));
   }
-  return { user: row.user, actAs: row.token.actAs };
+  return { user: row.user, scopes: row.token.scopes };
 }

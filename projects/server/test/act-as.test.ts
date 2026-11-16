@@ -1,4 +1,8 @@
-import { ACT_AS_HEADER, type CliAuthTarget } from "@todou/shared";
+import {
+  ACT_AS_HEADER,
+  type CliAuthTarget,
+  type TokenScope,
+} from "@todou/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { users } from "../src/db/system-schema.ts";
@@ -28,7 +32,7 @@ describe("x-todou-act-as", () => {
   let cookie: string;
   let aliceId: number;
   let botId: number;
-  /** Alice's tokens, one per act_as value. */
+  /** Alice's tokens: no scopes, agents:act, and agents:act + agents:create. */
   let off: Headers;
   let existing: Headers;
   let create: Headers;
@@ -80,24 +84,24 @@ describe("x-todou-act-as", () => {
   beforeAll(async () => {
     t = await makeTestApp();
     cookie = await t.login();
-    const alice = await addUserWithToken(t.ctx, "alice", { actAs: "off" });
+    const alice = await addUserWithToken(t.ctx, "alice");
     aliceId = alice.user.id;
     off = alice.headers;
-    const issue = async (actAs: "existing" | "create") => {
+    const issue = async (name: string, scopes: TokenScope[]) => {
       const token = await issueToken(t.ctx.router.system(), aliceId, {
-        name: actAs,
-        act_as: actAs,
+        name,
+        scopes,
       });
       return { authorization: `Bearer ${token.token}` };
     };
-    existing = await issue("existing");
-    create = await issue("create");
+    existing = await issue("existing", ["agents:act"]);
+    create = await issue("create", ["agents:act", "agents:create"]);
     const bot = await addUserWithToken(t.ctx, "bot-one", {
       kind: "machine",
       ownerId: aliceId,
       // Unreachable through the API; set here to prove the middleware
       // refuses an agent's token on its own.
-      actAs: "existing",
+      scopes: ["agents:act"],
     });
     botId = bot.user.id;
     botToken = bot.headers;
@@ -152,7 +156,7 @@ describe("x-todou-act-as", () => {
   it("lets an instance admin act as somebody else's agent", async () => {
     const root = await addUserWithToken(t.ctx, "root", {
       instanceAdmin: true,
-      actAs: "existing",
+      scopes: ["agents:act"],
     });
     expect((await json(await me(as(root.headers, "bot-one")))).login).toBe(
       "bot-one",
@@ -246,7 +250,7 @@ describe("x-todou-act-as", () => {
       }
     });
 
-    it("refuses a token issued without act_as", async () => {
+    it("refuses a token issued without agents:act", async () => {
       await expect401(
         await me(as(off, "bot-one")),
         "this token cannot act as an agent",
@@ -320,10 +324,10 @@ describe("x-todou-act-as", () => {
 
     it("never lets an agent issue itself a token", async () => {
       for (const headers of [botToken, as(existing, "bot-one")]) {
-        for (const act_as of ["off", "existing"]) {
+        for (const scopes of [[], ["agents:act"]]) {
           const res = await post("/api/me/tokens", headers, {
             name: "mine",
-            act_as,
+            scopes,
           });
           expect(res.status).toBe(403);
           expect((await json(res)).error.message).toBe(refusal);
@@ -362,29 +366,30 @@ describe("x-todou-act-as", () => {
       expect(del.status).toBe(204);
     });
 
-    it("issues and lists act_as on a human's tokens", async () => {
+    it("issues and lists scopes on a human's tokens", async () => {
+      // Out of order and repeated: stored deduplicated, in TOKEN_SCOPES order.
       const issued = await post("/api/me/tokens", off, {
         name: "proxy",
-        act_as: "create",
+        scopes: ["agents:create", "agents:act", "agents:create"],
       });
       expect(issued.status).toBe(201);
       const body = await json(issued);
-      expect(body.act_as).toBe("create");
+      expect(body.scopes).toEqual(["agents:act", "agents:create"]);
       const defaulted = await json(
         await post("/api/me/tokens", off, { name: "plain" }),
       );
-      expect(defaulted.act_as).toBe("off");
+      expect(defaulted.scopes).toEqual([]);
 
       const list = await json(
         await t.app.request("/api/me/tokens", { headers: off }),
       );
       const byName = Object.fromEntries(
-        list.map((x: { name: string; act_as: string }) => [x.name, x.act_as]),
+        list.map((x: { name: string; scopes: string[] }) => [x.name, x.scopes]),
       );
       expect(byName).toMatchObject({
-        proxy: "create",
-        plain: "off",
-        existing: "existing",
+        proxy: ["agents:act", "agents:create"],
+        plain: [],
+        existing: ["agents:act"],
       });
       // The token it just issued works for acting as an agent.
       const who = await me(
@@ -393,28 +398,39 @@ describe("x-todou-act-as", () => {
       expect((await json(who)).login).toBe("bot-one");
     });
 
-    it("refuses act_as on an agent's token", async () => {
+    it("refuses agents:create without agents:act", async () => {
+      const res = await post("/api/me/tokens", off, {
+        name: "half",
+        scopes: ["agents:create"],
+      });
+      expect(res.status).toBe(422);
+      expect((await json(res)).error.message).toBe(
+        "agents:create requires agents:act",
+      );
+    });
+
+    it("refuses scopes on an agent's token", async () => {
       const refused = await post(`/api/agents/${botId}/tokens`, off, {
         name: "agent",
-        act_as: "existing",
+        scopes: ["agents:act"],
       });
       expect(refused.status).toBe(422);
       const issued = await post(`/api/agents/${botId}/tokens`, off, {
         name: "agent",
-        act_as: "off",
+        scopes: [],
       });
       expect(issued.status).toBe(201);
-      expect((await json(issued)).act_as).toBe("off");
+      expect((await json(issued)).scopes).toEqual([]);
       const list = await json(
         await t.app.request(`/api/agents/${botId}/tokens`, { headers: off }),
       );
       const byName = Object.fromEntries(
-        list.map((x: { name: string; act_as: string }) => [x.name, x.act_as]),
+        list.map((x: { name: string; scopes: string[] }) => [x.name, x.scopes]),
       );
       // bot-one-token was written past the API by the fixture.
       expect(byName).toMatchObject({
-        agent: "off",
-        "bot-one-token": "existing",
+        agent: [],
+        "bot-one-token": ["agents:act"],
       });
     });
   });

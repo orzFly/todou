@@ -125,8 +125,8 @@ const createTokenRoute = createRoute({
   method: "post",
   path: "/me/tokens",
   summary:
-    "Issue a personal access token for myself (humans only; act_as lets it " +
-    "carry x-todou-act-as)",
+    "Issue a personal access token for myself (humans only; the " +
+    "agents:act scope lets it carry x-todou-act-as)",
   request: {
     body: {
       content: { "application/json": { schema: TokenCreateInput } },

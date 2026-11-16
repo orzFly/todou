@@ -215,8 +215,8 @@ export async function issueAgentToken(
   agentId: number,
   input: TokenCreateInput,
 ): Promise<TokenCreated> {
-  if (input.act_as !== undefined && input.act_as !== "off") {
-    throw new ValidationFailedError("an agent's token cannot act as agents");
+  if (input.scopes !== undefined && input.scopes.length > 0) {
+    throw new ValidationFailedError("an agent's token cannot carry scopes");
   }
   const agent = await loadAgentForToken(ctx, actor, agentId);
   return issueToken(ctx.router.system(), agent.id, input);

@@ -1,4 +1,5 @@
-import { MEMBER_ROLES } from "@todou/shared";
+import { MEMBER_ROLES, TOKEN_SCOPES } from "@todou/shared";
+import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
@@ -77,9 +78,10 @@ export const tokens = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
-    actAs: text("act_as", { enum: ["off", "existing", "create"] })
+    scopes: text("scopes", { enum: TOKEN_SCOPES })
+      .array()
       .notNull()
-      .default("off"),
+      .default(sql`'{}'::text[]`),
   },
   (t) => [
     uniqueIndex("tokens_token_hash_idx").on(t.tokenHash),

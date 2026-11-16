@@ -233,7 +233,7 @@ describe("SSE streams follow their credential (T-624)", () => {
     /** A human with an act-as token, and an agent of theirs; both readers. */
     const holderWithAgent = async (login: string) => {
       const holder = await addUserWithToken(t.ctx, login, {
-        actAs: "existing",
+        scopes: ["agents:act"],
       });
       const agent = await addUserWithToken(t.ctx, `${login}-bot`, {
         kind: "machine",
@@ -297,7 +297,7 @@ describe("SSE streams follow their credential (T-624)", () => {
     it("closes on the next heartbeat after an admin acting as another's agent is demoted", async () => {
       const root = await addUserWithToken(t.ctx, "root-two", {
         instanceAdmin: true,
-        actAs: "existing",
+        scopes: ["agents:act"],
       });
       const bot = await addUserWithToken(t.ctx, "admin-bot", {
         kind: "machine",

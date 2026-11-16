@@ -52,7 +52,7 @@ export function authMiddleware(ctx: AppContext) {
       } else {
         c.set(
           "user",
-          await resolveActAs(system, verified.user, verified.actAs, actAs),
+          await resolveActAs(system, verified.user, verified.scopes, actAs),
         );
         c.set("bearer", verified.user);
       }

@@ -1,14 +1,20 @@
-import type {
-  TokenCreated,
-  TokenCreateInput,
-  TokenListItem,
-  TokenListQuery,
+import {
+  TOKEN_SCOPES,
+  type TokenCreated,
+  type TokenCreateInput,
+  type TokenListItem,
+  type TokenListQuery,
+  type TokenScope,
 } from "@todou/shared";
 import { and, asc, eq, isNull, or, type SQL } from "drizzle-orm";
 import { generatePat } from "../auth/pat.ts";
 import type { Db } from "../db/driver.ts";
 import { tokens, users } from "../db/system-schema.ts";
-import { ForbiddenError, NotFoundError } from "../errors.ts";
+import {
+  ForbiddenError,
+  NotFoundError,
+  ValidationFailedError,
+} from "../errors.ts";
 import { getUserRefs } from "./users.ts";
 
 /**
@@ -24,6 +30,20 @@ export function assertMayIssueOwnToken(actor: { kind: string }): void {
   }
 }
 
+/**
+ * Deduplicated, in `TOKEN_SCOPES` order, so equal grants store and print the
+ * same way. Creating agents without acting as them grants nothing usable.
+ */
+export function normalizeScopes(
+  scopes: readonly TokenScope[] | undefined,
+): TokenScope[] {
+  const set = new Set(scopes);
+  if (set.has("agents:create") && !set.has("agents:act")) {
+    throw new ValidationFailedError("agents:create requires agents:act");
+  }
+  return TOKEN_SCOPES.filter((scope) => set.has(scope));
+}
+
 export async function issueToken(
   db: Db,
   userId: number,
@@ -31,7 +51,7 @@ export async function issueToken(
 ): Promise<TokenCreated> {
   const { token, hash, prefix } = generatePat();
   const expiresAt = input.expires_at ? new Date(input.expires_at) : null;
-  const actAs = input.act_as ?? "off";
+  const scopes = normalizeScopes(input.scopes);
   const inserted = await db
     .insert(tokens)
     .values({
@@ -40,7 +60,7 @@ export async function issueToken(
       tokenHash: hash,
       prefix,
       expiresAt,
-      actAs,
+      scopes,
     })
     .returning({ id: tokens.id });
   const id = inserted[0]?.id;
@@ -51,7 +71,7 @@ export async function issueToken(
     prefix,
     name: input.name,
     expires_at: expiresAt?.toISOString() ?? null,
-    act_as: actAs,
+    scopes,
   };
 }
 
@@ -85,7 +105,7 @@ async function listTokensWhere(
       expires_at: row.expiresAt?.toISOString() ?? null,
       revoked_at: row.revokedAt?.toISOString() ?? null,
       last_used_at: row.lastUsedAt?.toISOString() ?? null,
-      act_as: row.actAs,
+      scopes: row.scopes,
       holder,
     };
   });
