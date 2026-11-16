@@ -374,4 +374,19 @@ describe("LabelPicker selected chips", () => {
     fireEvent.click(screen.getByLabelText("remove area:web"));
     expect(onToggle).toHaveBeenCalledWith(LABELS[0]);
   });
+
+  it("folds a shared prefix once, as every other label list does (T-715)", () => {
+    open({ selected: [LABELS[0] as Label, LABELS[1] as Label] });
+    const strip = screen.getByLabelText("remove area:web").closest("div");
+    const prefixes = [...(strip?.querySelectorAll("span") ?? [])].filter(
+      (node) => node.textContent === "area:",
+    );
+    expect(prefixes).toHaveLength(1);
+    expect(screen.getByLabelText("remove area:cli")).toBeTruthy();
+  });
+
+  it("lands focus in the filter, not on the first ✕", () => {
+    open({ selected: [LABELS[0] as Label] });
+    expect(document.activeElement).toBe(input());
+  });
 });

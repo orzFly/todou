@@ -1,4 +1,6 @@
 import type { Label } from "@todou/shared";
+import { XIcon } from "lucide-react";
+import { Fragment } from "react";
 import { groupLabelsByPrefix, splitLabelName } from "@/lib/labels.ts";
 
 /**
@@ -19,8 +21,18 @@ export function LabelChip({ label }: { label: Label }) {
 /**
  * Each group is a single inline-flex unit so a wrapping container breaks
  * between groups, never inside one.
+ *
+ * `onRemove` adds behaviour, not a look: a remove button after each chip,
+ * inside its group, so an editable list still folds its prefixes the way
+ * every read-only one does.
  */
-export function LabelChips({ labels }: { labels: Label[] }) {
+export function LabelChips({
+  labels,
+  onRemove,
+}: {
+  labels: Label[];
+  onRemove?: (label: Label) => void;
+}) {
   const { groups, plain } = groupLabelsByPrefix(labels);
   return (
     <>
@@ -29,10 +41,16 @@ export function LabelChips({ labels }: { labels: Label[] }) {
           key={group.prefix}
           prefix={group.prefix}
           labels={group.labels}
+          onRemove={onRemove}
         />
       ))}
       {plain.map((label) => (
-        <LabelGroup key={label.id} prefix={null} labels={[label]} />
+        <LabelGroup
+          key={label.id}
+          prefix={null}
+          labels={[label]}
+          onRemove={onRemove}
+        />
       ))}
     </>
   );
@@ -45,9 +63,11 @@ export function LabelChips({ labels }: { labels: Label[] }) {
 function LabelGroup({
   prefix,
   labels,
+  onRemove,
 }: {
   prefix: string | null;
   labels: Label[];
+  onRemove?: (label: Label) => void;
 }) {
   return (
     <span className="inline-flex min-w-0 items-center gap-1 align-middle">
@@ -55,11 +75,22 @@ function LabelGroup({
         <span className="text-xs text-muted-foreground">{prefix}</span>
       )}
       {labels.map((label) => (
-        <Chip
-          key={label.id}
-          label={label}
-          text={prefix ? splitLabelName(label.name).value : label.name}
-        />
+        <Fragment key={label.id}>
+          <Chip
+            label={label}
+            text={prefix ? splitLabelName(label.name).value : label.name}
+          />
+          {onRemove && (
+            <button
+              type="button"
+              aria-label={`remove ${label.name}`}
+              className="cursor-pointer text-muted-foreground hover:text-foreground"
+              onClick={() => onRemove(label)}
+            >
+              <XIcon className="size-3" />
+            </button>
+          )}
+        </Fragment>
       ))}
     </span>
   );

@@ -107,15 +107,26 @@ function prefixSplits(file: string, source: string): Hit[] {
 }
 
 /**
- * Each owner exports components that destructure exactly one prop: the
- * entity. A `valueOnly`, `bordered` or `className` is a second drawing
- * waiting for a caller.
+ * The props each owner component may take: the entity, plus behaviour that
+ * changes no pixel of the label itself. A `valueOnly`, `bordered` or
+ * `className` is a second drawing waiting for a caller.
  */
+const ALLOWED_PROPS: Record<string, string[]> = {
+  LabelChip: ["label"],
+  LabelChips: ["labels", "onRemove"],
+  StatusPill: ["status"],
+  StatusHeading: ["status"],
+};
+
 function extraProps(file: string, source: string): Hit[] {
   const out: Hit[] = [];
   for (const m of source.matchAll(/export function (\w+)\(\{([^}]*)\}/g)) {
-    const props = (m[2] as string).split(",").filter((p) => p.trim() !== "");
-    if (props.length !== 1) {
+    const allowed = ALLOWED_PROPS[m[1] as string] ?? [];
+    const props = (m[2] as string)
+      .split(",")
+      .map((p) => p.split("=")[0]?.trim() ?? "")
+      .filter((p) => p !== "");
+    if (props.some((p) => !allowed.includes(p))) {
       const line = source.slice(0, m.index).split("\n").length;
       out.push({ file, line, text: `${m[1]}(${props.join(",").trim()})` });
     }
@@ -192,11 +203,17 @@ describe("the scanner catches the drawings it exists for", () => {
     expect(prefixSplits("x.tsx", BEFORE.pickerSelectedLabel)).toHaveLength(1);
   });
 
-  it("flags a component that grew a second prop", () => {
+  it("flags a component that grew a styling prop", () => {
     expect(extraProps("x.tsx", BEFORE.labelChipVariants)).toHaveLength(1);
     expect(
       extraProps("x.tsx", "export function StatusPill({ status }: {"),
     ).toHaveLength(0);
+    expect(
+      extraProps(
+        "x.tsx",
+        "export function StatusPill({ status, className }: {",
+      ),
+    ).toHaveLength(1);
   });
 
   it("leaves names handed to props and strings alone", () => {
@@ -243,7 +260,7 @@ describe("labels and statuses are drawn only by their components (T-715)", () =>
     );
   });
 
-  it("gives every owner component exactly one prop", () => {
+  it("gives the owner components no styling props", () => {
     const owners = all.filter(({ file }) => OWNERS.has(file));
     expect(owners.flatMap((s) => extraProps(s.file, s.source))).toEqual([]);
     // The four entry points, so a fifth is a decision rather than a drift.
