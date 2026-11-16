@@ -11,14 +11,7 @@ import {
   FileDiffIcon,
   GitCommitHorizontalIcon,
 } from "lucide-react";
-import {
-  type MouseEvent,
-  type ReactNode,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   CopyButton,
@@ -130,7 +123,7 @@ function FileHeader({
   /** Drawn as this row alone. */
   collapsed: boolean;
   /** Absent where there is no other file to fold this one away for. */
-  onToggle?: (event: MouseEvent<HTMLButtonElement>) => void;
+  onToggle?: () => void;
   /** Present while the diff is held back. */
   onLoad?: () => void;
 }) {
@@ -174,17 +167,6 @@ function FileHeader({
       </span>
     </div>
   );
-}
-
-/**
- * Whether the item holding `header` begins above the top of `box`, the
- * scrolling element around it.
- */
-function scrolledPast(header: Element, box: HTMLElement | undefined) {
-  // pierre slots a header row into a wrapper div on the item's own element.
-  const item = header.closest("[slot]")?.parentElement;
-  if (item == null || box === undefined) return false;
-  return item.getBoundingClientRect().top < box.getBoundingClientRect().top;
 }
 
 function FileList({
@@ -426,19 +408,20 @@ export function PatchView({
           collapsed={shut}
           onToggle={
             drawn.files.length > 1
-              ? (event) => {
+              ? () => {
                   // Folding a file whose top has scrolled past the box's
                   // would leave the reader among files further down; bring
                   // its header back to the top so the next file follows it.
                   // `start` resolves from the item's top, which its own
                   // folding leaves alone.
+                  const code = view.current?.getInstance();
+                  const top = code?.getTopForItem(patchFileId(index));
                   if (
                     !shut &&
                     !clipped &&
-                    scrolledPast(
-                      event.currentTarget,
-                      view.current?.getInstance()?.getContainerElement(),
-                    )
+                    code !== undefined &&
+                    top !== undefined &&
+                    top < code.getScrollTop()
                   ) {
                     view.current?.scrollTo({
                       type: "item",

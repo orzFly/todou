@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, type Ref, useImperativeHandle, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { DocumentCard } from "../src/components/shared/document-card.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
@@ -18,36 +18,54 @@ type Item =
       collapsed?: boolean;
     };
 
+/** Where the stand-in renderer says it is scrolled, and where it was sent. */
+const scroll = vi.hoisted(() => ({
+  top: 0,
+  itemTops: new Map<string, number>(),
+  scrolledTo: [] as unknown[],
+}));
+
 // The real parser runs (it is plain string work); only the renderer is a
 // stand-in that says what it was handed, header rows included.
 vi.mock("@pierre/diffs/react", () => ({
-  CodeView: ({
+  CodeView: function CodeView({
+    ref,
     items,
     className,
     renderCustomHeader,
   }: {
+    ref?: Ref<unknown>;
     className?: string;
     items: Item[];
     renderCustomHeader?: (item: Item) => ReactNode;
-  }) => (
-    <div data-testid="codeview" data-class={className ?? ""}>
-      {items.map((item) => (
-        <section key={item.id} data-item={item.id}>
-          <header>{renderCustomHeader?.(item)}</header>
-          {item.type === "diff" ? (
-            <div
-              data-diff={item.fileDiff.name}
-              data-collapsed={item.collapsed ? "" : undefined}
-            >
-              {item.id}
-            </div>
-          ) : (
-            <pre data-file={item.file.name}>{item.file.contents}</pre>
-          )}
-        </section>
-      ))}
-    </div>
-  ),
+  }) {
+    useImperativeHandle(ref, () => ({
+      scrollTo: (target: unknown) => scroll.scrolledTo.push(target),
+      getInstance: () => ({
+        getScrollTop: () => scroll.top,
+        getTopForItem: (id: string) => scroll.itemTops.get(id),
+      }),
+    }));
+    return (
+      <div data-testid="codeview" data-class={className ?? ""}>
+        {items.map((item) => (
+          <section key={item.id} data-item={item.id}>
+            <header>{renderCustomHeader?.(item)}</header>
+            {item.type === "diff" ? (
+              <div
+                data-diff={item.fileDiff.name}
+                data-collapsed={item.collapsed ? "" : undefined}
+              >
+                {item.id}
+              </div>
+            ) : (
+              <pre data-file={item.file.name}>{item.file.contents}</pre>
+            )}
+          </section>
+        ))}
+      </div>
+    );
+  },
   MultiFileDiff: () => null,
 }));
 
@@ -488,6 +506,29 @@ describe("PatchView collapsing files", () => {
     );
     expect(collapsedDiffs()).toEqual(["state.json"]);
     expect(screen.getByRole("button", { name: "Load diff" })).toBeTruthy();
+  });
+
+  it("scrolls back to a file's header when folding it from partway down", async () => {
+    renderWithProviders(<PatchView filename="x.patch" text={TWO_FILES} />);
+    const collapse = await screen.findByRole("button", {
+      name: "collapse src/a.ts",
+    });
+    const a = document.querySelector("[data-diff='src/a.ts']")?.textContent;
+    if (a == null) throw new Error("src/a.ts is not drawn");
+    scroll.itemTops = new Map([[a, 0]]);
+    scroll.scrolledTo = [];
+
+    scroll.top = 0;
+    fireEvent.click(collapse);
+    fireEvent.click(screen.getByRole("button", { name: "expand src/a.ts" }));
+    expect(scroll.scrolledTo).toEqual([]);
+
+    scroll.top = 120;
+    fireEvent.click(screen.getByRole("button", { name: "collapse src/a.ts" }));
+    expect(scroll.scrolledTo).toEqual([
+      { type: "item", id: a, align: "start" },
+    ]);
+    expect(collapsedDiffs()).toEqual(["src/a.ts"]);
   });
 
   it("keeps what was collapsed across the raw view", async () => {
