@@ -172,6 +172,13 @@ describe("a staged-file token is one unit with its spaces", () => {
     expect(chips.map((chip) => chip.textContent)).toEqual([TOKEN]);
   });
 
+  it("holds its `![` together inside the chip", () => {
+    const { cm } = mount(`a ${TOKEN} b`, 0);
+    const chip = cm.contentDOM.querySelector(".cm-staged-token");
+    const head = chip?.querySelector(".cm-staged-token-head");
+    expect(head?.textContent).toBe("![");
+  });
+
   it("leaves an unknown key's link to ordinary Backspace", () => {
     const doc = "a ![x](staged:9-k3f9)";
     const { root } = mount(doc, doc.length);

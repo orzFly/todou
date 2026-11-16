@@ -24,6 +24,9 @@ import {
 
 const chip = Decoration.mark({ class: "cm-staged-token" });
 
+/** A token's `![` or `[`, kept on the line its file name starts. */
+const chipHead = Decoration.mark({ class: "cm-staged-token-head" });
+
 /** A unit — a token and its spaces — for `atomicRanges`; never drawn. */
 const unit = Decoration.mark({});
 
@@ -37,6 +40,9 @@ const chipTheme = EditorView.theme({
       "color-mix(in oklab, var(--muted-foreground) 16%, transparent)",
     borderRadius: "var(--radius-sm)",
   },
+  // Line breaking allows a break between `!` and `[`, which would leave the
+  // `!` alone at the end of a line; inside the file name a break is fine.
+  ".cm-staged-token-head": { whiteSpace: "pre" },
 });
 
 /** The annotations a rewritten transaction carries over from the original. */
@@ -224,7 +230,12 @@ export function stagedTokenAtoms(knows: (key: string) => boolean): Extension {
   const decorate = (state: EditorState): Sets => {
     const ranges = stagedTokenRanges(state.doc.toString(), knows);
     return {
-      chips: Decoration.set(ranges.map((r) => chip.range(r.from, r.to))),
+      chips: Decoration.set(
+        ranges.flatMap((r) => [
+          chip.range(r.from, r.to),
+          chipHead.range(r.from, r.labelFrom),
+        ]),
+      ),
       units: Decoration.set(
         ranges.map((r) => unit.range(r.unitFrom, r.unitTo)),
       ),
