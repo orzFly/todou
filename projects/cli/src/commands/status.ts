@@ -257,7 +257,7 @@ export class StatusInitCommand extends ProjectCommand {
   static paths = [["status", "init"]];
   static usage = Command.Usage({
     description:
-      "Apply the canonical status set (Backlog → … → Done, Invalid) to an existing project: create what is missing, sync colors",
+      "Apply the canonical status set (Backlog → … → Done, Invalid) to an existing project: create what is missing, sync colors, set an unset block clear line",
   });
 
   protected async run(client: TodouClient): Promise<void> {
@@ -324,10 +324,29 @@ export class StatusInitCommand extends ProjectCommand {
       }
     }
 
+    // Same rule as the default: only where nobody has chosen a line yet. A
+    // line someone did pick decides when their blocked cards may start, and
+    // moving it would re-decide every edge in the project.
+    const clearName = CANONICAL_STATUSES.find((s) => s.block_clear)?.name;
+    let clearLine: Status | undefined;
+    if (
+      clearName !== undefined &&
+      (await client.getProject(project)).block_clear_status_id == null
+    ) {
+      const line = board.find(
+        (s) => s.name.toLowerCase() === clearName.toLowerCase(),
+      );
+      if (line !== undefined) {
+        await client.updateProject(project, { block_clear_status_id: line.id });
+        clearLine = line;
+      }
+    }
+
     this.output(
       {
         created: created.map((s) => s.name),
         recolored: recolored.map((s) => s.name),
+        block_clear: clearLine?.name ?? null,
         statuses: board,
       },
       () =>
@@ -341,6 +360,9 @@ export class StatusInitCommand extends ProjectCommand {
           ...(defaulted === undefined
             ? []
             : [`made ${defaulted.name} the default status`]),
+          ...(clearLine === undefined
+            ? []
+            : [`blocks now clear at ${clearLine.name} or later`]),
         ].join("\n"),
     );
   }

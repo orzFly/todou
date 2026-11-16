@@ -51,6 +51,17 @@ function canonicalBoard() {
   }));
 }
 
+function projectWithLine(lineId: number | null) {
+  return {
+    id: 1,
+    slug: "todou",
+    name: "todou",
+    description: "",
+    created_at: "2026-01-01T00:00:00.000Z",
+    block_clear_status_id: lineId,
+  };
+}
+
 function jsonBody(init: RequestInit): Record<string, unknown> {
   return JSON.parse(String(init.body)) as Record<string, unknown>;
 }
@@ -412,6 +423,7 @@ describe("status init", () => {
   it("fills the canonical gaps in order and pins Todo as the default", async () => {
     const posted: Array<Record<string, unknown>> = [];
     const patched: Array<{ id: string; body: Record<string, unknown> }> = [];
+    const linePatches: Array<Record<string, unknown>> = [];
     let nextId = 10;
     const patchRoute = (id: number) =>
       [
@@ -436,6 +448,15 @@ describe("status init", () => {
       [...patchRoute(1)],
       [...patchRoute(2)],
       [...patchRoute(3)],
+      ["GET", "/api/projects/todou", projectWithLine(null)],
+      [
+        "PATCH",
+        "/api/projects/todou",
+        (init: RequestInit) => {
+          linePatches.push(jsonBody(init));
+          return projectWithLine(13);
+        },
+      ],
     ]);
     const result = await runCli(["status", "init"], {
       fetchImpl,
@@ -473,20 +494,38 @@ describe("status init", () => {
       { id: "1", body: { is_default: true } },
     ]);
     expect(result.stdout).toBe(
-      "created Backlog, Next, Ready to Ship, Shipped, Invalid\nmade Todo the default status\n",
+      "created Backlog, Next, Ready to Ship, Shipped, Invalid\nmade Todo the default status\nblocks now clear at Shipped or later\n",
     );
+    // Shipped was the fourth status created, so it got id 13.
+    expect(linePatches).toEqual([{ block_clear_status_id: 13 }]);
+  });
+
+  it("leaves a block clear line someone already chose", async () => {
+    // No PATCH route for the project: moving the line would throw
+    // "unexpected fetch" rather than pass unnoticed.
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", canonicalBoard()],
+      ["GET", "/api/projects/todou", projectWithLine(7)],
+    ]);
+    const result = await runCli(["status", "init", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ block_clear: null });
   });
 
   it("is a no-op when the canonical set already exists", async () => {
     const { fetchImpl, calls } = fakeFetch([
       ["GET", "/api/projects/todou/statuses", canonicalBoard()],
+      ["GET", "/api/projects/todou", projectWithLine(6)],
     ]);
     const result = await runCli(["status", "init"], {
       fetchImpl,
       env: loggedInEnv("todou"),
     });
     expect(result.exitCode).toBe(0);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(result.stdout).toBe("all canonical statuses already exist\n");
   });
 
@@ -503,6 +542,7 @@ describe("status init", () => {
     // "unexpected fetch" rather than pass unnoticed.
     const routes = (patched: Array<Record<string, unknown>>): Route[] => [
       ["GET", "/api/projects/todou/statuses", drifted()],
+      ["GET", "/api/projects/todou", projectWithLine(6)],
       [
         "PATCH",
         "/api/projects/todou/statuses/1",
