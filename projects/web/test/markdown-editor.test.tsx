@@ -148,10 +148,11 @@ describe("MarkdownEditor", () => {
     cm.contentDOM.dispatchEvent(
       new Event("drop", { bubbles: true, cancelable: true }),
     );
+    const surface = expect.objectContaining({ dom: cm.dom });
     expect(staging.paste).toHaveBeenCalledOnce();
-    expect(staging.paste).toHaveBeenCalledWith(expect.any(Event), cm);
+    expect(staging.paste).toHaveBeenCalledWith(expect.any(Event), surface);
     expect(staging.drop).toHaveBeenCalledOnce();
-    expect(staging.drop).toHaveBeenCalledWith(expect.any(Event), cm);
+    expect(staging.drop).toHaveBeenCalledWith(expect.any(Event), surface);
   });
 
   it("refuses a staged-file token dropped on an editor that stages no files", () => {
@@ -173,7 +174,9 @@ describe("MarkdownEditor", () => {
     const staging = stagingSpy();
     const view = render(<MarkdownEditor staging={staging} />);
     const cm = cmView(view.container);
-    expect(staging.bind).toHaveBeenLastCalledWith(cm);
+    expect(staging.bind).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dom: cm.dom }),
+    );
     cmSetValue(view.container, "typed");
     expect(staging.sync).toHaveBeenLastCalledWith("typed");
     view.unmount();

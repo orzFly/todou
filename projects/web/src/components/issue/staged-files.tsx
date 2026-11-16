@@ -1,12 +1,13 @@
-import { isolateHistory } from "@codemirror/commands";
-import type { EditorView } from "@codemirror/view";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
 import { FileIcon, Maximize2Icon, PaperclipIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/api/queries.ts";
 import { AttachmentViewerDialog } from "@/components/issue/attachment-viewer.tsx";
-import type { EditorFileStaging } from "@/components/shared/markdown-editor.tsx";
+import type {
+  EditorFileStaging,
+  StagingSurface,
+} from "@/components/shared/markdown-editor.tsx";
 import { Button } from "@/components/ui/button";
 import {
   formatSize,
@@ -218,7 +219,7 @@ export function useStagedFiles(): StagedFiles {
     () => new Set(),
   );
   const referencedRef = useRef<ReadonlySet<string>>(new Set());
-  const viewRef = useRef<EditorView | null>(null);
+  const surfaceRef = useRef<StagingSurface | null>(null);
   // Whether the reader has pressed or typed in the editor since it bound: the
   // caret `autoFocus` leaves at 0 is not one they put there.
   const touchedRef = useRef(false);
@@ -282,32 +283,32 @@ export function useStagedFiles(): StagedFiles {
     setReferencedKeys(new Set(stagedKeysIn(doc, knows)));
   }
 
-  function bind(view: EditorView | null) {
+  function bind(surface: StagingSurface | null) {
     unbindRef.current?.();
     unbindRef.current = null;
-    viewRef.current = view;
+    surfaceRef.current = surface;
     touchedRef.current = false;
-    if (view === null) return;
+    if (surface === null) return;
     const touch = () => {
       touchedRef.current = true;
     };
     const controller = new AbortController();
     const listen = { capture: true, signal: controller.signal };
-    view.dom.addEventListener("pointerdown", touch, listen);
-    view.dom.addEventListener("keydown", touch, listen);
+    surface.dom.addEventListener("pointerdown", touch, listen);
+    surface.dom.addEventListener("keydown", touch, listen);
     unbindRef.current = () => controller.abort();
-    sync(view.state.doc.toString());
+    sync(surface.doc());
   }
 
   function stage(
     files: Iterable<File>,
     opts?: { fromClipboard?: boolean; at?: { from: number; to: number } },
   ): boolean {
-    const view = viewRef.current;
+    const surface = surfaceRef.current;
     const list = [...files].map((file) =>
       opts?.fromClipboard === true ? renameIfClipboardDefault(file) : file,
     );
-    if (list.length === 0 || view === null) return false;
+    if (list.length === 0 || surface === null) return false;
     const added = list.map((file): StagedFile => {
       const key = newKey(nextOrdinal.current++);
       pageFiles.set(key, file);
@@ -333,14 +334,12 @@ export function useStagedFiles(): StagedFiles {
     });
     // Before the dispatch, whose sync has to recognize the new tokens.
     commit([...allRef.current, ...added]);
-    const end = view.state.doc.length;
+    const end = surface.doc().length;
     place(
-      view,
+      surface,
       added.map((item) => item.token),
       opts?.at ??
-        (touchedRef.current
-          ? view.state.selection.main
-          : { from: end, to: end }),
+        (touchedRef.current ? surface.selection() : { from: end, to: end }),
       opts?.fromClipboard === true
         ? "input.paste"
         : opts?.at !== undefined
@@ -352,30 +351,21 @@ export function useStagedFiles(): StagedFiles {
 
   /** Put `tokens` in at `at`, by the placement rules of `tokenInsertion`. */
   function place(
-    view: EditorView,
+    surface: StagingSurface,
     tokens: string[],
     at: { from: number; to: number },
     userEvent: string,
   ) {
-    const change = tokenInsertion(
-      view.state.doc.toString(),
-      at.from,
-      at.to,
-      tokens,
-    );
-    view.dispatch({
-      changes: { from: change.from, to: change.to, insert: change.insert },
-      selection: { anchor: change.cursor },
-      scrollIntoView: true,
-      // An undo step of its own, so the next keystroke's undo cannot take
-      // the file with it.
-      annotations: isolateHistory.of("full"),
+    const change = tokenInsertion(surface.doc(), at.from, at.to, tokens);
+    surface.change({
+      changes: [{ from: change.from, to: change.to, insert: change.insert }],
+      cursor: change.cursor,
       userEvent,
     });
   }
 
-  function paste(event: ClipboardEvent, view: EditorView) {
-    const { from, to } = view.state.selection.main;
+  function paste(event: ClipboardEvent, surface: StagingSurface) {
+    const { from, to } = surface.selection();
     // The only route the clipboard-default rename applies to: a drop or a
     // file picker carries a name someone actually chose.
     if (
@@ -388,11 +378,11 @@ export function useStagedFiles(): StagedFiles {
     }
   }
 
-  function drop(event: DragEvent, view: EditorView): boolean {
+  function drop(event: DragEvent, surface: StagingSurface): boolean {
     const dropPoint = () => {
       const at =
-        view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
-        view.state.selection.main.head;
+        surface.posAtCoords(event.clientX, event.clientY) ??
+        surface.selection().head;
       return { from: at, to: at };
     };
     const files = event.dataTransfer?.files;
@@ -402,7 +392,7 @@ export function useStagedFiles(): StagedFiles {
       return true;
     }
     const data = event.dataTransfer?.getData(STAGED_TOKEN_TYPE) ?? "";
-    // Other text is CodeMirror's to drop.
+    // Other text is the editor's own to drop.
     if (data === "") return false;
     event.preventDefault();
     const dragged = trayDragOf(data);
@@ -412,7 +402,7 @@ export function useStagedFiles(): StagedFiles {
     if (own !== undefined) {
       // Placed once more where the reader let go, by the same rules as a
       // file dropped in: never inside code, a link or a word.
-      place(view, [own.token], dropPoint(), "input.drop");
+      place(surface, [own.token], dropPoint(), "input.drop");
       return true;
     }
     // Another editor's file: staged here too, under a key of its own.
@@ -444,25 +434,16 @@ export function useStagedFiles(): StagedFiles {
         ),
       );
     }
-    const view = viewRef.current;
-    if (view === null) {
+    const surface = surfaceRef.current;
+    if (surface === null) {
       setReferencedKeys(
         new Set([...referencedRef.current].filter((k) => k !== key)),
       );
       return;
     }
-    const deletions = stagedTokenDeletions(
-      view.state.doc.toString(),
-      knows,
-      key,
-    );
+    const deletions = stagedTokenDeletions(surface.doc(), knows, key);
     if (deletions.length > 0) {
-      view.dispatch({
-        changes: deletions,
-        // One Ctrl+Z brings back exactly what × took.
-        annotations: isolateHistory.of("full"),
-        userEvent: "delete",
-      });
+      surface.change({ changes: deletions, userEvent: "delete" });
     }
   }
 
@@ -552,8 +533,8 @@ export function useStagedFiles(): StagedFiles {
     // The next text counts its files from 1 again, past whatever the editor
     // still holds; its tags keep them apart from the ones just sent.
     nextOrdinal.current = 1;
-    const view = viewRef.current;
-    if (view !== null) countPast(view.state.doc.toString());
+    const surface = surfaceRef.current;
+    if (surface !== null) countPast(surface.doc());
   }
 
   function discard() {
@@ -566,11 +547,11 @@ export function useStagedFiles(): StagedFiles {
   const latest = useRef({ bind, sync, knows, paste, drop, dragOver });
   latest.current = { bind, sync, knows, paste, drop, dragOver };
   const [editor] = useState<EditorFileStaging>(() => ({
-    bind: (view) => latest.current.bind(view),
+    bind: (surface) => latest.current.bind(surface),
     sync: (doc) => latest.current.sync(doc),
     knows: (key) => latest.current.knows(key),
-    paste: (event, view) => latest.current.paste(event, view),
-    drop: (event, view) => latest.current.drop(event, view),
+    paste: (event, surface) => latest.current.paste(event, surface),
+    drop: (event, surface) => latest.current.drop(event, surface),
     dragOver: (event) => latest.current.dragOver(event),
   }));
 

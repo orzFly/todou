@@ -125,6 +125,7 @@ describe("preferences split into categories (T-557)", () => {
       "Issue number placement",
       "References in text",
       "Icons without an image",
+      "Text editor",
     ]);
     expect(view.getAllByRole("combobox")).toHaveLength(6);
     expect(

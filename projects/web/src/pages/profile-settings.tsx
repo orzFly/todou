@@ -45,6 +45,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  setPlainTextEditor,
+  usePlainTextEditor,
+} from "@/lib/plain-text-editor.ts";
 
 /** The signed-in user's own profile. Agents are edited via /settings/agents. */
 export function ProfileSettingsPage() {
@@ -155,6 +159,7 @@ export function AppearanceSettingsPage() {
       <DisplaySection />
       <BodyReferencesSection />
       <FallbackAvatarsSection />
+      <TextEditorSection />
     </div>
   );
 }
@@ -486,6 +491,29 @@ function FallbackAvatarsSection() {
             ))}
           </FallbackPreview>
         }
+      />
+    </div>
+  );
+}
+
+/**
+ * The textarea way out of CodeMirror (T-709). Kept in this browser alone, so
+ * unlike the sections above it never waits on the server's prefs.
+ */
+function TextEditorSection() {
+  const plain = usePlainTextEditor();
+  return (
+    <div className="space-y-4 border-t pt-6">
+      <div className="space-y-1">
+        <h2 className="font-medium">Text editor</h2>
+      </div>
+      <ToggleRow
+        id="plain-text-editor"
+        label="Plain text box in this browser"
+        description="Gives up suggestions after #, @ and /, and pasting rich text as markdown."
+        checked={plain}
+        disabled={false}
+        onChange={setPlainTextEditor}
       />
     </div>
   );

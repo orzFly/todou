@@ -2,6 +2,7 @@ import {
   copyLineDown,
   deleteLine,
   insertBlankLine,
+  isolateHistory,
   moveLineDown,
   moveLineUp,
   selectLine,
@@ -29,11 +30,13 @@ import {
   CodeEditor,
   type CodeEditorHandle,
 } from "@/components/shared/code-editor.tsx";
+import { PlainMarkdownEditor } from "@/components/shared/plain-markdown-editor.tsx";
 import { handlePaste, pasteAs } from "@/lib/editor/paste-as.ts";
 import { toggleQuote } from "@/lib/editor/quote-toggle.ts";
 import { stagedTokenAtoms } from "@/lib/editor/staged-token-atoms.ts";
 import { trimTrailingSpaceOnEnter } from "@/lib/editor/trim-trailing-space.ts";
 import { prefetchPasteConverter } from "@/lib/paste/load.ts";
+import { plainTextEditor } from "@/lib/plain-text-editor.ts";
 import { STAGED_TOKEN_TYPE } from "@/lib/staged-tokens.ts";
 
 /**
@@ -56,23 +59,70 @@ const markdownLanguage = new Language(
 export type MarkdownEditorHandle = CodeEditorHandle;
 
 /**
+ * The text box as file staging sees it, whichever editor draws it: a
+ * CodeMirror view, or the plain textarea some browsers opt into (T-709).
+ */
+export type StagingSurface = {
+  /** Where the reader presses and types: what counts as touching the box. */
+  dom: HTMLElement;
+  doc: () => string;
+  /** `head` is the end the caret is on. */
+  selection: () => { from: number; to: number; head: number };
+  /** The document position under a viewport point, where one is known. */
+  posAtCoords: (x: number, y: number) => number | null;
+  /**
+   * Apply non-overlapping `changes`, positions in the current document, as
+   * one undo step where the editor allows it. A `cursor` (in the changed
+   * document) moves the caret there and scrolls to it.
+   */
+  change: (spec: {
+    changes: ReadonlyArray<{ from: number; to: number; insert?: string }>;
+    cursor?: number;
+    userEvent: string;
+  }) => void;
+};
+
+/**
  * Where pasted, dropped and picked files go: `useStagedFiles` in
  * issue/staged-files.tsx implements it, and the editor only calls it. Each
  * staged file sits in the text as a token, which the editor keeps whole.
  */
 export type EditorFileStaging = {
-  /** The view once mounted, null once it is gone. */
-  bind: (view: EditorView | null) => void;
+  /** The box once mounted, null once it is gone. */
+  bind: (surface: StagingSurface | null) => void;
   /** Every document change, programmatic ones included. */
   sync: (doc: string) => void;
   /** Whether `key` is a file this editor staged: only those are tokens. */
   knows: (key: string) => boolean;
   /** Takes the paste's files, if any, and then default-prevents it. */
-  paste: (event: ClipboardEvent, view: EditorView) => void;
-  /** True when it took the drop's files; CodeMirror's own drop then stays out. */
-  drop: (event: DragEvent, view: EditorView) => boolean;
+  paste: (event: ClipboardEvent, surface: StagingSurface) => void;
+  /** True when it took the drop's files; the editor's own drop then stays out. */
+  drop: (event: DragEvent, surface: StagingSurface) => boolean;
   dragOver: (event: DragEvent) => void;
 };
+
+function viewSurface(view: EditorView): StagingSurface {
+  return {
+    dom: view.dom,
+    doc: () => view.state.doc.toString(),
+    selection: () => {
+      const { from, to, head } = view.state.selection.main;
+      return { from, to, head };
+    },
+    posAtCoords: (x, y) => view.posAtCoords({ x, y }),
+    change: ({ changes, cursor, userEvent }) =>
+      view.dispatch({
+        changes: [...changes],
+        ...(cursor === undefined
+          ? {}
+          : { selection: { anchor: cursor }, scrollIntoView: true }),
+        // An undo step of its own, so the next keystroke's undo cannot take
+        // a file with it, and one Ctrl+Z brings back exactly what × took.
+        annotations: isolateHistory.of("full"),
+        userEvent,
+      }),
+  };
+}
 
 /** One instance for every editor, so reconfiguring never rebuilds it. */
 const dropCursorExtension = dropCursor();
@@ -169,11 +219,26 @@ const highlightStyle = HighlightStyle.define([
  * callers read through the ref at submit time. onChange exists only for
  * derived flags; routing every keystroke through React would re-render the
  * timeline on every character.
+ *
+ * A browser that opted out of CodeMirror (T-709) gets a plain textarea
+ * instead, decided at mount: switching under an open draft would drop it.
  */
 export const MarkdownEditor = forwardRef<
   MarkdownEditorHandle,
   MarkdownEditorProps
->(function MarkdownEditor(
+>(function MarkdownEditor(props, ref) {
+  const [plain] = useState(plainTextEditor);
+  return plain ? (
+    <PlainMarkdownEditor {...props} ref={ref} />
+  ) : (
+    <CodeMirrorMarkdownEditor {...props} ref={ref} />
+  );
+});
+
+const CodeMirrorMarkdownEditor = forwardRef<
+  MarkdownEditorHandle,
+  MarkdownEditorProps
+>(function CodeMirrorMarkdownEditor(
   {
     initialValue,
     placeholder,
@@ -208,7 +273,8 @@ export const MarkdownEditor = forwardRef<
         ),
   );
   const bindView = useCallback(
-    (view: EditorView | null) => handlers.current.staging?.bind(view),
+    (view: EditorView | null) =>
+      handlers.current.staging?.bind(view === null ? null : viewSurface(view)),
     [],
   );
 
@@ -280,12 +346,14 @@ export const MarkdownEditor = forwardRef<
           // live in this one handler because the order of two separate
           // handlers is decided by extension precedence, not by position.
           paste: (event, view) => {
-            handlers.current.staging?.paste(event, view);
+            handlers.current.staging?.paste(event, viewSurface(view));
             return handlePaste(view, event);
           },
           drop: (event, view) => {
             const staging = handlers.current.staging;
-            if (staging !== undefined) return staging.drop(event, view);
+            if (staging !== undefined) {
+              return staging.drop(event, viewSurface(view));
+            }
             // A tray's token means nothing to an editor that stages no files.
             if (event.dataTransfer?.types.includes(STAGED_TOKEN_TYPE)) {
               event.preventDefault();
