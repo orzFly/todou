@@ -158,6 +158,7 @@ describe("config show", () => {
         server_unknown_name: false,
         token_source: "default",
         token_profile: null,
+        act_as: null,
         project: null,
         project_source: null,
       },
@@ -168,6 +169,7 @@ describe("config show", () => {
           name: null,
           default_token: false,
           profiles: ["bot-one"],
+          act_as_profiles: [],
           instead_of: [],
         },
         {
@@ -176,6 +178,7 @@ describe("config show", () => {
           name: null,
           default_token: true,
           profiles: ["claude-code", "harness"],
+          act_as_profiles: [],
           instead_of: [],
         },
       ],
@@ -218,6 +221,7 @@ describe("config show", () => {
       server_unknown_name: false,
       token_source: "env-token",
       token_profile: null,
+      act_as: null,
       project: null,
       project_source: null,
     });
@@ -318,6 +322,7 @@ describe("config show", () => {
         name: null,
         default_token: true,
         profiles: [],
+        act_as_profiles: [],
         instead_of: [],
       },
     ]);
@@ -354,6 +359,7 @@ describe("config show", () => {
       server_unknown_name: false,
       token_source: null,
       token_profile: null,
+      act_as: null,
       project: null,
       project_source: null,
     });
@@ -717,6 +723,45 @@ describe("config show fragment fidelity (T-366 review)", () => {
         source: configPath(env),
         active: true,
       },
+    ]);
+  });
+});
+
+describe("config show with act-as profiles (T-693)", () => {
+  const ACTING: CliConfig = {
+    default_server: "https://todou.example",
+    servers: {
+      "https://todou.example": {
+        token: SENTINELS.default,
+        tokens: {
+          ci: SENTINELS.claude,
+          harness: { act_as: "bot-one" },
+          own: { act_as: "bot-two", token: SENTINELS.harness },
+        },
+        instead_of: [],
+      },
+    },
+    bindings: [],
+  };
+
+  it("names what each profile acts as, never the token it borrows", async () => {
+    const env = seed("act-as", ACTING);
+    const { human, report } = await show({
+      env: { ...env, TODOU_PROFILE: "harness" },
+    });
+    expect(human).toContain(
+      '  token: profile "harness" (TODOU_PROFILE, acting as bot-one)\n',
+    );
+    expect(human).toContain(
+      "* https://todou.example — default token: set · profiles: ci, " +
+        "harness → acts as bot-one (default token), " +
+        "own → acts as bot-two (own token)\n",
+    );
+    expect(report.context.act_as).toBe("bot-one");
+    expect(report.servers[0]?.profiles).toEqual(["ci", "harness", "own"]);
+    expect(report.servers[0]?.act_as_profiles).toEqual([
+      { name: "harness", act_as: "bot-one", own_token: false },
+      { name: "own", act_as: "bot-two", own_token: true },
     ]);
   });
 });

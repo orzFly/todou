@@ -1,15 +1,48 @@
-import type {
-  TokenCreated,
-  TokenCreateInput,
-  TokenListItem,
-  TokenListQuery,
+import {
+  TOKEN_SCOPES,
+  type TokenCreated,
+  type TokenCreateInput,
+  type TokenListItem,
+  type TokenListQuery,
+  type TokenScope,
 } from "@todou/shared";
 import { and, asc, eq, isNull, or, type SQL } from "drizzle-orm";
 import { generatePat } from "../auth/pat.ts";
 import type { Db } from "../db/driver.ts";
 import { tokens, users } from "../db/system-schema.ts";
-import { NotFoundError } from "../errors.ts";
+import {
+  ForbiddenError,
+  NotFoundError,
+  ValidationFailedError,
+} from "../errors.ts";
 import { getUserRefs } from "./users.ts";
+
+/**
+ * An agent's tokens come only from its owner or an instance admin. Letting an
+ * agent mint its own would let an act-as request (T-693) turn a human's
+ * revocable delegation into a long-lived token the human cannot revoke.
+ */
+export function assertMayIssueOwnToken(actor: { kind: string }): void {
+  if (actor.kind === "machine") {
+    throw new ForbiddenError(
+      "agents cannot issue tokens; their owner issues them",
+    );
+  }
+}
+
+/**
+ * Deduplicated, in `TOKEN_SCOPES` order, so equal grants store and print the
+ * same way. Creating agents without acting as them grants nothing usable.
+ */
+export function normalizeScopes(
+  scopes: readonly TokenScope[] | undefined,
+): TokenScope[] {
+  const set = new Set(scopes);
+  if (set.has("agents:create") && !set.has("agents:act")) {
+    throw new ValidationFailedError("agents:create requires agents:act");
+  }
+  return TOKEN_SCOPES.filter((scope) => set.has(scope));
+}
 
 export async function issueToken(
   db: Db,
@@ -18,9 +51,17 @@ export async function issueToken(
 ): Promise<TokenCreated> {
   const { token, hash, prefix } = generatePat();
   const expiresAt = input.expires_at ? new Date(input.expires_at) : null;
+  const scopes = normalizeScopes(input.scopes);
   const inserted = await db
     .insert(tokens)
-    .values({ userId, name: input.name, tokenHash: hash, prefix, expiresAt })
+    .values({
+      userId,
+      name: input.name,
+      tokenHash: hash,
+      prefix,
+      expiresAt,
+      scopes,
+    })
     .returning({ id: tokens.id });
   const id = inserted[0]?.id;
   if (id === undefined) throw new Error("token insert returned no id");
@@ -30,6 +71,7 @@ export async function issueToken(
     prefix,
     name: input.name,
     expires_at: expiresAt?.toISOString() ?? null,
+    scopes,
   };
 }
 
@@ -63,6 +105,7 @@ async function listTokensWhere(
       expires_at: row.expiresAt?.toISOString() ?? null,
       revoked_at: row.revokedAt?.toISOString() ?? null,
       last_used_at: row.lastUsedAt?.toISOString() ?? null,
+      scopes: row.scopes,
       holder,
     };
   });

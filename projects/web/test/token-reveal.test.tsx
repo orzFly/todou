@@ -1,4 +1,5 @@
 import { fireEvent, render, waitFor } from "@testing-library/react";
+import type { TokenCreated } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import { TokenReveal } from "../src/components/shared/token-reveal.tsx";
 
@@ -8,7 +9,8 @@ const token = {
   prefix: "todou_pat_super",
   name: "ci",
   expires_at: null,
-};
+  scopes: [],
+} satisfies TokenCreated;
 
 describe("TokenReveal (one-time plaintext display)", () => {
   it("shows the plaintext exactly once with the prefix warning", () => {
@@ -31,5 +33,15 @@ describe("TokenReveal (one-time plaintext display)", () => {
     expect(getByText("Copied")).toBeTruthy();
 
     vi.unstubAllGlobals();
+  });
+
+  it("names the act-as header only for a token that can act as agents", () => {
+    const plain = render(<TokenReveal token={token} />);
+    expect(plain.queryByText(/x-todou-act-as/)).toBeNull();
+    plain.unmount();
+    const acting = render(
+      <TokenReveal token={{ ...token, scopes: ["agents:act"] }} />,
+    );
+    expect(acting.getByText("x-todou-act-as: <agent login>")).toBeTruthy();
   });
 });

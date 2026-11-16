@@ -1,3 +1,4 @@
+import type { TokenScope } from "@todou/shared";
 import { type App, createApp } from "../src/app.ts";
 import {
   type AppContext,
@@ -237,6 +238,11 @@ export async function addUserWithToken(
     kind?: "human" | "machine";
     ownerId?: number;
     instanceAdmin?: boolean;
+    /**
+     * Written straight through the service, which never refuses it: the
+     * only way to give an agent's token scopes, as T-693's tests must.
+     */
+    scopes?: TokenScope[];
   },
 ): Promise<{
   user: typeof users.$inferSelect;
@@ -257,6 +263,7 @@ export async function addUserWithToken(
   if (!row) throw new Error("user insert returned no row");
   const token = await issueToken(ctx.router.system(), row.id, {
     name: `${login}-token`,
+    scopes: opts?.scopes,
   });
   return { user: row, headers: { authorization: `Bearer ${token.token}` } };
 }

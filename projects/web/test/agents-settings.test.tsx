@@ -50,6 +50,7 @@ const AUTOMATION = {
   prefix: "td_ab12cd34",
   created_at: "2026-09-01T12:00:00Z",
   expires_at: null,
+  scopes: [],
   revoked_at: null,
   last_used_at: "2026-09-16T08:30:00Z",
   holder: PROBE,
@@ -191,6 +192,7 @@ describe("agent dialog forms with a legal 64-character login", () => {
       prefix: "fake_ci",
       token: "todou_at_fake_ci",
       expires_at: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      scopes: [],
     });
     renderWithProviders(
       <AgentTokensDialog agent={longAgent} />,
@@ -556,6 +558,7 @@ describe("agent tokens dialog · identity and one-time secret", () => {
       token: "todou_at_one_time_secret",
       prefix: "td_one_time",
       expires_at: null,
+      scopes: [],
     });
     const client = testQueryClient();
     renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);

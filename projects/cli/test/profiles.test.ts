@@ -1,12 +1,19 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ACT_AS_HEADER, AGENT_CONTEXT_HEADER } from "@todou/shared";
 import { afterAll, describe, expect, it } from "vitest";
 import type { CliConfig } from "../src/config.ts";
-import { configPath, loadCliConfig } from "../src/config.ts";
+import { configPath, loadCliConfig, saveCliConfig } from "../src/config.ts";
 import { resolveContext } from "../src/context.ts";
 import { CliError } from "../src/errors.ts";
-import { fakeFetch, runCli } from "./harness.ts";
+import { type Captured, fakeFetch, runCli } from "./harness.ts";
 
 const config: CliConfig = {
   default_server: "http://stub.test",
@@ -333,5 +340,310 @@ describe("config compatibility and login --profile", () => {
       'token: profile "harness" (auto-detected harness, no profile of its own)',
     );
     expect(result.stderr).toContain("detected harness: claude-code");
+  });
+});
+
+/** Profiles that act as an agent with a borrowed or their own token (T-693). */
+describe("act-as profiles", () => {
+  const actAs: CliConfig = {
+    default_server: "http://stub.test",
+    servers: {
+      "http://stub.test": {
+        token: "todou_pat_default",
+        tokens: {
+          ci: "todou_pat_ci",
+          "claude-code": { act_as: "claude-agent" },
+          harness: { act_as: "bot-one" },
+          own: { act_as: "bot-two", token: "todou_pat_own" },
+        },
+        instead_of: [],
+      },
+    },
+    bindings: [],
+  };
+  const withoutDefault: CliConfig = {
+    ...actAs,
+    servers: {
+      "http://stub.test": {
+        tokens: { harness: { act_as: "bot-one" } },
+        instead_of: [],
+      },
+    },
+  };
+
+  it("borrows the default token on every path that picks a profile", () => {
+    const flag = resolve({ profile: "harness", config: actAs });
+    expect(flag).toMatchObject({
+      token: "todou_pat_default",
+      tokenSource: "flag-profile",
+      tokenProfile: "harness",
+      actAs: "bot-one",
+    });
+    const env = resolve({ env: { TODOU_PROFILE: "harness" }, config: actAs });
+    expect(env).toMatchObject({
+      token: "todou_pat_default",
+      tokenSource: "env-profile",
+      actAs: "bot-one",
+    });
+    const own = resolve({ env: { CLAUDECODE: "1" }, config: actAs });
+    expect(own).toMatchObject({
+      token: "todou_pat_default",
+      tokenSource: "auto-harness",
+      tokenProfile: "claude-code",
+      actAs: "claude-agent",
+    });
+    const sharedHarness = resolve({ env: HERMES_ENV, config: actAs });
+    expect(sharedHarness).toMatchObject({
+      token: "todou_pat_default",
+      tokenSource: "auto-harness-shared",
+      tokenProfile: "harness",
+      actAs: "bot-one",
+    });
+  });
+
+  it("uses the profile's own token when it has one", () => {
+    expect(resolve({ profile: "own", config: actAs })).toMatchObject({
+      token: "todou_pat_own",
+      actAs: "bot-two",
+    });
+  });
+
+  it("leaves string profiles and the default token without act_as", () => {
+    expect(resolve({ profile: "ci", config: actAs }).actAs).toBeUndefined();
+    expect(resolve({ config: actAs }).actAs).toBeUndefined();
+  });
+
+  it("refuses to borrow a default token that is not stored", () => {
+    let err: CliError | undefined;
+    try {
+      resolve({ profile: "harness", config: withoutDefault });
+    } catch (e) {
+      err = e as CliError;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect(err?.message).toBe(
+      'profile "harness" acts as "bot-one" with the default token, but none is stored',
+    );
+    expect(err?.hint).toBe("run `todou login http://stub.test`");
+  });
+
+  describe("on disk", () => {
+    const dir = mkdtempSync(join(tmpdir(), "todou-act-as-"));
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+    const write = (name: string, body: string) => {
+      const env = { XDG_CONFIG_HOME: join(dir, name) };
+      mkdirSync(join(dir, name, "todou"), { recursive: true });
+      writeFileSync(configPath(env), body);
+      return env;
+    };
+    const seeded = (name: string, config: CliConfig = actAs) => {
+      const env = { XDG_CONFIG_HOME: join(dir, name) };
+      saveCliConfig(config, env);
+      return env;
+    };
+    const agentMe = {
+      id: 9,
+      login: "bot-one",
+      display_name: "bot-one",
+      kind: "machine",
+      owner: { id: 1, login: "user" },
+    };
+    const header = (call: Captured | undefined, name: string) =>
+      call ? new Headers(call.init.headers).get(name) : undefined;
+    const meCall = (calls: Captured[]) =>
+      calls.find((c) => new URL(c.url).pathname === "/api/me");
+
+    it("reads both profile forms, written inline or as a table", () => {
+      const env = write(
+        "forms",
+        [
+          '[servers."http://stub.test"]',
+          'token = "todou_pat_default"',
+          '[servers."http://stub.test".tokens]',
+          'ci = "todou_pat_ci"',
+          'claude-code = { act_as = "claude-agent" }',
+          '[servers."http://stub.test".tokens.harness]',
+          'act_as = "bot-one"',
+          'token = "todou_pat_own"',
+          "",
+        ].join("\n"),
+      );
+      expect(loadCliConfig(env).servers["http://stub.test"]?.tokens).toEqual({
+        ci: "todou_pat_ci",
+        "claude-code": { act_as: "claude-agent" },
+        harness: { act_as: "bot-one", token: "todou_pat_own" },
+      });
+    });
+
+    it("rejects a table without act_as, or with a login no account can have", () => {
+      for (const [name, value] of [
+        ["missing", '{ token = "todou_pat_own" }'],
+        ["upper", '{ act_as = "Bot-One" }'],
+        ["reserved", '{ act_as = "me" }'],
+      ]) {
+        const env = write(
+          `bad-${name}`,
+          `[servers."http://stub.test".tokens]\nharness = ${value}\n`,
+        );
+        expect(() => loadCliConfig(env), name).toThrow(/invalid config/);
+      }
+    });
+
+    it("writes a table profile back so it reads the same", () => {
+      const env = seeded("round-trip");
+      expect(loadCliConfig(env).servers["http://stub.test"]?.tokens).toEqual(
+        actAs.servers["http://stub.test"]?.tokens,
+      );
+    });
+
+    it("sends the header on REST requests beside the agent context", async () => {
+      const env = seeded("rest");
+      const { fetchImpl, calls } = fakeFetch([["GET", "/api/me", agentMe]]);
+      const result = await runCli(["whoami"], {
+        fetchImpl,
+        env: { ...env, HERMES_SESSION_KEY: HERMES_ENV.HERMES_SESSION_KEY },
+      });
+      expect(result.exitCode).toBe(0);
+      const call = meCall(calls);
+      expect(header(call, ACT_AS_HEADER)).toBe("bot-one");
+      expect(header(call, AGENT_CONTEXT_HEADER)).not.toBeNull();
+      expect(header(call, "authorization")).toBe("Bearer todou_pat_default");
+      expect(result.stderr).toContain(
+        'token: profile "harness" (auto-detected harness, no profile of its own), acting as bot-one',
+      );
+    });
+
+    it("sends no header for a string profile", async () => {
+      const env = seeded("plain");
+      const { fetchImpl, calls } = fakeFetch([
+        ["GET", "/api/me", { ...agentMe, login: "user", kind: "human" }],
+      ]);
+      const result = await runCli(["whoami", "--profile", "ci"], {
+        fetchImpl,
+        env,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(header(meCall(calls), ACT_AS_HEADER)).toBeNull();
+      expect(result.stderr).not.toContain("acting as");
+    });
+
+    describe("login --act-as", () => {
+      const human = { ...agentMe, id: 1, login: "user", kind: "human" };
+
+      it("stores only the profile, after the server accepts it", async () => {
+        const env = seeded("login-ok", {
+          ...actAs,
+          servers: {
+            "http://stub.test": {
+              token: "todou_pat_default",
+              tokens: { ci: "todou_pat_ci" },
+              instead_of: [],
+            },
+          },
+        });
+        const { fetchImpl, calls } = fakeFetch([["GET", "/api/me", agentMe]]);
+        const result = await runCli(
+          [
+            "login",
+            "http://stub.test",
+            "--profile",
+            "harness",
+            "--act-as",
+            "bot-one",
+          ],
+          { fetchImpl, env },
+        );
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe(
+          'logged in to http://stub.test as bot-one (profile "harness", acting as bot-one with the default token)\n',
+        );
+        expect(header(meCall(calls), ACT_AS_HEADER)).toBe("bot-one");
+        expect(calls).toHaveLength(1);
+        expect(loadCliConfig(env).servers["http://stub.test"]).toEqual({
+          token: "todou_pat_default",
+          tokens: { ci: "todou_pat_ci", harness: { act_as: "bot-one" } },
+          instead_of: [],
+        });
+      });
+
+      it("leaves the file untouched when the server refuses", async () => {
+        const env = seeded("login-refused");
+        const before = readFileSync(configPath(env));
+        const { fetchImpl } = fakeFetch([
+          [
+            "GET",
+            "/api/me",
+            {
+              __status: 401,
+              body: {
+                error: {
+                  code: "unauthorized",
+                  message: "this token cannot act as an agent",
+                },
+              },
+            },
+          ],
+        ]);
+        const result = await runCli(
+          [
+            "login",
+            "http://stub.test",
+            "--profile",
+            "x",
+            "--act-as",
+            "bot-one",
+          ],
+          { fetchImpl, env },
+        );
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("this token cannot act as an agent");
+        expect(readFileSync(configPath(env)).equals(before)).toBe(true);
+      });
+
+      it("needs a stored default token, and --profile", async () => {
+        const { fetchImpl, calls } = fakeFetch([["GET", "/api/me", human]]);
+        const bare = await runCli(
+          [
+            "login",
+            "http://stub.test",
+            "--profile",
+            "x",
+            "--act-as",
+            "bot-one",
+          ],
+          { fetchImpl, env: seeded("login-bare", withoutDefault) },
+        );
+        expect(bare.exitCode).toBe(1);
+        expect(bare.stderr).toContain(
+          "no default token stored for http://stub.test",
+        );
+
+        const noProfile = await runCli(
+          ["login", "http://stub.test", "--act-as", "bot-one"],
+          { fetchImpl, env: seeded("login-no-profile") },
+        );
+        expect(noProfile.exitCode).toBe(1);
+        expect(noProfile.stderr).toContain("--act-as needs --profile");
+
+        const manual = await runCli(
+          [
+            "login",
+            "http://stub.test",
+            "--profile",
+            "x",
+            "--act-as",
+            "bot-one",
+            "--manual",
+          ],
+          { fetchImpl, env: seeded("login-manual") },
+        );
+        expect(manual.exitCode).toBe(1);
+        expect(manual.stderr).toContain(
+          "--act-as cannot be combined with --manual or --no-browser",
+        );
+        expect(calls).toHaveLength(0);
+      });
+    });
   });
 });

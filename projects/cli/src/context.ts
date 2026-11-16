@@ -1,5 +1,11 @@
 import { spawnSync } from "node:child_process";
-import type { Binding, CliConfig, Env, ServerEntry } from "./config.ts";
+import type {
+  ActAsProfile,
+  Binding,
+  CliConfig,
+  Env,
+  ServerEntry,
+} from "./config.ts";
 import { normalizeServer } from "./config.ts";
 import type { DirConfig } from "./dir-config.ts";
 import { CliError } from "./errors.ts";
@@ -77,6 +83,8 @@ export type ResolvedContext = {
   tokenSource: TokenSource | null;
   /** Profile name when tokenSource is a profile (incl. both auto rules). */
   tokenProfile?: string;
+  /** Agent login the chosen profile sends as x-todou-act-as (T-693). */
+  actAs?: string;
   project?: string;
   /** Where `project` came from; null when it stayed unresolved. */
   projectSource: ProjectSource | null;
@@ -87,7 +95,7 @@ export type ResolvedContext = {
 
 type PickedToken = Pick<
   ResolvedContext,
-  "token" | "tokenSource" | "tokenProfile"
+  "token" | "tokenSource" | "tokenProfile" | "actAs"
 >;
 
 /** Throws CliError for an explicitly requested profile that does not exist. */
@@ -98,6 +106,29 @@ function pickToken(
   entry: ServerEntry | undefined,
   envTokenFits: boolean,
 ): PickedToken {
+  /**
+   * A stored profile as the token it sends. An act-as profile without a
+   * token of its own borrows the default one, so the owner's single login
+   * serves every agent profile on the machine.
+   */
+  const fromProfile = (
+    name: string,
+    value: string | ActAsProfile,
+    tokenSource: TokenSource,
+  ): PickedToken => {
+    if (typeof value === "string") {
+      return { token: value, tokenSource, tokenProfile: name };
+    }
+    const token = value.token ?? entry?.token;
+    if (!token) {
+      throw new CliError(
+        `profile "${name}" acts as "${value.act_as}" with the default token, but none is stored`,
+        `run \`todou login ${server}\``,
+      );
+    }
+    return { token, tokenSource, tokenProfile: name, actAs: value.act_as };
+  };
+
   const lookup = (
     name: string,
     tokenSource: "flag-profile" | "env-profile",
@@ -106,8 +137,8 @@ function pickToken(
       // Reserved name: bypasses the auto rule back to the default token.
       return { token: entry?.token, tokenSource: "default" };
     }
-    const token = entry?.tokens[name];
-    if (!token) {
+    const value = entry?.tokens[name];
+    if (!value) {
       const available = Object.keys(entry?.tokens ?? {});
       throw new CliError(
         `unknown profile "${name}" for ${server}`,
@@ -116,7 +147,7 @@ function pickToken(
           : `no profiles stored; run \`todou login ${server} --profile ${name}\``,
       );
     }
-    return { token, tokenSource, tokenProfile: name };
+    return fromProfile(name, value, tokenSource);
   };
 
   // A profile lookup is meaningless without a server; let the missing-server
@@ -138,20 +169,10 @@ function pickToken(
   const harnessId = detectHarnessId(env);
   if (harnessId) {
     const own = entry?.tokens[harnessId];
-    if (own) {
-      return {
-        token: own,
-        tokenSource: "auto-harness",
-        tokenProfile: harnessId,
-      };
-    }
+    if (own) return fromProfile(harnessId, own, "auto-harness");
     const shared = entry?.tokens[SHARED_HARNESS_PROFILE];
     if (shared) {
-      return {
-        token: shared,
-        tokenSource: "auto-harness-shared",
-        tokenProfile: SHARED_HARNESS_PROFILE,
-      };
+      return fromProfile(SHARED_HARNESS_PROFILE, shared, "auto-harness-shared");
     }
   }
   if (entry?.token) return { token: entry.token, tokenSource: "default" };

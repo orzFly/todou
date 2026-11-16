@@ -1,10 +1,11 @@
-import type { AgentContext } from "@todou/shared";
+import { ACT_AS_HEADER, type AgentContext } from "@todou/shared";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { AppContext } from "../bootstrap.ts";
 import type { Config } from "../config.ts";
 import { ForbiddenError, UnauthorizedError } from "../errors.ts";
 import { peerTrust, type RequestLike } from "../http/proxy.ts";
+import { resolveActAs } from "./act-as.ts";
 import { admissionRefusal, forwardAdmissionPolicy } from "./admission.ts";
 import { type UserRow, verifyPat } from "./pat.ts";
 import { deriveLogin, provisionUser, upstreamName } from "./provision.ts";
@@ -14,6 +15,12 @@ export type AppEnv = {
   Variables: {
     appCtx: AppContext;
     user: UserRow;
+    /**
+     * Who holds the Bearer token when the request acts as an agent (T-693);
+     * null otherwise. Only for code that must know whose credential keeps
+     * the request alive (SSE) — everything else reads `user`.
+     */
+    bearer: UserRow | null;
     /** Parsed x-todou-agent-context header; null when absent. */
     agentContext: AgentContext | null;
     /** Set by the upload-route body limiters; the API-wide one stands down. */
@@ -35,11 +42,31 @@ export function authMiddleware(ctx: AppContext) {
       if (scheme?.toLowerCase() !== "bearer" || token === "") {
         throw new UnauthorizedError("malformed authorization header");
       }
-      const user = await verifyPat(ctx.router.system(), token);
-      if (!user) throw new UnauthorizedError("invalid token");
-      c.set("user", user);
+      const system = ctx.router.system();
+      const verified = await verifyPat(system, token);
+      if (!verified) throw new UnauthorizedError("invalid token");
+      const actAs = c.req.header(ACT_AS_HEADER);
+      if (actAs === undefined) {
+        c.set("user", verified.user);
+        c.set("bearer", null);
+      } else {
+        c.set(
+          "user",
+          await resolveActAs(system, verified.user, verified.scopes, actAs),
+        );
+        c.set("bearer", verified.user);
+      }
       return next();
     }
+
+    // Refused rather than ignored: ignoring it would write as the human
+    // while the caller believes it is writing as the agent.
+    if (c.req.header(ACT_AS_HEADER) !== undefined) {
+      throw new UnauthorizedError(
+        `${ACT_AS_HEADER} requires token authentication`,
+      );
+    }
+    c.set("bearer", null);
 
     if (ctx.config.auth.mode === "forward") {
       c.set("user", await forwardUser(c, ctx));

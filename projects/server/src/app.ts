@@ -167,7 +167,12 @@ export function createApp(ctx: AppContext) {
       version: resolveVersion(),
       description:
         "A to-do system where projects behave like GitHub-Issues-style " +
-        "boards and agents are first-class machine users.",
+        "boards and agents are first-class machine users. A human's token " +
+        "issued with the agents:act scope may send x-todou-act-as: " +
+        "<agent login> to make the request as that agent — one they own, " +
+        "or any agent for an instance admin. With agents:create as well, " +
+        "an agent that does not exist yet is created on first use, owned " +
+        "by the token's holder.",
     },
   });
   // Calendar responses are private even when authentication or canonical

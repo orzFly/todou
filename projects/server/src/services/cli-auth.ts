@@ -16,7 +16,7 @@ import type { Db } from "../db/driver.ts";
 import { cliAuthRequests, tokens, users } from "../db/system-schema.ts";
 import { ConflictError, DomainError, NotFoundError } from "../errors.ts";
 import { createAgent, loadAgentForToken } from "./agents.ts";
-import { issueToken } from "./tokens.ts";
+import { assertMayIssueOwnToken, issueToken } from "./tokens.ts";
 
 /** Crockford base32: no I/L/O/U, so a code read aloud or retyped survives. */
 const CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -228,6 +228,7 @@ export async function approveCliAuthRequest(
   let agentId: number | null;
   switch (target.kind) {
     case "me":
+      assertMayIssueOwnToken(actor);
       userId = actor.id;
       agentId = null;
       break;

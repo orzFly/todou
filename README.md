@@ -107,6 +107,10 @@ pnpm --filter @todou/web dev
 The REST API is documented at `/api/openapi.json`. Agents are machine
 users: create one in Settings → Agents, issue it a personal access token,
 and it can do everything a member can via `Authorization: Bearer todou_pat_…`.
+A token you issue for yourself can instead carry the `agents:act` scope:
+send `x-todou-act-as: <agent login>` with it and the request runs as that
+agent. With `agents:create` as well, it also creates an agent that does not
+exist yet, owned by you.
 
 ### CLI
 
@@ -196,6 +200,12 @@ TODOU_SERVER=… TODOU_TOKEN=todou_pat_… TODOU_PROJECT=… todou issue list --
 # profile serves every harness that has none of its own.
 todou login https://todou.example --profile claude-code
 todou login https://todou.example --profile harness
+
+# Or let a profile borrow your default token and act as one of your agents
+# (the token needs the agents:act scope, chosen in Settings → Personal tokens).
+# This stores `harness = { act_as = "claude-agent" }`; add `token = "…"` to
+# the table to borrow a different token instead.
+todou login https://todou.example --profile harness --act-as claude-agent
 ```
 
 `todou --help` lists every command; `todou api <method> </path>` reaches

@@ -55,6 +55,8 @@ export type ConfigReport = {
     token_source: TokenSource | null;
     /** Profile name only; never the token stored under it. */
     token_profile: string | null;
+    /** Agent login the chosen profile acts as (T-693); null when none. */
+    act_as: string | null;
     project: string | null;
     project_source: ProjectSource | null;
   };
@@ -66,6 +68,16 @@ export type ConfigReport = {
     /** Existence only — "is a default identity stored here", not which. */
     default_token: boolean;
     profiles: string[];
+    /**
+     * The profiles that act as an agent, by name. `own_token` says only
+     * whether the profile stores a token of its own instead of borrowing
+     * the default one.
+     */
+    act_as_profiles: Array<{
+      name: string;
+      act_as: string;
+      own_token: boolean;
+    }>;
     /** This entry's `instead_of`, normalized; empty when it has none. */
     instead_of: string[];
   }>;
@@ -157,6 +169,7 @@ export function buildConfigReport(input: {
       server_unknown_name: ctx.serverUnknownName,
       token_source: ctx.tokenSource,
       token_profile: ctx.tokenProfile ?? null,
+      act_as: ctx.actAs ?? null,
       project: ctx.project ?? null,
       project_source: ctx.projectSource,
     },
@@ -170,6 +183,19 @@ export function buildConfigReport(input: {
         name: entry.name ?? null,
         default_token: Boolean(entry.token),
         profiles: Object.keys(entry.tokens).sort(),
+        act_as_profiles: Object.entries(entry.tokens)
+          .flatMap(([name, value]) =>
+            typeof value === "string"
+              ? []
+              : [
+                  {
+                    name,
+                    act_as: value.act_as,
+                    own_token: value.token !== undefined,
+                  },
+                ],
+          )
+          .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
         // Addresses, not credentials: `ConfigReport` stays a type with no
         // field a token value could be assigned to.
         instead_of: entry.instead_of.map(normalizeServer),
@@ -253,17 +279,18 @@ function withSource(
 
 /** How the identity was chosen — never anything about what it is. */
 export function tokenLine(report: ConfigReport): string {
-  const { token_source, token_profile, server } = report.context;
+  const { token_source, token_profile, server, act_as } = report.context;
   const profile = `profile "${token_profile}"`;
+  const acting = act_as === null ? "" : `, acting as ${act_as}`;
   switch (token_source) {
     case "flag-profile":
-      return `${profile} (--profile)`;
+      return `${profile} (--profile${acting})`;
     case "env-profile":
-      return `${profile} (TODOU_PROFILE)`;
+      return `${profile} (TODOU_PROFILE${acting})`;
     case "auto-harness":
-      return `${profile} (auto-detected harness)`;
+      return `${profile} (auto-detected harness${acting})`;
     case "auto-harness-shared":
-      return `${profile} (auto-detected harness, no profile of its own)`;
+      return `${profile} (auto-detected harness, no profile of its own${acting})`;
     case "env-token":
       return "TODOU_TOKEN (env)";
     case "env-token-withheld":
@@ -275,6 +302,15 @@ export function tokenLine(report: ConfigReport): string {
   }
 }
 
+function profileLabel(
+  entry: ConfigReport["servers"][number],
+  name: string,
+): string {
+  const acting = entry.act_as_profiles.find((p) => p.name === name);
+  if (acting === undefined) return name;
+  return `${name} → acts as ${acting.act_as} (${acting.own_token ? "own token" : "default token"})`;
+}
+
 function serversBlock(report: ConfigReport): string[] {
   if (report.servers.length === 0) return ["servers: none"];
   return [
@@ -284,7 +320,7 @@ function serversBlock(report: ConfigReport): string[] {
         `${entry.active ? "*" : " "} ${entry.origin} — ` +
         (entry.name === null ? "" : `name: ${entry.name} · `) +
         `default token: ${entry.default_token ? "set" : "none"} · profiles: ` +
-        `${entry.profiles.length === 0 ? "none" : entry.profiles.join(", ")}` +
+        `${entry.profiles.length === 0 ? "none" : entry.profiles.map((name) => profileLabel(entry, name)).join(", ")}` +
         // Printed only when there is something to say, following the
         // `--follow=uds: opted out` precedent: an ordinary config's output
         // is byte-identical to what it was before names and aliases existed.

@@ -7,7 +7,14 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { Agent, Me, MePrefs, TokenListItem } from "@todou/shared";
+import type {
+  Agent,
+  Me,
+  MePrefs,
+  TokenCreated,
+  TokenListItem,
+  TokenScope,
+} from "@todou/shared";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { prefsQuery } from "../src/api/prefs.ts";
 import {
@@ -72,6 +79,7 @@ function token(id: number, name: string, holder: Me | Agent): TokenListItem {
     prefix: `td_${id}`,
     created_at: "2026-09-01T12:00:00Z",
     expires_at: null,
+    scopes: [],
     revoked_at: null,
     last_used_at: null,
     holder,
@@ -115,7 +123,7 @@ const page = async () =>
         level: 1,
         name: "Personal access tokens",
       })
-    ).closest("div.space-y-6") as HTMLElement,
+    ).closest("div.space-y-10") as HTMLElement,
   );
 
 const rowNames = (view: Awaited<ReturnType<typeof page>>) =>
@@ -230,6 +238,7 @@ describe("personal tokens by holder (T-560)", () => {
       prefix: "td_99",
       name: "deploy",
       expires_at: null,
+      scopes: [],
     });
     const createMine = vi.spyOn(api, "createMyToken");
     const view = await page();
@@ -272,5 +281,134 @@ describe("personal tokens by holder (T-560)", () => {
     await waitFor(() => expect(rowNames(view)).toHaveLength(1));
     expect(view.queryByRole("link", { name: /^User/ })).toBeNull();
     expect(view.queryByRole("button", { name: /^Issue for/ })).toBeNull();
+  });
+});
+
+describe("token scopes (T-693)", () => {
+  const scopeBox = (view: Awaited<ReturnType<typeof page>>, scope: string) =>
+    view.queryByRole("checkbox", {
+      name: new RegExp(`^${scope}`),
+    }) as HTMLInputElement | null;
+  const created = (scopes: TokenCreated["scopes"]): TokenCreated => ({
+    id: 98,
+    token: "todou_pat_fallback",
+    prefix: "td_98",
+    name: "proxy",
+    expires_at: null,
+    scopes,
+  });
+
+  it("issues my token with the scopes ticked, none by default", async () => {
+    mountAt("/settings/tokens");
+    const createMine = vi
+      .spyOn(api, "createMyToken")
+      .mockResolvedValue(created(["agents:act", "agents:create"]));
+    const view = await page();
+    const act = await waitFor(() => {
+      const found = scopeBox(view, "agents:act");
+      expect(found?.checked).toBe(false);
+      return found as HTMLInputElement;
+    });
+    expect(scopeBox(view, "agents:create")?.checked).toBe(false);
+
+    // Creating implies acting: ticking it ticks agents:act too.
+    fireEvent.click(scopeBox(view, "agents:create") as HTMLInputElement);
+    expect(act.checked).toBe(true);
+    fireEvent.change(view.getByRole("textbox", { name: "Name" }), {
+      target: { value: "proxy" },
+    });
+    fireEvent.click(view.getByRole("button", { name: "Issue token" }));
+
+    await waitFor(() =>
+      expect(createMine).toHaveBeenCalledWith({
+        name: "proxy",
+        expires_at: null,
+        scopes: ["agents:act", "agents:create"],
+      }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Token created" }),
+    );
+    expect(dialog.getByText("x-todou-act-as: <agent login>")).toBeTruthy();
+    // Reset for the next token, once the reveal is dismissed.
+    fireEvent.click(dialog.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(scopeBox(view, "agents:act")?.checked).toBe(false),
+    );
+  });
+
+  it("unticking agents:act unticks agents:create", async () => {
+    mountAt("/settings/tokens");
+    const view = await page();
+    const create = await waitFor(
+      () => scopeBox(view, "agents:create") as HTMLInputElement,
+    );
+    fireEvent.click(create);
+    fireEvent.click(scopeBox(view, "agents:act") as HTMLInputElement);
+    expect(scopeBox(view, "agents:act")?.checked).toBe(false);
+    expect(create.checked).toBe(false);
+  });
+
+  it("hides the scopes while issuing for an agent, and forgets them", async () => {
+    mountAt("/settings/tokens");
+    const issueAgent = vi.spyOn(api, "issueAgentToken").mockResolvedValue({
+      ...created([]),
+      id: 99,
+      name: "deploy",
+    });
+    const createMine = vi.spyOn(api, "createMyToken");
+    const view = await page();
+    fireEvent.click(
+      await waitFor(() => scopeBox(view, "agents:act") as HTMLInputElement),
+    );
+
+    fireEvent.click(view.getByRole("button", { name: /^Issue for/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /@bot-two/ }));
+    await waitFor(() => expect(scopeBox(view, "agents:act")).toBeNull());
+    fireEvent.change(view.getByRole("textbox", { name: "Name" }), {
+      target: { value: "deploy" },
+    });
+    fireEvent.click(view.getByRole("button", { name: "Issue token" }));
+    await waitFor(() =>
+      expect(issueAgent).toHaveBeenCalledWith(8, {
+        name: "deploy",
+        expires_at: null,
+      }),
+    );
+
+    // Back on myself, the earlier tick did not survive the detour.
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    fireEvent.click(view.getByRole("button", { name: /^Issue for/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /@user/ }));
+    await waitFor(() =>
+      expect(scopeBox(view, "agents:act")?.checked).toBe(false),
+    );
+    expect(createMine).not.toHaveBeenCalled();
+  });
+
+  it("lists each token's scopes, including ones this build does not know", async () => {
+    mountAt(
+      "/settings/tokens?holder=all",
+      [BOT, HELPER],
+      [
+        { ...MINE, scopes: ["agents:act"] },
+        {
+          ...token(14, "proxy", me),
+          // A newer server's scope, as an older page would receive it.
+          scopes: ["agents:act", "issues:read" as TokenScope],
+        },
+        BOTS,
+      ],
+    );
+    const view = await page();
+    await waitFor(() => expect(rowNames(view)).toHaveLength(3));
+    expect(view.getByRole("columnheader", { name: "Scopes" })).toBeTruthy();
+    const rows = rowNames(view);
+    expect(rows[0]).toContain("agents:act");
+    expect(rows[1]).toContain("agents:act");
+    expect(rows[1]).toContain("issues:read");
+    expect(rows[2]).not.toContain("agents:");
   });
 });

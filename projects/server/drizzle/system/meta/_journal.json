@@ -134,6 +134,13 @@
       "when": 1794159928381,
       "tag": "0018_blob-reaps",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794845197121,
+      "tag": "0019_token-scopes",
+      "breakpoints": true
     }
   ]
 }

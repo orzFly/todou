@@ -4,7 +4,12 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
-import type { TokenCreated, TokenListItem } from "@todou/shared";
+import {
+  TOKEN_SCOPES,
+  type TokenCreated,
+  type TokenListItem,
+  type TokenScope,
+} from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -28,6 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 type HolderFilter = "user" | "agents" | "all";
@@ -47,6 +53,41 @@ const DESCRIPTIONS: Record<HolderFilter, string> = {
     "under the agent's name.",
   all: "Each token acts as its holder over the REST API.",
 };
+
+/**
+ * What each scope grants, the one thing its name does not say. Iterated in
+ * `TOKEN_SCOPES` order, so a new scope only needs its line here.
+ */
+function scopeDescription(scope: TokenScope): string {
+  switch (scope) {
+    case "agents:act":
+      return "Make requests as one of your agents by sending x-todou-act-as.";
+    case "agents:create":
+      return "Create the agent you name, owned by you, if no account has that login yet.";
+    default:
+      return "";
+  }
+}
+
+/**
+ * Creating an agent is only reachable by acting as it, so the two move
+ * together: one ticks the other on, the other takes it off.
+ */
+function toggleScope(
+  current: TokenScope[],
+  scope: TokenScope,
+  on: boolean,
+): TokenScope[] {
+  const next = new Set(current);
+  if (on) {
+    next.add(scope);
+    if (scope === "agents:create") next.add("agents:act");
+  } else {
+    next.delete(scope);
+    if (scope === "agents:act") next.delete("agents:create");
+  }
+  return TOKEN_SCOPES.filter((s) => next.has(s));
+}
 
 /**
  * Personal access tokens for the signed-in user, and for the agents they own
@@ -76,6 +117,8 @@ export function TokensSettingsPage() {
   const [name, setName] = useState("");
   const holderPicked = [me, ...agents].find((u) => String(u.id) === issueFor);
   const [expiry, setExpiry] = useState("never");
+  const [scopes, setScopes] = useState<TokenScope[]>([]);
+  const issuingForMe = issueFor === String(me.id);
   const [created, setCreated] = useState<{
     token: TokenCreated;
     holder: string | null;
@@ -94,7 +137,7 @@ export function TokensSettingsPage() {
       return {
         token: agent
           ? await api.issueAgentToken(agent.id, input)
-          : await api.createMyToken(input),
+          : await api.createMyToken({ ...input, scopes }),
         holder: agent ? agent.login : null,
       };
     },
@@ -102,6 +145,7 @@ export function TokensSettingsPage() {
       setCreated(result);
       setName("");
       setExpiry("never");
+      setScopes([]);
       invalidate();
     },
     onError: (error) => toast.error(error.message),
@@ -124,78 +168,148 @@ export function TokensSettingsPage() {
     );
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">Personal access tokens</h1>
-        <p className="text-sm text-muted-foreground">
-          {DESCRIPTIONS[filter] ?? DESCRIPTIONS.user}
-        </p>
-      </div>
-
-      <form
-        className="flex flex-wrap items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (name.trim()) issue.mutate();
-        }}
-      >
-        {agents.length > 0 && (
-          <UserPicker
-            users={[me, ...agents]}
-            selectedIds={[Number(issueFor)]}
-            onPick={(user) => {
-              if (user !== null) setIssueFor(String(user.id));
-            }}
-            trigger={
-              <UserSelectTrigger
-                user={holderPicked}
-                placeholder="Issue for"
-                className="w-44"
-                aria-label={`Issue for ${displayNameOf(holderPicked ?? me)}`}
-              />
-            }
-          />
-        )}
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Token name (e.g. cli, ci)"
-          className="w-56"
-          required
-        />
-        <TokenExpirySelect value={expiry} onChange={setExpiry} />
-        <Button type="submit" size="sm" disabled={issue.isPending}>
-          <PlusIcon className="size-3.5" /> Issue token
-        </Button>
-      </form>
-
-      {hasAgents && (
-        <div className="inline-flex overflow-hidden rounded-md border">
-          {SEGMENTS.map(([value, label]) => (
-            <Link
-              key={value}
-              to="/settings/tokens"
-              search={value === "user" ? {} : { holder: value }}
-              // Exact, or User ({}) would match every holder as a subset.
-              activeOptions={{ exact: true }}
-              // The router compares against the raw URL, so an unknown
-              // ?holder= would leave no segment current while User is shown.
-              aria-current={filter === value ? "page" : undefined}
-              className={seg(filter === value)}
-            >
-              {label} {(byFilter[value] ?? []).length}
-            </Link>
-          ))}
+    <div className="space-y-10">
+      <section className="space-y-4">
+        <div>
+          <h1 className="text-xl font-semibold">Personal access tokens</h1>
+          <p className="text-sm text-muted-foreground">
+            {DESCRIPTIONS[filter] ?? DESCRIPTIONS.user}
+          </p>
         </div>
-      )}
 
-      <div className="rounded-lg border">
-        <TokenTable
-          tokens={byFilter[filter] ?? byFilter.user}
-          showHolder={filter !== "user"}
-          onRevoke={(token) => revoke.mutate(token)}
-        />
-      </div>
+        {hasAgents && (
+          <div className="inline-flex overflow-hidden rounded-md border">
+            {SEGMENTS.map(([value, label]) => (
+              <Link
+                key={value}
+                to="/settings/tokens"
+                search={value === "user" ? {} : { holder: value }}
+                // Exact, or User ({}) would match every holder as a subset.
+                activeOptions={{ exact: true }}
+                // The router compares against the raw URL, so an unknown
+                // ?holder= would leave no segment current while User is shown.
+                aria-current={filter === value ? "page" : undefined}
+                className={seg(filter === value)}
+              >
+                {label} {(byFilter[value] ?? []).length}
+              </Link>
+            ))}
+          </div>
+        )}
+
+        <div className="rounded-lg border">
+          <TokenTable
+            tokens={byFilter[filter] ?? byFilter.user}
+            showHolder={filter !== "user"}
+            showScopes
+            onRevoke={(token) => revoke.mutate(token)}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-4" aria-labelledby="new-token-heading">
+        <h2 id="new-token-heading" className="text-lg font-semibold">
+          New token
+        </h2>
+        <form
+          className="max-w-xl space-y-5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) issue.mutate();
+          }}
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            {agents.length > 0 && (
+              <div className="space-y-2 sm:col-span-2">
+                <Label asChild>
+                  <span>Issue for</span>
+                </Label>
+                <UserPicker
+                  users={[me, ...agents]}
+                  selectedIds={[Number(issueFor)]}
+                  onPick={(user) => {
+                    if (user === null) return;
+                    setIssueFor(String(user.id));
+                    // An agent's token can never carry scopes.
+                    if (user.id !== me.id) setScopes([]);
+                  }}
+                  trigger={
+                    <UserSelectTrigger
+                      user={holderPicked}
+                      placeholder="Issue for"
+                      className="w-full sm:w-64"
+                      aria-label={`Issue for ${displayNameOf(holderPicked ?? me)}`}
+                    />
+                  }
+                />
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="new-token-name">Name</Label>
+              <Input
+                id="new-token-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Token name (e.g. cli, ci)"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label asChild>
+                <span>Expiration</span>
+              </Label>
+              <TokenExpirySelect
+                value={expiry}
+                onChange={setExpiry}
+                className="w-full"
+              />
+            </div>
+          </div>
+
+          {issuingForMe && (
+            <fieldset className="space-y-2">
+              <legend className="mb-2 text-sm font-medium">Scopes</legend>
+              <div className="divide-y rounded-lg border">
+                {TOKEN_SCOPES.map((scope) => (
+                  <label
+                    key={scope}
+                    className="flex cursor-pointer items-start gap-3 px-3 py-2.5 hover:bg-muted/40"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-4 accent-primary"
+                      aria-labelledby={`scope-${scope}`}
+                      aria-describedby={`scope-${scope}-grants`}
+                      checked={scopes.includes(scope)}
+                      onChange={(e) =>
+                        setScopes(toggleScope(scopes, scope, e.target.checked))
+                      }
+                    />
+                    <span className="min-w-0 space-y-0.5">
+                      <span
+                        id={`scope-${scope}`}
+                        className="block font-mono text-sm"
+                      >
+                        {scope}
+                      </span>
+                      <span
+                        id={`scope-${scope}-grants`}
+                        className="block text-sm text-muted-foreground"
+                      >
+                        {scopeDescription(scope)}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+
+          <Button type="submit" size="sm" disabled={issue.isPending}>
+            <PlusIcon className="size-3.5" /> Issue token
+          </Button>
+        </form>
+      </section>
 
       <Dialog
         open={created !== null}

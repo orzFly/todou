@@ -32,7 +32,12 @@ import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
 import { bulkMarkRead, markIssueRead } from "../services/reads.ts";
 import { referenceDirectory } from "../services/reference-directory.ts";
 import { resolveRefLocator } from "../services/reference-resolve.ts";
-import { issueToken, listHeldTokens, revokeToken } from "../services/tokens.ts";
+import {
+  assertMayIssueOwnToken,
+  issueToken,
+  listHeldTokens,
+  revokeToken,
+} from "../services/tokens.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
 
 const meRoute = createRoute({
@@ -119,7 +124,9 @@ const listTokensRoute = createRoute({
 const createTokenRoute = createRoute({
   method: "post",
   path: "/me/tokens",
-  summary: "Issue a personal access token for myself",
+  summary:
+    "Issue a personal access token for myself (humans only; the " +
+    "agents:act scope lets it carry x-todou-act-as)",
   request: {
     body: {
       content: { "application/json": { schema: TokenCreateInput } },
@@ -320,7 +327,9 @@ export function meRoutes() {
   app.openapi(createTokenRoute, async (c) => {
     const db = c.get("appCtx").router.system();
     const input = c.req.valid("json");
-    return c.json(await issueToken(db, c.get("user").id, input), 201);
+    const user = c.get("user");
+    assertMayIssueOwnToken(user);
+    return c.json(await issueToken(db, user.id, input), 201);
   });
 
   app.openapi(getPrefsRoute, async (c) => {

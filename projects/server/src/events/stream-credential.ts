@@ -1,6 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
+import { canActAs } from "../auth/act-as.ts";
 import type { AppEnv } from "../auth/middleware.ts";
 import { hashToken, type UserRow } from "../auth/pat.ts";
 import { SESSION_COOKIE } from "../auth/session.ts";
@@ -18,7 +19,9 @@ import { sessions, tokens, users } from "../db/system-schema.ts";
  * be.
  */
 export type StreamCredential =
-  | { kind: "pat"; hash: string }
+  // actingAs: the token is a human's and the stream runs as their agent
+  // (T-693), so the stream's user is not the token's holder.
+  | { kind: "pat"; hash: string; actingAs: boolean }
   | { kind: "session"; hash: string }
   | { kind: "identity" };
 
@@ -31,7 +34,11 @@ export function streamCredentialOf(c: Context<AppEnv>): StreamCredential {
   const header = c.req.header("authorization");
   if (header !== undefined) {
     const token = header.split(" ").slice(1).join(" ").trim();
-    return { kind: "pat", hash: hashToken(token) };
+    return {
+      kind: "pat",
+      hash: hashToken(token),
+      actingAs: c.get("bearer") !== null,
+    };
   }
   if (c.get("appCtx").config.auth.mode === "forward") {
     return { kind: "identity" };
@@ -69,6 +76,10 @@ export async function recheckStreamCredential(
       return null;
     }
     user = row?.user;
+    if (credential.actingAs) {
+      if (user === undefined || user.disabledAt) return null;
+      return actingAgent(db, user, userId);
+    }
   } else if (credential.kind === "session") {
     const rows = await db
       .select({ session: sessions, user: users })
@@ -83,4 +94,21 @@ export async function recheckStreamCredential(
   }
   if (user === undefined || user.id !== userId || user.disabledAt) return null;
   return user;
+}
+
+/**
+ * The agent an acting-as stream runs as, re-judged by the rule that let it
+ * open: the holder may have lost admin, or the agent its owner or its
+ * enablement, since then.
+ */
+async function actingAgent(
+  db: Db,
+  holder: UserRow,
+  agentId: number,
+): Promise<UserRow | null> {
+  const agent = (await db.select().from(users).where(eq(users.id, agentId)))[0];
+  if (agent === undefined || agent.disabledAt || !canActAs(holder, agent)) {
+    return null;
+  }
+  return agent;
 }

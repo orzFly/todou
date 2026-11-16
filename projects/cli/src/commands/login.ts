@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import {
+  ACT_AS_HEADER,
   AGENT_CONTEXT_HEADER,
   formatCliAuthCode,
   TodouClient,
@@ -10,6 +11,7 @@ import { Command, Option } from "clipanion";
 import type { CliContext } from "../api-command.ts";
 import { systemClock } from "../clock.ts";
 import {
+  type CliConfig,
   configPath,
   loadCliConfigSet,
   normalizeServer,
@@ -48,6 +50,10 @@ export class LoginCommand extends Command<CliContext> {
         "Store a separate token for an agent to pick up",
         "todou login https://todou.example --profile claude-code",
       ],
+      [
+        "Let a profile act as one of your agents with your default token",
+        "todou login https://todou.example --profile harness --act-as claude-agent",
+      ],
     ],
   });
 
@@ -61,6 +67,10 @@ export class LoginCommand extends Command<CliContext> {
   noBrowser = Option.Boolean("--no-browser", false, {
     description:
       "Authorize from a browser on any other machine (no local callback)",
+  });
+  actAs = Option.String("--act-as", {
+    description:
+      "Make --profile act as this agent with the default token; issues no token",
   });
 
   async execute(): Promise<number | undefined> {
@@ -100,6 +110,9 @@ export class LoginCommand extends Command<CliContext> {
           '"default" is reserved for the default token',
           "omit --profile to store the default token",
         );
+      }
+      if (this.actAs !== undefined) {
+        return await this.storeActAs(origin, config, own);
       }
 
       const anon = new TodouClient({
@@ -188,6 +201,59 @@ export class LoginCommand extends Command<CliContext> {
     } catch (error) {
       return reportError(error, this.context.stderr, this.server);
     }
+  }
+
+  /**
+   * `--profile <name> --act-as <login>`: nothing is issued. The profile
+   * borrows the default token, which the server must accept for this agent
+   * before the profile is written.
+   */
+  private async storeActAs(
+    origin: string,
+    config: CliConfig,
+    own: CliConfig,
+  ): Promise<number> {
+    if (this.manual || this.noBrowser) {
+      throw new CliError(
+        "--act-as cannot be combined with --manual or --no-browser",
+        "--act-as issues no token, so there is nothing to authorize",
+      );
+    }
+    const profile = this.profile;
+    if (profile === undefined) {
+      throw new CliError(
+        "--act-as needs --profile",
+        "the default token cannot act as an agent; name a profile for it",
+      );
+    }
+    const token = config.servers[origin]?.token;
+    if (!token) {
+      throw new CliError(
+        `no default token stored for ${origin}`,
+        `run \`todou login ${origin}\` first`,
+      );
+    }
+    const agentContext = detectAgentContext(this.context.env);
+    const me = await new TodouClient({
+      baseUrl: origin,
+      token,
+      headers: {
+        ...(agentContext
+          ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(agentContext) }
+          : {}),
+        [ACT_AS_HEADER]: this.actAs as string,
+      },
+      fetch: this.context.fetchImpl,
+    }).me();
+
+    const entry = own.servers[origin] ?? { tokens: {} };
+    entry.tokens = { ...entry.tokens, [profile]: { act_as: me.login } };
+    own.servers[origin] = entry;
+    saveCliConfig(own, this.context.env);
+    this.context.stderr.write(
+      `logged in to ${origin} as ${me.login} (profile "${profile}", acting as ${me.login} with the default token)\n`,
+    );
+    return 0;
   }
 
   /** The token's name in the browser and in token lists afterwards. */
