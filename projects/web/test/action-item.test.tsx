@@ -148,7 +148,7 @@ describe("an action on the timeline", () => {
     );
     const trigger = await openMenu(view.container);
     fireEvent.click(screen.getByRole("menuitem", { name: /Edit action/ }));
-    const input = view.getByLabelText("Edit action") as HTMLInputElement;
+    const input = view.getByLabelText("Edit action") as HTMLTextAreaElement;
     expect(input.value).toBe(ACTION.body);
     // The menu that opened it is gone; the focus must not go with it.
     await waitFor(() => expect(document.activeElement).toBe(input));
@@ -170,6 +170,35 @@ describe("an action on the timeline", () => {
     fireEvent.click(view.getByText("Save"));
     await waitFor(() => expect(updateComment).toHaveBeenCalledOnce());
     expect(updateComment.mock.calls[0]?.[3]).toBe("is testing.");
+  });
+
+  // The editor wraps so a long line can be read while it is edited (T-705),
+  // which makes it a textarea; it must still take only one line.
+  it("turns a pasted break into a space, and saves on Enter", async () => {
+    const updateComment = vi
+      .spyOn(api, "updateComment")
+      .mockResolvedValue(ACTION);
+    const view = renderWithProviders(
+      <CommentItem
+        slug="todou"
+        issueNumber={7}
+        comment={ACTION}
+        viewer={{ id: author.id, isAdmin: false }}
+      />,
+    );
+    await openMenu(view.container);
+    fireEvent.click(screen.getByRole("menuitem", { name: /Edit action/ }));
+    const input = view.getByLabelText("Edit action") as HTMLTextAreaElement;
+
+    fireEvent.change(input, { target: { value: "reads\nthe\r\nspec" } });
+    expect(input.value).toBe("reads the spec");
+    expect(view.container.textContent).not.toContain("single line");
+
+    const enter = fireEvent.keyDown(input, { key: "Enter" });
+    // Not cancelled, the textarea would take the break the change refused.
+    expect(enter).toBe(false);
+    await waitFor(() => expect(updateComment).toHaveBeenCalledOnce());
+    expect(updateComment.mock.calls[0]?.[3]).toBe("reads the spec");
   });
 });
 

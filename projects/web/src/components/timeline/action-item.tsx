@@ -28,7 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { inlineActionSource } from "@/lib/action-text.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import {
@@ -74,7 +74,7 @@ export function ActionItem({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const editInput = useRef<HTMLInputElement>(null);
+  const editInput = useRef<HTMLTextAreaElement>(null);
   /** Set by Edit action, so closing the menu hands the focus to the input. */
   const openingEditor = useRef(false);
   const returnState = useReturnLinkState();
@@ -124,24 +124,13 @@ export function ActionItem({
         pending && "opacity-60",
       )}
     >
-      {/* As tall as the first line, the editor's included, to centre on it. */}
-      <span
-        className={cn(
-          "inline-flex shrink-0 align-middle text-muted-foreground/70 sm:items-center sm:self-start",
-          editing ? "sm:h-7" : "sm:h-5",
-        )}
-      >
+      <span className="inline-flex shrink-0 align-middle text-muted-foreground/70 sm:h-5 sm:items-center sm:self-start">
         <AsteriskIcon className="size-3.5" />
       </span>{" "}
-      <div
-        className={cn(
-          "max-sm:inline",
-          editing && "sm:flex sm:items-baseline sm:gap-2",
-        )}
-      >
+      <div className="max-sm:inline">
         {/* A space plus these margins comes to the gap-2 an event row puts
             between the same three, within half a pixel. */}
-        <span className={editing ? undefined : "sm:me-1"}>
+        <span className="sm:me-1">
           <UserChip
             user={comment.author}
             nameClassName="font-medium text-foreground"
@@ -151,37 +140,50 @@ export function ActionItem({
           context={comment.agent_context}
           // A pixel taller than the line it sits in, so without the margins
           // the first line of a wrapped sentence came out taller than the rest.
-          className={cn(
-            "align-middle sm:-my-1 sm:self-center",
-            !editing && "sm:me-1",
-          )}
+          className="align-middle sm:-my-1 sm:me-1"
         />{" "}
         {editing ? (
+          // A block, so it starts under the name and spans the column the
+          // sentence wraps in: a 500-character line has to be readable while
+          // it is edited, which a one-line input scrolling sideways is not.
           <form
-            className="mt-1 flex min-w-0 flex-col gap-1 sm:mt-0 sm:flex-1"
+            className="mt-1 flex min-w-0 flex-col gap-1"
             onSubmit={(e) => {
               e.preventDefault();
               submitEdit();
             }}
           >
-            <div className="flex gap-2">
-              {/* No autoFocus: the menu that opens this still holds a focus
-                  trap when it mounts, and takes the focus straight back. */}
-              <Input
-                ref={editInput}
-                aria-label="Edit action"
-                aria-invalid={problem !== null}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") closeEditor();
-                }}
-                className="h-7"
-              />
+            {/* No autoFocus: the menu that opens this still holds a focus
+                trap when it mounts, and takes the focus straight back. */}
+            <Textarea
+              ref={editInput}
+              aria-label="Edit action"
+              aria-invalid={problem !== null}
+              value={draft}
+              rows={1}
+              // Still one line, only drawn wrapped: a pasted break becomes a
+              // space, as it would in an input, and Enter saves.
+              onChange={(e) =>
+                setDraft(e.target.value.replace(/\r\n?|\n/g, " "))
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Escape") closeEditor();
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  submitEdit();
+                }
+              }}
+              className="min-h-7 resize-none px-2.5 py-[3px] text-foreground md:leading-5"
+            />
+            <div className="flex items-start gap-2">
+              {problem !== null && draft.trim() !== "" && (
+                <p className="py-1.5 text-xs text-destructive">{problem}</p>
+              )}
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
+                className="ms-auto"
                 onClick={closeEditor}
               >
                 Cancel
@@ -194,9 +196,6 @@ export function ActionItem({
                 Save
               </Button>
             </div>
-            {problem !== null && draft.trim() !== "" && (
-              <p className="text-xs text-destructive">{problem}</p>
-            )}
           </form>
         ) : (
           <div
@@ -271,7 +270,11 @@ export function ActionItem({
                 if (!openingEditor.current) return;
                 openingEditor.current = false;
                 e.preventDefault();
-                editInput.current?.focus();
+                const input = editInput.current;
+                if (input === null) return;
+                input.focus();
+                // An input's caret lands at the end; a textarea's at the start.
+                input.setSelectionRange(input.value.length, input.value.length);
               }}
             >
               {mayEdit || mayHide || mayUnhide ? (
