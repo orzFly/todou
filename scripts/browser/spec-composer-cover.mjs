@@ -27,6 +27,7 @@ const SCAN = { step: 20, columns: 4, rowGap: 12, inset: 8, minOverlap: 8 };
 const FILES = ["design.md", "notes.md", "plan.md"];
 const HEADER_SELECTOR =
   ":is([data-file-diff], [data-file-unchanged]) [data-header-follow]";
+const COMPOSER_SELECTOR = '[data-testid="spec-composer"]';
 
 function failure(name, detail, viewport) {
   return { name, detail, ...(viewport ? { viewport } : {}) };
@@ -137,6 +138,8 @@ async function click(page, label) {
 const labelled = (label) =>
   !!document.querySelector(`[aria-label="${CSS.escape(label)}"]:enabled`);
 
+const present = (selector) => !!document.querySelector(selector);
+
 // "Comment file" is disabled while comparing, so the composer is opened on
 // the single-version view and carried back into the compare view, which keeps
 // it open.
@@ -156,7 +159,7 @@ async function openComposer(page, fixture, stack) {
   if (!(await waitUntil(page, labelled, 15_000, "Comment file")))
     throw new Error('"Comment file" never became enabled');
   await click(page, "Comment file");
-  if (!(await waitUntil(page, labelled, 15_000, "cancel comment")))
+  if (!(await waitUntil(page, present, 15_000, COMPOSER_SELECTOR)))
     return false;
   await click(page, "turn comparing on");
   const stacked = await waitUntil(
@@ -192,7 +195,7 @@ async function openComposer(page, fixture, stack) {
       code: "ShiftLeft",
       windowsVirtualKeyCode: 16,
     });
-  return await evaluate(page, labelled, "cancel comment");
+  return await evaluate(page, present, COMPOSER_SELECTOR);
 }
 
 // Runs in the page, once per scroll step: scrolls to `target`, clamped to the
@@ -205,6 +208,7 @@ async function sampleInPage({
   rowGap,
   inset,
   minOverlap,
+  composerSelector,
   headerSelector,
   fault,
 }) {
@@ -218,10 +222,7 @@ async function sampleInPage({
     requestAnimationFrame(() => requestAnimationFrame(resolve)),
   );
   const sample = { end, scrollY: round(window.scrollY), points: 0 };
-  // SpecComposer's outer bar: the first sticky ancestor of its cancel button.
-  let bar = document.querySelector('[aria-label="cancel comment"]');
-  while (bar && getComputedStyle(bar).position !== "sticky")
-    bar = bar.parentElement;
+  const bar = document.querySelector(composerSelector);
   if (!bar) return { ...sample, missing: true };
   // The value the bar carried before the fix.
   if (fault) bar.style.zIndex = "10";
@@ -292,6 +293,7 @@ async function scanComposer(page, fault) {
     const sample = await evaluate(page, sampleInPage, {
       ...SCAN,
       target,
+      composerSelector: COMPOSER_SELECTOR,
       headerSelector: HEADER_SELECTOR,
       fault,
     });
