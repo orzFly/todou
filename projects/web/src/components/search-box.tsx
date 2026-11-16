@@ -31,6 +31,7 @@ import {
 import { referenceDirectoryQuery } from "@/api/references.ts";
 import { searchFacetsQuery } from "@/api/search.ts";
 import { useSearchHistory } from "@/api/search-history.ts";
+import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import {
   highlightParts,
@@ -118,7 +119,7 @@ function Glyph({ children }: { children: React.ReactNode }) {
 const NONE = -1;
 
 /**
- * One glyph per kind of offer. A row is a short run of monospace and a few
+ * One glyph per kind of offer. Most rows are a short run of monospace and a few
  * grey words, so the icon carries the whole distinction between a key, a
  * value and a project.
  */
@@ -224,8 +225,8 @@ export function SearchBox({
 
   const pools: ValuePools = useMemo(
     () => ({
-      label: labels.data?.map((l) => ({ value: l.name })),
-      status: statuses.data?.map((s) => ({ value: s.name })),
+      label: labels.data?.map((l) => ({ value: l.name, label: l })),
+      status: statuses.data?.map((s) => ({ value: s.name, status: s })),
       // `@me` drawn as the viewer, so its row lines up with the people below.
       assignee: members.data?.flatMap((m) => [
         ...(m.user.id === me.data?.id
@@ -705,15 +706,21 @@ export function SearchBox({
                         <UserAvatar user={row.row.user} badge aria-hidden />
                       </span>
                     )}
-                    <span
-                      className={cn(
-                        row.row.user === undefined
-                          ? "truncate font-mono text-xs"
-                          : "shrink-0",
-                      )}
-                    >
-                      {row.row.text}
-                    </span>
+                    {row.row.label !== undefined ? (
+                      <LabelChip label={row.row.label} />
+                    ) : row.row.status !== undefined ? (
+                      <StatusPill status={row.row.status} />
+                    ) : (
+                      <span
+                        className={cn(
+                          row.row.user === undefined
+                            ? "truncate font-mono text-xs"
+                            : "shrink-0",
+                        )}
+                      >
+                        {row.row.text}
+                      </span>
+                    )}
                     {row.row.hint !== undefined && (
                       <span
                         className={cn(
@@ -846,12 +853,7 @@ export function SearchBox({
                       identity={null}
                       refClassName="text-muted-foreground"
                       text={row.item.title}
-                      trailing={
-                        <StatusPill
-                          status={row.item.status}
-                          className="shrink-0"
-                        />
-                      }
+                      trailing={<StatusPill status={row.item.status} />}
                     />
                   </Link>
                 );
@@ -947,12 +949,7 @@ export function SearchBox({
                     refClassName="text-muted-foreground"
                     text={row.item.title}
                     author={row.commentBy}
-                    trailing={
-                      <StatusPill
-                        status={row.item.status}
-                        className="shrink-0"
-                      />
-                    }
+                    trailing={<StatusPill status={row.item.status} />}
                   />
                 </Link>
               );

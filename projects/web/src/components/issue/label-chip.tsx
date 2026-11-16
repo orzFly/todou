@@ -1,119 +1,124 @@
 import type { Label } from "@todou/shared";
+import { XIcon } from "lucide-react";
+import { Fragment } from "react";
 import { groupLabelsByPrefix, splitLabelName } from "@/lib/labels.ts";
-import { cn } from "@/lib/utils";
-
-export { splitLabelName };
 
 /**
- * Tinted chip (T-90, reverting T-82's dot style): a full `${color}22`
- * background with same-color text, no dot — a status pill is outlined with a
- * dot, so the two read differently at a glance, which T-82's quiet chips
- * didn't.
+ * The only two ways a label reaches the screen (T-715): one label, or a list
+ * of them. Both draw the same atom — a `prefix:` in muted text beside a chip
+ * holding the value, or the whole name in the chip when there is no prefix —
+ * and a list only folds a repeated prefix. Neither takes styling props: a
+ * second look for a label was how the sidebar and the timeline came to
+ * disagree, and `label-status-rendering.test.ts` fails on any drawing that
+ * goes around these two.
+ */
+export function LabelChip({ label }: { label: Label }) {
+  return (
+    <LabelGroup prefix={splitLabelName(label.name).prefix} labels={[label]} />
+  );
+}
+
+/**
+ * Each group is a single inline-flex unit so a wrapping container breaks
+ * between groups, never inside one.
  *
- * Vertical metrics (text-xs, py-0.5, border) must equal StatusPill's: the two
- * share the list's meta line and the board card, and any difference shows up
- * as misaligned boxes and baselines (T-98). `bordered: false` keeps a
- * transparent border for the same reason.
- */
-export function LabelChip({
-  label,
-  valueOnly = false,
-  bordered = true,
-  truncate = false,
-  className,
-}: {
-  label: Label;
-  valueOnly?: boolean;
-  bordered?: boolean;
-  truncate?: boolean;
-  className?: string;
-}) {
-  const { value } = splitLabelName(label.name);
-  const text = valueOnly ? value : label.name;
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-        truncate && "min-w-0",
-        className,
-      )}
-      style={{
-        backgroundColor: `${label.color}22`,
-        color: label.color,
-        borderColor: bordered ? `${label.color}55` : "transparent",
-      }}
-      title={label.name}
-    >
-      {/* `text-overflow: ellipsis` has no effect on an inline-flex box, and
-          turning the chip into a block would shift it where it sits inline
-          (LabelInline, event-row's `align-middle`) — hence the inner span. */}
-      {truncate ? <span className="truncate">{text}</span> : text}
-    </span>
-  );
-}
-
-/**
- * A single label inside a menu row: muted prefix outside a borderless
- * value-only badge, matching how LabelChips renders whole lists.
- */
-export function LabelInline({ label }: { label: Label }) {
-  const { prefix } = splitLabelName(label.name);
-  return (
-    <span className="inline-flex min-w-0 items-center gap-1">
-      {prefix && (
-        <span className="text-xs text-muted-foreground">{prefix}</span>
-      )}
-      <LabelChip label={label} valueOnly bordered={false} />
-    </span>
-  );
-}
-
-/**
- * Grouped label list: labels sharing a `prefix:` render as the prefix in
- * muted text followed by one value-only chip each; unprefixed labels keep the
- * full chip. Each group is a single inline-flex unit so a wrapping container
- * breaks between groups, never inside one.
+ * `onRemove` adds behaviour, not a look: a remove button after each chip,
+ * inside its group, so an editable list still folds its prefixes the way
+ * every read-only one does.
  */
 export function LabelChips({
   labels,
-  truncate = false,
-  className,
+  onRemove,
 }: {
   labels: Label[];
-  truncate?: boolean;
-  className?: string;
+  onRemove?: (label: Label) => void;
 }) {
   const { groups, plain } = groupLabelsByPrefix(labels);
   return (
     <>
       {groups.map((group) => (
-        <span
+        <LabelGroup
           key={group.prefix}
-          className={cn(
-            "inline-flex items-center gap-1",
-            truncate && "min-w-0",
-            className,
-          )}
-        >
-          <span className="text-xs text-muted-foreground">{group.prefix}</span>
-          {group.labels.map((label) => (
-            <LabelChip
-              key={label.id}
-              label={label}
-              valueOnly
-              truncate={truncate}
-            />
-          ))}
-        </span>
+          prefix={group.prefix}
+          labels={group.labels}
+          onRemove={onRemove}
+        />
       ))}
       {plain.map((label) => (
-        <LabelChip
+        <LabelGroup
           key={label.id}
-          label={label}
-          truncate={truncate}
-          className={className}
+          prefix={null}
+          labels={[label]}
+          onRemove={onRemove}
         />
       ))}
     </>
+  );
+}
+
+/*
+ * `align-middle` only acts where a label sits in running text (a timeline
+ * sentence); everywhere else the group is a flex item and ignores it.
+ */
+function LabelGroup({
+  prefix,
+  labels,
+  onRemove,
+}: {
+  prefix: string | null;
+  labels: Label[];
+  onRemove?: (label: Label) => void;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1 align-middle">
+      {prefix && (
+        <span className="text-xs text-muted-foreground">{prefix}</span>
+      )}
+      {labels.map((label) => (
+        <Fragment key={label.id}>
+          <Chip
+            label={label}
+            text={prefix ? splitLabelName(label.name).value : label.name}
+          />
+          {onRemove && (
+            <button
+              type="button"
+              aria-label={`remove ${label.name}`}
+              className="cursor-pointer text-muted-foreground hover:text-foreground"
+              onClick={() => onRemove(label)}
+            >
+              <XIcon className="size-3" />
+            </button>
+          )}
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * Tinted chip (T-90): a `${color}22` background with same-color text and no
+ * dot, so it reads differently from a status pill at a glance.
+ *
+ * Vertical metrics (text-xs, py-0.5, border) must equal StatusPill's: the two
+ * share the list's meta line and the board card, and any difference shows up
+ * as misaligned boxes and baselines (T-98).
+ */
+function Chip({ label, text }: { label: Label; text: string }) {
+  return (
+    <span
+      className="inline-flex min-w-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap"
+      style={{
+        backgroundColor: `${label.color}22`,
+        color: label.color,
+        borderColor: `${label.color}55`,
+      }}
+      title={label.name}
+    >
+      {/* `text-overflow` has no effect on the inline-flex box itself, hence the
+          inner span; `clip` rather than `hidden`, because `hidden` would move
+          the chip's baseline to its bottom edge where it sits in a sentence. */}
+      <span className="min-w-0 overflow-clip text-ellipsis">{text}</span>
+    </span>
   );
 }

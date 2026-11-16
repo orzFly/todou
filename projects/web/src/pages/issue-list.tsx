@@ -70,6 +70,7 @@ import {
   useCreateLabel,
 } from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
+import { StatusHeading } from "@/components/issue/status-pill.tsx";
 import {
   IssueListBodySkeleton,
   PageSkeleton,
@@ -869,12 +870,7 @@ function IssueGroup({
         }}
       >
         <div className="flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm">
-          <span
-            className="size-2.5 rounded-full"
-            style={{ backgroundColor: status.color }}
-            aria-hidden
-          />
-          <span className="font-medium">{status.name}</span>
+          <StatusHeading status={status} />
           <span className="text-muted-foreground">{total}</span>
         </div>
       </div>

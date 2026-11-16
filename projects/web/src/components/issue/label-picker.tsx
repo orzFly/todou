@@ -1,10 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { Label } from "@todou/shared";
-import { CheckIcon, XIcon } from "lucide-react";
-import { type ReactNode, useCallback, useState } from "react";
+import { CheckIcon } from "lucide-react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api, useCan } from "@/api/queries.ts";
-import { LabelChip, LabelInline } from "@/components/issue/label-chip.tsx";
+import { LabelChip, LabelChips } from "@/components/issue/label-chip.tsx";
 import { PICKER_ROW, usePickerOrder } from "@/components/issue/picker-row.ts";
 import {
   Popover,
@@ -75,6 +75,7 @@ export function LabelPicker({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
   const [highlight, setHighlight] = useState(0);
   const [creating, setCreating] = useState(false);
 
@@ -174,33 +175,22 @@ export function LabelPicker({
       }}
     >
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent className="w-72 p-0">
+      <PopoverContent
+        className="w-72 p-0"
+        // The filter, not radix's first focusable: the selected strip's
+        // remove buttons come first in the DOM.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          inputRef.current?.focus();
+        }}
+      >
         {selected.length > 0 && (
-          <div className="flex flex-wrap gap-1 border-b p-2">
-            {selected.map((label) => {
-              const { prefix } = splitLabelName(label.name);
-              return (
-                <span key={label.id} className="inline-flex items-center gap-1">
-                  {prefix && (
-                    <span className="text-xs text-muted-foreground">
-                      {prefix}
-                    </span>
-                  )}
-                  <LabelChip label={label} valueOnly />
-                  <button
-                    type="button"
-                    aria-label={`remove ${label.name}`}
-                    className="cursor-pointer text-muted-foreground hover:text-foreground"
-                    onClick={() => onToggle(label)}
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </span>
-              );
-            })}
+          <div className="flex flex-wrap gap-1.5 border-b p-2">
+            <LabelChips labels={selected} onRemove={onToggle} />
           </div>
         )}
         <input
+          ref={inputRef}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -215,7 +205,7 @@ export function LabelPicker({
         {nearMismatch && (
           <div className="m-2 flex flex-wrap items-center gap-1 rounded-md border border-amber-500/60 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
             Similar label exists
-            <LabelInline label={near} />—
+            <LabelChip label={near} />—
             <button
               type="button"
               className="cursor-pointer font-semibold underline"
@@ -258,7 +248,7 @@ export function LabelPicker({
               {row.kind === "toggle" ? (
                 <>
                   <span className="flex min-w-0 overflow-hidden">
-                    <LabelInline label={row.label} />
+                    <LabelChip label={row.label} />
                   </span>
                   <span className="ml-auto w-4 shrink-0">
                     {isSelected(row.label) && <CheckIcon className="size-4" />}

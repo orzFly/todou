@@ -22,7 +22,9 @@ import {
   idsToCsv,
   toggleId,
 } from "@/api/issues.ts";
-import { LabelInline } from "@/components/issue/label-chip.tsx";
+import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { PICKER_ROW } from "@/components/issue/picker-row.ts";
+import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import {
   UserPicker,
@@ -100,16 +102,7 @@ export function FilterBar({
         label="Status"
         items={statuses.map((s) => ({
           id: s.id,
-          node: (
-            <>
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: s.color }}
-                aria-hidden
-              />
-              {s.name}
-            </>
-          ),
+          node: <StatusPill status={s} />,
         }))}
         selected={selectedStatuses}
         onToggle={(id) =>
@@ -124,7 +117,7 @@ export function FilterBar({
         label="Labels"
         items={labels.map((l) => ({
           id: l.id,
-          node: <LabelInline label={l} />,
+          node: <LabelChip label={l} />,
         }))}
         selected={selectedLabels}
         onToggle={(id) =>
@@ -271,7 +264,9 @@ function MultiPick({
           {selected.length > 0 && ` (${selected.length})`}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent>
+      {/* Not the shared default, which is the trigger's width: the trigger
+          is this small button, and "Ready to Ship" would fold (T-719). */}
+      <DropdownMenuContent align="start" className="w-auto min-w-64">
         <DropdownMenuLabel>{label}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {items.length === 0 && (
@@ -280,15 +275,16 @@ function MultiPick({
         {items.map((item) => (
           <DropdownMenuItem
             key={item.id}
+            className={cn(PICKER_ROW, "cursor-pointer")}
             onSelect={(e) => {
               e.preventDefault();
               onToggle(item.id);
             }}
           >
-            <span className="w-4">
+            {item.node}
+            <span className="ml-auto w-4 shrink-0">
               {selected.includes(item.id) && <CheckIcon className="size-4" />}
             </span>
-            {item.node}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

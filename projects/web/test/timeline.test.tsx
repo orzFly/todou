@@ -642,8 +642,10 @@ describe("timeline entities render like the rest of the app (T-171)", () => {
       { labels: [{ id: 1, name: "area:web", color: "#00ff00" }] },
     );
     // LabelChip's title is the full label name — the snapshot lost the race.
+    // Prefix outside the chip, as the sidebar draws it (T-715).
     const chip = await findByTitle("area:web");
-    expect(chip.textContent).toBe("area:web");
+    expect(chip.textContent).toBe("web");
+    expect(chip.parentElement?.textContent).toBe("area:web");
   });
 
   it("renders a status move as a pill on each side", async () => {

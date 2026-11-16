@@ -96,13 +96,13 @@ describe("IssueRow labels wrap instead of folding (T-98)", () => {
    opposite invariant, that a call site without the prop renders verbatim,
    lives in label-chip-truncate.test.tsx. */
 describe("IssueRow keeps a long label inside the row (T-306)", () => {
-  it("opts the row's chips into truncation", async () => {
+  it("gives the row's chips a shrinkable box and a clipped text child", async () => {
     const view = renderRow(4);
     await view.findByText("issue 1");
     for (const label of labels) {
       const chip = view.getByTitle(label.name);
       expect(chip.className).toContain("min-w-0");
-      expect(chip.querySelector(".truncate")).not.toBeNull();
+      expect(chip.firstElementChild?.className).toContain("text-ellipsis");
     }
   });
 

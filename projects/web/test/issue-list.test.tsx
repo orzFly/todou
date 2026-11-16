@@ -21,13 +21,9 @@ import {
   toggleId,
 } from "../src/api/issues.ts";
 import { api } from "../src/api/queries.ts";
-import {
-  LabelChip,
-  LabelChips,
-  LabelInline,
-  splitLabelName,
-} from "../src/components/issue/label-chip.tsx";
+import { LabelChip, LabelChips } from "../src/components/issue/label-chip.tsx";
 import { StatusPill } from "../src/components/issue/status-pill.tsx";
+import { splitLabelName } from "../src/lib/labels.ts";
 import { FlatIssueList, groupStickyTop } from "../src/pages/issue-list.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -193,30 +189,29 @@ describe("presentational chips", () => {
   it("tints the chip with the label color instead of showing a dot (T-90)", () => {
     const chip = render(
       <LabelChip label={{ id: 1, name: "bug", color: "#ff0000" }} />,
-    ).container.firstElementChild as HTMLElement;
+    ).getByTitle("bug");
     expect(chip.style.backgroundColor).not.toBe("");
     expect(chip.style.color).not.toBe("");
-    expect(chip.querySelectorAll("span").length).toBe(0);
+    expect(chip.querySelector(".rounded-full")).toBeNull();
   });
 
-  it("keeps the full name in the title when valueOnly trims the prefix", () => {
-    const { getByTitle } = render(
-      <LabelChip
-        label={{ id: 1, name: "area:web", color: "#3b82f6" }}
-        valueOnly
-      />,
+  it("puts a single label's prefix outside the chip, full name in the title (T-715)", () => {
+    const { container, getByTitle } = render(
+      <LabelChip label={{ id: 1, name: "area:web", color: "#3b82f6" }} />,
     );
     expect(getByTitle("area:web").textContent).toBe("web");
+    expect(container.textContent).toBe("area:web");
   });
 
-  it("renders a menu-row label with the prefix outside a borderless badge", () => {
-    const { container, getByTitle } = render(
-      <LabelInline label={{ id: 1, name: "area:web", color: "#3b82f6" }} />,
-    );
-    const badge = getByTitle("area:web") as HTMLElement;
-    expect(badge.textContent).toBe("web");
-    expect(badge.style.borderColor).toBe("transparent");
-    expect(container.textContent).toBe("area:web");
+  it("draws one label exactly as a list of one draws it (T-715)", () => {
+    for (const label of [
+      { id: 1, name: "area:web", color: "#3b82f6" },
+      { id: 2, name: "needs-brainstorm", color: "#a855f7" },
+    ]) {
+      const one = render(<LabelChip label={label} />).container.innerHTML;
+      const list = render(<LabelChips labels={[label]} />).container.innerHTML;
+      expect(one).toBe(list);
+    }
   });
 
   it("groups same-prefix labels behind one muted prefix (T-90)", () => {
@@ -246,7 +241,7 @@ describe("presentational chips", () => {
     ).container.firstElementChild;
     const chip = render(
       <LabelChip label={{ id: 1, name: "bug", color: "#ff0000" }} />,
-    ).container.firstElementChild;
+    ).getByTitle("bug");
     for (const metric of ["text-xs", "py-0.5", "border"]) {
       expect(pill?.className.split(" ")).toContain(metric);
       expect(chip?.className.split(" ")).toContain(metric);

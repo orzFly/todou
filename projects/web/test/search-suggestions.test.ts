@@ -17,8 +17,14 @@ import {
 } from "../src/lib/project-spellings.ts";
 
 const POOLS: ValuePools = {
-  label: [{ value: "area:web" }, { value: "kind:bug" }],
-  status: [{ value: "Todo" }, { value: "In Progress" }],
+  label: [
+    { value: "area:web", label: { id: 1, name: "area:web", color: "#3b82f6" } },
+    { value: "kind:bug", label: { id: 2, name: "kind:bug", color: "#ef4444" } },
+  ],
+  status: [
+    { value: "Todo", status: { name: "Todo", color: "#6b7280" } },
+    { value: "In Progress", status: { name: "In Progress", color: "#3b82f6" } },
+  ],
   assignee: [{ value: "alice" }],
   harness: [{ value: "codex", hint: "12" }, { value: "claude-code" }],
   session: [{ value: "sess-a", hint: "codex" }],
