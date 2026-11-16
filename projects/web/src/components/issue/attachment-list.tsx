@@ -13,9 +13,10 @@ import {
   ImageIcon,
   PaperclipIcon,
 } from "lucide-react";
-import { type MouseEvent, type ReactNode, useState } from "react";
+import { type MouseEvent, type ReactNode, useMemo, useState } from "react";
 import { attachmentsQuery, useAttachmentDeleted } from "@/api/attachments.ts";
 import { useBoxedRefLinks } from "@/api/prefs.ts";
+import { AttachmentBulkActions } from "@/components/issue/attachment-bulk.tsx";
 import { AttachmentDeleteButton } from "@/components/issue/attachment-delete.tsx";
 import {
   AttachmentViewerDialog,
@@ -29,6 +30,7 @@ import {
   RICH_CHIP_SKIN,
   RICH_CHIP_STRUCTURE,
 } from "@/components/shared/rich-chip.ts";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   formatSize,
   isArchiveFile,
@@ -40,6 +42,7 @@ import {
   previewKind,
 } from "@/lib/attachment-preview.ts";
 import { attachmentAnchorHref, attachmentHref } from "@/lib/attachment-refs.ts";
+import { useSelection } from "@/lib/use-selection.ts";
 import { cn } from "@/lib/utils.ts";
 
 /** Modifier-clicks (new tab, forced download) keep native link behavior. */
@@ -107,7 +110,14 @@ export function AttachmentList({
   // Not persisted anywhere: expanding is "show me now", not a preference.
   const [expanded, setExpanded] = useState(false);
   const items = attachments.data ?? [];
+  const ids = useMemo(
+    () => (attachments.data ?? []).map((a) => a.id),
+    [attachments.data],
+  );
+  const selection = useSelection(ids);
   if (items.length === 0) return null;
+  // One file has its own download and delete on its row already.
+  const selectable = items.length > 1;
 
   const collapsible = items.length >= CAP + MIN_HIDDEN;
   const folded = collapsible && !expanded;
@@ -120,10 +130,26 @@ export function AttachmentList({
 
   return (
     <section className="rounded-lg border" id="attachments">
-      <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
+      <div className="flex flex-wrap items-center gap-x-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
+        {selectable && (
+          <Checkbox
+            aria-label="select all attachments"
+            checked={selection.state === "all"}
+            indeterminate={selection.state === "some"}
+            onChange={selection.toggleAll}
+          />
+        )}
         <PaperclipIcon className="size-3.5 text-muted-foreground" />
         <span className="font-medium">Attachments</span>
         <span className="text-muted-foreground">{items.length}</span>
+        {selectable && (
+          <AttachmentBulkActions
+            slug={slug}
+            issueNumber={issueNumber}
+            items={items}
+            selection={selection}
+          />
+        )}
       </div>
       {collapsible && (
         <button
@@ -156,11 +182,37 @@ export function AttachmentList({
           return (
             <li
               key={attachment.id}
-              className="flex items-center hover:bg-muted/40"
+              className={cn(
+                "flex items-center hover:bg-muted/40",
+                selection.isSelected(attachment.id) && "bg-muted/60",
+              )}
             >
+              {selectable && (
+                // The label is the hit area: the whole left gutter, row
+                // height, rather than a 16px box beside a link.
+                <label
+                  htmlFor={`attachment-select-${attachment.id}`}
+                  className="flex shrink-0 cursor-pointer items-center self-stretch pr-2 pl-3"
+                >
+                  <Checkbox
+                    id={`attachment-select-${attachment.id}`}
+                    aria-label={`select ${attachment.filename}`}
+                    checked={selection.isSelected(attachment.id)}
+                    // onClick rather than onChange: only the click carries
+                    // shiftKey, and it fires for Space as well.
+                    onClick={(e) =>
+                      selection.toggle(attachment.id, { extend: e.shiftKey })
+                    }
+                    onChange={() => {}}
+                  />
+                </label>
+              )}
               <a
                 href={attachmentAnchorHref(attachment)}
-                className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-sm"
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-2 py-2 text-sm",
+                  !selectable && "pl-3",
+                )}
                 onClick={(e) => {
                   if (previewKind(attachment) !== null && isPlainLeftClick(e)) {
                     e.preventDefault();

@@ -153,7 +153,7 @@ function ReferenceList({
 }
 
 /** `#12 description`, `#comment-88`, or `#12#comment-88` off this card. */
-function referenceLabel(ref: AttachmentReference, here: number): string {
+export function referenceLabel(ref: AttachmentReference, here: number): string {
   if (ref.comment_id === null) return `${ref.issue_ref} description`;
   const comment = `#comment-${ref.comment_id}`;
   return ref.issue_number === here ? comment : `${ref.issue_ref}${comment}`;
