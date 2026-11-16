@@ -43,6 +43,7 @@ import {
   accessDenialsQuery,
   agentsQuery,
   labelsQuery,
+  labelUsageQuery,
   membersQuery,
   meQuery,
   projectQuery,
@@ -50,6 +51,7 @@ import {
 } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { ReviewSubmitDialog } from "../src/components/spec/review-submit.tsx";
+import { labelColorFor } from "../src/lib/labels.ts";
 import type { SpecReviewDraft } from "../src/lib/spec-drafts.ts";
 import {
   AccessDenialsSection,
@@ -157,6 +159,13 @@ function stubFetch(): Call[] {
       body: init?.body === undefined ? undefined : String(init.body),
     };
     calls.push(call);
+    // A list the Labels page maps over, refetched on mount.
+    if (url.endsWith("/labels/usage")) {
+      return new Response("[]", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (method === "PATCH" && call.body) {
       const slug = url.match(/\/api\/projects\/([^/]+)$/)?.[1];
       return new Response(JSON.stringify(project(slug ?? "p", "Pea")), {
@@ -204,6 +213,10 @@ function seed(client: QueryClient) {
     },
   ]);
   client.setQueryData(labelsQuery("q").queryKey, []);
+  client.setQueryData(labelUsageQuery("p").queryKey, [
+    { id: 3, open_issues: 1, issues: 2 },
+  ]);
+  client.setQueryData(labelUsageQuery("q").queryKey, []);
   client.setQueryData(referenceConfigQuery("p").queryKey, referenceConfig("p"));
   client.setQueryData(referenceConfigQuery("q").queryKey, referenceConfig("q"));
 }
@@ -253,7 +266,7 @@ type ProjectCase = {
 };
 
 /**
- * The 15 `project-settings.tsx` sites, one row each. `editWhilePaused`
+ * The 14 `project-settings.tsx` sites, one row each. `editWhilePaused`
  * marks the six rows whose payload comes from form state: without the
  * paused-edit step those rows cannot fail on an unfixed tree, because the
  * form's `useState` does not follow the navigation.
@@ -491,14 +504,15 @@ const cases: ProjectCase[] = [
     name: "LabelsSection create",
     section: LabelsSection,
     trigger: (view) => {
-      fireEvent.change(view.getByPlaceholderText("New label name"), {
+      fireEvent.click(view.getByRole("button", { name: /New label/ }));
+      fireEvent.change(view.getByLabelText("Name"), {
         target: { value: "ux" },
       });
-      fireEvent.click(view.getByRole("button", { name: "Add" }));
+      fireEvent.click(view.getByRole("button", { name: "Create" }));
     },
     editWhilePaused: true,
     edit: (view) => {
-      fireEvent.change(view.getByPlaceholderText("New label name"), {
+      fireEvent.change(view.getByLabelText("Name"), {
         target: { value: "Edited While Paused" },
       });
     },
@@ -506,7 +520,7 @@ const cases: ProjectCase[] = [
       expect(call.url).toContain("/api/projects/p/labels");
       expect(JSON.parse(call.body ?? "{}")).toEqual({
         name: "ux",
-        color: "#3b82f6",
+        color: labelColorFor("ux"),
       });
     },
   },
@@ -514,11 +528,9 @@ const cases: ProjectCase[] = [
     name: "LabelsSection remove",
     section: LabelsSection,
     trigger: (view) => {
-      fireEvent.click(
-        view.container.querySelector(
-          "button[aria-label='delete label bug']",
-        ) as HTMLButtonElement,
-      );
+      fireEvent.click(view.getByLabelText("edit label bug"));
+      fireEvent.click(view.getByRole("button", { name: "Delete" }));
+      fireEvent.click(view.getByRole("button", { name: "Delete label" }));
     },
     editWhilePaused: false,
     expect: (call) => {
@@ -527,51 +539,26 @@ const cases: ProjectCase[] = [
     },
   },
   {
-    name: "LabelsSection recolor",
+    // Project q has no labels, so the open row is gone after the swap and
+    // there is no form left to edit while paused.
+    name: "LabelsSection update",
     section: LabelsSection,
     trigger: (view) => {
-      fireEvent.click(
-        view.container.querySelector(
-          "button[aria-label='change bug color']",
-        ) as HTMLButtonElement,
-      );
-      const swatch = document.querySelector(
-        "button[aria-label='set bug color #22c55e']",
-      );
-      expect(swatch).not.toBeNull();
-      fireEvent.click(swatch as Element);
+      fireEvent.click(view.getByLabelText("edit label bug"));
+      fireEvent.change(view.getByLabelText("Name"), {
+        target: { value: "regression" },
+      });
+      fireEvent.click(view.getByLabelText("set regression color #22c55e"));
+      fireEvent.click(view.getByRole("button", { name: "Save" }));
     },
     editWhilePaused: false,
     expect: (call) => {
       expect(call.method).toBe("PATCH");
       expect(call.url).toContain("/api/projects/p/labels/3");
-      expect(JSON.parse(call.body ?? "{}")).toEqual({ color: "#22c55e" });
-    },
-  },
-  {
-    name: "LabelsSection rename",
-    section: LabelsSection,
-    trigger: (view) => {
-      fireEvent.click(
-        view.container.querySelector(
-          "button[aria-label='rename label bug']",
-        ) as HTMLButtonElement,
-      );
-      const input = view.container.querySelector(
-        "input[aria-label='new name for bug']",
-      ) as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "regression" } });
-      fireEvent.click(
-        view.container.querySelector(
-          "button[aria-label='save name for bug']",
-        ) as HTMLButtonElement,
-      );
-    },
-    editWhilePaused: false,
-    expect: (call) => {
-      expect(call.method).toBe("PATCH");
-      expect(call.url).toContain("/api/projects/p/labels/3");
-      expect(JSON.parse(call.body ?? "{}")).toEqual({ name: "regression" });
+      expect(JSON.parse(call.body ?? "{}")).toEqual({
+        name: "regression",
+        color: "#22c55e",
+      });
     },
   },
 ];

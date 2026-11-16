@@ -57,6 +57,7 @@ import type {
   Label,
   LabelCreateInput,
   LabelUpdateInput,
+  LabelUsage,
   Me,
   Member,
   MemberAddInput,
@@ -824,6 +825,8 @@ export class TodouClient {
 
   listLabels = (slug: string) =>
     this.request<Label[]>("GET", `/projects/${slug}/labels`);
+  labelUsage = (slug: string) =>
+    this.request<LabelUsage[]>("GET", `/projects/${slug}/labels/usage`);
   createLabel = (slug: string, input: LabelCreateInput) =>
     this.request<Label>("POST", `/projects/${slug}/labels`, { json: input });
   updateLabel = (slug: string, id: number, input: LabelUpdateInput) =>

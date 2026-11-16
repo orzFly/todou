@@ -1,8 +1,13 @@
-import type { Label, LabelCreateInput, LabelUpdateInput } from "@todou/shared";
-import { and, asc, eq } from "drizzle-orm";
+import type {
+  Label,
+  LabelCreateInput,
+  LabelUpdateInput,
+  LabelUsage,
+} from "@todou/shared";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
-import { labels } from "../db/project-schema.ts";
+import { issueLabels, issues, labels, statuses } from "../db/project-schema.ts";
 import { ConflictError, NotFoundError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
 
@@ -25,6 +30,32 @@ export async function listLabels(
     .where(eq(labels.projectId, project.id))
     .orderBy(asc(labels.name));
   return rows.map(toLabel);
+}
+
+/** Every label of the project, an unused one as zeros. Trashed issues don't count. */
+export async function listLabelUsage(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+): Promise<LabelUsage[]> {
+  const { project } = await requireCapability(ctx, actor, slug, "label.list");
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  return db
+    .select({
+      id: labels.id,
+      open_issues: sql<number>`(count(${issues.id}) filter (where ${statuses.category} = 'open'))::int`,
+      issues: sql<number>`count(${issues.id})::int`,
+    })
+    .from(labels)
+    .leftJoin(issueLabels, eq(issueLabels.labelId, labels.id))
+    .leftJoin(
+      issues,
+      and(eq(issues.id, issueLabels.issueId), isNull(issues.deletedAt)),
+    )
+    .leftJoin(statuses, eq(statuses.id, issues.statusId))
+    .where(eq(labels.projectId, project.id))
+    .groupBy(labels.id)
+    .orderBy(asc(labels.id));
 }
 
 export async function createLabel(

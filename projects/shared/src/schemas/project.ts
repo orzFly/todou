@@ -288,6 +288,18 @@ export const Label = z.object({
 });
 export type Label = z.infer<typeof Label>;
 
+/**
+ * How many issues carry a label (T-713), out of the trash. Its own read
+ * rather than fields on `Label`: every CLI command that resolves a label
+ * name lists the catalog, and none of them needs a count.
+ */
+export const LabelUsage = z.object({
+  id: Id,
+  open_issues: z.number().int().nonnegative(),
+  issues: z.number().int().nonnegative(),
+});
+export type LabelUsage = z.infer<typeof LabelUsage>;
+
 export const LabelCreateInput = z.object({
   name: LabelName,
   color: ColorHex.default("#3b82f6"),

@@ -3,6 +3,7 @@ import {
   Label,
   LabelCreateInput,
   LabelUpdateInput,
+  LabelUsage,
   ProjectRef,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
@@ -10,6 +11,7 @@ import {
   createLabel,
   deleteLabel,
   listLabels,
+  listLabelUsage,
   updateLabel,
 } from "../services/labels.ts";
 import { roleTag } from "./role-tag.ts";
@@ -29,6 +31,16 @@ const listRoute = createRoute({
   summary: "Project labels",
   request: { params: slugParam },
   responses: { 200: { description: "Labels", ...jsonBody(z.array(Label)) } },
+});
+
+const usageRoute = createRoute({
+  method: "get",
+  path: "/{slug}/labels/usage",
+  summary: "How many issues carry each label, open and in all",
+  request: { params: slugParam },
+  responses: {
+    200: { description: "Label usage", ...jsonBody(z.array(LabelUsage)) },
+  },
 });
 
 const createRouteDef = createRoute({
@@ -61,6 +73,17 @@ export function labelRoutes() {
   app.openapi(listRoute, async (c) =>
     c.json(
       await listLabels(
+        c.get("appCtx"),
+        c.get("user"),
+        c.req.valid("param").slug,
+      ),
+      200,
+    ),
+  );
+
+  app.openapi(usageRoute, async (c) =>
+    c.json(
+      await listLabelUsage(
         c.get("appCtx"),
         c.get("user"),
         c.req.valid("param").slug,

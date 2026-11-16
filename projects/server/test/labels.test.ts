@@ -121,3 +121,79 @@ describe("who may edit the label catalog", () => {
     }
   });
 });
+
+/**
+ * T-713: the settings page shows how many issues carry each label, and links
+ * the number to the issue list — so open means the status category, the
+ * trash is left out, and an issue with two labels counts once under each.
+ */
+describe("label usage", () => {
+  let t: TestApp;
+  let cookie: string;
+  const slug = "label-usage";
+  const headers = () => ({ "content-type": "application/json", cookie });
+  const post = (path: string, body: unknown) =>
+    t.app.request(`/api/projects/${slug}${path}`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
+
+  beforeAll(async () => {
+    t = await makeTestApp("shared");
+    cookie = await t.login();
+    const created = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug, name: "Label usage" }),
+    });
+    expect(created.status).toBe(201);
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  it("counts open and all issues per label, skipping the trash", async () => {
+    const bug = await json(await post("/labels", { name: "kind:bug" }));
+    const docs = await json(await post("/labels", { name: "area:docs" }));
+    const unused = await json(await post("/labels", { name: "unused" }));
+    const statuses = await json(
+      await t.app.request(`/api/projects/${slug}/statuses`, {
+        headers: headers(),
+      }),
+    );
+    // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
+    const closed = statuses.find((s: any) => s.category === "closed");
+    expect(closed).toBeDefined();
+
+    const issue = async (body: Record<string, unknown>) => {
+      const res = await post("/issues", { title: "t", ...body });
+      expect(res.status).toBe(201);
+      return json(res);
+    };
+    await issue({ label_ids: [bug.id, docs.id] });
+    await issue({ label_ids: [bug.id] });
+    await issue({ label_ids: [bug.id], status_id: closed.id });
+    const trashed = await issue({ label_ids: [bug.id, docs.id] });
+    const removed = await t.app.request(
+      `/api/projects/${slug}/issues/${trashed.number}`,
+      { method: "DELETE", headers: headers() },
+    );
+    expect(removed.status).toBe(204);
+
+    const res = await t.app.request(`/api/projects/${slug}/labels/usage`, {
+      headers: headers(),
+    });
+    expect(res.status).toBe(200);
+    const usage = await json(res);
+    expect(usage).toHaveLength(3);
+    expect(usage).toEqual(
+      expect.arrayContaining([
+        { id: bug.id, open_issues: 2, issues: 3 },
+        { id: docs.id, open_issues: 1, issues: 1 },
+        { id: unused.id, open_issues: 0, issues: 0 },
+      ]),
+    );
+  });
+});
