@@ -1186,6 +1186,86 @@ describe("spec review", () => {
   );
 });
 
+describe("spec review --approve --version", () => {
+  const REVIEWED = {
+    event_id: 99,
+    version: 3,
+    verdict: "approve",
+    summary_comment_id: null,
+    comment_ids: [],
+  };
+
+  it("refuses an approval that names no version, before any request", async () => {
+    const { fetchImpl, calls } = fakeFetch([]);
+    const run = await runCli(
+      ["spec", "review", "23", "-p", "proj", "--approve"],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("--approve needs --version");
+    expect(run.stderr).toContain(
+      "todou spec review 23 -p proj --approve --version <N>",
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it("approves the current version for latest", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/proj/issues/23/spec",
+        { current_version: 3, review_status: "unreviewed" },
+      ],
+      ["POST", "/api/projects/proj/issues/23/spec/reviews", REVIEWED],
+    ]);
+    const run = await runCli(
+      ["spec", "review", "23", "--approve", "--version", "latest"],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(calls.map((call) => call.init.method ?? "GET")).toEqual([
+      "GET",
+      "POST",
+    ]);
+    expect(JSON.parse(String(calls[1]?.init.body))).toMatchObject({
+      version: 3,
+      verdict: "approve",
+    });
+  });
+
+  it("approves the named version without asking which is current", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["POST", "/api/projects/proj/issues/23/spec/reviews", REVIEWED],
+    ]);
+    const run = await runCli(
+      ["spec", "review", "23", "--approve", "--version", "3"],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]?.init.body))).toMatchObject({
+      version: 3,
+      verdict: "approve",
+    });
+  });
+
+  it.each(["v3", "0", "3.5", "03"])(
+    "refuses --version %s before any request",
+    async (version) => {
+      const { fetchImpl, calls } = fakeFetch([]);
+      const run = await runCli(
+        ["spec", "review", "23", "--approve", "--version", version],
+        { fetchImpl, env: ENV },
+      );
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain(
+        "--version takes a positive integer or latest",
+      );
+      expect(calls).toHaveLength(0);
+    },
+  );
+});
+
 // T-277: the CLI half of inline review. Everything a local check can catch
 // has to fail before the POST, so each failing case asserts on `calls` and
 // not merely on the exit code.

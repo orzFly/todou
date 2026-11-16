@@ -591,8 +591,13 @@ export class SpecReviewCommand extends ProjectCommand {
     details: `
       Exactly one of \`--approve\` / \`--request-changes\` / \`--comment\`
       is required, and \`--body\`/\`--body-file\` becomes a summary
-      comment. \`--version\` defaults to the current version; either way
-      the server rejects a review of anything but the latest.
+      comment. \`--approve\` also needs \`--version\`, naming the version
+      you read: a push can land between your reading and the approval, and
+      the version makes the server refuse it rather than approve what you
+      have not read. \`--version latest\` takes whatever is current when the
+      command runs. \`--request-changes\` and \`--comment\` default to the
+      current version. Either way the server takes a review of the latest
+      version only.
 
       \`--comment\` is a review that **judges nothing**: it records the
       summary and annotations and preserves the current review status,
@@ -623,6 +628,14 @@ export class SpecReviewCommand extends ProjectCommand {
       stream.
     `,
     examples: [
+      [
+        "Approve the version you read",
+        "$0 spec review 23 --approve --version 3",
+      ],
+      [
+        "Approve whatever is current",
+        "$0 spec review 23 --approve --version latest",
+      ],
       [
         "Request changes with a note",
         '$0 spec review 23 --request-changes --body "rework §2"',
@@ -661,11 +674,11 @@ export class SpecReviewCommand extends ProjectCommand {
     description: "Post a --body that is a path as literal text",
   });
   version = Option.String("--version", {
-    description: "Version being reviewed (default: current)",
+    description:
+      "Version you read: a number, or latest (required with --approve)",
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = await this.resolveIssueRef(client, this.number);
     const picked = (
       [
         ["approve", this.approve],
@@ -680,6 +693,26 @@ export class SpecReviewCommand extends ProjectCommand {
       );
     }
     const verdict = picked[0]?.[0] ?? "comment";
+    // Checked before any request, so a refusal costs no round trip.
+    const asked = this.version;
+    if (
+      asked !== undefined &&
+      asked !== "latest" &&
+      !/^[1-9][0-9]*$/.test(asked)
+    ) {
+      throw new CliError(
+        "--version takes a positive integer or latest",
+        `got "${asked}"`,
+      );
+    }
+    if (verdict === "approve" && asked === undefined) {
+      const project = this.project === undefined ? "" : ` -p ${this.project}`;
+      throw new CliError(
+        "--approve needs --version: the version you read, or latest",
+        `todou spec review ${this.number}${project} --approve --version <N>`,
+      );
+    }
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     if (this.bodyFile === "-" && this.annotations === "-") {
       throw new CliError(
         "--body-file and --annotations cannot both read stdin",
@@ -711,9 +744,9 @@ export class SpecReviewCommand extends ProjectCommand {
       );
     }
     const version =
-      this.version === undefined
+      asked === undefined || asked === "latest"
         ? (await client.getSpec(project, number)).current_version
-        : Number(this.version);
+        : Number(asked);
     const comments =
       staged.length === 0
         ? []
