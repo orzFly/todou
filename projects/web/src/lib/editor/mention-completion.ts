@@ -10,6 +10,7 @@ import { enumLookup } from "@todou/shared";
 import { membersQuery } from "@/api/queries.ts";
 import { inCodeContext } from "@/lib/editor/code-context.ts";
 import { applyWithSpace } from "@/lib/editor/completion-space.ts";
+import { withUser } from "@/lib/editor/user-completion.tsx";
 
 /**
  * Mention completion (@login) beside the reference completion, as a second
@@ -89,18 +90,23 @@ export function mentionCompletionSource(
     const options = rankMembers(members ?? [], trigger.query)
       .slice(0, MAX_OPTIONS)
       .map(
-        (m): Completion => ({
-          label: `@${m.user.login}`,
-          detail: m.user.display_name,
-          // The panel's icon separates people from agents at a glance.
-          type: enumLookup(
-            { machine: "mention-agent", human: "mention-user" },
-            m.user.kind,
-            () => "mention-unknown",
-            "user kind",
+        (m): Completion =>
+          // The row's avatar and its bot badge are what separate people from
+          // agents; the type stays as the checked record of which one this is.
+          withUser(
+            {
+              label: `@${m.user.login}`,
+              detail: m.user.display_name,
+              type: enumLookup(
+                { machine: "mention-agent", human: "mention-user" },
+                m.user.kind,
+                () => "mention-unknown",
+                "user kind",
+              ),
+              apply: applyWithSpace(`@${m.user.login}`),
+            },
+            m.user,
           ),
-          apply: applyWithSpace(`@${m.user.login}`),
-        }),
       );
     if (options.length === 0) return null;
     return { from: line.from + trigger.at, filter: false, options };

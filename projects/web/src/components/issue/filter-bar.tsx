@@ -24,6 +24,10 @@ import {
 } from "@/api/issues.ts";
 import { LabelInline } from "@/components/issue/label-chip.tsx";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
+import {
+  UserPicker,
+  UserSelectTrigger,
+} from "@/components/shared/user-picker.tsx";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -128,37 +132,27 @@ export function FilterBar({
         }
       />
 
-      <Select
-        value={
-          search.assignee === undefined ? "anyone" : String(search.assignee)
+      <UserPicker
+        users={members.map((m) => m.user)}
+        selectedIds={search.assignee === undefined ? [] : [search.assignee]}
+        onPick={(user) =>
+          onChange({ ...search, assignee: user === null ? undefined : user.id })
         }
-        onValueChange={(v) =>
-          onChange({
-            ...search,
-            assignee: v === "anyone" ? undefined : Number(v),
-          })
+        anyone="Any assignee"
+        trigger={
+          <UserSelectTrigger
+            user={selectedAssignee?.user}
+            placeholder="Any assignee"
+            size="sm"
+            className="w-36"
+            aria-label={
+              selectedAssignee === undefined
+                ? "Any assignee"
+                : `Assignee: ${displayNameOf(selectedAssignee.user)}`
+            }
+          />
         }
-      >
-        <SelectTrigger className="w-36" size="sm">
-          {/* Naming the value here rather than letting the trigger echo the
-              selected item: the item carries `@login` for disambiguation,
-              and this narrow trigger would clip it to a bare "@". */}
-          <SelectValue placeholder="Assignee">
-            {selectedAssignee === undefined
-              ? "Any assignee"
-              : displayNameOf(selectedAssignee.user)}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="anyone">Any assignee</SelectItem>
-          {members.map((m) => (
-            <SelectItem key={m.user.id} value={String(m.user.id)}>
-              {displayNameOf(m.user)}
-              <span className="text-muted-foreground">@{m.user.login}</span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      />
 
       <Select
         value={`${effectiveSort(search).sort}-${effectiveSort(search).order}`}

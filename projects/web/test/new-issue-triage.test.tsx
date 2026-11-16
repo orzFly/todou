@@ -605,16 +605,18 @@ describe("the new-issue sidebar's picked assignees (T-391)", () => {
     renderAs("admin");
     await screen.findByLabelText("Title");
 
-    fireEvent.pointerDown(
+    fireEvent.click(
       await screen.findByRole("button", { name: "Edit assignees" }),
-      { button: 0, pointerType: "mouse" },
     );
-    fireEvent.click(await screen.findByRole("menuitem", { name: /User/ }));
-    // The picker stays open on purpose (several people in a row), and while
-    // it is open Radix marks the rest of the page `aria-hidden`, which hides
-    // the very section this case is about from every role query.
-    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.click(await screen.findByRole("option", { name: /User/ }));
+    // The picker stays open on purpose (several people in a row); closed
+    // here so the section this case is about is the only thing being read.
+    fireEvent.keyDown(screen.getByLabelText("filter people"), {
+      key: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByLabelText("filter people")).toBeNull(),
+    );
 
     // The echo lives in the Assignees section, under the heading row that
     // carries the picker. It restates a choice the reader just made on a card
@@ -650,16 +652,14 @@ async function toggleBug() {
 }
 
 async function toggleUser() {
-  fireEvent.pointerDown(
-    screen.getByRole("button", { name: "Edit assignees" }),
-    {
-      button: 0,
-      pointerType: "mouse",
-    },
+  fireEvent.click(screen.getByRole("button", { name: "Edit assignees" }));
+  fireEvent.click(await screen.findByRole("option", { name: /User/ }));
+  fireEvent.keyDown(screen.getByLabelText("filter people"), {
+    key: "Escape",
+  });
+  await waitFor(() =>
+    expect(screen.queryByLabelText("filter people")).toBeNull(),
   );
-  fireEvent.click(await screen.findByRole("menuitem", { name: /User/ }));
-  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
-  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 }
 
 async function pickNotifications(quiet: boolean) {

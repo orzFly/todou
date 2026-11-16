@@ -7,7 +7,7 @@ import { PICKER_ROW } from "../src/components/issue/picker-row.ts";
 import { renderWithClient as render } from "./render.tsx";
 
 /**
- * The Labels and Assignees menus have to draw rows of the same height
+ * The Labels and Assignees pickers have to draw rows of the same height
  * (T-458). A pixel reading cannot say that here — happy-dom loads no
  * stylesheet, and even in a browser the same fixture has measured two
  * different heights at one width (T-445). What is checkable is that both
@@ -64,7 +64,7 @@ describe("the Labels and Assignees rows (T-458)", () => {
         defaultOpen
       />,
     );
-    const assigneeRow = screen.getByRole("menuitem", { name: /Alice Kim/ });
+    const assigneeRow = screen.getByRole("option", { name: /Alice Kim/ });
     expect(classesOf(assigneeRow)).toEqual(expect.arrayContaining(tokens));
   });
 });

@@ -480,11 +480,14 @@ export function Composer({
   registryRef.current = registry;
   const extensions = useMemo(
     () => [
-      completionWith([
-        refCompletionSource(slug, queryClient),
-        mentionCompletionSource(slug, queryClient),
-        commandCompletionSource(() => registryRef.current),
-      ]),
+      completionWith(
+        [
+          refCompletionSource(slug, queryClient),
+          mentionCompletionSource(slug, queryClient),
+          commandCompletionSource(() => registryRef.current),
+        ],
+        queryClient,
+      ),
       commandDecoration(() => registryRef.current),
     ],
     [slug, queryClient],

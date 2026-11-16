@@ -15,6 +15,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   labelsQuery,
   membersQuery,
+  meQuery,
   projectQuery,
   projectsQuery,
   statusesQuery,
@@ -51,6 +52,8 @@ import {
 } from "@/components/search/suggestions.ts";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
+import { AVATAR_SLOT } from "@/components/shared/user-picker.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { projectSpellings } from "@/lib/project-spellings.ts";
 import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
@@ -96,6 +99,20 @@ function pointsElsewhere(row: JumpRow, slug: string): boolean {
  * `<a>` and `<div>` rows, which are block already, it changes nothing.
  */
 const OPTION = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm";
+
+/**
+ * A row's leading glyph, centred where an avatar would sit and in a column as
+ * wide as an avatar's (T-677). People appear in this panel as avatars, and a
+ * column fitted to the 14px icons would start their text 12px right of every
+ * other row's.
+ */
+function Glyph({ children }: { children: React.ReactNode }) {
+  return (
+    <span className={AVATAR_SLOT}>
+      <span className="flex w-5 justify-center">{children}</span>
+    </span>
+  );
+}
 
 /** Nothing highlighted. Enter then submits what was typed, not an offer. */
 const NONE = -1;
@@ -197,6 +214,8 @@ export function SearchBox({
   const labels = useQuery({ ...labelsQuery(slug), enabled: asked });
   const statuses = useQuery({ ...statusesQuery(slug), enabled: asked });
   const members = useQuery({ ...membersQuery(slug), enabled: asked });
+  // Cached by the shell before this box can be typed in: no request of its own.
+  const me = useQuery(meQuery);
   const facets = useQuery(searchFacetsQuery(slug, asked));
   // The same two the jump offer reads, so completing a project name costs
   // nothing beyond what resolving one already did.
@@ -207,7 +226,13 @@ export function SearchBox({
     () => ({
       label: labels.data?.map((l) => ({ value: l.name })),
       status: statuses.data?.map((s) => ({ value: s.name })),
-      assignee: members.data?.map((m) => ({ value: m.user.login })),
+      // `@me` drawn as the viewer, so its row lines up with the people below.
+      assignee: members.data?.flatMap((m) => [
+        ...(m.user.id === me.data?.id
+          ? [{ value: "@me", hint: displayNameOf(m.user), user: m.user }]
+          : []),
+        { value: m.user.login, hint: displayNameOf(m.user), user: m.user },
+      ]),
       harness: facets.data?.harnesses
         .filter((h) => h.agent !== null)
         .map((h) => ({ value: h.agent as string, hint: String(h.count) })),
@@ -216,7 +241,7 @@ export function SearchBox({
         ...(s.agent === null ? {} : { hint: s.agent }),
       })),
     }),
-    [labels.data, statuses.data, members.data, facets.data],
+    [labels.data, statuses.data, members.data, facets.data, me.data],
   );
   const known: KnownValues = useMemo(
     () => ({
@@ -624,15 +649,19 @@ export function SearchBox({
                     }}
                   >
                     {blank ? (
-                      <ArrowRightIcon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
+                      <Glyph>
+                        <ArrowRightIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
                     ) : (
-                      <SearchIcon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
+                      <Glyph>
+                        <SearchIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
                     )}
                     <span className="truncate">
                       {blank ? (
@@ -660,15 +689,38 @@ export function SearchBox({
                     onMouseMove={() => setHighlight(idx)}
                     onClick={() => accept(row.row.apply)}
                   >
-                    <Icon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
-                    <span className="truncate font-mono text-xs">
+                    {/* A person is drawn as in every user picker (T-677),
+                        login first: it is the value being completed. The
+                        avatar takes the glyph column the other rows' icons
+                        sit in, which is sized for it (Glyph). */}
+                    {row.row.user === undefined ? (
+                      <Glyph>
+                        <Icon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
+                    ) : (
+                      <span className={AVATAR_SLOT}>
+                        <UserAvatar user={row.row.user} badge aria-hidden />
+                      </span>
+                    )}
+                    <span
+                      className={cn(
+                        row.row.user === undefined
+                          ? "truncate font-mono text-xs"
+                          : "shrink-0",
+                      )}
+                    >
                       {row.row.text}
                     </span>
                     {row.row.hint !== undefined && (
-                      <span className="truncate text-muted-foreground text-xs">
+                      <span
+                        className={cn(
+                          "truncate text-muted-foreground",
+                          row.row.user === undefined && "text-xs",
+                        )}
+                      >
                         {row.row.hint}
                       </span>
                     )}
@@ -703,10 +755,12 @@ export function SearchBox({
                         closeUnlessNewTab(e);
                       }}
                     >
-                      <ClockIcon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
+                      <Glyph>
+                        <ClockIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
                       <span className="truncate">
                         {highlightParts(row.q, parseSearchQuery(row.q), known)}
                       </span>
@@ -739,10 +793,12 @@ export function SearchBox({
                   >
                     <JumpRowBody
                       icon={
-                        <ArrowRightIcon
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden
-                        />
+                        <Glyph>
+                          <ArrowRightIcon
+                            className="size-3.5 text-muted-foreground"
+                            aria-hidden
+                          />
+                        </Glyph>
                       }
                       spelled={row.spelled}
                       // What the reader typed, not a card: nothing to take
@@ -782,7 +838,7 @@ export function SearchBox({
                         /* Where the arrow goes on every other row. These cards
                            are offered rather than asked for, and the empty
                            column is what says so — one indent, no new glyph. */
-                        <span className="size-3.5 shrink-0" aria-hidden />
+                        <span className={AVATAR_SLOT} aria-hidden />
                       }
                       spelled={row.spelled}
                       // The reader's own spelling carried on, not a format:
@@ -815,10 +871,12 @@ export function SearchBox({
                   >
                     <JumpRowBody
                       icon={
-                        <ExternalLinkIcon
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden
-                        />
+                        <Glyph>
+                          <ExternalLinkIcon
+                            className="size-3.5 text-muted-foreground"
+                            aria-hidden
+                          />
+                        </Glyph>
                       }
                       spelled={row.text}
                       // An autolink's own text, which todou never spelled.
@@ -842,10 +900,12 @@ export function SearchBox({
                     aria-label="Looking up the card…"
                     className={cn(OPTION, idx === hl && "bg-accent")}
                   >
-                    <ArrowRightIcon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
+                    <Glyph>
+                      <ArrowRightIcon
+                        className="size-3.5 text-muted-foreground"
+                        aria-hidden
+                      />
+                    </Glyph>
                     <Skeleton className="h-4 w-40" />
                   </div>
                 );
@@ -868,10 +928,12 @@ export function SearchBox({
                 >
                   <JumpRowBody
                     icon={
-                      <ArrowRightIcon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
+                      <Glyph>
+                        <ArrowRightIcon
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </Glyph>
                     }
                     spelled={row.spelled}
                     identity={{

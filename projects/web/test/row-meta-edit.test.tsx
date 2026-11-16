@@ -222,8 +222,9 @@ describe("board card edit icons (T-533)", () => {
     const button = await view.findByRole("button", { name: "Edit assignees" });
     fireEvent.pointerDown(button, { button: 0, pointerType: "mouse" });
     expect(onCardPointerDown).not.toHaveBeenCalled();
-    // The menu still opened from that same press.
-    await view.findByRole("menuitem", { name: /newcomer/ });
+    // The picker still opens from that same press, on the click that ends it.
+    fireEvent.click(button);
+    await view.findByRole("option", { name: /newcomer/ });
   });
 
   it("shows no icons to a viewer the server would refuse", async () => {
@@ -271,7 +272,8 @@ describe("list row assignee picker (T-533)", () => {
     const button = await view.findByRole("button", { name: "Edit assignees" });
     expect(button.closest("a")).toBeNull();
     fireEvent.pointerDown(button, { button: 0, pointerType: "mouse" });
-    fireEvent.click(await view.findByRole("menuitem", { name: /newcomer/ }));
+    fireEvent.click(button);
+    fireEvent.click(await view.findByRole("option", { name: /newcomer/ }));
     expect(onToggle).toHaveBeenCalledWith(3);
   });
 
@@ -282,9 +284,9 @@ describe("list row assignee picker (T-533)", () => {
     const button = await view.findByRole("button", { name: "Edit assignees" });
     fireEvent.pointerDown(button, { button: 0, pointerType: "touch" });
     await act(async () => {});
-    expect(view.queryByRole("menu")).toBeNull();
+    expect(view.queryByRole("listbox")).toBeNull();
     fireEvent.click(button);
-    await view.findByRole("menuitem", { name: /newcomer/ });
+    await view.findByRole("option", { name: /newcomer/ });
   });
 
   it("opens the status menu on a tap, not a touch (T-596)", async () => {
@@ -302,10 +304,10 @@ describe("list row assignee picker (T-533)", () => {
     const button = await view.findByRole("button", { name: "Edit assignees" });
     fireEvent.pointerDown(button, { button: 0, pointerType: "touch" });
     fireEvent.click(button);
-    await view.findByRole("menu");
+    await view.findByRole("listbox");
     fireEvent.pointerDown(button, { button: 0, pointerType: "touch" });
     fireEvent.click(button);
-    await waitFor(() => expect(view.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(view.queryByRole("listbox")).toBeNull());
   });
 
   it("has no assignee picker without a handler", async () => {

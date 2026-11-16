@@ -34,6 +34,10 @@ import {
   tagCompletionSource,
 } from "@/lib/editor/tag-completion.ts";
 import {
+  userAvatarOption,
+  userOptionClass,
+} from "@/lib/editor/user-completion.tsx";
+import {
   type ProjectRefOption,
   projectSpellings,
 } from "@/lib/project-spellings.ts";
@@ -220,13 +224,22 @@ export function refCompletionSource(
  * Tag templates need no inputs, so every caller gets the source here.
  * The snippet facet lives beside the Tab binding whose priority it arbitrates.
  */
-export function completionWith(sources: CompletionSource[]): Extension {
+export function completionWith(
+  sources: CompletionSource[],
+  /** Draws avatars on rows that name a person; without it they go bare. */
+  queryClient?: QueryClient,
+): Extension {
   return [
     Prec.high(keymap.of([{ key: "Tab", run: acceptCompletion }])),
     snippetFieldKeys,
     // With filter:false CodeMirror ignores boost and preserves source order.
     // Put tags first so <det selects the template while retaining project rows.
-    autocompletion({ override: [tagCompletionSource, ...sources] }),
+    autocompletion({
+      override: [tagCompletionSource, ...sources],
+      optionClass: userOptionClass,
+      addToOptions:
+        queryClient === undefined ? [] : [userAvatarOption(queryClient)],
+    }),
     spaceAfterAccept,
     completionTheme,
   ];
@@ -241,10 +254,13 @@ export function useRefCompletion(slug: string): Extension {
   const queryClient = useQueryClient();
   return useMemo(
     () =>
-      completionWith([
-        refCompletionSource(slug, queryClient),
-        mentionCompletionSource(slug, queryClient),
-      ]),
+      completionWith(
+        [
+          refCompletionSource(slug, queryClient),
+          mentionCompletionSource(slug, queryClient),
+        ],
+        queryClient,
+      ),
     [slug, queryClient],
   );
 }
@@ -269,6 +285,9 @@ export const completionTheme = EditorView.theme({
     maxHeight: "16rem",
     fontFamily: "inherit",
   },
+  // The 16rem above loses to the base theme's `10em` on the longer selector,
+  // which at 14px is 140px: four 34px person rows and the top of a fifth.
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": { maxHeight: "16rem" },
   ".cm-tooltip-autocomplete > ul > li": {
     display: "flex",
     alignItems: "baseline",
@@ -289,6 +308,29 @@ export const completionTheme = EditorView.theme({
     whiteSpace: "nowrap",
   },
   ".cm-completionMatchedText": { textDecoration: "none", fontWeight: "600" },
+  // A person's row is drawn like every user picker's (T-677): the avatar
+  // takes the icon's place, and the login is set like a name, not like code.
+  // Named in full: CodeMirror's base theme sets the list's font and its rows'
+  // 1px padding through `.cm-tooltip.cm-tooltip-autocomplete > ul`, which
+  // outranks a shorter selector. The row is held to PICKER_ROW's 34px and
+  // padding: at the panel's own 22px, the 20px avatar touched both edges and
+  // its badge hung into the next row.
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li.cm-completion-user": {
+    alignItems: "center",
+    gap: "0.5rem",
+    minHeight: "2.125rem",
+    padding: "0.375rem 0.5rem",
+    fontFamily: "var(--font-sans)",
+    fontSize: "0.875rem",
+  },
+  ".cm-completion-user .cm-completionIcon": { display: "none" },
+  ".cm-completion-user .cm-completionLabel": { fontFamily: "inherit" },
+  // AVATAR_SLOT's width, room for the badge's overhang.
+  ".cm-completionAvatar": {
+    display: "inline-flex",
+    flex: "none",
+    width: "1.625rem",
+  },
   ".cm-completionIcon": { width: "1em", paddingRight: "0", opacity: "1" },
   ".cm-completionIcon-issue-open::after": {
     content: "'○'",
@@ -302,10 +344,6 @@ export const completionTheme = EditorView.theme({
     content: "'?'",
     color: "var(--muted-foreground)",
   },
-  ".cm-completionIcon-mention-unknown::after": {
-    content: "'?'",
-    color: "var(--muted-foreground)",
-  },
   ".cm-completionIcon-command::after": {
     content: "'/'",
     color: "var(--primary)",
@@ -316,14 +354,6 @@ export const completionTheme = EditorView.theme({
   },
   ".cm-completionIcon-project-ref::after": {
     content: "'◇'",
-    color: "var(--muted-foreground)",
-  },
-  ".cm-completionIcon-mention-user::after": {
-    content: "'@'",
-    color: "var(--primary)",
-  },
-  ".cm-completionIcon-mention-agent::after": {
-    content: "'◉'",
     color: "var(--muted-foreground)",
   },
 });
