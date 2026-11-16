@@ -8,7 +8,10 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
-import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
+import {
+  AttachmentEventLink,
+  attachmentIcon,
+} from "@/components/issue/attachment-list.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
@@ -290,6 +293,15 @@ export function EventGroup({
     if (family === "attachments") {
       return (
         <AttachmentsGroup
+          events={events}
+          slug={slug}
+          issueNumber={issueNumber}
+        />
+      );
+    }
+    if (family === "attachments_deleted") {
+      return (
+        <DeletedAttachmentsGroup
           events={events}
           slug={slug}
           issueNumber={issueNumber}
@@ -665,6 +677,55 @@ function AttachmentsGroup({
                 filename={filename}
               />
             ),
+        };
+      })}
+    />
+  );
+}
+
+/**
+ * `deleted …` as one row per file (T-700), the same shape as an upload. The
+ * rows are unlinked and not struck through: the file is gone, so there is
+ * nothing to link to, and the header's verb already says so.
+ */
+function DeletedAttachmentsGroup({
+  events,
+  slug,
+  issueNumber,
+}: {
+  events: TimelineEvent[];
+  slug: string;
+  issueNumber: number;
+}) {
+  return (
+    <ListGroup
+      events={events}
+      slug={slug}
+      issueNumber={issueNumber}
+      headline={
+        <>
+          deleted {events.length} file{events.length === 1 ? "" : "s"}
+        </>
+      }
+      rows={events.map((event) => {
+        const file = event.payload.attachment as
+          | { filename?: string }
+          | undefined;
+        const filename = file?.filename ?? "a file";
+        const Icon = attachmentIcon({ filename });
+        return {
+          key: event.id,
+          id: eventAnchor(event.id),
+          title: event.created_at,
+          node: (
+            <span className="text-muted-foreground">
+              <Icon
+                aria-hidden
+                className="mr-0.5 inline size-3.5 align-middle"
+              />
+              {filename}
+            </span>
+          ),
         };
       })}
     />

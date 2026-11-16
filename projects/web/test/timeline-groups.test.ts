@@ -148,6 +148,7 @@ describe("familyOf", () => {
     expect(familyOf("referenced")).toBe("referenced");
     expect(familyOf("cross_referenced")).toBe("referenced");
     expect(familyOf("attachment_added")).toBe("attachments");
+    expect(familyOf("attachment_deleted")).toBe("attachments_deleted");
     expect(familyOf("assigned")).toBe("assignees");
     expect(familyOf("unassigned")).toBe("assignees");
     expect(familyOf("spec_comments_resolved")).toBe("spec_resolved");
@@ -183,6 +184,7 @@ describe("rendersAsList", () => {
   it("names every family whose rows are always visible", () => {
     expect(rendersAsList("referenced")).toBe(true);
     expect(rendersAsList("attachments")).toBe(true);
+    expect(rendersAsList("attachments_deleted")).toBe(true);
     expect(rendersAsList("spec_resolved")).toBe(true);
     expect(rendersAsList("block_added")).toBe(true);
     expect(rendersAsList("block_removed")).toBe(true);
@@ -378,6 +380,27 @@ describe("groupTimeline", () => {
       event({ event_type: "label_removed", atMs: 1000 }),
     ]);
     expect(kinds(units)).toEqual(["group:2"]);
+  });
+
+  it("folds a burst of deletions, apart from the upload before it (T-700)", () => {
+    const file = (type: "attachment_added" | "attachment_deleted", n: number) =>
+      event({
+        event_type: type,
+        payload: { attachment: { id: n, filename: `${n}.html` } },
+        atMs: n * 1000,
+      });
+    const units = groupTimeline([
+      file("attachment_added", 1),
+      file("attachment_added", 2),
+      file("attachment_deleted", 3),
+      file("attachment_deleted", 4),
+      file("attachment_deleted", 5),
+    ]);
+    expect(kinds(units)).toEqual(["group:2", "group:3"]);
+    expect(units.map((u) => u.kind === "group" && u.family)).toEqual([
+      "attachments",
+      "attachments_deleted",
+    ]);
   });
 
   it("never merges across families", () => {

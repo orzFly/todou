@@ -58,7 +58,7 @@ function isPlainLeftClick(e: MouseEvent): boolean {
  * TypeScript source and an MPEG transport stream, and `isTextDocument` has
  * to get the first look at it.
  */
-function attachmentIcon(attachment: {
+export function attachmentIcon(attachment: {
   filename: string;
   content_type?: string;
 }) {

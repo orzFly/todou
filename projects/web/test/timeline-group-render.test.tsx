@@ -889,6 +889,38 @@ describe("EventGroup", () => {
     expect(rows[0]?.id).toBe(`event-${lone.id}`);
   });
 
+  it("lists deleted files under one header, unlinked (T-700)", async () => {
+    const deletions = [
+      event({
+        event_type: "attachment_deleted",
+        payload: { attachment: { id: 5, filename: "report.html" } },
+      }),
+      event({
+        event_type: "attachment_deleted",
+        payload: { attachment: { id: 6, filename: "report.xlsx" } },
+      }),
+    ];
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="attachments_deleted"
+        events={deletions}
+        slug="p"
+        issueNumber={1}
+      />,
+    );
+    const group = await findByTestId("event-group");
+    expect(group.textContent).toContain("deleted 2 files");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows.map((li) => li.textContent)).toEqual([
+      "report.html",
+      "report.xlsx",
+    ]);
+    expect(rows.map((li) => li.id)).toEqual(
+      deletions.map((e) => `event-${e.id}`),
+    );
+    expect(group.querySelectorAll("li a, li button")).toHaveLength(0);
+  });
+
   it("reads a hand-off as an arrow between the two who net out", async () => {
     const { findByTestId, getByTestId, getByTitle, queryByTitle } =
       renderWithProviders(

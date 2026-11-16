@@ -25,6 +25,7 @@ export type MergeFamily =
   | "labels"
   | "referenced"
   | "attachments"
+  | "attachments_deleted"
   | "assignees"
   | "spec_resolved"
   | BlockFamily;
@@ -44,6 +45,7 @@ export type BlockFamily =
 export type ListFamily =
   | "referenced"
   | "attachments"
+  | "attachments_deleted"
   | "spec_resolved"
   | BlockFamily;
 /** The rest: a summary row with an expander behind it. */
@@ -60,6 +62,7 @@ export function rendersAsList(family: MergeFamily): family is ListFamily {
   return (
     family === "referenced" ||
     family === "attachments" ||
+    family === "attachments_deleted" ||
     family === "spec_resolved" ||
     isBlockFamily(family)
   );
@@ -101,6 +104,8 @@ export function windowMsFor(family: MergeFamily): number {
  * referenced and cross_referenced likewise: the reader cares who pointed
  * here, not whether they did it from this project, and every row says so
  * itself.
+ * attachment_added and attachment_deleted are the counter-example: the
+ * header is the verb, and no one verb covers both halves.
  */
 const FAMILY_BY_TYPE: Partial<Record<IssueEventType, MergeFamily>> = {
   status_changed: "status",
@@ -109,6 +114,7 @@ const FAMILY_BY_TYPE: Partial<Record<IssueEventType, MergeFamily>> = {
   referenced: "referenced",
   cross_referenced: "referenced",
   attachment_added: "attachments",
+  attachment_deleted: "attachments_deleted",
   assigned: "assignees",
   unassigned: "assignees",
   spec_comments_resolved: "spec_resolved",
