@@ -506,6 +506,25 @@ function pageHelpers() {
       const ACTS_ON_A_TAP =
         "a,button,input,textarea,select,summary,label,[role='button']," +
         "[role='link'],[role='menuitem'],[role='option'],[tabindex]";
+      // The comment box by its frame, not by points around the tap: a tap in
+      // the gap below the folded composer, past every 16px probe, was still
+      // snapped into its editor. The focus unfolded the composer, and the
+      // next tap's pointerdown refolded it — moving the sidebar 88px between
+      // that tap's pointerdown and its click, and a popover trigger opens on
+      // the click (T-677). Twice the probes' clearance, since the snap
+      // measured here reached past it.
+      const REACH = 32;
+      const editors = [
+        ...document.querySelectorAll("[data-slot='markdown-editor']"),
+      ].map((element) => element.getBoundingClientRect());
+      const nearAnEditor = (x, y) =>
+        editors.some(
+          (box) =>
+            x > box.left - REACH &&
+            x < box.right + REACH &&
+            y > box.top - REACH &&
+            y < box.bottom + REACH,
+        );
       // Off the viewport `elementFromPoint` returns null: nothing there to act.
       const actsOnATap = (x, y) => {
         const hit = document.elementFromPoint(x, y);
@@ -522,7 +541,7 @@ function pageHelpers() {
         );
       for (let y = 8; y < window.innerHeight; y += 24) {
         for (const x of [window.innerWidth / 2, 8, window.innerWidth - 8]) {
-          if (covered(x, y)) continue;
+          if (covered(x, y) || nearAnEditor(x, y)) continue;
           if (document.elementFromPoint(x, y) === null || !clear(x, y))
             continue;
           return { x, y };
