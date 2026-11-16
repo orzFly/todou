@@ -169,7 +169,7 @@ export function TokensSettingsPage() {
               <UserSelectTrigger
                 user={holderPicked}
                 placeholder="Issue for"
-                className="w-44"
+                className="w-40"
                 aria-label={`Issue for ${displayNameOf(holderPicked ?? me)}`}
               />
             }
@@ -179,7 +179,7 @@ export function TokensSettingsPage() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Token name (e.g. cli, ci)"
-          className="w-56"
+          className="w-44"
           required
         />
         <TokenExpirySelect value={expiry} onChange={setExpiry} />
