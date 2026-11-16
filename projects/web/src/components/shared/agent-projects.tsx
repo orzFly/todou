@@ -283,11 +283,11 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
                   <PlusIcon className="size-3.5" /> Add
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                {addRole === null
-                  ? "Pick a project to see what this agent can be added as."
-                  : `Added as ${addRole} — change the role above afterwards.`}
-              </p>
+              {addRole !== null && (
+                <p className="text-xs text-muted-foreground">
+                  Added as {addRole} — change the role above afterwards.
+                </p>
+              )}
             </>
           )}
         </div>
