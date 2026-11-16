@@ -495,3 +495,168 @@ describe("samples inside the generator dropdowns (T-558)", () => {
     ).toBeTruthy();
   });
 });
+
+describe("previews under issue number placement and references (T-710)", () => {
+  /** The sample drawn under the select it belongs to. */
+  async function previewFor(
+    view: ReturnType<typeof renderSettings>,
+    name: string,
+  ) {
+    const control = await view.findByRole("combobox", { name });
+    const preview = control.parentElement?.parentElement?.querySelector(
+      "[data-appearance-preview]",
+    );
+    expect(preview, name).not.toBeNull();
+    return preview as HTMLElement;
+  }
+
+  /** Whether `ref` comes after `title` in the preview's text. */
+  function refFollowsTitle(preview: HTMLElement, ref: string, title: string) {
+    const text = preview.textContent ?? "";
+    expect(text).toContain(ref);
+    expect(text).toContain(title);
+    return text.indexOf(ref) > text.indexOf(title);
+  }
+
+  it.each([
+    ["before", false],
+    ["after", true],
+  ] as const)(
+    "draws list rows with the ref %s the title",
+    async (placement, follows) => {
+      const view = renderSettings({ ref_placement_list: placement });
+      const preview = await previewFor(view, "Issue lists & Inbox");
+      await waitFor(() =>
+        expect(
+          refFollowsTitle(preview, "DES-9", "Dark mode for the board"),
+        ).toBe(follows),
+      );
+    },
+  );
+
+  it("redraws the sample the moment a placement is picked", async () => {
+    vi.spyOn(api, "patchMyPrefs").mockReturnValue(new Promise(() => {}));
+    const view = renderSettings({ ref_placement_detail: "before" });
+    const preview = await previewFor(view, "Issue page title");
+    await waitFor(() =>
+      expect(refFollowsTitle(preview, "DES-9", "Dark mode for the board")).toBe(
+        false,
+      ),
+    );
+    fireEvent.keyDown(
+      view.getByRole("combobox", { name: "Issue page title" }),
+      { key: "A" },
+    );
+    await waitFor(() =>
+      expect(refFollowsTitle(preview, "DES-9", "Dark mode for the board")).toBe(
+        true,
+      ),
+    );
+  });
+
+  it.each([
+    ["before", false, false],
+    ["after", true, true],
+    ["own_line", true, false],
+  ] as const)(
+    "draws a board card with the ref placed %s",
+    async (placement, follows, inMeta) => {
+      const view = renderSettings({ ref_placement_board: placement });
+      const preview = await previewFor(view, "Board cards");
+      const title = "Sign-in forgets the page you came from";
+      await waitFor(() =>
+        expect(refFollowsTitle(preview, "DES-12", title)).toBe(follows),
+      );
+      expect(
+        preview
+          .querySelector("[data-card-meta]")
+          ?.textContent?.includes("DES-12") ?? false,
+      ).toBe(inMeta);
+    },
+  );
+
+  it("draws an issue reference in the chosen order", async () => {
+    const view = renderSettings({ ref_placement_reference: "after" });
+    const preview = await previewFor(view, "Issue references");
+    await waitFor(() =>
+      expect(
+        refFollowsTitle(
+          preview,
+          "DES-12",
+          "Sign-in forgets the page you came from",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  /** The body sample sits in its section, under the explanation. */
+  async function bodyPreview(view: ReturnType<typeof renderSettings>) {
+    const heading = await view.findByRole("heading", {
+      name: "References in text",
+    });
+    const preview = heading
+      .closest(".border-t")
+      ?.querySelector("[data-appearance-preview]");
+    expect(preview).not.toBeNull();
+    return preview as HTMLElement;
+  }
+
+  it.each([
+    [false, 1],
+    [true, 2],
+  ])(
+    "repeats a title in the body sample when title-on-every-mention=%s",
+    async (repeat, count) => {
+      const view = renderSettings({ show_repeated_ref_title: repeat });
+      const preview = await bodyPreview(view);
+      await waitFor(() =>
+        expect(preview.querySelectorAll("[data-issue-link]")).toHaveLength(3),
+      );
+      expect(
+        preview.querySelectorAll('[data-issue-link="12"] [data-ref-title]'),
+      ).toHaveLength(count);
+    },
+  );
+
+  it("draws body references with the border it is set to", async () => {
+    const classesOf = async (boxed: boolean) => {
+      const view = renderSettings({ boxed_ref_links: boxed });
+      const preview = await bodyPreview(view);
+      await waitFor(() =>
+        expect(preview.querySelector("[data-issue-link]")).not.toBeNull(),
+      );
+      const classes = (
+        preview.querySelector("[data-issue-link]") as HTMLElement
+      ).className;
+      cleanup();
+      return classes;
+    };
+    const on = await classesOf(true);
+    const off = await classesOf(false);
+    expect(on).toMatch(/(^|\s)border(\s|$)/);
+    expect(off).not.toMatch(/(^|\s)border(\s|$)/);
+  });
+
+  it("asks the server nothing about the made-up cards", async () => {
+    const request = vi.spyOn(globalThis, "fetch");
+    const view = renderSettings();
+    const preview = await bodyPreview(view);
+    await waitFor(() =>
+      expect(preview.querySelectorAll("[data-issue-link]")).toHaveLength(3),
+    );
+    // A batched lookup flushes on a macrotask; let one pass.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("keeps every sample out of the tab order and the accessibility tree", async () => {
+    const view = renderSettings();
+    await bodyPreview(view);
+    const previews = document.querySelectorAll("[data-appearance-preview]");
+    expect(previews).toHaveLength(5);
+    for (const preview of previews) {
+      expect(preview.getAttribute("aria-hidden")).toBe("true");
+      expect(preview.hasAttribute("inert")).toBe(true);
+    }
+  });
+});
