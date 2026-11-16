@@ -408,8 +408,12 @@ export function SpecViewPage() {
   // An address without `v` is pinned in place to the version current when it
   // opened, so a later push cannot swap the document under the reader. The
   // same holds for a spec that appears while the empty state below is open.
+  // The pin waits for the query to settle: a stale cache can lag a push
+  // behind, so until the refetch lands the page follows the query, and only
+  // what it lands on is pinned. A refetch that fails leaves the query on the
+  // cache, which is pinned all the same.
   const unpinned =
-    spec.data === null || search.v !== undefined
+    spec.data === null || search.v !== undefined || spec.isFetching
       ? undefined
       : spec.data.current_version;
   useEffect(() => {
@@ -440,14 +444,13 @@ export function SpecViewPage() {
       </div>
     );
   }
-  if (search.v === undefined) return null;
   return (
     <SpecReviewSessionScope slug={slug} issueNumber={issueNumber}>
       <SpecViewBody
         slug={slug}
         issueNumber={issueNumber}
         spec={spec.data}
-        version={search.v}
+        version={search.v ?? spec.data.current_version}
       />
     </SpecReviewSessionScope>
   );
@@ -529,7 +532,10 @@ function SpecViewBody({
   slug: string;
   issueNumber: number;
   spec: SpecInfo;
-  /** The version on screen: the URL's, never whatever is current. */
+  /**
+   * The version on screen: the URL's, or, until the page pins it, the
+   * current one it is about to be pinned to.
+   */
   version: number;
 }) {
   const search = useSearch({

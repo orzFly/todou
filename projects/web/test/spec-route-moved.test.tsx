@@ -191,6 +191,10 @@ describe("an old spec deep link (T-245)", () => {
     stubFetch({
       ...specServed("b", 7),
       "/api/projects/b/issues/7/spec": [200, { ...SPEC, current_version: 2 }],
+      "/api/projects/b/issues/7/spec/files?version=2": [
+        200,
+        { ...FILES, version: 2 },
+      ],
       "/api/projects/a": [200, project("a")],
       "/api/projects/a/issues/1/spec": [
         301,

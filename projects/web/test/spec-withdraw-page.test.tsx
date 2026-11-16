@@ -81,6 +81,15 @@ type FixtureOptions = {
   absent?: boolean;
   /** History state the page is opened with, as a link's return state is. */
   state?: Record<string, unknown>;
+  /**
+   * The test client's cache already holds the spec at this version when the
+   * page is opened, as a visit earlier in the session would have left it.
+   */
+  cached?: number;
+  /** The cached spec is stale, so opening the page refetches it. */
+  staleCache?: boolean;
+  /** `GET …/spec` answers 500. */
+  specFails?: boolean;
 };
 
 function pageFixture(options: FixtureOptions = {}) {
@@ -213,6 +222,12 @@ function pageFixture(options: FixtureOptions = {}) {
       });
     }
     if (path === `${base}/spec`) {
+      if (options.specFails) {
+        return Response.json(
+          { error: { code: "internal", message: "boom" } },
+          { status: 500 },
+        );
+      }
       if (absent) {
         return Response.json(
           { error: { code: "not_found", message: "no spec" } },
@@ -297,6 +312,13 @@ async function mountPage(options: FixtureOptions = {}) {
     queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
     mutations: { retry: false },
   });
+  if (options.cached !== undefined) {
+    const key = ["spec", "demo", fixture.issueNumber];
+    client.setQueryData(key, fixture.specAt(options.cached));
+    // Staleness by age cannot reach a client whose staleTime is infinite.
+    if (options.staleCache)
+      client.getQueryCache().find({ queryKey: key })?.invalidate();
+  }
   // The singleton app router can leave navigate pending between unmounted
   // trees. As in startAtDraftPage, mount first and await the rendered page.
   void router
@@ -701,6 +723,32 @@ describe("the spec page reads the version its URL names", () => {
     expect(page.writes).toHaveLength(0);
   });
 
+  it("takes a version ahead of the cached spec for the current one", async () => {
+    // Opened from a version card before the refetch of the push that
+    // replaced a withdrawn v1 has landed.
+    const page = await mountPage({ version: 2, cached: 1, viewedVersion: 2 });
+    act(() => {
+      page.client.setQueryData(["spec", "demo", page.issueNumber], {
+        ...page.specAt(1),
+        review_status: "withdrawn",
+      });
+    });
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+    const finish = screen.getByRole("button", { name: /finish review/i });
+    expectDisabled(finish, false);
+    expect(document.querySelector("[data-old-version-notice]")).toBeNull();
+    const status = document.querySelector(
+      '[data-toolbar-slot="review-status"]',
+    )?.textContent;
+    expect(status).toBeTruthy();
+    expect(status).not.toBe("old version");
+    const dialog = await openReview(2);
+    expect(within(dialog).queryByRole("status")).toBeNull();
+    const approve = within(dialog).getByRole("button", { name: "Approve" });
+    expectDisabled(approve, false);
+    expect(approve.title).toBe("");
+  });
+
   it("marks an older version and leads to the current one from a notice", async () => {
     await mountPage({ version: 2, viewedVersion: 1 });
     const slot = () =>
@@ -734,5 +782,59 @@ describe("the spec page reads the version its URL names", () => {
       compare: "1",
       view: "rendered",
     });
+  });
+});
+
+describe("an address without a version", () => {
+  it("pins a fresh cache's version on the first frame, without asking the server", async () => {
+    const page = await mountPage({ version: 2, cached: 2 });
+    expect(shownTitle()).toBe("Version 2");
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    expect(page.specReads()).toBe(0);
+  });
+
+  it("pins what the refetch of a stale cache lands on", async () => {
+    const page = await mountPage({ version: 2, cached: 1, staleCache: true });
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+    expect(page.specReads()).toBe(1);
+    expect(document.querySelector("[data-old-version-notice]")).toBeNull();
+  });
+
+  it("pins a stale cache when its refetch fails", async () => {
+    await mountPage({
+      version: 2,
+      cached: 1,
+      staleCache: true,
+      specFails: true,
+    });
+    await waitFor(() => expect(router.state.location.search.v).toBe(1));
+    expect(shownTitle()).toBe("Version 1");
+    expect(screen.queryByText("Couldn't load this spec.")).toBeNull();
+  });
+
+  it("pins in place, keeping the entry and its history state", async () => {
+    const entries = window.history.length;
+    await mountPage({
+      version: 2,
+      cached: 1,
+      staleCache: true,
+      state: { origin: "kept" },
+    });
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    expect(window.history.length).toBe(entries);
+    expect(router.state.location.state).toMatchObject({ origin: "kept" });
+  });
+
+  it("keeps the pinned version through a push", async () => {
+    const page = await mountPage({ version: 2 });
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+
+    const before = await pushNext(page);
+    await expectRefreshed(page, before, 3, "unreviewed");
+    expect(shownTitle()).toBe("Version 2");
+    expect(page.reads).not.toContain(`${page.base}/spec/files?version=3`);
+    expect(router.state.location.search.v).toBe(2);
   });
 });
