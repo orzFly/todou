@@ -50,9 +50,6 @@ export function specStatusLabel(status: string): string {
   );
 }
 
-const BADGE_SHAPE =
-  "inline-flex items-center rounded-full border px-2 py-0.5 text-xs";
-
 export function SpecStatusBadge({
   status,
   className,
@@ -61,21 +58,14 @@ export function SpecStatusBadge({
   className?: string;
 }) {
   return (
-    <span className={cn(BADGE_SHAPE, specStatusStyle(status), className)}>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs",
+        specStatusStyle(status),
+        className,
+      )}
+    >
       {specStatusLabel(status)}
-    </span>
-  );
-}
-
-/**
- * Stands where the status would on a version that is no longer current. The
- * server reports a status for the current version only, so an older one says
- * only that it is older; its history is in the timeline and the version menu.
- */
-export function SpecOldVersionBadge({ className }: { className?: string }) {
-  return (
-    <span className={cn(BADGE_SHAPE, specStatusStyle("withdrawn"), className)}>
-      old version
     </span>
   );
 }

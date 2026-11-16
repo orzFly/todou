@@ -5,7 +5,7 @@ import {
   type SpecReviewVerdict,
   TodouError,
 } from "@todou/shared";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import {
@@ -83,6 +83,7 @@ export function ReviewSubmitDialog({
   issueNumber,
   currentVersion,
   drafts,
+  newerVersionLink,
   summary: controlledSummary,
   open,
   pendingVerdict: controlledPendingVerdict,
@@ -95,6 +96,8 @@ export function ReviewSubmitDialog({
   issueNumber: number;
   currentVersion: number;
   drafts: SpecReviewDraft[];
+  /** Where to go once a push has made this version stale. */
+  newerVersionLink?: ReactNode;
   summary?: string;
   open: boolean;
   pendingVerdict?: SpecReviewVerdict | null;
@@ -257,7 +260,12 @@ export function ReviewSubmitDialog({
             Finish review — spec v{currentVersion}
           </DialogTitle>
         </DialogHeader>
-        {staleVersion && <p role="status">{staleTitle}</p>}
+        {staleVersion && (
+          <p role="status">
+            {staleTitle}
+            {newerVersionLink ? <> {newerVersionLink}</> : null}
+          </p>
+        )}
 
         {drafts.length > 0 && (
           <ul className="min-w-0 max-h-48 space-y-1 overflow-y-auto text-xs [overflow-wrap:anywhere]">

@@ -51,10 +51,7 @@ import { issueQuery } from "@/api/issues.ts";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
-import {
-  SpecOldVersionBadge,
-  SpecStatusBadge,
-} from "@/components/issue/spec-entry.tsx";
+import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
 import {
   COMMENT_HEADER_ACTION,
   COMMENT_HEADER_ROW,
@@ -1285,17 +1282,13 @@ function SpecViewBody({
     />
   );
   // The status is the current version's. Beside an older one it would read
-  // as that version's own, so there the badge says only that it is older,
-  // and the way to the current one is the notice below.
-  const reviewStatus = (
+  // as that version's own, so there is none, and the notice below says the
+  // version is not the latest.
+  const reviewStatus = isCurrent ? (
     <ToolbarSlot name="review-status">
-      {isCurrent ? (
-        <SpecStatusBadge status={spec.review_status} />
-      ) : (
-        <SpecOldVersionBadge />
-      )}
+      <SpecStatusBadge status={spec.review_status} />
     </ToolbarSlot>
-  );
+  ) : null;
   /* The toolbar's last row on an older version, sticky at every width. One
      link with no role of its own: a push that makes this version old while
      the review dialog is open is already announced there. */
@@ -1306,13 +1299,25 @@ function SpecViewBody({
       search={versionSearch(spec.current_version)}
       state={returnState}
       data-old-version-notice=""
-      className="flex flex-wrap items-center gap-x-2 rounded-md border bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+      className="flex items-center rounded-md border bg-muted/40 px-3 py-1.5 text-sm font-medium hover:bg-muted"
     >
-      <span>This is an old version.</span>{" "}
-      <span className="font-medium text-foreground">
-        Latest: v{spec.current_version}
+      <span>
+        Newer version: v{spec.current_version}
         <span aria-hidden> →</span>
       </span>
+    </Link>
+  );
+  // The same destination, offered where a push lands on an open review.
+  const newerVersionLink = isCurrent ? null : (
+    <Link
+      to="/projects/$slug/issues/$number/spec"
+      params={params}
+      search={versionSearch(spec.current_version)}
+      state={returnState}
+      className="font-medium text-foreground underline underline-offset-2"
+    >
+      Review v{spec.current_version}
+      <span aria-hidden> →</span>
     </Link>
   );
   /* Below lg the file rail is gone from the flow; this is where it went. In
@@ -1934,6 +1939,7 @@ function SpecViewBody({
         issueNumber={issueNumber}
         currentVersion={version}
         drafts={drafts.drafts}
+        newerVersionLink={newerVersionLink}
         open={finishOpen}
         pendingVerdict={pendingVerdict}
         onSummaryChange={session.setSummary}

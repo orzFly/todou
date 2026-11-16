@@ -773,7 +773,7 @@ describe("the spec page's own moves", () => {
     // v2 is an old version now, and its notice leads back to the latest.
     fireEvent.click(
       await screen.findByRole("link", {
-        name: "This is an old version. Latest: v3",
+        name: "Newer version: v3",
       }),
     );
     await waitFor(() =>

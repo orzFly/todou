@@ -749,15 +749,14 @@ describe("the spec page reads the version its URL names", () => {
     expect(approve.title).toBe("");
   });
 
-  it("marks an older version and leads to the current one from a notice", async () => {
+  it("leads from an older version to the current one by a notice", async () => {
     await mountPage({ version: 2, viewedVersion: 1 });
     const slot = () =>
       document.querySelector('[data-toolbar-slot="review-status"]');
-    expect(slot()?.textContent).toBe("old version");
+    // The status is the current version's, so an older one shows none.
+    expect(slot()).toBeNull();
     // Named by its words alone: the arrow is decoration.
-    const link = screen.getByRole("link", {
-      name: "This is an old version. Latest: v2",
-    });
+    const link = screen.getByRole("link", { name: "Newer version: v2" });
     expect(link.matches("[data-old-version-notice]")).toBe(true);
     const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
     expect(href.searchParams.get("v")).toBe("2");
@@ -773,7 +772,7 @@ describe("the spec page reads the version its URL names", () => {
   it("keeps the comparison the reader pinned on the way to the latest", async () => {
     await mountPage({ version: 3, viewedVersion: 2, compare: 1 });
     const link = await screen.findByRole("link", {
-      name: "This is an old version. Latest: v3",
+      name: "Newer version: v3",
     });
     const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
     expect(Object.fromEntries(href.searchParams)).toEqual({
@@ -782,6 +781,32 @@ describe("the spec page reads the version its URL names", () => {
       compare: "1",
       view: "rendered",
     });
+  });
+});
+
+describe("a push under an open review", () => {
+  it("links the stale review to the newer version, which keeps the drafts", async () => {
+    const page = await mountPage({ staged: true });
+    const dialog = await openReview();
+    act(() => cmSetValue(dialog, SUMMARY));
+
+    const before = await pushNext(page);
+    await expectRefreshed(page, before, 2, "unreviewed");
+    const status = within(dialog).getByRole("status");
+    const link = within(status).getByRole("link", { name: "Review v2" });
+
+    fireEvent.click(link);
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    const moved = await screen.findByRole("dialog", {
+      name: "Finish review — spec v2",
+    });
+    expectDrafts(moved, page.storageKey);
+    expect(within(moved).queryByRole("status")).toBeNull();
+    expectDisabled(
+      within(moved).getByRole("button", { name: "Approve" }),
+      false,
+    );
+    expect(page.writes).toHaveLength(0);
   });
 });
 

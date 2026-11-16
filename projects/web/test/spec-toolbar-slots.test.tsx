@@ -320,7 +320,10 @@ describe("spec toolbar fixed slots (T-190)", () => {
 
   it("has no baseline slot at v1 either, and disables the toggle there", async () => {
     const view = await toolbar("?v=1");
-    expect(slotNames(view)).toEqual(SLOTS_PLAIN);
+    // v1 is also an older version here, and the status is the current one's.
+    expect(slotNames(view)).toEqual(
+      SLOTS_PLAIN.filter((name) => name !== "review-status"),
+    );
     const toggle = compareToggle(view);
     expect(toggle.hasAttribute("disabled")).toBe(true);
     expect(toggle.getAttribute("aria-label")).toContain("no earlier version");
