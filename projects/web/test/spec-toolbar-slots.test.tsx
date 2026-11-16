@@ -320,7 +320,10 @@ describe("spec toolbar fixed slots (T-190)", () => {
 
   it("has no baseline slot at v1 either, and disables the toggle there", async () => {
     const view = await toolbar("?v=1");
-    expect(slotNames(view)).toEqual(SLOTS_PLAIN);
+    // v1 is also an older version here, and the status is the current one's.
+    expect(slotNames(view)).toEqual(
+      SLOTS_PLAIN.filter((name) => name !== "review-status"),
+    );
     const toggle = compareToggle(view);
     expect(toggle.hasAttribute("disabled")).toBe(true);
     expect(toggle.getAttribute("aria-label")).toContain("no earlier version");
@@ -774,6 +777,19 @@ describe("spec toolbar fixed slots (T-190)", () => {
       "/projects/demo/issues/1/spec?file=fresh.md&v=2&compare=1",
     );
   });
+
+  it("gives an old version no row of its own in the toolbar", async () => {
+    // A toast says it instead, so the sticky toolbar is as tall as on the
+    // current version.
+    const old = await toolbar("?v=1&file=design.md");
+    const bar = slot(old, "title")?.closest(".sticky");
+    expect(bar).toBeTruthy();
+    expect(
+      within(bar as HTMLElement).queryByRole("link", {
+        name: /newer version/i,
+      }),
+    ).toBeNull();
+  });
 });
 
 const slot = (view: { container: HTMLElement }, name: string) =>
@@ -974,10 +990,10 @@ describe("the way back and the identity beside it (T-407)", () => {
 });
 
 describe("the toolbar below lg (T-593)", () => {
-  async function narrowToolbar() {
+  async function narrowToolbar(search = "?v=2&file=design.md") {
     setViewportWidth(390);
     onTestFinished(() => setViewportWidth(1024));
-    const view = await toolbar("?v=2&file=design.md");
+    const view = await toolbar(search);
     const more = view.getByRole("button", { name: /toolbar controls$/ });
     const bar = more.closest<HTMLElement>(".sticky");
     const controls = document.getElementById(

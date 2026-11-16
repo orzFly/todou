@@ -225,8 +225,11 @@ todou spec list -p <proj> [--state open|closed|all]        # which cards have sp
 todou spec status <n> -p <proj>                            # versions, verdict, unresolved count
 todou spec comments <n> --unresolved                       # inline annotations (file + anchor)
 todou spec resolve <n> <commentIds…>
-todou spec review <n> --approve | --request-changes | --comment [--body …] [--annotations <file|->]
+todou spec review <n> --approve --version <N|latest> | --request-changes | --comment [--body …] [--annotations <file|->]
 ```
+
+`--approve` needs `--version`, the version you read: a push can land after your reading, and naming
+the version makes the server refuse the approval instead of applying it to text you have not read.
 
 `--comment` records the summary and annotations while preserving the current review status, including
 `approved`, `changes_requested` or `withdrawn`; it does not reset a version to awaiting review. It is

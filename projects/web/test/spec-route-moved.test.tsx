@@ -187,6 +187,28 @@ describe("an old spec deep link (T-245)", () => {
     expect(screen.queryByText(ABOVE)).toBeNull();
   });
 
+  it("pins the destination's current version when the address names none", async () => {
+    stubFetch({
+      ...specServed("b", 7),
+      "/api/projects/b/issues/7/spec": [200, { ...SPEC, current_version: 2 }],
+      "/api/projects/b/issues/7/spec/files?version=2": [
+        200,
+        { ...FILES, version: 2 },
+      ],
+      "/api/projects/a": [200, project("a")],
+      "/api/projects/a/issues/1/spec": [
+        301,
+        { moved_to: { slug: "b", number: 7 } },
+      ],
+    });
+    const router = renderAt("/projects/a/issues/1/spec");
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/b/issues/7/spec"),
+    );
+    await waitFor(() => expect(router.state.location.search).toEqual({ v: 2 }));
+  });
+
   it("carries every search parameter across verbatim", async () => {
     stubFetch({
       ...specServed("b", 7),

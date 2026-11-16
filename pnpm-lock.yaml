@@ -271,9 +271,6 @@ importers:
       clipanion:
         specifier: 4.0.0-rc.4
         version: 4.0.0-rc.4(typanion@3.14.0)
-      diff:
-        specifier: ^9.0.0
-        version: 9.0.0
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@electric-sql/pglite@0.5.4)(@types/pg@8.21.0)(pg@8.23.0)
@@ -311,6 +308,9 @@ importers:
 
   projects/shared:
     dependencies:
+      diff:
+        specifier: ^9.0.0
+        version: 9.0.0
       smol-toml:
         specifier: ^1.7.1
         version: 1.7.1

@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { HistoryState } from "@tanstack/react-router";
 import {
   act,
   fireEvent,
@@ -73,7 +74,26 @@ type FixtureOptions = {
   status?: SpecInfo["review_status"];
   version?: number;
   viewedVersion?: number;
+  /** The baseline the address pins, read in the rendered view. */
+  compare?: number;
   staged?: boolean;
+  /** `GET …/spec` answers 404 until the first `advance()`, which pushes v1. */
+  absent?: boolean;
+  /** History state the page is opened with, as a link's return state is. */
+  state?: Record<string, unknown>;
+  /**
+   * The test client's cache already holds the spec at this version when the
+   * page is opened, as a visit earlier in the session would have left it.
+   */
+  cached?: number;
+  /** The cached spec is stale, so opening the page refetches it. */
+  staleCache?: boolean;
+  /** `GET …/spec` answers 500. */
+  specFails?: boolean;
+  /** Staged instead of `DRAFT` when given. */
+  stagedDrafts?: SpecReviewDraft[];
+  /** Each version's files, path to body, in place of the stock `design.md`. */
+  filesFor?: (version: number) => Record<string, string>;
 };
 
 function pageFixture(options: FixtureOptions = {}) {
@@ -89,8 +109,7 @@ function pageFixture(options: FixtureOptions = {}) {
     viewer_role: options.role ?? "writer",
     former_slugs: [],
   };
-  const version = options.version ?? 1;
-  let spec: SpecInfo = {
+  const specAt = (version: number): SpecInfo => ({
     current_version: version,
     current_version_cursor: `c${version}`,
     review_status: options.status ?? "unreviewed",
@@ -103,22 +122,30 @@ function pageFixture(options: FixtureOptions = {}) {
       message: null,
       created_at: "2026-01-01T00:00:00Z",
     })),
-  };
+  });
+  let spec = specAt(options.version ?? 1);
+  let absent = options.absent ?? false;
   const reads: string[] = [];
   const writes: Array<{ path: string; body: unknown }> = [];
   const reviews: SpecReviewSubmitInput[] = [];
   let reviewConflict: "withdrawn" | "newer" | null = null;
 
+  /** An agent pushes the next version. */
   function advance() {
+    if (absent) {
+      absent = false;
+      return;
+    }
+    const next = spec.current_version + 1;
     spec = {
       ...spec,
-      current_version: 2,
-      current_version_cursor: "c2",
+      current_version: next,
+      current_version_cursor: `c${next}`,
       review_status: "unreviewed",
       versions: [
         ...spec.versions,
         {
-          number: 2,
+          number: next,
           author: AUTHOR,
           message: null,
           created_at: "2026-01-02T00:00:00Z",
@@ -198,7 +225,21 @@ function pageFixture(options: FixtureOptions = {}) {
         spec_version: spec.current_version,
       });
     }
-    if (path === `${base}/spec`) return Response.json(spec);
+    if (path === `${base}/spec`) {
+      if (options.specFails) {
+        return Response.json(
+          { error: { code: "internal", message: "boom" } },
+          { status: 500 },
+        );
+      }
+      if (absent) {
+        return Response.json(
+          { error: { code: "not_found", message: "no spec" } },
+          { status: 404 },
+        );
+      }
+      return Response.json(spec);
+    }
     if (path === `${base}/spec/comments`) {
       return Response.json({
         current_version: spec.current_version,
@@ -211,13 +252,18 @@ function pageFixture(options: FixtureOptions = {}) {
       );
       const files: SpecFiles = {
         version: requestedVersion,
-        files: [
-          {
-            path: "design.md",
-            body: `# Version ${requestedVersion}\n\nA reviewable paragraph.\n`,
-            size: 50,
-          },
-        ],
+        files:
+          options.filesFor === undefined
+            ? [
+                {
+                  path: "design.md",
+                  body: `# Version ${requestedVersion}\n\nA reviewable paragraph.\n`,
+                  size: 50,
+                },
+              ]
+            : Object.entries(options.filesFor(requestedVersion)).map(
+                ([path, body]) => ({ path, body, size: body.length }),
+              ),
       };
       return Response.json(files);
     }
@@ -232,6 +278,7 @@ function pageFixture(options: FixtureOptions = {}) {
     reads,
     writes,
     reviews,
+    specAt,
     advance,
     setStatus(review_status: SpecInfo["review_status"]) {
       spec = { ...spec, review_status };
@@ -264,8 +311,11 @@ afterAll(teardownAppRouter);
 async function mountPage(options: FixtureOptions = {}) {
   const fixture = pageFixture(options);
   vi.stubGlobal("fetch", fixture.fetch);
-  if (options.staged) {
-    localStorage.setItem(fixture.storageKey, JSON.stringify([DRAFT]));
+  if (options.staged || options.stagedDrafts !== undefined) {
+    localStorage.setItem(
+      fixture.storageKey,
+      JSON.stringify(options.stagedDrafts ?? [DRAFT]),
+    );
   }
   const client = testQueryClient();
   // A new dialog observer or close/reopen must not accidentally rescue missing
@@ -274,15 +324,31 @@ async function mountPage(options: FixtureOptions = {}) {
     queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
     mutations: { retry: false },
   });
+  if (options.cached !== undefined) {
+    const key = ["spec", "demo", fixture.issueNumber];
+    client.setQueryData(key, fixture.specAt(options.cached));
+    // Staleness by age cannot reach a client whose staleTime is infinite.
+    if (options.staleCache)
+      client.getQueryCache().find({ queryKey: key })?.invalidate();
+  }
   // The singleton app router can leave navigate pending between unmounted
   // trees. As in startAtDraftPage, mount first and await the rendered page.
   void router
     .navigate({
       to: "/projects/$slug/issues/$number/spec",
       params: { slug: "demo", number: String(fixture.issueNumber) },
-      search: { file: "design.md", v: options.viewedVersion },
+      search: {
+        file: "design.md",
+        v: options.viewedVersion,
+        ...(options.compare === undefined
+          ? {}
+          : { compare: options.compare, view: "rendered" as const }),
+      },
       replace: true,
       ignoreBlocker: true,
+      ...(options.state === undefined
+        ? {}
+        : { state: options.state as HistoryState }),
     })
     .catch(() => undefined);
   const mounted = renderOnTheAppRouter(client);
@@ -291,20 +357,43 @@ async function mountPage(options: FixtureOptions = {}) {
     clear: () => client.clear(),
     storageKey: fixture.storageKey,
   });
-  await screen.findByRole(
-    "button",
-    { name: /finish review/i },
-    { timeout: 4000 },
-  );
+  if (options.absent) {
+    await screen.findByText(
+      "This issue has no spec yet.",
+      {},
+      { timeout: 4000 },
+    );
+  } else {
+    await screen.findByRole(
+      "button",
+      { name: /finish review/i },
+      { timeout: 4000 },
+    );
+  }
   await waitFor(() =>
     expect(client.getQueryState(["project", "demo"])?.status).toBe("success"),
   );
   return { ...fixture, client };
 }
 
-async function openReview() {
+async function openReview(version = 1) {
   fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
-  return screen.findByRole("dialog", { name: "Finish review — spec v1" });
+  return screen.findByRole("dialog", {
+    name: `Finish review — spec v${version}`,
+  });
+}
+
+/** Switches the page to another version, as the version picker does. */
+async function viewVersion(page: { issueNumber: number }, v: number) {
+  void router
+    .navigate({
+      to: "/projects/$slug/issues/$number/spec",
+      params: { slug: "demo", number: String(page.issueNumber) },
+      search: { file: "design.md", v },
+    })
+    .catch(() => undefined);
+  await waitFor(() => expect(router.state.location.search.v).toBe(v));
+  await waitFor(() => expect(shownTitle()).toBe(`Version ${v}`));
 }
 
 function expectDrafts(dialog: HTMLElement, storageKey: string) {
@@ -486,7 +575,7 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       expect(within(empty).queryByText(DRAFT.body.split("\n")[0])).toBeNull();
     });
 
-    it(`at ${width}px a newer-version 409 cannot retarget retained drafts, even after close/reopen`, async () => {
+    it(`at ${width}px after a newer-version 409 the page stays on v1 and a review reopened on v2 keeps the drafts`, async () => {
       reviewViewport(width);
       const page = await mountPage({ staged: true });
       const errorToast = vi.spyOn(toast, "error");
@@ -497,18 +586,10 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       fireEvent.click(controls(width).approve);
       await expectRefreshed(page, before, 2, "unreviewed");
       expect(errorToast).toHaveBeenCalledWith("Spec changed during review");
-      // Without a pinned session version the refreshed page silently offers a
-      // v2 review with the v1 summary and annotation; closing must not reset it.
+      // The page stays on v1, so the open form still reviews v1 and is stale.
       dialog = await screen.findByRole("dialog", {
         name: "Finish review — spec v1",
       });
-      expectDrafts(dialog, page.storageKey);
-      expect(within(dialog).getByRole("status").textContent).toContain(
-        "Spec v1 is no longer current",
-      );
-      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      dialog = await openReview();
       expectDrafts(dialog, page.storageKey);
       expect(within(dialog).getByRole("status").textContent).toContain(
         "Spec v1 is no longer current",
@@ -527,8 +608,25 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       expect(page.reviews).toEqual([
         { version: 1, verdict: "approve", body: SUMMARY, comments: COMMENTS },
       ]);
-      expect(page.writes).toHaveLength(1);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expectDisabled(
+        screen.getByRole("button", { name: /finish review/i }),
+        true,
+      );
+
+      await viewVersion(page, 2);
+      dialog = await openReview(2);
       expectDrafts(dialog, page.storageKey);
+      expectDisabled(
+        within(dialog).getByRole("button", { name: "Comment" }),
+        false,
+      );
+      expectDisabled(
+        within(dialog).getByRole("button", { name: "Approve" }),
+        false,
+      );
+      expect(page.writes).toHaveLength(1);
     });
 
     it(`at ${width}px a live newer-version refresh disables an open review before any submission`, async () => {
@@ -563,4 +661,506 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
       expect(page.writes).toHaveLength(0);
     });
   }
+});
+
+/**
+ * The document's heading as the version on screen spells it. A version past
+ * the first is compared with the one before, and its heading carries that
+ * one's text as a deletion.
+ */
+function shownTitle() {
+  const heading = document.querySelector("main h1");
+  if (heading === null) return null;
+  const shown = heading.cloneNode(true) as HTMLElement;
+  for (const removed of shown.querySelectorAll("del")) removed.remove();
+  return shown.textContent;
+}
+
+/** An agent pushes, and the SSE feed invalidates the spec as it would. */
+async function pushNext(page: RefreshedPage & { advance: () => void }) {
+  const before = page.specReads();
+  page.advance();
+  await act(async () => {
+    await page.client.invalidateQueries({
+      queryKey: ["spec", "demo", page.issueNumber],
+    });
+  });
+  return before;
+}
+
+describe("the spec page reads the version its URL names", () => {
+  it("pins the first version of a spec pushed while the empty state is open", async () => {
+    const page = await mountPage({ absent: true, state: { origin: "kept" } });
+    expect(router.state.location.search.v).toBeUndefined();
+    const entries = window.history.length;
+
+    await pushNext(page);
+    await waitFor(() => expect(router.state.location.search.v).toBe(1));
+    await waitFor(() => expect(shownTitle()).toBe("Version 1"));
+    // In place: no entry to step back onto, and the way back kept.
+    expect(window.history.length).toBe(entries);
+    expect(router.state.location.state).toMatchObject({ origin: "kept" });
+  });
+
+  it("offers Finish review on the current version only", async () => {
+    reviewViewport(640);
+    const page = await mountPage({ viewedVersion: 1 });
+    const before = await pushNext(page);
+    await expectRefreshed(page, before, 2, "unreviewed");
+    const stale = screen.getByRole("button", { name: /finish review/i });
+    expectDisabled(stale, true);
+    expect(stale.getAttribute("aria-label")).toContain(
+      "Only the current version can be reviewed",
+    );
+    // A disabled button gets no hover, so the reason is on its wrapper too.
+    expect(
+      stale
+        .closest('[data-toolbar-slot="finish-review"]')
+        ?.getAttribute("title"),
+    ).toBe("Only the current version can be reviewed");
+    fireEvent.click(stale);
+    await act(async () => {});
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await viewVersion(page, 2);
+    expectDisabled(
+      screen.getByRole("button", { name: /finish review/i }),
+      false,
+    );
+    const dialog = await openReview(2);
+    expectDisabled(
+      within(dialog).getByRole("button", { name: "Approve" }),
+      false,
+    );
+    expect(page.writes).toHaveLength(0);
+  });
+
+  it("takes a version ahead of the cached spec for the current one", async () => {
+    // Opened from a version card before the refetch of the push that
+    // replaced a withdrawn v1 has landed.
+    const page = await mountPage({ version: 2, cached: 1, viewedVersion: 2 });
+    act(() => {
+      page.client.setQueryData(["spec", "demo", page.issueNumber], {
+        ...page.specAt(1),
+        review_status: "withdrawn",
+      });
+    });
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+    const finish = screen.getByRole("button", { name: /finish review/i });
+    expectDisabled(finish, false);
+    expect(newerToast()).toBeNull();
+    const status = document.querySelector(
+      '[data-toolbar-slot="review-status"]',
+    )?.textContent;
+    expect(status).toBeTruthy();
+    expect(status).not.toBe("old version");
+    const dialog = await openReview(2);
+    expect(within(dialog).queryByRole("status")).toBeNull();
+    const approve = within(dialog).getByRole("button", { name: "Approve" });
+    expectDisabled(approve, false);
+    expect(approve.title).toBe("");
+  });
+
+  it("leads from an older version to the current one by a toast", async () => {
+    await mountPage({ version: 2, viewedVersion: 1 });
+    const slot = () =>
+      document.querySelector('[data-toolbar-slot="review-status"]');
+    // The status is the current version's, so an older one shows none.
+    expect(slot()).toBeNull();
+    // Named by its words alone: the arrow is decoration.
+    const link = await screen.findByRole("link", { name: "Newer version: v2" });
+    expect(link.closest("[data-sonner-toast]")).not.toBeNull();
+    const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
+    expect(href.searchParams.get("v")).toBe("2");
+    expect(href.searchParams.get("file")).toBe("design.md");
+
+    fireEvent.click(link);
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+    expect(slot()?.textContent).toBe("awaiting review");
+    await waitFor(() => expect(newerToast()).toBeNull());
+  });
+
+  it("keeps the comparison the reader pinned on the way to the latest", async () => {
+    await mountPage({ version: 3, viewedVersion: 2, compare: 1 });
+    const link = await screen.findByRole("link", {
+      name: "Newer version: v3",
+    });
+    const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
+    expect(Object.fromEntries(href.searchParams)).toEqual({
+      file: "design.md",
+      v: "3",
+      compare: "1",
+      view: "rendered",
+    });
+  });
+});
+
+/**
+ * The newer-version toast, while one is up. Looked up in the DOM rather than
+ * by role: a modal dialog hides everything outside it from the role queries,
+ * and the toast with it.
+ */
+function newerToast() {
+  return (
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        "[data-sonner-toast]:not([data-removed='true'])",
+      ),
+    ].find((toast) => /Newer version: v\d+/.test(toast.textContent ?? "")) ??
+    null
+  );
+}
+
+/** Waits for the toast to name `version`, past any that is on its way out. */
+function shownNewerToast(version: number) {
+  return waitFor(() => {
+    const toast = newerToast();
+    expect(toast?.textContent).toContain(`Newer version: v${version}`);
+    return toast as HTMLElement;
+  });
+}
+
+async function closeNewerToast(version: number) {
+  const shown = await shownNewerToast(version);
+  fireEvent.click(within(shown).getByRole("button", { name: "Close toast" }));
+  await waitFor(() => expect(newerToast()).toBeNull());
+}
+
+async function openAndCancelComposer() {
+  fireEvent.click(screen.getByRole("button", { name: "Comment file" }));
+  const composer = await screen.findByTestId("spec-composer");
+  await waitFor(() => expect(newerToast()).toBeNull());
+  fireEvent.click(
+    within(composer).getByRole("button", { name: "cancel comment" }),
+  );
+  await waitFor(() => expect(screen.queryByTestId("spec-composer")).toBeNull());
+}
+
+describe("the newer-version toast", () => {
+  it("stays past a toast's usual time, outside the toolbar", async () => {
+    const page = await mountPage();
+    await waitFor(() => expect(router.state.location.search.v).toBe(1));
+    expect(newerToast()).toBeNull();
+    await pushNext(page);
+    await shownNewerToast(2);
+    expect(
+      newerToast()?.closest(".sticky"),
+      "the toolbar holds no notice row",
+    ).toBeNull();
+    // sonner's own default is 4s.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 4500)));
+    expect(newerToast()).not.toBeNull();
+  }, 10_000);
+
+  it("stays closed once closed, until a newer version comes", async () => {
+    const page = await mountPage({ version: 3, viewedVersion: 2 });
+    await closeNewerToast(3);
+    await viewVersion(page, 1);
+    await viewVersion(page, 2);
+    // Gives the page a reason to put it back, which it must not take.
+    await openAndCancelComposer();
+    await act(async () => {});
+    expect(newerToast()).toBeNull();
+
+    await pushNext(page);
+    await shownNewerToast(4);
+  });
+
+  it("goes when the reader follows it, without counting as closed", async () => {
+    const page = await mountPage({ version: 2, viewedVersion: 1 });
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Newer version: v2" }),
+    );
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+    await waitFor(() => expect(newerToast()).toBeNull());
+
+    await pushNext(page);
+    await shownNewerToast(3);
+  });
+
+  it("makes way for the review dialog and the composer", async () => {
+    const page = await mountPage();
+    const dialog = await openReview();
+    await pushNext(page);
+    await within(dialog).findByRole("link", { name: "Review v2" });
+    await act(async () => {});
+    expect(newerToast()).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await shownNewerToast(2);
+
+    // Taken down by the page, which is not the reader closing it.
+    await openAndCancelComposer();
+    await shownNewerToast(2);
+  });
+
+  it("goes with the page", async () => {
+    const page = await mountPage({ version: 2, viewedVersion: 1 });
+    await shownNewerToast(2);
+    const shown = toast.getToasts().map((active) => active.id);
+    expect(shown).not.toHaveLength(0);
+    void router
+      .navigate({
+        to: "/projects/$slug/issues/$number",
+        params: { slug: "demo", number: String(page.issueNumber) },
+      })
+      .catch(() => undefined);
+    await waitFor(() =>
+      expect(router.state.location.pathname).not.toMatch(/\/spec$/),
+    );
+    // Asked of sonner, not the DOM: the issue page's own render can take the
+    // Toaster's list down with it, and that would pass for a dismiss.
+    await waitFor(() =>
+      expect(
+        toast.getToasts().filter((active) => shown.includes(active.id)),
+      ).toEqual([]),
+    );
+  });
+});
+
+describe("a push under an open review", () => {
+  it("links the stale review to the newer version, which keeps the drafts", async () => {
+    const page = await mountPage({ staged: true });
+    const dialog = await openReview();
+    act(() => cmSetValue(dialog, SUMMARY));
+
+    const before = await pushNext(page);
+    await expectRefreshed(page, before, 2, "unreviewed");
+    const status = within(dialog).getByRole("status");
+    const link = within(status).getByRole("link", { name: "Review v2" });
+
+    fireEvent.click(link);
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    const moved = await screen.findByRole("dialog", {
+      name: "Finish review — spec v2",
+    });
+    expectDrafts(moved, page.storageKey);
+    expect(within(moved).queryByRole("status")).toBeNull();
+    expectDisabled(
+      within(moved).getByRole("button", { name: "Approve" }),
+      false,
+    );
+    expect(page.writes).toHaveLength(0);
+  });
+});
+
+describe("an address without a version", () => {
+  it("pins a fresh cache's version on the first frame, without asking the server", async () => {
+    const page = await mountPage({ version: 2, cached: 2 });
+    expect(shownTitle()).toBe("Version 2");
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    expect(page.specReads()).toBe(0);
+  });
+
+  it("pins what the refetch of a stale cache lands on", async () => {
+    const page = await mountPage({ version: 2, cached: 1, staleCache: true });
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+    expect(page.specReads()).toBe(1);
+    expect(newerToast()).toBeNull();
+  });
+
+  it("pins a stale cache when its refetch fails", async () => {
+    await mountPage({
+      version: 2,
+      cached: 1,
+      staleCache: true,
+      specFails: true,
+    });
+    await waitFor(() => expect(router.state.location.search.v).toBe(1));
+    expect(shownTitle()).toBe("Version 1");
+    expect(screen.queryByText("Couldn't load this spec.")).toBeNull();
+  });
+
+  it("pins in place, keeping the entry and its history state", async () => {
+    const entries = window.history.length;
+    await mountPage({
+      version: 2,
+      cached: 1,
+      staleCache: true,
+      state: { origin: "kept" },
+    });
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    expect(window.history.length).toBe(entries);
+    expect(router.state.location.state).toMatchObject({ origin: "kept" });
+  });
+
+  it("keeps the pinned version through a push", async () => {
+    const page = await mountPage({ version: 2 });
+    await waitFor(() => expect(router.state.location.search.v).toBe(2));
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+
+    const before = await pushNext(page);
+    await expectRefreshed(page, before, 3, "unreviewed");
+    expect(shownTitle()).toBe("Version 2");
+    expect(page.reads).not.toContain(`${page.base}/spec/files?version=3`);
+    expect(router.state.location.search.v).toBe(2);
+  });
+});
+
+/** v2 adds an intro, keeps one paragraph, rewrites another, drops a file. */
+function movingFiles(version: number): Record<string, string> {
+  if (version === 1) {
+    return {
+      "design.md": "# Version 1\n\nKept paragraph.\n\nChanged paragraph.\n",
+      "other.md": "Other file.\n",
+    };
+  }
+  return {
+    "design.md": `# Version ${version}\n\nIntro added.\n\nKept paragraph.\n\nChanged paragraph, rewritten.\n`,
+  };
+}
+
+const stagedOnV1 = (
+  id: string,
+  path: string,
+  line: number,
+  quote: string,
+  body: string,
+): SpecReviewDraft => ({
+  id,
+  anchor: {
+    path,
+    version: 1,
+    line_start: line,
+    line_end: line,
+    col_start: null,
+    col_end: null,
+  },
+  quote,
+  body,
+});
+
+const KEPT = stagedOnV1("kept", "design.md", 3, "Kept paragraph.", "On kept");
+const CHANGED = stagedOnV1(
+  "changed",
+  "design.md",
+  5,
+  "Changed paragraph.",
+  "On changed",
+);
+const OTHER = stagedOnV1("other", "other.md", 1, "Other file.", "On other");
+
+const storedDrafts = (storageKey: string): SpecReviewDraft[] =>
+  JSON.parse(localStorage.getItem(storageKey) ?? "[]");
+
+function unplacedSection() {
+  const heading = screen.queryByRole("heading", {
+    name: /comments without a place/i,
+  });
+  return heading?.parentElement ?? null;
+}
+
+describe("staged comments on a newer version", () => {
+  it("follows the text onto the newer version, and sets aside what changed", async () => {
+    const page = await mountPage({
+      filesFor: movingFiles,
+      stagedDrafts: [KEPT, CHANGED],
+    });
+    await pushNext(page);
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Newer version: v2" }),
+    );
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+
+    // Kept: drawn on the line its paragraph moved to.
+    fireEvent.click(await screen.findByLabelText("1 comment(s) on this block"));
+    expect(await screen.findByRole("button", { name: "L5" })).toBeTruthy();
+    expect(screen.getAllByText("On kept")).toHaveLength(1);
+
+    // Changed: set aside, still editable on its own version.
+    const section = await waitFor(() => {
+      const found = unplacedSection();
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(within(section).getByText("On changed")).toBeTruthy();
+    expect(within(section).getByText("L5 · v1")).toBeTruthy();
+    expect(within(section).getByText("outdated")).toBeTruthy();
+    expect(within(section).getByText("Changed paragraph.")).toBeTruthy();
+    expect(within(section).queryByText("On kept")).toBeNull();
+
+    fireEvent.click(within(section).getByRole("button", { name: "Edit" }));
+    const composer = await screen.findByTestId("spec-composer");
+    act(() => cmSetValue(composer, "On changed, edited"));
+    fireEvent.click(
+      within(composer).getByRole("button", { name: "Update draft" }),
+    );
+    await waitFor(() =>
+      expect(
+        storedDrafts(page.storageKey).find((d) => d.id === "changed"),
+      ).toMatchObject({ body: "On changed, edited", anchor: CHANGED.anchor }),
+    );
+
+    fireEvent.click(
+      within(unplacedSection() as HTMLElement).getByRole("button", {
+        name: "Discard",
+      }),
+    );
+    await waitFor(() =>
+      expect(storedDrafts(page.storageKey).map((d) => d.id)).toEqual(["kept"]),
+    );
+    await waitFor(() => expect(unplacedSection()).toBeNull());
+  });
+
+  it("marks a draft whose file is gone in the review, which posts every anchor as staged", async () => {
+    const page = await mountPage({
+      version: 2,
+      viewedVersion: 2,
+      filesFor: movingFiles,
+      stagedDrafts: [KEPT, OTHER],
+    });
+    await waitFor(() =>
+      expect(page.reads).toContain(`${page.base}/spec/files?version=1`),
+    );
+    // design.md is on screen; other.md has nowhere to be shown.
+    expect(unplacedSection()).toBeNull();
+
+    const dialog = await openReview(2);
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText(
+          "2 staged comment(s) will be posted with this review; 1 no longer matches v2 and will be posted as outdated.",
+        ),
+      ).toBeTruthy(),
+    );
+    const items = within(dialog).getAllByRole("listitem");
+    const outdated = items.filter((item) =>
+      within(item).queryByText("outdated"),
+    );
+    expect(outdated).toHaveLength(1);
+    expect(outdated[0]?.textContent).toContain("other.md");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(page.reviews).toHaveLength(1));
+    expect(page.reviews[0]?.version).toBe(2);
+    // Each on the version it was staged on, which the server judges.
+    expect(page.reviews[0]?.comments).toEqual([
+      {
+        anchor: { path: "design.md", version: 1, line_start: 3, line_end: 3 },
+        body: KEPT.body,
+      },
+      {
+        anchor: { path: "other.md", version: 1, line_start: 1, line_end: 1 },
+        body: OTHER.body,
+      },
+    ]);
+  });
+
+  it("leaves an older version on screen alone", async () => {
+    const onV2: SpecReviewDraft = {
+      ...KEPT,
+      id: "on-v2",
+      anchor: { ...KEPT.anchor, version: 2, line_start: 5, line_end: 5 },
+    };
+    const page = await mountPage({
+      version: 2,
+      viewedVersion: 1,
+      filesFor: movingFiles,
+      stagedDrafts: [onV2],
+    });
+    expect(screen.queryByLabelText(/comment\(s\) on this block/)).toBeNull();
+    expect(unplacedSection()).toBeNull();
+    expect(page.reads).not.toContain(`${page.base}/spec/files?version=2`);
+  });
 });

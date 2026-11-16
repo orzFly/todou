@@ -187,9 +187,6 @@ export function SpecVersionPicker({
         >
           <MessageText message={current?.message ?? null} />
         </span>
-        {current?.withdrawal && (
-          <span className="text-muted-foreground">previously withdrawn</span>
-        )}
         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent

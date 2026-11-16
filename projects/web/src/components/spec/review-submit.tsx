@@ -5,7 +5,7 @@ import {
   type SpecReviewVerdict,
   TodouError,
 } from "@todou/shared";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import {
@@ -78,11 +78,15 @@ function submitComments(
  * The atomic review form. Its text and request lifecycle live in the stable
  * spec session; this dialog may disappear without taking either with it.
  */
+const NO_DRAFTS: ReadonlySet<string> = new Set();
+
 export function ReviewSubmitDialog({
   slug,
   issueNumber,
   currentVersion,
   drafts,
+  outdatedDraftIds = NO_DRAFTS,
+  newerVersionLink,
   summary: controlledSummary,
   open,
   pendingVerdict: controlledPendingVerdict,
@@ -95,6 +99,10 @@ export function ReviewSubmitDialog({
   issueNumber: number;
   currentVersion: number;
   drafts: SpecReviewDraft[];
+  /** Drafts whose lines no longer read the same in this version. */
+  outdatedDraftIds?: ReadonlySet<string>;
+  /** Where to go once a push has made this version stale. */
+  newerVersionLink?: ReactNode;
   summary?: string;
   open: boolean;
   pendingVerdict?: SpecReviewVerdict | null;
@@ -120,11 +128,17 @@ export function ReviewSubmitDialog({
     currentVersion,
   );
   const spec = useQuery(specQuery(slug, issueNumber)).data;
+  // Behind the version under review is the cache lagging behind a push, not
+  // a newer version having replaced it.
   const staleVersion =
     spec !== undefined &&
     spec !== null &&
-    spec.current_version !== currentVersion;
-  const withdrawn = spec?.review_status === "withdrawn";
+    spec.current_version > currentVersion;
+  // The cached status is the cached version's, which a version ahead of it
+  // does not share.
+  const withdrawn =
+    spec?.current_version === currentVersion &&
+    spec.review_status === "withdrawn";
   const summary = controlledSummary ?? localSummary;
   const latestSummary = useRef(summary);
   latestSummary.current = summary;
@@ -174,7 +188,12 @@ export function ReviewSubmitDialog({
   const commentDisabled = pending || staleVersion || saysNothing;
   const verdictDisabled = pending || staleVersion || withdrawn || isPusher;
   const approveDisabled = verdictDisabled || approvedInCurrentRound;
-  const staleTitle = `Spec v${currentVersion} is no longer current. Your review draft has been kept.`;
+  const outdatedCount = drafts.filter((draft) =>
+    outdatedDraftIds.has(draft.id),
+  ).length;
+  const staleTitle = saysNothing
+    ? `Spec v${currentVersion} is no longer current.`
+    : `Spec v${currentVersion} is no longer current. Your review draft has been kept.`;
   const verdictTitle = staleVersion
     ? staleTitle
     : withdrawn
@@ -249,7 +268,12 @@ export function ReviewSubmitDialog({
             Finish review — spec v{currentVersion}
           </DialogTitle>
         </DialogHeader>
-        {staleVersion && <p role="status">{staleTitle}</p>}
+        {staleVersion && (
+          <p role="status">
+            {staleTitle}
+            {newerVersionLink ? <> {newerVersionLink}</> : null}
+          </p>
+        )}
 
         {drafts.length > 0 && (
           <ul className="min-w-0 max-h-48 space-y-1 overflow-y-auto text-xs [overflow-wrap:anywhere]">
@@ -262,6 +286,13 @@ export function ReviewSubmitDialog({
                   (v{draft.anchor.version}
                   {draft.anchor.line_start === null && ", file"})
                 </span>{" "}
+                {outdatedDraftIds.has(draft.id) && (
+                  <>
+                    <span className="rounded-full border px-1.5 text-muted-foreground">
+                      outdated
+                    </span>{" "}
+                  </>
+                )}
                 <span className="text-muted-foreground">
                   {draft.body.split("\n")[0]}
                 </span>
@@ -272,7 +303,9 @@ export function ReviewSubmitDialog({
         <p className="text-xs text-muted-foreground">
           {drafts.length === 0
             ? "No staged comments — this review carries the summary only."
-            : `${drafts.length} staged comment(s) will be posted with this review.`}
+            : outdatedCount === 0
+              ? `${drafts.length} staged comment(s) will be posted with this review.`
+              : `${drafts.length} staged comment(s) will be posted with this review; ${outdatedCount} no longer ${outdatedCount === 1 ? "matches" : "match"} v${currentVersion} and will be posted as outdated.`}
         </p>
 
         <MarkdownEditor

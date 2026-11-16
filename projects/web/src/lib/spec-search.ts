@@ -12,6 +12,7 @@ export type SpecView = "rendered" | "source";
 
 export type SpecSearch = {
   file?: string;
+  /** Absent only on the way in: the page pins it to the version it opened on. */
   v?: number;
   compare?: number;
   view?: SpecView;
@@ -78,31 +79,30 @@ export function specMode(
 /**
  * Shortest URL for a page state.
  *
- * Reading without a baseline shares the parameterless form with the
- * automatic posture: the "off" position is a session-local reading stance,
- * deliberately not carried in a shared link (T-192).
+ * The version is always spelled out: the page reads it from the URL alone,
+ * so a push cannot change what is on screen. Reading without a baseline
+ * shares the parameterless form with the automatic posture: the "off"
+ * position is a session-local reading stance, deliberately not carried in a
+ * shared link (T-192).
  */
 export function specSearchFor({
   file,
-  v,
   version,
   baseline,
   view,
 }: {
   file?: string;
-  /** The `v` param as it stands — absent means "whatever is current". */
-  v?: number;
-  /** The version being viewed, `v` already resolved. */
+  /** The version being viewed. */
   version: number;
   baseline: number | null;
   view: SpecView;
 }): SpecSearch {
   if (baseline === null || (baseline === version - 1 && view === "rendered")) {
-    return { file, v };
+    return { file, v: version };
   }
   return {
     file,
-    v,
+    v: version,
     compare: baseline,
     view: view === "rendered" ? "rendered" : undefined,
   };

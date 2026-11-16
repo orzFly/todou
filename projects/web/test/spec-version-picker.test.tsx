@@ -60,7 +60,6 @@ function renderPicker(
       searchFor={(target) =>
         specSearchFor({
           file: "design.md",
-          v: target,
           version: target,
           baseline: null,
           view: "rendered",
@@ -168,7 +167,6 @@ describe("SpecVersionPicker (T-178)", () => {
       searchFor: (target) =>
         specSearchFor({
           file: "design.md",
-          v: target,
           version: target,
           baseline: target > 1 ? target - 1 : null,
           view: "source",
@@ -206,8 +204,10 @@ describe("SpecVersionPicker (T-178)", () => {
     );
   });
 
-  it("marks the viewed historical version on the closed trigger", async () => {
-    const view = renderPicker({
+  it("leaves a version's withdrawal to the menu, not the closed trigger", async () => {
+    // On a phone the extra words pushed the compare toggle onto a row of its
+    // own; the page's old-version badge already says this is not current.
+    const view = await openMenu({
       version: 2,
       versions: VERSIONS.map((v) =>
         v.number === 2
@@ -215,10 +215,11 @@ describe("SpecVersionPicker (T-178)", () => {
           : v,
       ),
     });
-    const trigger = await view.findByRole("button");
+    const trigger = view.getByRole("button", { hidden: true });
     expect(trigger.textContent).toContain("v2");
-    expect(trigger.textContent).toContain("previously withdrawn");
-    expect(trigger.textContent).not.toContain("reworking");
+    expect(trigger.textContent).not.toContain("withdrawn");
+    const [, withdrawn] = versionLinks();
+    expect(withdrawn?.textContent).toContain("Previously withdrawn by ");
   });
 
   it("retains a withdrawn baseline and its historical comparison destination", async () => {

@@ -7,6 +7,7 @@ import type { SelectedLineRange } from "@pierre/diffs";
 import { MultiFileDiff, File as PierreFile } from "@pierre/diffs/react";
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   useSuspenseQuery,
@@ -79,6 +80,7 @@ import {
   AnnotatedMarkdown,
   type DisplayedAnnotation,
 } from "@/components/spec/annotated-markdown.tsx";
+import { useNewerVersionToast } from "@/components/spec/newer-version-toast.tsx";
 import { ReviewSubmitDialog } from "@/components/spec/review-submit.tsx";
 import { SpecBaselinePicker } from "@/components/spec/spec-baseline-picker.tsx";
 import { SpecCompareToggle } from "@/components/spec/spec-compare-toggle.tsx";
@@ -121,6 +123,7 @@ import {
   stepIndex,
 } from "@/lib/spec-change-nav.ts";
 import { changedLineRanges } from "@/lib/spec-changes.ts";
+import { type DraftPlacement, placeDraft } from "@/lib/spec-draft-placement.ts";
 import {
   type SpecReviewDraft,
   useSpecReviewDrafts,
@@ -396,8 +399,36 @@ export function SpecViewPage() {
   const { slug, number: numberParam } = useParams({
     from: "/authed/projects/$slug/issues/$number/spec",
   });
+  const search = useSearch({
+    from: "/authed/projects/$slug/issues/$number/spec",
+  });
   const issueNumber = Number(numberParam);
   const spec = useSuspenseQuery(specQuery(slug, issueNumber));
+  const navigate = useNavigate();
+  // An address without `v` is pinned in place to the version current when it
+  // opened, so a later push cannot swap the document under the reader. The
+  // same holds for a spec that appears while the empty state below is open.
+  // The pin waits for the query to settle: a stale cache can lag a push
+  // behind, so until the refetch lands the page follows the query, and only
+  // what it lands on is pinned. A refetch that fails leaves the query on the
+  // cache, which is pinned all the same.
+  const unpinned =
+    spec.data === null || search.v !== undefined || spec.isFetching
+      ? undefined
+      : spec.data.current_version;
+  useEffect(() => {
+    if (unpinned === undefined) return;
+    void navigate({
+      to: "/projects/$slug/issues/$number/spec",
+      params: { slug, number: numberParam },
+      search: { ...search, v: unpinned },
+      replace: true,
+      resetScroll: false,
+      hashScrollIntoView: false,
+      ignoreBlocker: true,
+      state: (prev) => prev,
+    });
+  }, [unpinned, navigate, slug, numberParam, search]);
 
   if (spec.data === null) {
     return (
@@ -415,7 +446,12 @@ export function SpecViewPage() {
   }
   return (
     <SpecReviewSessionScope slug={slug} issueNumber={issueNumber}>
-      <SpecViewBody slug={slug} issueNumber={issueNumber} spec={spec.data} />
+      <SpecViewBody
+        slug={slug}
+        issueNumber={issueNumber}
+        spec={spec.data}
+        version={search.v ?? spec.data.current_version}
+      />
     </SpecReviewSessionScope>
   );
 }
@@ -491,10 +527,16 @@ function SpecViewBody({
   slug,
   issueNumber,
   spec,
+  version,
 }: {
   slug: string;
   issueNumber: number;
   spec: SpecInfo;
+  /**
+   * The version on screen: the URL's, or, until the page pins it, the
+   * current one it is about to be pinned to.
+   */
+  version: number;
 }) {
   const search = useSearch({
     from: "/authed/projects/$slug/issues/$number/spec",
@@ -521,7 +563,6 @@ function SpecViewBody({
   // its hit area.
   const refLeads = useRefPlacement("detail") === "before";
   const mergedBack = toolbarCarriesBack && refLeads;
-  const version = search.v ?? spec.current_version;
   const files = useSuspenseQuery(specFilesQuery(slug, issueNumber, version));
   const comments = useSuspenseQuery(specCommentsQuery(slug, issueNumber));
   const drafts = useSpecReviewDrafts(slug, issueNumber);
@@ -533,11 +574,11 @@ function SpecViewBody({
     issueNumber,
   );
   const staging = useSpecReviewSessionValue(session, (s) => s.staging);
-  const reviewVersion = useSpecReviewSessionValue(
-    session,
-    (s) => s.reviewVersion,
-  );
   const finishOpen = useSpecReviewSessionValue(session, (s) => s.finishOpen);
+  const newerDismissedAt = useSpecReviewSessionValue(
+    session,
+    (s) => s.newerDismissedAt,
+  );
   const pendingVerdict = useSpecReviewSessionValue(
     session,
     (s) => s.pending?.verdict ?? null,
@@ -664,11 +705,10 @@ function SpecViewBody({
   const params = { slug, number: String(issueNumber) };
 
   const fileSearch = (path: string): SpecSearch =>
-    specSearchFor({ file: path, v: search.v, version, baseline, view });
+    specSearchFor({ file: path, version, baseline, view });
   const baselineSearch = (next: number | null): SpecSearch =>
     specSearchFor({
       file: search.file,
-      v: search.v,
       version,
       baseline: next,
       view,
@@ -677,7 +717,6 @@ function SpecViewBody({
   const viewSearch = (next: SpecView): SpecSearch =>
     specSearchFor({
       file: search.file,
-      v: search.v,
       version,
       baseline,
       view: next,
@@ -700,7 +739,6 @@ function SpecViewBody({
         // found" with no way back (T-203).
         search: specSearchFor({
           file: selected === undefined ? undefined : search.file,
-          v: search.v,
           version,
           baseline: null,
           view,
@@ -733,7 +771,6 @@ function SpecViewBody({
           : target - 1;
     return specSearchFor({
       file: search.file,
-      v: target,
       version: target,
       baseline: next,
       view,
@@ -1024,6 +1061,12 @@ function SpecViewBody({
     : selected === undefined
       ? `This file is not part of v${version}`
       : undefined;
+  // Ahead of the cached current version is the cache lagging behind a push,
+  // not an old version.
+  const isCurrent = version >= spec.current_version;
+  const finishReviewReason = isCurrent
+    ? undefined
+    : "Only the current version can be reviewed";
 
   /**
    * The counter beside ↑↓, measured the way they measure. The total comes off
@@ -1127,6 +1170,67 @@ function SpecViewBody({
     [resolveMutate, slug, issueNumber],
   );
 
+  // Drafts staged on an older version follow the text onto the current one,
+  // as their comments will once submitted. An older version on screen shows
+  // only its own: what it would be reviewed against is not on screen.
+  const draftVersions = isCurrent
+    ? [
+        ...new Set(
+          drafts.drafts
+            .map((draft) => draft.anchor.version)
+            .filter((v) => v !== version),
+        ),
+      ].sort((a, b) => a - b)
+    : [];
+  const draftVersionFiles = useQueries({
+    queries: draftVersions.map((v) => specFilesQuery(slug, issueNumber, v)),
+  });
+  const draftFilesKey = draftVersionFiles
+    .map((query) => query.dataUpdatedAt || (query.isError ? -1 : 0))
+    .join();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `draftFilesKey` stands for the query results, whose array is new on every render.
+  const placements = useMemo(() => {
+    const viewedFiles = new Map(
+      files.data.files.map((file) => [file.path, file.body]),
+    );
+    const anchorFiles = new Map<number, ReadonlyMap<string, string>>();
+    draftVersions.forEach((v, index) => {
+      const query = draftVersionFiles[index];
+      if (query?.data !== undefined) {
+        anchorFiles.set(
+          v,
+          new Map(query.data.files.map((file) => [file.path, file.body])),
+        );
+      } else if (query?.isError) {
+        // Nothing to carry it across with, so it has no place here.
+        anchorFiles.set(v, new Map());
+      }
+    });
+    const placements = new Map<string, DraftPlacement>();
+    for (const draft of drafts.drafts) {
+      if (!isCurrent && draft.anchor.version !== version) continue;
+      placements.set(
+        draft.id,
+        placeDraft(
+          draft,
+          version,
+          viewedFiles,
+          anchorFiles.get(draft.anchor.version),
+        ),
+      );
+    }
+    return placements;
+  }, [files.data, drafts.drafts, version, isCurrent, draftFilesKey]);
+  const outdatedDraftIds = useMemo(
+    () =>
+      new Set(
+        [...placements]
+          .filter(([, placement]) => placement.kind === "unplaced")
+          .map(([id]) => id),
+      ),
+    [placements],
+  );
+
   // Comments that can hang inline on the viewed version of the selected
   // file; everything else (outdated, anchored to another version while an
   // old one is viewed) lands in the flat list below the document.
@@ -1173,29 +1277,31 @@ function SpecViewBody({
     }
     for (const draft of drafts.drafts) {
       if (draft.anchor.path !== selectedPath) continue;
-      if (draft.anchor.version !== version) continue;
-      if (draft.anchor.line_start === null || draft.anchor.line_end === null) {
-        continue; // file-level drafts render in the file-level strip below
-      }
+      const placement = placements.get(draft.id);
+      // File-level drafts render in the file-level strip below.
+      if (placement?.kind !== "line") continue;
       displayed.push({
         key: draft.id,
         kind: "draft",
         draft,
-        start: draft.anchor.line_start,
-        end: draft.anchor.line_end,
+        start: placement.start,
+        end: placement.end,
+        // Moved only when the lines read the same, so the columns still cut
+        // them where they did.
         colStart: draft.anchor.col_start,
         colEnd: draft.anchor.col_end,
       });
     }
     return { displayed, unplaced, fileLevel };
-  }, [comments.data, drafts.drafts, selectedPath, version]);
+  }, [comments.data, drafts.drafts, placements, selectedPath, version]);
 
-  const fileLevelDrafts = drafts.drafts.filter(
-    (d) =>
-      d.anchor.path === selectedPath &&
-      d.anchor.version === version &&
-      d.anchor.line_start === null,
-  );
+  const draftsPlacedAs = (kind: DraftPlacement["kind"]) =>
+    drafts.drafts.filter(
+      (d) =>
+        d.anchor.path === selectedPath && placements.get(d.id)?.kind === kind,
+    );
+  const fileLevelDrafts = draftsPlacedAs("file");
+  const unplacedDrafts = draftsPlacedAs("unplaced");
 
   const unresolvedByPath = useMemo(() => {
     const counts = new Map<string, number>();
@@ -1245,10 +1351,52 @@ function SpecViewBody({
       omitRef={mergedBack}
     />
   );
-  const reviewStatus = (
+  // The status is the current version's. Beside an older one it would read
+  // as that version's own, so there is none, and the toast below says the
+  // version is not the latest.
+  const reviewStatus = isCurrent ? (
     <ToolbarSlot name="review-status">
       <SpecStatusBadge status={spec.review_status} />
     </ToolbarSlot>
+  ) : null;
+  const newerSearch = versionSearch(spec.current_version);
+  // Held back while the review dialog or the composer is open: the dialog
+  // links the newer version itself, and on a phone the toast would sit on
+  // the composer.
+  useNewerVersionToast({
+    open:
+      !isCurrent &&
+      !finishOpen &&
+      staging === null &&
+      newerDismissedAt !== spec.current_version,
+    current: spec.current_version,
+    contentKey: JSON.stringify(newerSearch),
+    content: (
+      <Link
+        to="/projects/$slug/issues/$number/spec"
+        params={params}
+        search={newerSearch}
+        state={returnState}
+        className="font-medium hover:underline"
+      >
+        Newer version: v{spec.current_version}
+        <span aria-hidden> →</span>
+      </Link>
+    ),
+    onReaderDismiss: session.setNewerDismissedAt,
+  });
+  // The same destination, offered where a push lands on an open review.
+  const newerVersionLink = isCurrent ? null : (
+    <Link
+      to="/projects/$slug/issues/$number/spec"
+      params={params}
+      search={newerSearch}
+      state={returnState}
+      className="font-medium text-foreground underline underline-offset-2"
+    >
+      Review v{spec.current_version}
+      <span aria-hidden> →</span>
+    </Link>
   );
   /* Below lg the file rail is gone from the flow; this is where it went. In
      source mode it lists the files that differ, and its links carry the
@@ -1311,38 +1459,38 @@ function SpecViewBody({
       </Button>
     </ToolbarSlot>
   );
+  const finishLabel =
+    drafts.drafts.length > 0
+      ? `Finish review (${drafts.drafts.length} staged)`
+      : "Finish review";
   const finishReview = (
-    <Button
-      size="sm"
-      data-toolbar-slot="finish-review"
-      className="shrink-0"
-      aria-label={
-        drafts.drafts.length > 0
-          ? `Finish review (${drafts.drafts.length} staged)`
-          : "Finish review"
-      }
-      onClick={() =>
-        session.setFinishOpen(
-          true,
-          spec.current_version,
-          drafts.drafts.length > 0,
-        )
-      }
-    >
-      Finish review
-      {/* T-190 reserved this box so staging the first draft would not
-          widen the button — at the cost of 24px of hollow beside
-          `Finish review` on every page with no drafts, which is every
-          page most of the time. T-200 takes the one-off shift. */}
-      {drafts.drafts.length > 0 && (
-        <span
-          aria-hidden
-          className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
-        >
-          {drafts.drafts.length}
-        </span>
-      )}
-    </Button>
+    <ToolbarSlot name="finish-review" title={finishReviewReason}>
+      <Button
+        size="sm"
+        className="shrink-0"
+        disabled={finishReviewReason !== undefined}
+        aria-label={
+          finishReviewReason === undefined
+            ? finishLabel
+            : `${finishLabel} — ${finishReviewReason}`
+        }
+        onClick={() => session.setFinishOpen(true)}
+      >
+        Finish review
+        {/* T-190 reserved this box so staging the first draft would not
+            widen the button — at the cost of 24px of hollow beside
+            `Finish review` on every page with no drafts, which is every
+            page most of the time. T-200 takes the one-off shift. */}
+        {drafts.drafts.length > 0 && (
+          <span
+            aria-hidden
+            className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
+          >
+            {drafts.drafts.length}
+          </span>
+        )}
+      </Button>
+    </ToolbarSlot>
   );
   const viewToggle = (
     <ToolbarSlot name="view-toggle">
@@ -1773,7 +1921,6 @@ function SpecViewBody({
                         params={params}
                         search={specSearchFor({
                           file: selectedPath,
-                          v: search.v,
                           version,
                           baseline,
                           view: "source",
@@ -1802,7 +1949,7 @@ function SpecViewBody({
                   )}
                 </div>
               )}
-              {unplaced.length > 0 && (
+              {(unplaced.length > 0 || unplacedDrafts.length > 0) && (
                 <div className="space-y-2 rounded-lg border px-4 py-3">
                   <h3 className="text-xs font-medium text-muted-foreground uppercase">
                     Comments without a place in v{version}
@@ -1817,6 +1964,14 @@ function SpecViewBody({
                         resolve.mutate({ slug, issueNumber, commentId: id })
                       }
                       resolving={resolve.isPending}
+                    />
+                  ))}
+                  {unplacedDrafts.map((draft) => (
+                    <UnplacedDraft
+                      key={draft.id}
+                      draft={draft}
+                      onEdit={() => editDraft(draft)}
+                      onDiscard={() => drafts.remove(draft.id)}
                     />
                   ))}
                 </div>
@@ -1860,15 +2015,17 @@ function SpecViewBody({
         session={session}
         slug={slug}
         issueNumber={issueNumber}
-        currentVersion={reviewVersion ?? spec.current_version}
+        currentVersion={version}
         drafts={drafts.drafts}
+        outdatedDraftIds={outdatedDraftIds}
+        newerVersionLink={newerVersionLink}
         open={finishOpen}
         pendingVerdict={pendingVerdict}
         onSummaryChange={session.setSummary}
         onClose={() => session.setFinishOpen(false)}
         onSubmit={(verdict) =>
           submitReview({
-            currentVersion: reviewVersion ?? spec.current_version,
+            version,
             verdict,
             drafts: drafts.drafts,
           })
@@ -2040,6 +2197,56 @@ function RemovedFileNotice({
           Open the source diff
         </Link>
       </Button>
+    </div>
+  );
+}
+
+/** A staged comment whose lines no longer read the same here. */
+function UnplacedDraft({
+  draft,
+  onEdit,
+  onDiscard,
+}: {
+  draft: SpecReviewDraft;
+  onEdit: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-indigo-500/40 p-2 text-sm">
+      <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium text-indigo-700 dark:text-indigo-400">
+          draft
+        </span>
+        <span>
+          {formatAnchorRange(draft.anchor)} · v{draft.anchor.version}
+        </span>
+        <span className="rounded-full border px-1.5 text-muted-foreground">
+          outdated
+        </span>
+        <span className="ml-auto" />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          onClick={onEdit}
+        >
+          Edit
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          onClick={onDiscard}
+        >
+          Discard
+        </Button>
+      </div>
+      {draft.quote !== "" && (
+        <blockquote className="mb-1 border-l-2 pl-2 text-xs whitespace-pre-wrap text-muted-foreground">
+          {draft.quote}
+        </blockquote>
+      )}
+      <p className="whitespace-pre-wrap">{draft.body}</p>
     </div>
   );
 }

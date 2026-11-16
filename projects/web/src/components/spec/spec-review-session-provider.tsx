@@ -40,7 +40,8 @@ import { type NavigationContext, useDirtySource } from "@/lib/unsaved-guard.ts";
 const SPEC_ROUTE_ID = "/authed/projects/$slug/issues/$number/spec";
 
 type SubmitReviewInput = {
-  currentVersion: number;
+  /** The version on screen: a review is never retargeted to another one. */
+  version: number;
   verdict: SpecReviewVerdict;
   drafts: SpecReviewDraft[];
   returnState?: ReturnLinkState;
@@ -102,20 +103,25 @@ function SessionOwner({
   useDirtySource(session.isDirty, survivesNavigation);
 
   const submitReview = useCallback(
-    ({ currentVersion, verdict, drafts, returnState }: SubmitReviewInput) => {
+    ({ version, verdict, drafts, returnState }: SubmitReviewInput) => {
       const state = session.getSnapshot();
       if (state.pending !== null) return;
-      const version = state.reviewVersion ?? currentVersion;
       const latest = queryClient.getQueryData(
         specQuery(slug, issueNumber).queryKey,
       );
-      if (latest && latest.current_version !== version) {
+      if (latest && latest.current_version > version) {
         toast.error(
-          `Spec v${version} is no longer current. Your review draft has been kept.`,
+          state.summary.trim() === "" && drafts.length === 0
+            ? `Spec v${version} is no longer current.`
+            : `Spec v${version} is no longer current. Your review draft has been kept.`,
         );
         return;
       }
-      if (latest?.review_status === "withdrawn" && verdict !== "comment") {
+      if (
+        latest?.current_version === version &&
+        latest.review_status === "withdrawn" &&
+        verdict !== "comment"
+      ) {
         toast.error(`Spec v${version} has been withdrawn.`);
         return;
       }
