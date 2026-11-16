@@ -357,6 +357,8 @@ describe("CliAuthCard", () => {
     const input = getByRole("textbox", { name: "New agent login" });
     fireEvent.change(input, { target: { value: "Bad Name" } });
     expect(button).toHaveProperty("disabled", true);
+    fireEvent.change(input, { target: { value: "123" } });
+    expect(button).toHaveProperty("disabled", true);
     fireEvent.change(input, { target: { value: "review-bot" } });
     expect(button).toHaveProperty("disabled", false);
 

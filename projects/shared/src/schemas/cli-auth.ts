@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
-import { Login } from "./user.ts";
+import { LoginInput } from "./user.ts";
 
 /**
  * Crockford base32 minus the ambiguous letters, so a code read off one
@@ -67,7 +67,7 @@ export type CliAuthRequestInfo = z.infer<typeof CliAuthRequestInfo>;
 export const CliAuthTarget = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("me") }),
   z.object({ kind: z.literal("agent"), id: Id }),
-  z.object({ kind: z.literal("new"), login: Login }),
+  z.object({ kind: z.literal("new"), login: LoginInput }),
 ]);
 export type CliAuthTarget = z.infer<typeof CliAuthTarget>;
 

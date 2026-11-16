@@ -211,6 +211,20 @@ describe("cli device authorization", () => {
     expect(await json(me)).toMatchObject({ id: agentId, login: "newcomer" });
   });
 
+  it("refuses an all-digit login for a new agent", async () => {
+    const cookie = await t.login();
+    const created = await createRequest();
+    const res = await approve(
+      created.id,
+      { kind: "new", login: "123" },
+      cookie,
+    );
+    expect(res.status).toBe(422);
+    expect((await approve(created.id, { kind: "me" }, cookie)).status).toBe(
+      200,
+    );
+  });
+
   it("passes a login clash through unchanged and leaves the request usable", async () => {
     const cookie = await t.login();
     await createAgent(cookie, "taken-bot");

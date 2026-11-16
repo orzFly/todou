@@ -1,5 +1,5 @@
 import type { Agent, Me } from "@todou/shared";
-import { Login } from "@todou/shared";
+import { LoginInput } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
@@ -87,7 +87,7 @@ export function useTargetSelection(
     initial === undefined ? defaultSelection(candidates, lastAgentId) : initial,
   );
   const [newLogin, setNewLogin] = useState("");
-  const newLoginValid = Login.safeParse(newLogin).success;
+  const newLoginValid = LoginInput.safeParse(newLogin).success;
   const target: AuthTarget | null =
     selection === null
       ? null
@@ -206,7 +206,7 @@ export function AuthTargetFieldset({
       </div>
       {selection?.kind === "new" && newLogin !== "" && !picker.newLoginValid ? (
         <p className="mt-1.5 text-xs text-destructive">
-          Logins are lowercase letters, digits, and dashes.
+          Logins are lowercase letters, digits, and dashes, not all digits.
         </p>
       ) : null}
     </fieldset>
