@@ -35,6 +35,19 @@ import {
 import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 import { cn } from "@/lib/utils";
 
+/**
+ * Where the footer's "Open in new tab" goes, if anywhere. An object URL is
+ * never opened bare: as a page of its own it would run in this app's origin,
+ * outside the sandbox /view gives an uploaded file, so a staged file goes
+ * through the sandboxed page its `tabUrl` names.
+ */
+function newTabHref(target: PreviewTarget): string | null {
+  if (!opensInBrowserTab(target)) return null;
+  if (target.tabUrl !== undefined) return target.tabUrl;
+  if (target.url.startsWith("blob:")) return null;
+  return viewHrefFromDownload(target.url);
+}
+
 // Long enough to cover a pointer crossing the image between two controls,
 // short enough that leaving for good does not read as the viewer lagging.
 const RELEASE_DELAY = 400;
@@ -48,8 +61,8 @@ export type ViewerState = {
 
 type TextPaneProps = {
   target: PreviewTarget;
-  slug: string;
-  issueNumber: number;
+  slug?: string;
+  issueNumber?: number;
   toolbar: HTMLElement | null;
 };
 
@@ -169,8 +182,9 @@ export function AttachmentViewerDialog({
   state: ViewerState | null;
   onNavigate: (index: number) => void;
   onClose: () => void;
-  slug: string;
-  issueNumber: number;
+  /** Markdown context for a text file; a staged file has no card yet. */
+  slug?: string;
+  issueNumber?: number;
 }) {
   // "Maximize" fills the browser window without entering system fullscreen
   // (the form the reviewer picked on T-58); the dialog stays a modal.
@@ -180,6 +194,7 @@ export function AttachmentViewerDialog({
 
   const target = state?.items[state.index];
   const kind = target === undefined ? null : previewKind(target);
+  const tabHref = target === undefined ? null : newTabHref(target);
   // Paging between images tweens from one's height to the next; from
   // anything else, including a closed viewer, the image lands at once.
   useEffect(() => {
@@ -379,9 +394,9 @@ export function AttachmentViewerDialog({
                   .join(" · ")}
               </span>
               <span className="flex shrink-0 items-center gap-3">
-                {opensInBrowserTab(target) && (
+                {tabHref !== null && (
                   <a
-                    href={viewHrefFromDownload(target.url)}
+                    href={tabHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 font-medium hover:underline"

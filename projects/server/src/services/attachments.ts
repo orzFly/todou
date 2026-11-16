@@ -10,9 +10,19 @@ import {
   type DirectUploadRequest,
   type DirectUploadTicket,
   formatRef,
+  type MemberRole,
   minRoleOf,
 } from "@todou/shared";
-import { and, asc, eq, inArray, isNull, like, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  like,
+  sql,
+} from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import { uniqueViolation } from "../auth/provision.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -49,6 +59,7 @@ import {
   sanitizeFilename,
   takenNames,
 } from "./attachment-names.ts";
+import { relabelSegment } from "./attachment-relabel.ts";
 import { visibleProjects } from "./cross-references.ts";
 import { formerSlugsOf } from "./projects.ts";
 import { currentRefPrefix } from "./references.ts";
@@ -57,6 +68,7 @@ import {
   assertIssueReadable,
   assertIssueWritable,
   gateColumns,
+  type TrashFields,
 } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -84,11 +96,16 @@ async function toAttachment(
   };
 }
 
+/**
+ * `issueNumber` null uploads a draft before its card exists: the new-issue
+ * page sends its files first, and `createIssue` attaches them to the card
+ * whose body links them.
+ */
 export async function uploadAttachment(
   ctx: AppContext,
   actor: UserRow,
   slug: string,
-  issueNumber: number,
+  issueNumber: number | null,
   file: File,
   agentContext: AgentContext | null = null,
   draft = false,
@@ -99,6 +116,7 @@ export async function uploadAttachment(
     slug,
     "attachment.upload",
   );
+  assertCardOrDraft(issueNumber, draft);
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const maxBytes = ctx.config.storage.max_upload_mb * 1024 * 1024;
@@ -108,17 +126,10 @@ export async function uploadAttachment(
     );
   }
 
-  const issueRows = await db
-    .select({
-      ...gateColumns,
-    })
-    .from(issues)
-    .where(
-      and(eq(issues.projectId, project.id), eq(issues.number, issueNumber)),
-    );
-  const issue = issueRows[0];
-  if (!issue) throw new NotFoundError("issue not found");
-  assertIssueWritable(issue, actor, role);
+  const issue =
+    issueNumber === null
+      ? null
+      : await writableIssue(db, project.id, issueNumber, actor, role);
 
   if (draft) await markDraftAttachments(ctx, project);
   const storageKey = newStorageKey();
@@ -129,22 +140,55 @@ export async function uploadAttachment(
     db.transaction(async (tx) => {
       const attachment = await insertNamed(tx, requested, {
         projectId: project.id,
-        issueId: issue.id,
+        issueId: issue?.id ?? null,
         uploaderId: actor.id,
         contentType: file.type || "application/octet-stream",
         size: file.size,
         storageKey,
         draft,
       });
-      if (!draft) await announceInTx(tx, attachment, actor.id, agentContext);
+      if (!draft && issue !== null) {
+        await announceInTx(tx, attachment, issue.id, actor.id, agentContext);
+      }
       return attachment;
     }),
   );
 
-  if (!draft) {
-    publishAttachmentEvents(ctx, project.id, row.id, issue.id, issueNumber);
+  if (!draft && issue !== null) {
+    publishAttachmentEvents(ctx, project.id, row.id, issue.id, issue.number);
   }
   return toAttachment(ctx, slug, row);
+}
+
+/** Only a draft may wait for its card; anything else is attached at once. */
+function assertCardOrDraft(issueNumber: number | null, draft: boolean): void {
+  if (issueNumber === null && !draft) {
+    throw new ValidationFailedError(
+      "issue_number is required unless draft is true",
+    );
+  }
+}
+
+/** The card an upload names, once the uploader may add to it. */
+async function writableIssue(
+  db: Db,
+  projectId: number,
+  issueNumber: number,
+  actor: UserRow,
+  role: MemberRole,
+): Promise<TrashFields> {
+  const issueRows = await db
+    .select({
+      ...gateColumns,
+    })
+    .from(issues)
+    .where(
+      and(eq(issues.projectId, projectId), eq(issues.number, issueNumber)),
+    );
+  const issue = issueRows[0];
+  if (!issue) throw new NotFoundError("issue not found");
+  assertIssueWritable(issue, actor, role);
+  return issue;
 }
 
 /**
@@ -156,12 +200,13 @@ export async function uploadAttachment(
 async function announceInTx(
   tx: Db,
   attachment: AttachmentRow,
+  issueId: number,
   actorId: number,
   agentContext: AgentContext | null,
 ): Promise<void> {
   await tx.insert(issueEvents).values({
     projectId: attachment.projectId,
-    issueId: attachment.issueId,
+    issueId,
     actorId,
     type: "attachment_added",
     agentContext,
@@ -176,7 +221,7 @@ async function announceInTx(
   await tx
     .update(issues)
     .set({ updatedAt: new Date() })
-    .where(eq(issues.id, attachment.issueId));
+    .where(eq(issues.id, issueId));
 }
 
 /**
@@ -216,7 +261,9 @@ async function deleteQuietly(ctx: AppContext, key: string): Promise<void> {
 }
 
 /**
- * Insert the row under a name free on this card (T-269).
+ * Insert the row under a name free on this card (T-269). A draft with no
+ * card yet takes its name as it is; `prepareLooseDrafts` settles it when the
+ * card is created.
  *
  * The colliding case needs the row's own id, which `generated always as
  * identity` will not hand out before the insert — so it lands under a
@@ -229,7 +276,10 @@ async function insertNamed(
   requested: string,
   values: Omit<typeof attachments.$inferInsert, "filename">,
 ): Promise<AttachmentRow> {
-  const taken = await takenNames(tx, values.issueId);
+  const taken =
+    values.issueId == null
+      ? new Set<string>()
+      : await takenNames(tx, values.issueId);
   const free = !taken.has(nameKey(requested));
   const inserted = await tx
     .insert(attachments)
@@ -335,6 +385,8 @@ export async function requestDirectUpload(
     slug,
     "attachment.upload",
   );
+  const issueNumber = input.issue_number ?? null;
+  assertCardOrDraft(issueNumber, input.draft === true);
   // The size gate precedes the backend gate: an oversize declaration means
   // no upload path will take the file, so clients probing this endpoint
   // first (the CLI does) learn that before shipping a single body byte —
@@ -349,21 +401,10 @@ export async function requestDirectUpload(
     throw new DirectUploadUnavailableError();
   }
   const db = await ctx.router.forProject(routeInfoOf(project));
-
-  const issueRows = await db
-    .select({
-      ...gateColumns,
-    })
-    .from(issues)
-    .where(
-      and(
-        eq(issues.projectId, project.id),
-        eq(issues.number, input.issue_number),
-      ),
-    );
-  const issue = issueRows[0];
-  if (!issue) throw new NotFoundError("issue not found");
-  assertIssueWritable(issue, actor, role);
+  const issue =
+    issueNumber === null
+      ? null
+      : await writableIssue(db, project.id, issueNumber, actor, role);
 
   const storageKey = newStorageKey();
   const expiresAt = new Date(
@@ -373,7 +414,7 @@ export async function requestDirectUpload(
     .insert(pendingUploads)
     .values({
       projectId: project.id,
-      issueId: issue.id,
+      issueId: issue?.id ?? null,
       uploaderId: actor.id,
       filename: sanitizeFilename(input.filename),
       contentType: input.content_type || "application/octet-stream",
@@ -486,15 +527,19 @@ export async function completeDirectUpload(
     throw new DirectUploadIncompleteError("size_mismatch");
   }
 
-  const issueRows = await db
-    .select({
-      ...gateColumns,
-    })
-    .from(issues)
-    .where(eq(issues.id, pending.issueId));
-  const issue = issueRows[0];
-  if (!issue) throw new NotFoundError("issue not found");
-  assertIssueWritable(issue, actor, role);
+  let issue: TrashFields | null = null;
+  if (pending.issueId !== null) {
+    const issueRows = await db
+      .select({
+        ...gateColumns,
+      })
+      .from(issues)
+      .where(eq(issues.id, pending.issueId));
+    const found = issueRows[0];
+    if (!found) throw new NotFoundError("issue not found");
+    assertIssueWritable(found, actor, role);
+    issue = found;
+  }
 
   // The ticket keeps accepting PUTs until it expires, long after this
   // returns, so the attachment gets bytes the ticket cannot reach (T-653).
@@ -536,8 +581,8 @@ export async function completeDirectUpload(
           storageKey: attachmentKey,
           draft: pending.draft,
         });
-        if (!pending.draft) {
-          await announceInTx(tx, attachment, actor.id, agentContext);
+        if (!pending.draft && issue !== null) {
+          await announceInTx(tx, attachment, issue.id, actor.id, agentContext);
         }
         return attachment;
       }),
@@ -563,14 +608,8 @@ export async function completeDirectUpload(
   // collects it then.
   await deleteQuietly(ctx, pending.storageKey);
 
-  if (!row.draft) {
-    publishAttachmentEvents(
-      ctx,
-      project.id,
-      row.id,
-      pending.issueId,
-      issue.number,
-    );
+  if (!row.draft && issue !== null) {
+    publishAttachmentEvents(ctx, project.id, row.id, issue.id, issue.number);
   }
   return toAttachment(ctx, slug, row);
 }
@@ -609,6 +648,13 @@ export async function openAttachment(
     );
   const found = rows[0];
   if (!found) {
+    const loose = await looseDraftOf(db, project.id, attachmentId);
+    if (loose !== undefined) {
+      if (role === null || loose.uploaderId !== actor.id) {
+        throw new NotFoundError("attachment not found");
+      }
+      return { row: loose };
+    }
     // Not here may mean this project held it before the card moved (T-231);
     // only a miss pays for the system-database lookup.
     const alias = await aliasOf(
@@ -751,13 +797,39 @@ async function sourceSlugs(
   return byProject;
 }
 
-/** A file and the gate columns of the card it hangs on. */
+/**
+ * A draft uploaded before its card existed (`issue_id` null). With no card to
+ * gate it, it is its uploader's alone; it never moves with a card, so it has
+ * no other address either.
+ */
+async function looseDraftOf(
+  db: Db,
+  projectId: number,
+  attachmentId: number,
+): Promise<AttachmentRow | undefined> {
+  const rows = await db
+    .select()
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.id, attachmentId),
+        eq(attachments.projectId, projectId),
+        isNull(attachments.issueId),
+      ),
+    );
+  return rows[0];
+}
+
+/**
+ * A file and the gate columns of the card it hangs on; `issue` is null for a
+ * draft that has no card yet.
+ */
 async function loadForWrite(
   db: Db,
   projectId: number,
   attachmentId: number,
   actor: UserRow,
-) {
+): Promise<{ row: AttachmentRow; issue: TrashFields | null }> {
   const rows = await db
     .select({ row: attachments, ...gateColumns })
     .from(attachments)
@@ -769,11 +841,19 @@ async function loadForWrite(
       ),
     );
   const found = rows[0];
+  if (found === undefined) {
+    const loose = await looseDraftOf(db, projectId, attachmentId);
+    if (loose === undefined || loose.uploaderId !== actor.id) {
+      throw new NotFoundError("attachment not found");
+    }
+    return { row: loose, issue: null };
+  }
   // Someone else's draft is as absent here as it is from the list.
-  if (!found || (found.row.draft && found.row.uploaderId !== actor.id)) {
+  if (found.row.draft && found.row.uploaderId !== actor.id) {
     throw new NotFoundError("attachment not found");
   }
-  return found;
+  const { row, ...issue } = found;
+  return { row, issue };
 }
 
 /**
@@ -800,27 +880,34 @@ export async function deleteAttachment(
     "attachment.delete",
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const found = await loadForWrite(db, project.id, attachmentId, actor);
+  const { row, issue } = await loadForWrite(
+    db,
+    project.id,
+    attachmentId,
+    actor,
+  );
   // A card being copied to another project shares its objects with the
   // copy, so this refuses it with the 409 every other write gets.
-  assertIssueWritable(found, actor, role);
-  const { row } = found;
+  if (issue !== null) assertIssueWritable(issue, actor, role);
   if (row.uploaderId !== actor.id && !can(role, "attachment.delete_any")) {
     throw new ForbiddenError(
       `only the uploader or a ${minRoleOf("attachment.delete_any")} may delete this file`,
     );
   }
 
+  const announced = row.draft ? null : issue;
   const deleted = await db.transaction(async (tx) => {
     const gone = await tx
       .delete(attachments)
-      .where(eq(attachments.id, row.id))
+      // Only as it was read: a draft that a text sent in the meantime is the
+      // card's now, not an unsent file to withdraw.
+      .where(and(eq(attachments.id, row.id), eq(attachments.draft, row.draft)))
       .returning({ id: attachments.id });
     if (gone.length === 0) return false;
-    if (row.draft) return true;
+    if (announced === null) return true;
     await tx.insert(issueEvents).values({
       projectId: project.id,
-      issueId: row.issueId,
+      issueId: announced.id,
       actorId: actor.id,
       type: "attachment_deleted",
       agentContext,
@@ -831,10 +918,11 @@ export async function deleteAttachment(
     await tx
       .update(issues)
       .set({ updatedAt: new Date() })
-      .where(eq(issues.id, row.issueId));
+      .where(eq(issues.id, announced.id));
     return true;
   });
-  // Lost a race with another delete: that one already did everything below.
+  // Lost a race with another delete, which already did everything below, or
+  // with the text that sent this draft.
   if (!deleted) throw new NotFoundError("attachment not found");
 
   try {
@@ -845,11 +933,11 @@ export async function deleteAttachment(
       cause,
     );
   }
-  if (row.draft) return;
+  if (announced === null) return;
   for (const event of attachmentEvents(
     row.id,
-    row.issueId,
-    found.number,
+    announced.id,
+    announced.number,
     "deleted",
   )) {
     ctx.bus.publish(project.id, event);
@@ -878,8 +966,8 @@ export async function listAttachmentReferences(
     "attachment.delete",
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const found = await loadForWrite(db, project.id, attachmentId, actor);
-  assertIssueReadable(found, actor, role);
+  const { issue } = await loadForWrite(db, project.id, attachmentId, actor);
+  if (issue !== null) assertIssueReadable(issue, actor, role);
 
   const owners = new Set([
     String(project.id),
@@ -1019,21 +1107,101 @@ export async function commitDraftAttachments(
         eq(attachments.projectId, project.id),
         eq(attachments.uploaderId, actorId),
         eq(attachments.draft, true),
+        // A draft with no card stays one: only `createIssue` gives it a card,
+        // through `attachLooseDrafts`, before it gets here.
+        isNotNull(attachments.issueId),
         inArray(attachments.id, [...ids]),
       ),
     )
     .returning();
   const events: ChangeEvent[] = [];
   for (const row of committed) {
-    await announceInTx(tx, row, actorId, agentContext);
+    const issueId = row.issueId;
+    if (issueId === null) continue;
+    await announceInTx(tx, row, issueId, actorId, agentContext);
     const [card] = await tx
       .select({ number: issues.number })
       .from(issues)
-      .where(eq(issues.id, row.issueId));
+      .where(eq(issues.id, issueId));
     if (!card) continue;
-    events.push(
-      ...attachmentEvents(row.id, row.issueId, card.number, "created"),
-    );
+    events.push(...attachmentEvents(row.id, issueId, card.number, "created"));
   }
   return events;
+}
+
+/** A draft uploaded before its card, under the name it takes on the card. */
+export type LooseDraft = { id: number; filename: string };
+
+/**
+ * The drafts a new card's body links that were uploaded before the card
+ * existed, and the body to store with them. Only the author's own, on the
+ * same rule as `commitDraftAttachments`.
+ *
+ * Uploading left their names as sent, so they are made unique here (T-269).
+ * The new card holds no other file yet, so only this batch can collide, and
+ * the body follows each rename in the link text and the URL's last segment.
+ */
+export async function prepareLooseDrafts(
+  tx: Db,
+  project: ProjectRow,
+  actorId: number,
+  storedText: string,
+): Promise<{ text: string; drafts: LooseDraft[] }> {
+  const owners = new Set([String(project.id), project.slug]);
+  const ids = linkedAttachmentIds(storedText, owners);
+  if (ids.size === 0) return { text: storedText, drafts: [] };
+  const rows = await tx
+    .select({ id: attachments.id, filename: attachments.filename })
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.projectId, project.id),
+        isNull(attachments.issueId),
+        eq(attachments.uploaderId, actorId),
+        eq(attachments.draft, true),
+        inArray(attachments.id, [...ids]),
+      ),
+    )
+    .orderBy(asc(attachments.id))
+    // Held until `attachLooseDrafts` writes them, so the reaper cannot take
+    // one in between.
+    .for("update");
+
+  const taken = new Set<string>();
+  const drafts: LooseDraft[] = [];
+  const renames = new Map<number, { before: string; after: string }>();
+  for (const row of rows) {
+    const filename = taken.has(nameKey(row.filename))
+      ? resolveCollision(taken, row.filename, row.id)
+      : row.filename;
+    if (filename !== row.filename) {
+      renames.set(row.id, { before: row.filename, after: filename });
+    }
+    taken.add(nameKey(filename));
+    drafts.push({ id: row.id, filename });
+  }
+  if (renames.size === 0) return { text: storedText, drafts };
+  const { text } = relabelSegment(storedText, {
+    renames,
+    known: new Set(drafts.map((d) => d.id)),
+    owners,
+  });
+  return { text, drafts };
+}
+
+/**
+ * Hang the drafts `prepareLooseDrafts` found on the new card, still drafts:
+ * `commitDraftAttachments` then attaches them the way it does any other.
+ */
+export async function attachLooseDrafts(
+  tx: Db,
+  drafts: readonly LooseDraft[],
+  issueId: number,
+): Promise<void> {
+  for (const draft of drafts) {
+    await tx
+      .update(attachments)
+      .set({ issueId, filename: draft.filename })
+      .where(and(eq(attachments.id, draft.id), isNull(attachments.issueId)));
+  }
 }

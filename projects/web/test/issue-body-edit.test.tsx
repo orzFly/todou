@@ -10,7 +10,13 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { BodyBlock } from "../src/pages/issue-detail.tsx";
-import { cmGetValue, cmPressKey, cmSetValue, cmView } from "./cm.ts";
+import {
+  cmDropFiles,
+  cmGetValue,
+  cmPressKey,
+  cmSetValue,
+  cmView,
+} from "./cm.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const author = {
@@ -95,27 +101,29 @@ describe("the issue body editor", () => {
     expect(patchedBody).not.toMatch(/\s$/);
   });
 
-  it("trims the body before appending staged attachment markers", async () => {
+  it("trims the body and links a dropped file where it was dropped", async () => {
     vi.spyOn(api, "uploadAttachment").mockResolvedValue(ATTACHMENT);
     const updateIssue = vi.spyOn(api, "updateIssue").mockResolvedValue(ISSUE);
     const view = await openEditor();
 
-    cmSetValue(view.container, "\tthe second draft \t\n");
-    fireEvent.drop(cmView(view.container).contentDOM, {
-      dataTransfer: {
-        files: [new File(["notes"], "notes.txt", { type: "text/plain" })],
-        types: [],
-        items: [],
-        getData: () => "",
-      } as unknown as DataTransfer,
-    });
-    await view.findByText("notes.txt");
+    // Two spaces lead, not a tab: a tab would make the line indented code,
+    // which a token is never placed on.
+    cmSetValue(view.container, "  the second\n\ndraft \t\n");
+    // happy-dom lays nothing out, so the drop point is the browser's answer
+    // stubbed in: the end of the first line.
+    vi.spyOn(cmView(view.container), "posAtCoords").mockReturnValue(
+      "  the second".length,
+    );
+    cmDropFiles(view.container, [
+      new File(["notes"], "notes.txt", { type: "text/plain" }),
+    ]);
+    await view.findByTitle("notes.txt");
     cmPressKey(view.container, "Enter", { ctrlKey: true });
 
     await waitFor(() => expect(updateIssue).toHaveBeenCalledOnce());
     const patchedBody = updateIssue.mock.calls[0]?.[2]?.body;
     expect(patchedBody).toBe(
-      "\tthe second draft\n\n[notes.txt](/attachments/notes.txt)",
+      "  the second [notes.txt](/attachments/notes.txt)\n\ndraft",
     );
     expect(patchedBody).not.toMatch(/\s$/);
   });

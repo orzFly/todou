@@ -1013,6 +1013,98 @@ describe("attachments (s3 backend)", () => {
     expect(list.map((a: { id: number }) => a.id)).not.toContain(attachment.id);
   });
 
+  it("carries a draft ticket without a card to the card that links it", async () => {
+    const body = "drafted before the card";
+    const ticket = await json(
+      await requestDirect({
+        issue_number: undefined,
+        filename: "before-card.txt",
+        content_type: "text/plain",
+        size: body.length,
+        draft: true,
+      }),
+    );
+    await fetch(ticket.url, { method: "PUT", body });
+    const done = await complete(ticket.upload_id);
+    expect(done.status).toBe(201);
+    const attachment = await json(done);
+
+    const issue = await json(
+      await t.app.request(`/api/projects/${slug}/issues`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          title: "born with a file",
+          body: `[before-card.txt](${attachment.url})`,
+        }),
+      }),
+    );
+    const list = await json(
+      await t.app.request(
+        `/api/projects/${slug}/attachments?issue_number=${issue.number}`,
+        { headers: { cookie } },
+      ),
+    );
+    expect(list.map((a: { id: number }) => a.id)).toEqual([attachment.id]);
+  });
+
+  it("refuses a ticket without a card unless it is a draft", async () => {
+    const res = await requestDirect({
+      issue_number: undefined,
+      filename: "no-card.txt",
+      content_type: "text/plain",
+      size: 4,
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it("drops a project's uncompleted tickets without a card with the project", async () => {
+    const gone = "attach-s3-gone";
+    await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug: gone, name: "Gone" }),
+    });
+    const project = (
+      await t.ctx.router
+        .system()
+        .select()
+        .from(projects)
+        .where(eq(projects.slug, gone))
+    )[0];
+    if (!project) throw new Error("project row missing");
+    const ticket = await t.app.request(
+      `/api/projects/${gone}/attachments/direct-uploads`,
+      {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          filename: "never-sent.txt",
+          content_type: "text/plain",
+          size: 4,
+          draft: true,
+        }),
+      },
+    );
+    expect(ticket.status).toBe(201);
+
+    const deleted = await t.app.request(`/api/projects/${gone}`, {
+      method: "DELETE",
+      headers: headers(),
+    });
+    expect(deleted.status).toBe(204);
+    const db = await t.ctx.router.forProject({
+      id: project.id,
+      slug: gone,
+      database_url: project.databaseUrl,
+    });
+    const left = await db
+      .select()
+      .from(pendingUploads)
+      .where(eq(pendingUploads.projectId, project.id));
+    expect(left).toEqual([]);
+  });
+
   it("deletes the object from the bucket with the attachment (T-567)", async () => {
     const attachment = await json(await multipartUpload("doomed.txt", "bye"));
     const key = [...fake.objects.entries()].find(

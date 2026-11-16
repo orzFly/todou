@@ -283,6 +283,51 @@ describe("TodouClient", () => {
     expect("sha256" in ticket).toBe(false);
   });
 
+  it("sends no issue_number for a draft uploaded before its card", async () => {
+    const attachment = { id: 3, filename: "early.png" };
+    const file = new File(["early"], "early.png", { type: "image/png" });
+
+    const direct = mockFetchSeq(directUploadResponses(attachment));
+    await new TodouClient({ fetch: direct.fetch }).uploadAttachment(
+      "todou",
+      null,
+      file,
+      { draft: true },
+    );
+    const ticket = JSON.parse(String(direct.calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+    expect("issue_number" in ticket).toBe(false);
+    expect(ticket.draft).toBe(true);
+
+    const multipart = mockFetchSeq([
+      {
+        status: 409,
+        body: { error: { code: "direct_upload_unavailable", message: "no" } },
+      },
+      { status: 201, body: attachment },
+    ]);
+    await new TodouClient({ fetch: multipart.fetch }).uploadAttachment(
+      "todou",
+      null,
+      file,
+      { draft: true },
+    );
+    const form = multipart.calls[1]?.init.body as FormData;
+    expect(form.has("issue_number")).toBe(false);
+    expect(form.get("draft")).toBe("true");
+  });
+
+  it("refuses an upload without a card unless it is a draft, sending nothing", async () => {
+    const { fetch, calls } = mockFetch(200, {});
+    const client = new TodouClient({ fetch });
+    await expect(
+      client.uploadAttachment("todou", null, new File(["x"], "x.txt")),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+  });
+
   it("exposes request() for raw API calls", async () => {
     const { fetch, calls } = mockFetch(200, { ok: true });
     const client = new TodouClient({ fetch, token: "todou_pat_x" });

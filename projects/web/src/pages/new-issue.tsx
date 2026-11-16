@@ -50,10 +50,7 @@ import {
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import {
-  useCommandRegistry,
-  withAttachmentMarkers,
-} from "@/components/timeline/composer.tsx";
+import { useCommandRegistry } from "@/components/timeline/composer.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -256,7 +253,12 @@ function NewIssueForm({
     const current =
       registry === null || !canTriage ? null : parseCommandLines(raw, registry);
     if (current !== null && current.invalid.length > 0) return;
-    const body = current === null ? raw : current.body;
+    const parsedBody = current === null ? raw : current.body;
+    // A text whose files go up is sent trimmed at the end, as one with its
+    // files appended always was.
+    const text = staging.pending(parsedBody)
+      ? parsedBody.trimEnd()
+      : parsedBody;
     const fields =
       current === null
         ? { statusId, labelIds, assigneeIds }
@@ -266,7 +268,7 @@ function NewIssueForm({
           );
     const input: IssueCreateInput = {
       title: trimmedTitle,
-      body,
+      body: text,
       // Empty triage sets ask for nothing on create. PATCH separately checks
       // the current capability: even an empty set is a triage write there.
       status_id:
@@ -279,6 +281,13 @@ function NewIssueForm({
     setSubmitting(true);
     try {
       let issue = createdRef.current;
+      if (staging.pending(text)) {
+        // Before the card exists the files go up as drafts of no card, and
+        // the card is created with its final body, so it is never edited;
+        // a failed upload leaves no card behind. On a retry after creation
+        // they go up onto the card, and a changed body is a real edit.
+        input.body = await staging.resolve(text, slug, issue?.number ?? null);
+      }
       if (!issue) {
         issue = await api.createIssue(slug, input);
         // If creation chose the default, keep the server's actual choice:
@@ -298,12 +307,6 @@ function NewIssueForm({
       // needs its concrete id: undefined would silently leave the old status.
       if (canTriage && input.status_id === undefined) {
         input.status_id = createdDefaultRef.current?.id ?? defaultStatusId;
-      }
-      if (staging.staged.length > 0) {
-        const markers = await staging.uploadAll(slug, issue.number);
-        // Assemble the final body before diffing it. A retry must not
-        // overwrite uploaded markers with the editor's unadorned body.
-        input.body = withAttachmentMarkers(body.trimEnd(), markers);
       }
       const saved = savedFieldsRef.current;
       if (saved !== null) {
@@ -413,9 +416,7 @@ function NewIssueForm({
             readOnly={submitting}
             onChange={setDraft}
             onSubmit={() => void submit()}
-            onPaste={staging.onPaste}
-            onDrop={staging.onDrop}
-            onDragOver={staging.onDragOver}
+            staging={staging.editor}
           />
           <CommandErrors broken={broken} />
           <StagedFileTray

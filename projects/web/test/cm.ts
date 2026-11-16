@@ -1,7 +1,7 @@
 import type { Completion } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { fireEvent } from "@testing-library/react";
+import { act, fireEvent } from "@testing-library/react";
 
 /**
  * Test-side reach into a MarkdownEditor. The document lives in the
@@ -165,6 +165,39 @@ export function cmPressKey(
     ...modifiers,
   });
   cmView(root, index).contentDOM.dispatchEvent(event);
+  return event;
+}
+
+/** Paste files on the editor, as the browser raises it on the contenteditable. */
+export function cmPasteFiles(
+  root: ParentNode,
+  files: File[],
+  index = 0,
+): Event {
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    value: { types: ["Files"], files, getData: () => "" },
+  });
+  act(() => {
+    cmView(root, index).contentDOM.dispatchEvent(event);
+  });
+  return event;
+}
+
+/**
+ * Drop files on the editor the way a browser does: a drag event carrying the
+ * pointer's coordinates, which CodeMirror reads for the drop position.
+ * happy-dom has no DragEvent, and `fireEvent.drop` falls back to a bare Event
+ * with no coordinates at all.
+ */
+export function cmDropFiles(root: ParentNode, files: File[], index = 0): Event {
+  const event = new MouseEvent("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", {
+    value: { types: ["Files"], files, getData: () => "" },
+  });
+  act(() => {
+    cmView(root, index).contentDOM.dispatchEvent(event);
+  });
   return event;
 }
 

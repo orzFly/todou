@@ -169,6 +169,13 @@
       "when": 1794139671304,
       "tag": "0023_upload-attachment-key",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794825834448,
+      "tag": "0024_loose_drafts",
+      "breakpoints": true
     }
   ]
 }

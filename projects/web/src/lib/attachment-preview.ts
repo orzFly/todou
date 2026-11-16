@@ -18,6 +18,11 @@ export type PreviewTarget = {
   size?: number;
   /** Upload time; anchors markdown ref parsing (T-80 time cutoff). */
   created_at?: string;
+  /**
+   * Where "Open in new tab" goes for a file with no /view address of its
+   * own: a staged one, which is only an object URL so far.
+   */
+  tabUrl?: string;
 };
 
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
