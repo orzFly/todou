@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import type { Logger } from "drizzle-orm/logger";
@@ -117,9 +118,79 @@ export async function openDb(
     db: db as unknown as Db,
     kind,
     url,
-    migrate: (tier) => migrateNodePg(db, MIGRATIONS[tier]),
+    migrate: (tier) => migrateNodePgQueued(pool, tier, opts?.logger),
     close: () => pool.end(),
   };
+}
+
+// Advisory locks belong to one database, so a fixed key queues the
+// migrations of that database and no other. Both tiers take the same key:
+// their journals live in the one "drizzle" schema that each migration starts
+// by creating. The value is "todou" in ASCII; any fixed number would do.
+export const MIGRATION_LOCK_KEY = 0x746f646f75;
+const MIGRATION_LOCK_RETRY_MS = 1_000;
+
+/**
+ * drizzle's migrator cannot run twice at once on one database. It creates
+ * the "drizzle" schema and the journal table and reads the last journal entry
+ * outside any transaction, and only then applies the newer migrations in
+ * one. Two runs on a database with migrations pending collide on the
+ * catalogs' unique indexes (IF NOT EXISTS sees only what is committed), or
+ * both apply the same migrations and the later commit fails. Two servers
+ * starting with auto_migrate do that, as do two `todou-server migrate` or two
+ * test files opening one new database.
+ *
+ * So a migration first takes a session advisory lock on a connection of its
+ * own and runs on that connection; another one tries again every second
+ * until it gets the lock, then finds the journal current. The connection is
+ * closed afterwards instead of going back to the pool, whether the migration
+ * succeeded or threw: a pooled connection still holding the lock (an unlock
+ * an error skipped) would hold up every later migration of the database
+ * until the pool closed it, which on a busy server may be never. Ending the
+ * session releases the lock the same way on both paths. All of it needs one
+ * server session throughout, which a transaction-pooling proxy does not give
+ * (see docs/deploy.md).
+ *
+ * It retries rather than blocking in pg_advisory_lock. PostgreSQL grants a
+ * blocked waiter the lock even when its process has frozen or died meanwhile,
+ * as it notices a dead client only on its next read, and that waiter would
+ * then hold up every later migration. A blocking statement also falls under
+ * a role's lock_timeout or statement_timeout, and leaves the connection
+ * silent for whatever idle timeout lies on the network path.
+ *
+ * The wait has no timeout. A short one would fail a process queued behind a
+ * long but healthy migration, and the case it would rescue, a holder whose
+ * machine vanished, lasts until TCP keepalive notices, by default hours.
+ * Waiting is logged instead, so a start that hangs says why.
+ */
+async function migrateNodePgQueued(
+  pool: pg.Pool,
+  tier: DbTier,
+  logger: Logger | undefined,
+): Promise<void> {
+  const client = await pool.connect();
+  const tryLock = async () => {
+    const { rows } = await client.query<{ locked: boolean; name: string }>(
+      "SELECT pg_try_advisory_lock($1::bigint) AS locked, current_database() AS name",
+      [MIGRATION_LOCK_KEY],
+    );
+    return rows[0];
+  };
+  try {
+    let attempt = await tryLock();
+    if (!attempt?.locked) {
+      console.log(
+        `migrate: waiting for another migration of database "${attempt?.name}" (${tier} tier)`,
+      );
+      while (!attempt?.locked) {
+        await delay(MIGRATION_LOCK_RETRY_MS);
+        attempt = await tryLock();
+      }
+    }
+    await migrateNodePg(drizzleNodePg(client, { logger }), MIGRATIONS[tier]);
+  } finally {
+    client.release(true);
+  }
 }
 
 type MemoryTemplate = {

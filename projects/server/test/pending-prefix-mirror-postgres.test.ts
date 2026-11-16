@@ -6,25 +6,31 @@ import {
   markPendingMirror,
 } from "../src/services/pending-mirror.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
+import { createTestDatabase, type TestDatabase } from "./postgres-database.ts";
 
 /**
  * The claim UPDATE's mutual exclusion (T-511). PGlite has a single
  * connection, so the default suite cannot run two drainers at once and
  * therefore cannot see this property at all: there, the two calls simply
- * queue. Skipped unless TODOU_TEST_POSTGRES_URL points at a server.
+ * queue. Skipped unless TODOU_TEST_POSTGRES_URL points at a server, whose
+ * role needs CREATEDB: the test makes a database of its own.
  */
 const PG_URL = process.env.TODOU_TEST_POSTGRES_URL;
 
 describe.skipIf(!PG_URL)("two drainers racing for the same marks", () => {
+  let database: TestDatabase | undefined;
   let t: TestApp;
   let cookie: string;
-  // The database persists across runs; unique slugs isolate each one.
-  const run = Date.now().toString(36);
-  const slugs = [1, 2, 3, 4].map((n) => `ppm-${run}-${n}`);
+  // A database of its own: drainPendingMirrors claims every due mark in the
+  // table, and the assertion below counts them, so no other run or test file
+  // may have left marks there.
+  const slugs = [1, 2, 3, 4].map((n) => `ppm-${n}`);
   const ids: number[] = [];
 
   beforeAll(async () => {
-    t = await makeTestApp("dedicated", { systemUrl: PG_URL });
+    if (!PG_URL) throw new Error("TODOU_TEST_POSTGRES_URL is unset");
+    database = await createTestDatabase(PG_URL, "pending_mirror");
+    t = await makeTestApp("dedicated", { systemUrl: database.url });
     cookie = await t.login();
     for (const slug of slugs) {
       const res = await t.app.request("/api/projects", {
@@ -38,7 +44,12 @@ describe.skipIf(!PG_URL)("two drainers racing for the same marks", () => {
   });
 
   afterAll(async () => {
-    await t.cleanup();
+    try {
+      // Either may be unset: beforeAll can fail before reaching it.
+      await t?.cleanup();
+    } finally {
+      await database?.drop();
+    }
   });
 
   it("claims every mark exactly once between them", async () => {

@@ -67,6 +67,14 @@ For PostgreSQL, set `database.system` to a `postgres://` URL and apply
 migrations explicitly: `todou-server migrate` applies pending migrations to
 the system database and every project database.
 
+Migrations of one database queue: a second `todou-server migrate`, or a server
+starting with `database.auto_migrate = true`, waits until the one already
+running is done. The queue is a session-level lock, so todou needs a direct
+connection to every database it migrates, not one through a
+transaction-pooling proxy such as PgBouncer: `database.system` and, under
+dedicated placement, every project database, which todou also migrates when
+it creates a project.
+
 Migration 0013 is the one that changes existing data rather than only its
 shape: it renames stored attachment filenames so that no two on one card
 collide. See [Relabelling attachment links after the filename
