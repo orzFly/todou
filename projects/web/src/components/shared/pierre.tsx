@@ -202,9 +202,25 @@ export function useSyntaxTheme(): SyntaxTheme {
 }
 
 /** The shape every code surface falls back to: the code, unhighlighted. */
-export function PlainCodeFallback({ contents }: { contents: string }) {
+export function PlainCodeFallback({
+  contents,
+  bare = false,
+}: {
+  contents: string;
+  /**
+   * pierre's own snippet geometry, with no box of its own: inside a frame a
+   * grey box would flash white and shift its lines when pierre lands.
+   */
+  bare?: boolean;
+}) {
   return (
-    <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[0.85em] leading-[1.45]">
+    <pre
+      className={
+        bare
+          ? "code-fallback-bare"
+          : "overflow-x-auto rounded-md bg-muted p-3 text-[0.85em] leading-[1.45]"
+      }
+    >
       <code>{contents}</code>
     </pre>
   );
@@ -410,7 +426,7 @@ function fenceDiffOptions(
  * land on the same plain text rather than on React's error screen.
  */
 class CodeViewBoundary extends Component<
-  { contents: string; children: ReactNode },
+  { contents: string; bare?: boolean; children: ReactNode },
   { failed: boolean }
 > {
   state = { failed: false };
@@ -425,7 +441,12 @@ class CodeViewBoundary extends Component<
 
   render() {
     if (this.state.failed) {
-      return <PlainCodeFallback contents={this.props.contents} />;
+      return (
+        <PlainCodeFallback
+          contents={this.props.contents}
+          bare={this.props.bare}
+        />
+      );
     }
     return this.props.children;
   }
@@ -483,6 +504,7 @@ export function CodeBlock({
   lineNumbers = false,
   plain = false,
   offThread = false,
+  bareFallback = false,
   className,
 }: {
   filename: string;
@@ -501,6 +523,8 @@ export function CodeBlock({
    * thread for 2.2 s (T-584).
    */
   offThread?: boolean;
+  /** Plain text in pierre's geometry until it lands; see PlainCodeFallback. */
+  bareFallback?: boolean;
   /** Caps the height for a long file: CodeView virtualizes against its box. */
   className?: string;
 }) {
@@ -545,12 +569,14 @@ export function CodeBlock({
   }, []);
   // Highlighting fails per grammar rather than per input, so a block that has
   // gone plain stays plain: re-arming it would only repeat the same failure.
-  if (degraded) return <PlainCodeFallback contents={contents} />;
+  if (degraded) {
+    return <PlainCodeFallback contents={contents} bare={bareFallback} />;
+  }
   // Plain text has nothing to tokenize, so no worker to start for it.
   const View = offThread && !plain ? ChunkWorkerCodeView : ChunkCodeView;
   return (
-    <CodeViewBoundary contents={contents}>
-      {!ready && <PlainCodeFallback contents={contents} />}
+    <CodeViewBoundary contents={contents} bare={bareFallback}>
+      {!ready && <PlainCodeFallback contents={contents} bare={bareFallback} />}
       <div style={ready ? undefined : { visibility: "hidden" }}>
         <View
           items={items}
@@ -567,10 +593,12 @@ function FenceDiff({
   filename,
   before,
   after,
+  bareFallback = false,
 }: {
   filename: string;
   before: string;
   after: string;
+  bareFallback?: boolean;
 }) {
   const syntaxTheme = useSyntaxTheme();
   const options = useMemo(() => fenceDiffOptions(syntaxTheme), [syntaxTheme]);
@@ -613,11 +641,13 @@ function FenceDiff({
       handlePostRender(container);
     }
   }, []);
-  if (degraded) return <PlainCodeFallback contents={after} />;
+  if (degraded) {
+    return <PlainCodeFallback contents={after} bare={bareFallback} />;
+  }
   return (
     <div ref={containerRef}>
-      <CodeViewBoundary contents={after}>
-        {!ready && <PlainCodeFallback contents={after} />}
+      <CodeViewBoundary contents={after} bare={bareFallback}>
+        {!ready && <PlainCodeFallback contents={after} bare={bareFallback} />}
         <div style={ready ? undefined : { visibility: "hidden" }}>
           <ChunkMultiFileDiff
             oldFile={oldFile}
@@ -644,19 +674,34 @@ export function CodeDiffBlock({
   filename,
   before,
   after,
+  bareFallback = false,
 }: {
   filename: string;
   before: string;
   after: string;
+  bareFallback?: boolean;
 }) {
   // Identical sides produce zero hunks, and a hunkless diff with no file
   // header renders nothing at all — the block would vanish from the page.
   // Branching here rather than inside `FenceDiff` also keeps every hook in
   // both shapes unconditional.
   if (before === after) {
-    return <CodeBlock filename={filename} contents={after} />;
+    return (
+      <CodeBlock
+        filename={filename}
+        contents={after}
+        bareFallback={bareFallback}
+      />
+    );
   }
-  return <FenceDiff filename={filename} before={before} after={after} />;
+  return (
+    <FenceDiff
+      filename={filename}
+      before={before}
+      after={after}
+      bareFallback={bareFallback}
+    />
+  );
 }
 
 /** The CodeView item id of a patch's `index`-th file, counted across commits. */

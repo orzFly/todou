@@ -12,6 +12,7 @@ import {
   MarkdownAttachmentImage,
 } from "@/components/issue/attachment-markdown.tsx";
 import { BodyAnchor } from "@/components/shared/body-anchor.tsx";
+import { FenceFrame } from "@/components/shared/fence-frame.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
 import { MermaidBlock } from "@/components/shared/mermaid-block.tsx";
 import { PatchView } from "@/components/shared/patch-view.tsx";
@@ -22,6 +23,7 @@ import {
 } from "@/components/shared/pierre.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
+import { FENCE_COLLAPSE_LINES, fenceTitle } from "@/lib/fence-meta.ts";
 import { MARKDOWN_SYNTAX_PLUGINS } from "@/lib/markdown-processor.ts";
 import { rehypeDetails } from "@/lib/rehype-details.ts";
 import {
@@ -50,6 +52,7 @@ type HastNode = {
   value?: string;
   properties?: { className?: unknown; src?: unknown };
   children?: HastNode[];
+  data?: { meta?: unknown };
 };
 
 /**
@@ -72,11 +75,13 @@ function isEmbedImgNode(child: HastNode): boolean {
 }
 
 /**
- * Pull the code text and fence tag out of a <pre> element's hast node.
- * Returns null for shapes that aren't a plain fenced block, which then
- * keep the default <pre> rendering.
+ * Pull the code text, fence tag and the info string after the tag out of a
+ * <pre> element's hast node. Returns null for shapes that aren't a plain
+ * fenced block, which then keep the default <pre> rendering.
  */
-function parseFence(node: unknown): { text: string; tag?: string } | null {
+function parseFence(
+  node: unknown,
+): { text: string; tag?: string; meta?: string } | null {
   const pre = node as HastNode | undefined;
   const code = pre?.children?.find(
     (child) => child.type === "element" && child.tagName === "code",
@@ -94,19 +99,26 @@ function parseFence(node: unknown): { text: string; tag?: string } | null {
     .filter((child) => child.type === "text")
     .map((child) => child.value ?? "")
     .join("");
+  const meta = code.data?.meta;
   // Fenced blocks always carry a trailing newline; CodeView would show it
   // as an empty last line.
-  return { text: text.replace(/\n$/, ""), tag };
+  return {
+    text: text.replace(/\n$/, ""),
+    tag,
+    meta: typeof meta === "string" ? meta : undefined,
+  };
 }
 
 function MarkdownPre({
   node,
   children,
   fenceBaselines,
+  collapseLongFences,
   ...props
 }: ComponentProps<"pre"> & {
   node?: unknown;
   fenceBaselines?: Map<number, string>;
+  collapseLongFences: boolean;
 }) {
   const fence = parseFence(node);
   if (fence === null) return <pre {...props}>{children}</pre>;
@@ -125,15 +137,54 @@ function MarkdownPre({
   // language compiles that grammar, 520 ms for TypeScript at 4× CPU
   // throttling, in the middle of the page's first load.
   const tag = fence.tag?.toLowerCase();
+  const title = fenceTitle(fence.meta);
+  const collapsible =
+    collapseLongFences && fence.text.split("\n").length > FENCE_COLLAPSE_LINES;
+  // A diagram and a patch draw their own frames: each has controls of its
+  // own to put in it.
   const block =
     baseline !== undefined ? (
-      <CodeDiffBlock filename={filename} before={baseline} after={fence.text} />
+      <FenceFrame
+        text={fence.text}
+        lang={fence.tag}
+        title={title}
+        collapsible={collapsible}
+      >
+        <CodeDiffBlock
+          filename={filename}
+          before={baseline}
+          after={fence.text}
+          bareFallback
+        />
+      </FenceFrame>
     ) : tag === "mermaid" ? (
-      <MermaidBlock filename={filename} source={fence.text} />
+      <MermaidBlock
+        filename={filename}
+        source={fence.text}
+        title={title}
+        collapsible={collapsible}
+      />
     ) : tag === "diff" || tag === "patch" ? (
-      <PatchView filename={filename} text={fence.text} />
+      <PatchView
+        filename={filename}
+        text={fence.text}
+        title={title}
+        lang={fence.tag}
+      />
     ) : (
-      <CodeBlock filename={filename} contents={fence.text} offThread />
+      <FenceFrame
+        text={fence.text}
+        lang={fence.tag}
+        title={title}
+        collapsible={collapsible}
+      >
+        <CodeBlock
+          filename={filename}
+          contents={fence.text}
+          offThread
+          bareFallback
+        />
+      </FenceFrame>
     );
   const wrapperProps =
     loc === null
@@ -208,6 +259,12 @@ type MarkdownViewProps = {
    * the two versions instead of as its own contents.
    */
   fenceBaselines?: Map<number, string>;
+  /**
+   * Cap a long code block to scroll inside its frame (default). The spec
+   * document turns it off: a review reads every line, and an annotation on
+   * a line scrolled out of the frame could be neither seen nor selected.
+   */
+  collapseLongFences?: boolean;
 };
 
 export type MarkdownRemarkPlugins = NonNullable<
@@ -279,6 +336,7 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
   embedded = false,
   rehypePlugins,
   fenceBaselines,
+  collapseLongFences = true,
   remarkPlugins,
 }: MarkdownViewProps & { remarkPlugins: MarkdownRemarkPlugins }) {
   const rootRef = useRefChipFlow();
@@ -292,7 +350,11 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
   const components: ComponentProps<typeof Markdown>["components"] = useMemo(
     () => ({
       pre: (props) => (
-        <MarkdownPre {...props} fenceBaselines={fenceBaselines} />
+        <MarkdownPre
+          {...props}
+          fenceBaselines={fenceBaselines}
+          collapseLongFences={collapseLongFences}
+        />
       ),
       ...(slug === undefined
         ? {
@@ -396,7 +458,7 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
             },
           }),
     }),
-    [fenceBaselines, slug, issueNumber, embedded],
+    [fenceBaselines, collapseLongFences, slug, issueNumber, embedded],
   );
 
   // `rehypeDetails` goes first so that every later pass — the caller's stamp,

@@ -281,4 +281,22 @@ describe("CodeBlock highlighting failures", () => {
     expect(deepText(document.body)).not.toContain("chunk boom");
     expect(warn).toHaveBeenCalled();
   });
+
+  it.each(["paints-error", "throws"] as const)(
+    "keeps a framed fence's plain text boxless when it degrades (%s)",
+    async (mode) => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      mock.mode = mode;
+      const { container } = render(
+        <CodeBlock filename="snippet.ts" contents={TS_SNIPPET} bareFallback />,
+      );
+      await waitFor(() => {
+        expect(screen.queryByTestId("code-view")).toBeNull();
+      });
+      const pre = container.querySelector("pre");
+      expect(pre?.textContent).toBe(TS_SNIPPET);
+      expect(pre?.className).not.toContain("bg-muted");
+    },
+  );
 });

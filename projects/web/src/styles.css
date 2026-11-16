@@ -1221,6 +1221,85 @@ html[data-header-settling] [data-header-follow] {
     height: auto;
   }
 
+  /* A code block's toolbar (T-706) shows on hover or once focus is inside,
+     so Tab to Copy brings it up. Touch has no hover, so there it stays. */
+  .fence-tools {
+    opacity: 0;
+    transition: opacity 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .fence-frame:hover .fence-tools,
+  .fence-frame:focus-within .fence-tools,
+  .fence-tools[data-always] {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .fence-tools {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fence-tools {
+      transition: none;
+    }
+  }
+  /* A header's filename underlines on hover only, like DocumentCard's. */
+  .markdown-body a.fence-title-link {
+    text-decoration: none;
+  }
+  /* 20 lines of pierre's 20px plus its 8px above and below; half the screen
+     where that is shorter. */
+  .fence-scroll {
+    overflow: auto;
+    overscroll-behavior: auto;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 25%, transparent)
+      transparent;
+  }
+  .fence-scroll:not([data-expanded]) {
+    max-height: min(calc(20 * 20px + 16px), 50vh);
+  }
+  .fence-scroll:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+  /* Plain text standing in for a framed snippet until pierre draws it, set
+     exactly where pierre will put the same lines: its 8px layout margin plus
+     its own 8px above and below, 1ch either side, and its font stack — not
+     ours, which resolves to a different face and would shift every glyph.
+     Spelled to outrank `.markdown-body pre`, which it sits inside. */
+  pre.code-fallback-bare,
+  .markdown-body pre.code-fallback-bare {
+    margin: 0;
+    border-radius: 0;
+    background-color: transparent;
+    padding: 16px 1ch;
+    font-family: var(
+      --diffs-font-family,
+      "SF Mono",
+      Monaco,
+      Consolas,
+      "Ubuntu Mono",
+      "Liberation Mono",
+      "Courier New",
+      monospace
+    );
+    font-size: 13px;
+    line-height: 20px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .markdown-body pre.code-fallback-bare code {
+    font: inherit;
+  }
+  @media print {
+    .fence-scroll:not([data-expanded]) {
+      max-height: none;
+    }
+    .fence-tools {
+      display: none;
+    }
+  }
+
   /* Timeline permalink target (T-38): a short flash that fades out. */
   .anchor-flash {
     animation: anchor-flash 2s ease-out both;

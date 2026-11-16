@@ -1029,6 +1029,7 @@ export const AnnotatedMarkdown = memo(function AnnotatedMarkdown({
         issueNumber={issueNumber}
         rehypePlugins={rehypePlugins}
         fenceBaselines={fenceBaselines}
+        collapseLongFences={false}
         remarkPlugins={remarkPlugins}
       >
         {body}

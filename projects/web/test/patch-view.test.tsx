@@ -276,6 +276,46 @@ describe("```diff fences (T-528)", () => {
     expect(diffs()).toEqual([]);
     expect(screen.queryByText(/Not a valid patch/)).toBeNull();
   });
+
+  it("copies from the frame it draws, and not from a card's title bar (T-706)", async () => {
+    const view = renderWithProviders(
+      <MarkdownView>{`\`\`\`diff\n${TWO_FILES}\`\`\`\n`}</MarkdownView>,
+    );
+    await waitFor(() => expect(diffs()).toEqual(["src/a.ts", "src/b.ts"]));
+    expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
+    view.unmount();
+
+    renderWithProviders(
+      <DocumentCard filename="x.patch" text={TWO_FILES} render="patch" />,
+    );
+    await waitFor(() => expect(diffs()).toEqual(["src/a.ts", "src/b.ts"]));
+    expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+  });
+
+  it("names a titled patch fence with a download of it (T-706)", async () => {
+    renderWithProviders(
+      <MarkdownView>{`\`\`\`diff fix.patch\n${TWO_FILES}\`\`\`\n`}</MarkdownView>,
+    );
+    await waitFor(() => expect(diffs()).toEqual(["src/a.ts", "src/b.ts"]));
+    const link = document.querySelector('a[download="fix.patch"]');
+    expect(link?.textContent).toBe("fix.patch");
+    expect(screen.queryByText("patch")).toBeNull();
+  });
+
+  it("frames a fence that is not a patch, with Copy (T-706)", async () => {
+    renderWithProviders(
+      <MarkdownView>{"```patch\n-old\n+new\n```\n"}</MarkdownView>,
+    );
+    await waitFor(() =>
+      expect(document.querySelector("[data-file]")).not.toBeNull(),
+    );
+    const frame = document.querySelector(".fence-frame");
+    expect(frame?.querySelector("[data-file]")).not.toBeNull();
+    expect(frame?.querySelector(".fence-tools")?.textContent).toContain(
+      "patch",
+    );
+    expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
+  });
 });
 
 describe("PatchView large files (T-582)", () => {

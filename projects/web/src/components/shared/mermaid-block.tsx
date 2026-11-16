@@ -5,6 +5,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { FenceFrame } from "@/components/shared/fence-frame.tsx";
 import { CodeBlock } from "@/components/shared/pierre.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -75,9 +76,15 @@ function readPalette(el: Element): DiagramPalette {
 export function MermaidBlock({
   filename,
   source,
+  title,
+  collapsible = false,
 }: {
   filename: string;
   source: string;
+  /** The fence's filename; see `FenceFrame`. */
+  title?: string;
+  /** Caps the source, never the drawn diagram. */
+  collapsible?: boolean;
 }) {
   const theme = useSyncExternalStore(subscribeTheme, themeSnapshot);
   const probe = useRef<HTMLDivElement>(null);
@@ -104,43 +111,53 @@ export function MermaidBlock({
   }, [source, theme]);
 
   const diagram = result?.ok === true ? result : null;
+  const drawn = diagram !== null && !showSource;
   return (
-    // The toggle sits in a strip of its own: over the diagram it would cover
-    // whichever node lands in the corner.
-    <div ref={probe} className={diagram === null ? undefined : "relative pt-7"}>
-      {diagram !== null && !showSource ? (
-        <div
-          className="mermaid-diagram overflow-x-auto"
-          style={{ "--diagram-width": `${diagram.width}px` } as CSSProperties}
-          // mermaid's own output under securityLevel "strict", which runs
-          // labels through DOMPurify: markup survives, scripts and handlers
-          // do not.
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by mermaid, see above
-          dangerouslySetInnerHTML={{ __html: diagram.svg }}
-        />
-      ) : (
-        <CodeBlock filename={filename} contents={source} />
-      )}
-      {result?.ok === false && (
-        <p
-          className="mt-1 truncate text-destructive text-xs"
-          title={result.error}
-        >
-          {errorSummary(result.error)}
-        </p>
-      )}
-      {diagram !== null && (
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          className="absolute top-0 right-0"
-          aria-pressed={showSource}
-          onClick={() => setShowSource((shown) => !shown)}
-        >
-          {showSource ? "Diagram" : "Source"}
-        </Button>
-      )}
+    <div ref={probe}>
+      <FenceFrame
+        text={source}
+        title={title}
+        collapsible={collapsible && !drawn}
+        // The toggle is the reader's only way to the source, so it is never
+        // hidden behind a hover.
+        toolbarAlwaysVisible={diagram !== null}
+        actions={
+          diagram !== null && (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              className="font-normal text-muted-foreground"
+              aria-pressed={showSource}
+              onClick={() => setShowSource((shown) => !shown)}
+            >
+              {showSource ? "Diagram" : "Source"}
+            </Button>
+          )
+        }
+      >
+        {drawn ? (
+          <div
+            className="mermaid-diagram overflow-x-auto p-4"
+            style={{ "--diagram-width": `${diagram.width}px` } as CSSProperties}
+            // mermaid's own output under securityLevel "strict", which runs
+            // labels through DOMPurify: markup survives, scripts and handlers
+            // do not.
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by mermaid, see above
+            dangerouslySetInnerHTML={{ __html: diagram.svg }}
+          />
+        ) : (
+          <CodeBlock filename={filename} contents={source} bareFallback />
+        )}
+        {result?.ok === false && (
+          <p
+            className="truncate border-t px-3 py-1 text-destructive text-xs"
+            title={result.error}
+          >
+            {errorSummary(result.error)}
+          </p>
+        )}
+      </FenceFrame>
     </div>
   );
 }

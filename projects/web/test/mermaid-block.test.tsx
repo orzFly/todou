@@ -1,4 +1,10 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
@@ -110,6 +116,30 @@ describe("mermaid fences (T-523)", () => {
     expect(screen.getByTestId("code").textContent).toContain("游戏连接或回放");
     expect(container.querySelector(".mermaid-diagram")).toBeNull();
     expect(screen.queryByRole("button", { name: "Source" })).toBeNull();
+  });
+
+  it("keeps its toolbar up once drawn, and copies the source (T-706)", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    try {
+      render.next = { ok: true, svg: SVG, width: 1360 };
+      const container = await mount(FENCE);
+      await waitFor(() => {
+        expect(container.querySelector(".mermaid-diagram svg")).not.toBeNull();
+      });
+      const tools = container.querySelector(".fence-tools");
+      expect(tools?.hasAttribute("data-always")).toBe(true);
+      expect(
+        within(tools as HTMLElement).getByRole("button", { name: "Source" }),
+      ).toBeTruthy();
+      expect(container.querySelectorAll(".fence-frame")).toHaveLength(1);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+      });
+      expect(writeText).toHaveBeenCalledWith(DIAGRAM);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("shows the source while the renderer is still loading", async () => {

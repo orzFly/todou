@@ -13,6 +13,11 @@ import {
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  CopyButton,
+  FenceFrame,
+  FenceTitleLink,
+} from "@/components/shared/fence-frame.tsx";
+import {
   CodeBlock,
   PATCH_HEADER_HEIGHT,
   PatchFiles,
@@ -252,6 +257,8 @@ export function PatchView({
   invalidNote = false,
   clipped = false,
   toolbar,
+  title,
+  lang,
 }: {
   /** Names the raw view's highlighting. */
   filename: string;
@@ -274,6 +281,10 @@ export function PatchView({
    * mounted. Omitted, the patch draws a title bar of its own.
    */
   toolbar?: HTMLElement | null;
+  /** A fence's filename, downloadable from the title bar this draws. */
+  title?: string;
+  /** A fence's tag, shown while its text is not drawn as a patch. */
+  lang?: string;
 }) {
   const [parsed, setParsed] = useState<Parsed>({ kind: "pending" });
   const [raw, setRaw] = useState(false);
@@ -352,8 +363,29 @@ export function PatchView({
     return rows;
   }, [drawn, collapsed]);
 
-  if (parsed.kind === "pending") return <PlainCodeFallback contents={text} />;
+  // A fence that is not (yet) a drawn patch is still a code block, framed as
+  // every other one is.
+  // With no title bar to borrow, text not (yet) drawn as a patch is still a
+  // code block, and framed as every other one is.
+  const framed = toolbar === undefined;
+  if (parsed.kind === "pending") {
+    return framed ? (
+      <FenceFrame text={text} lang={lang} title={title}>
+        <PlainCodeFallback contents={text} bare />
+      </FenceFrame>
+    ) : (
+      <PlainCodeFallback contents={text} />
+    );
+  }
   if (patches === null || drawn === null) {
+    const code = (
+      <CodeBlock
+        filename={filename}
+        contents={text}
+        lineNumbers={lineNumbers}
+        bareFallback={framed}
+      />
+    );
     return (
       <>
         {parsed.kind === "invalid" && invalidNote && (
@@ -361,11 +393,13 @@ export function PatchView({
             Not a valid patch — showing the text.
           </p>
         )}
-        <CodeBlock
-          filename={filename}
-          contents={text}
-          lineNumbers={lineNumbers}
-        />
+        {framed ? (
+          <FenceFrame text={text} lang={lang} title={title}>
+            {code}
+          </FenceFrame>
+        ) : (
+          code
+        )}
       </>
     );
   }
@@ -433,10 +467,17 @@ export function PatchView({
   return (
     <div className="overflow-hidden rounded-lg border">
       <div className="flex items-center gap-2 border-b bg-muted/40 py-1 pr-1.5 pl-3 text-xs text-muted-foreground">
-        <FileDiffIcon className="size-3.5" />
-        <span>patch</span>
+        {title !== undefined ? (
+          <FenceTitleLink title={title} text={text} />
+        ) : (
+          <>
+            <FileDiffIcon className="size-3.5" />
+            <span>patch</span>
+          </>
+        )}
         <span className="ml-auto" />
         {controls}
+        <CopyButton text={text} />
       </div>
       <div className="p-2">{body}</div>
     </div>
