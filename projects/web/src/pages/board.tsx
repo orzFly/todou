@@ -354,11 +354,14 @@ const BoardColumn = memo(function BoardColumn({
       </div>
       {/* The overlay scrollbars are absolutely positioned against this box, so
           it has to be `relative` and it has to hug the scroll container: given
-          the whole column instead, the bar is drawn over the header row too. */}
+          the whole column instead, the bar is drawn over the header row too.
+          The native bar is hidden from the start rather than once the overlay
+          arrives, which is an idle callback later: on a platform whose bars
+          take room, the cards would otherwise narrow and widen again. */}
       <div ref={slot} className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={viewport}
-          className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2"
+          className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 [scrollbar-width:none]"
         >
           {column.isPending && <Skeleton className="h-20 w-full" />}
           {column.data?.items.map((issue) => (

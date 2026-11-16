@@ -180,8 +180,9 @@ describe("the board columns' overlay scrollbars", () => {
     const viewport = viewportOf(container, "Next");
     const slot = viewport.parentElement as HTMLElement;
     // Inside the scroll container the bars are positioned against the
-    // scrolled box and slide out of view with the content.
-    expect(directChildScrollbars(slot)).toBe(2);
+    // scrolled box and slide out of view with the content. Waited for,
+    // because the instance is created a task after the cards (T-691).
+    await waitFor(() => expect(directChildScrollbars(slot)).toBe(2));
     expect(directChildScrollbars(viewport)).toBe(0);
   });
 
@@ -190,7 +191,7 @@ describe("the board columns' overlay scrollbars", () => {
     await screen.findByText("first");
 
     const viewport = viewportOf(container, "Next");
-    expect(OverlayScrollbars(viewport)).toBeDefined();
+    await waitFor(() => expect(OverlayScrollbars(viewport)).toBeDefined());
 
     client.setQueryData(statusesQuery("p").queryKey, [STATUSES[0]]);
     await waitFor(() => {

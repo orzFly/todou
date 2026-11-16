@@ -65,12 +65,17 @@ export function FallbackGlyph({
       if (room === 0 || width === 0) return;
       if (width > room) group.style.transform = `scale(${room / width})`;
     };
-    measure();
     // The ratio holds at every size, since the text is sized in the box's
     // units; what changes it is a box that had no size when this first ran.
     const resize =
       typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
     if (box.current) resize?.observe(box.current);
+    // The observer's first report is the first measurement: it arrives after
+    // the browser's own layout and before paint. Measured here as well, the
+    // first avatar of every commit forced a layout of the whole page, which
+    // on a board of cards is most of a commit (T-691). Without an observer
+    // there is no later chance.
+    if (resize === null) measure();
     // A measurement taken in the fallback face is wrong once Geist arrives.
     document.fonts?.addEventListener("loadingdone", measure);
     return () => {
