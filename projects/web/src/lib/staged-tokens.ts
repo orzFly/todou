@@ -554,6 +554,10 @@ export function stagedTokenDeletions(
  * Point each resolved key's placeholders at its upload. Link text that
  * still reads as the name the file was staged under becomes the name the
  * server settled on (T-269); text the reader rewrote stays as written.
+ *
+ * The spaces a unit carries exist only to keep the caret off the chip, so
+ * one that would sit beside other whitespace or at an edge is dropped
+ * rather than stored in the body.
  */
 export function resolveStagedTokens(
   text: string,
@@ -570,14 +574,20 @@ export function resolveStagedTokens(
     const label = text.slice(range.labelFrom, range.labelTo);
     const urlFrom = text.indexOf(`staged:${range.key}`, range.labelTo);
     const urlTo = urlFrom + `staged:${range.key}`.length;
+    out += text.slice(last, range.unitFrom);
+    if (range.unitFrom < range.from && !/^$|\s$/.test(out)) out += " ";
     out +=
-      text.slice(last, range.labelFrom) +
+      text.slice(range.from, range.labelFrom) +
       (label === escapeLinkText(target.insertedName)
         ? escapeLinkText(target.filename)
         : label) +
       text.slice(range.labelTo, urlFrom) +
-      target.url;
-    last = urlTo;
+      target.url +
+      text.slice(urlTo, range.to);
+    if (range.unitTo > range.to && /\S/.test(text[range.unitTo] ?? "")) {
+      out += " ";
+    }
+    last = range.unitTo;
   }
   return out + text.slice(last);
 }

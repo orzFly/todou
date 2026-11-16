@@ -118,7 +118,7 @@ describe("staging a file names it once (T-269)", () => {
       sent = await mounted.hook().resolve(mounted.text(), "p", 1);
     });
 
-    expect(sent).toBe(` [shot-813.png](${settled.url}) `);
+    expect(sent).toBe(`[shot-813.png](${settled.url})`);
     expect(screen.getByTitle("shot-813.png")).toBeTruthy();
     expect(screen.queryByTitle("shot.png")).toBeNull();
   });
@@ -314,7 +314,7 @@ describe("the text is the record of what is staged", () => {
 
     expect(upload).toHaveBeenCalledOnce();
     expect(upload.mock.calls[0]?.[2]?.name).toBe("kept.png");
-    expect(sent).toBe(`x ![kept.png](${stored(813, "kept.png").url})  y`);
+    expect(sent).toBe(`x ![kept.png](${stored(813, "kept.png").url}) y`);
   });
 
   it("leaves a staged: link it does not know as text", async () => {
@@ -398,7 +398,7 @@ describe("one file placed in several spots", () => {
     });
     const marker = `![shot.png](${stored(813, "shot.png").url})`;
     expect(upload).toHaveBeenCalledOnce();
-    expect(sent).toBe(` ${marker} \n\nagain ${marker} `);
+    expect(sent).toBe(`${marker}\n\nagain ${marker}`);
   });
 });
 

@@ -265,6 +265,19 @@ describe("resolveStagedTokens", () => {
     ).toBe(`![a\\[2\\].png](${url})`);
   });
 
+  it("drops a unit's space beside whitespace or an edge", () => {
+    const link = `![shot-813.png](${url})`;
+    expect(resolveStagedTokens(` ${T1} `, resolved)).toBe(link);
+    expect(resolveStagedTokens(`a  ${T1}  b`, resolved)).toBe(`a ${link} b`);
+    expect(resolveStagedTokens(`a\n ${T1} \nb`, resolved)).toBe(
+      `a\n${link}\nb`,
+    );
+    expect(resolveStagedTokens(`a ${T1} ${T1} b`, resolved)).toBe(
+      `a ${link} ${link} b`,
+    );
+    expect(resolveStagedTokens(`看 ${T1} 这`, resolved)).toBe(`看 ${link} 这`);
+  });
+
   it("leaves keys it was not given, and code, alone", () => {
     expect(resolveStagedTokens(`${T2} \`${T1}\``, resolved)).toBe(
       `${T2} \`${T1}\``,
