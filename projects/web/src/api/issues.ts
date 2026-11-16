@@ -1,4 +1,5 @@
 import {
+  type QueryClient,
   queryOptions,
   useMutation,
   useQueryClient,
@@ -417,79 +418,195 @@ export function useIssueStatusMutation() {
         status_id: vars.status.id,
       }),
     onMutate: async (vars) => {
-      await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
-      const snapshots = queryClient.getQueriesData<IssueListPage | IssueCounts>(
-        { queryKey: ["issues", vars.slug] },
-      );
-      // The pre-move row, from whichever page holds it: its old status
-      // drives the counts patch and the source-group removal below.
-      let moved: IssueListItem | undefined;
-      for (const [, data] of snapshots) {
-        if (data && "items" in data) {
-          moved = data.items.find((i) => i.number === vars.issueNumber);
-          if (moved) break;
-        }
-      }
-      for (const [key, data] of snapshots) {
-        if (!data) continue;
-        if (!("items" in data)) {
-          // Counts page: keep the group headers and segment totals in step.
-          if (moved) {
-            queryClient.setQueryData(
-              key,
-              patchCountsMove(data, moved.status, vars.status),
-            );
-          }
-          continue;
-        }
-        const scope = statusScopeOf(key);
-        if (scope === null) {
-          // Mixed-status (flat) page: the row stays, only its pill changes.
-          queryClient.setQueryData(
-            key,
-            patchIssueStatus(data, vars.issueNumber, vars.status),
-          );
-        } else if (scope === vars.status.id && moved) {
-          // Target group/column of the move (any cached filter variant).
-          if (moved.status.id !== vars.status.id) {
-            queryClient.setQueryData(
-              key,
-              prependIssue(data, { ...moved, status: vars.status }),
-            );
-          }
-        } else if (scope !== vars.status.id) {
-          queryClient.setQueryData(key, removeIssue(data, vars.issueNumber));
-        }
-      }
-      // The inbox shows the pill too (T-561). The row stays put: whether a
-      // closed card still belongs there is the server's call on refetch.
-      await queryClient.cancelQueries({ queryKey: inboxQuery.queryKey });
-      const inbox = queryClient.getQueryData(inboxQuery.queryKey);
-      if (inbox) {
-        queryClient.setQueryData(
-          inboxQuery.queryKey,
-          patchInboxStatus(inbox, vars.slug, vars.issueNumber, vars.status),
-        );
-      }
-      return { snapshots, inbox };
+      const context = await snapshotStatusMove(queryClient, vars.slug);
+      applyStatusMove(queryClient, vars.slug, vars.issueNumber, vars.status);
+      return context;
     },
     onError: (error, _vars, context) => {
-      for (const [key, data] of context?.snapshots ?? []) {
-        queryClient.setQueryData(key, data);
-      }
-      if (context?.inbox) {
-        queryClient.setQueryData(inboxQuery.queryKey, context.inbox);
-      }
+      restoreStatusMove(queryClient, context);
       toast.error(`Could not move issue: ${error.message}`);
     },
-    onSettled: (_data, _error, vars) => {
-      queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey });
-      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
-      queryClient.invalidateQueries({
-        queryKey: ["issue", vars.slug, vars.issueNumber],
-      });
-    },
+    onSettled: (_data, _error, vars) =>
+      invalidateAfterStatusMove(queryClient, vars.slug, [vars.issueNumber]),
   });
+}
+
+/**
+ * Some cards of a bulk status move were refused. The rest went through, and
+ * `moved` names them so their rows can stay where they landed.
+ */
+export class BulkStatusError extends Error {
+  readonly moved: readonly number[];
+  readonly failures: readonly { issueNumber: number; reason: Error }[];
+
+  constructor(
+    moved: readonly number[],
+    failures: readonly { issueNumber: number; reason: Error }[],
+  ) {
+    super(
+      `Could not move ${failures.length === 1 ? "1 issue" : `${failures.length} issues`}: ${failures[0]?.reason.message ?? ""}`,
+    );
+    this.moved = moved;
+    this.failures = failures;
+  }
+}
+
+/**
+ * One status for several cards at once (T-707): the list's multi-select, and
+ * the board's next. There is no bulk endpoint: each card is its own PATCH,
+ * so each writes its own timeline event and is allowed or refused on its
+ * own, and one refusal leaves the others moved.
+ */
+export function useBulkIssueStatusMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      slug: string;
+      issueNumbers: readonly number[];
+      status: Status;
+    }) => {
+      const results = await Promise.allSettled(
+        vars.issueNumbers.map((issueNumber) =>
+          api.updateIssue(vars.slug, issueNumber, {
+            status_id: vars.status.id,
+          }),
+        ),
+      );
+      const moved: number[] = [];
+      const failures: { issueNumber: number; reason: Error }[] = [];
+      results.forEach((result, i) => {
+        const issueNumber = vars.issueNumbers[i] as number;
+        if (result.status === "fulfilled") {
+          moved.push(issueNumber);
+        } else {
+          const reason =
+            result.reason instanceof Error
+              ? result.reason
+              : new Error(String(result.reason));
+          failures.push({ issueNumber, reason });
+        }
+      });
+      if (failures.length > 0) throw new BulkStatusError(moved, failures);
+    },
+    onMutate: async (vars) => {
+      const context = await snapshotStatusMove(queryClient, vars.slug);
+      for (const issueNumber of vars.issueNumbers) {
+        applyStatusMove(queryClient, vars.slug, issueNumber, vars.status);
+      }
+      return context;
+    },
+    onError: (error, vars, context) => {
+      // Back to before the click, then forward again for the cards the server
+      // took: rolling them back too would show them in their old place until
+      // the refetch lands, and then jump.
+      restoreStatusMove(queryClient, context);
+      if (error instanceof BulkStatusError) {
+        for (const issueNumber of error.moved) {
+          applyStatusMove(queryClient, vars.slug, issueNumber, vars.status);
+        }
+      }
+      toast.error(error.message);
+    },
+    onSettled: (_data, _error, vars) =>
+      invalidateAfterStatusMove(queryClient, vars.slug, vars.issueNumbers),
+  });
+}
+
+async function snapshotStatusMove(queryClient: QueryClient, slug: string) {
+  await queryClient.cancelQueries({ queryKey: ["issues", slug] });
+  await queryClient.cancelQueries({ queryKey: inboxQuery.queryKey });
+  return {
+    snapshots: queryClient.getQueriesData<IssueListPage | IssueCounts>({
+      queryKey: ["issues", slug],
+    }),
+    inbox: queryClient.getQueryData(inboxQuery.queryKey),
+  };
+}
+
+function restoreStatusMove(
+  queryClient: QueryClient,
+  context: Awaited<ReturnType<typeof snapshotStatusMove>> | undefined,
+) {
+  for (const [key, data] of context?.snapshots ?? []) {
+    queryClient.setQueryData(key, data);
+  }
+  if (context?.inbox) {
+    queryClient.setQueryData(inboxQuery.queryKey, context.inbox);
+  }
+}
+
+/**
+ * One optimistic move, written into the cache as it stands now rather than
+ * into a snapshot, so a bulk move can apply it card after card and each
+ * application sees the last.
+ */
+function applyStatusMove(
+  queryClient: QueryClient,
+  slug: string,
+  issueNumber: number,
+  status: Status,
+) {
+  const entries = queryClient.getQueriesData<IssueListPage | IssueCounts>({
+    queryKey: ["issues", slug],
+  });
+  // The pre-move row, from whichever page holds it: its old status
+  // drives the counts patch and the source-group removal below.
+  let moved: IssueListItem | undefined;
+  for (const [, data] of entries) {
+    if (data && "items" in data) {
+      moved = data.items.find((i) => i.number === issueNumber);
+      if (moved) break;
+    }
+  }
+  for (const [key, data] of entries) {
+    if (!data) continue;
+    if (!("items" in data)) {
+      // Counts page: keep the group headers and segment totals in step.
+      if (moved) {
+        queryClient.setQueryData(
+          key,
+          patchCountsMove(data, moved.status, status),
+        );
+      }
+      continue;
+    }
+    const scope = statusScopeOf(key);
+    if (scope === null) {
+      // Mixed-status (flat) page: the row stays, only its pill changes.
+      queryClient.setQueryData(
+        key,
+        patchIssueStatus(data, issueNumber, status),
+      );
+    } else if (scope === status.id && moved) {
+      // Target group/column of the move (any cached filter variant).
+      if (moved.status.id !== status.id) {
+        queryClient.setQueryData(key, prependIssue(data, { ...moved, status }));
+      }
+    } else if (scope !== status.id) {
+      queryClient.setQueryData(key, removeIssue(data, issueNumber));
+    }
+  }
+  // The inbox shows the pill too (T-561). The row stays put: whether a
+  // closed card still belongs there is the server's call on refetch.
+  const inbox = queryClient.getQueryData(inboxQuery.queryKey);
+  if (inbox) {
+    queryClient.setQueryData(
+      inboxQuery.queryKey,
+      patchInboxStatus(inbox, slug, issueNumber, status),
+    );
+  }
+}
+
+function invalidateAfterStatusMove(
+  queryClient: QueryClient,
+  slug: string,
+  issueNumbers: readonly number[],
+) {
+  queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey });
+  queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+  for (const issueNumber of issueNumbers) {
+    queryClient.invalidateQueries({ queryKey: ["issue", slug, issueNumber] });
+  }
 }
 
 /**

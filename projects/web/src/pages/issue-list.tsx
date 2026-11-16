@@ -19,11 +19,13 @@ import type {
   Status,
   Watcher,
 } from "@todou/shared";
-import { ArrowLeftIcon, Trash2Icon } from "lucide-react";
+import { ArrowLeftIcon, Trash2Icon, XIcon } from "lucide-react";
 import {
+  createContext,
   memo,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -58,6 +60,7 @@ import {
   useCanIfLoaded,
   useIsProjectAdmin,
 } from "@/api/queries.ts";
+import { BulkStatusMenu } from "@/components/issue/bulk-status-menu.tsx";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import {
   ISSUE_LIST_ROW,
@@ -91,12 +94,14 @@ import {
   useRegisterReturnLane,
 } from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
 import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
 import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
+import { type Selection, useSelection } from "@/lib/use-selection.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -289,6 +294,48 @@ export function ProjectIssueListPage({
   const grouped =
     effectiveCategory(search) === "open" && effectiveGroup(search) === "status";
 
+  // The rows each list has on screen, by lane, for the selection to run
+  // across: select-all and a shift-click range cross group boundaries.
+  const [shownByLane, setShownByLane] = useState<
+    ReadonlyMap<string, readonly IssueListItem[]>
+  >(() => new Map());
+  const reportShown = useCallback(
+    (lane: string, items: readonly IssueListItem[] | null) =>
+      setShownByLane((current) => {
+        if ((current.get(lane) ?? null) === items) return current;
+        const next = new Map(current);
+        if (items === null) next.delete(lane);
+        else next.set(lane, items);
+        return next;
+      }),
+    [],
+  );
+  // Joined in screen order, which is the groups' order and not the order
+  // their answers happened to arrive in.
+  const laneOrder = (
+    !grouped
+      ? ["flat"]
+      : counts.data === undefined
+        ? []
+        : groupStatuses(
+            statuses.data,
+            counts.data,
+            csvToIds(search.status),
+          ).map((status) => `status:${status.id}`)
+  ).join(" ");
+  const shownNumbers = useMemo(
+    () =>
+      laneOrder
+        .split(" ")
+        .flatMap((lane) => shownByLane.get(lane) ?? [])
+        .map((issue) => issue.number),
+    [laneOrder, shownByLane],
+  );
+  const selection = useSelection(shownNumbers);
+  // The server refuses a status change below `issue.triage`, and status is
+  // the only thing a selection does here yet.
+  const canSelect = useCanIfLoaded(slug, "issue.triage");
+
   // Nothing upstream catches a failed counts read any more, so it is handled
   // where a failed group already is: inside the list area, with the header
   // and the toolbar left standing.
@@ -336,7 +383,17 @@ export function ProjectIssueListPage({
             Below `sm` the actions have about 35px to spare at 390px, so the
             chip takes a line of its own above them. */}
         <div className="flex w-full flex-wrap items-center gap-2">
-          <ProjectWatchersChip slug={slug} className="max-sm:basis-full" />
+          {canSelect && shownNumbers.length > 0 && (
+            <IssueSelectionBar
+              slug={slug}
+              statuses={statuses.data}
+              selection={selection}
+            />
+          )}
+          <ProjectWatchersChip
+            slug={slug}
+            className="max-sm:order-first max-sm:basis-full"
+          />
           <MarkAllReadButton
             slug={slug}
             scopeName="this project"
@@ -367,28 +424,32 @@ export function ProjectIssueListPage({
           failure T-381 was — the whole page painted out, the focus in the
           search box going with it. */}
       <Suspense fallback={<IssueListBodySkeleton />}>
-        {grouped ? (
-          <GroupedIssueList
-            slug={slug}
-            statuses={statuses.data}
-            counts={counts.data}
-            allLabels={labels.data}
-            search={search}
-            typed={typed}
-            onCreateLabel={canCreateLabels ? createLabel : undefined}
-            onReady={setBodyReady}
-          />
-        ) : (
-          <FlatIssueList
-            slug={slug}
-            statuses={statuses.data}
-            allLabels={labels.data}
-            search={search}
-            typed={typed}
-            onCreateLabel={canCreateLabels ? createLabel : undefined}
-            onReady={setBodyReady}
-          />
-        )}
+        <ReportShownContext.Provider value={canSelect ? reportShown : null}>
+          <SelectionContext.Provider value={canSelect ? selection : null}>
+            {grouped ? (
+              <GroupedIssueList
+                slug={slug}
+                statuses={statuses.data}
+                counts={counts.data}
+                allLabels={labels.data}
+                search={search}
+                typed={typed}
+                onCreateLabel={canCreateLabels ? createLabel : undefined}
+                onReady={setBodyReady}
+              />
+            ) : (
+              <FlatIssueList
+                slug={slug}
+                statuses={statuses.data}
+                allLabels={labels.data}
+                search={search}
+                typed={typed}
+                onCreateLabel={canCreateLabels ? createLabel : undefined}
+                onReady={setBodyReady}
+              />
+            )}
+          </SelectionContext.Provider>
+        </ReportShownContext.Provider>
       </Suspense>
     </div>
   );
@@ -487,6 +548,75 @@ export function TrashView({
             />
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * How a list hands the page the rows it shows, keyed by the same lane name
+ * the return driver uses. Null where the reader cannot select, which is also
+ * how a list knows to leave out the checkbox track.
+ */
+const ReportShownContext = createContext<
+  ((lane: string, items: readonly IssueListItem[] | null) => void) | null
+>(null);
+
+const SelectionContext = createContext<Selection<number> | null>(null);
+
+function useReportShown(lane: string, items: readonly IssueListItem[]) {
+  const report = useContext(ReportShownContext);
+  useEffect(() => {
+    report?.(lane, items);
+  }, [report, lane, items]);
+  // A list that leaves the screen takes its rows out of the selection.
+  useEffect(() => () => report?.(lane, null), [report, lane]);
+  return report !== null;
+}
+
+/**
+ * Select-all and what a selection can do (T-707). The box sits over the
+ * rows' own checkbox column: 1px of list border plus the rows' 14px padding.
+ */
+function IssueSelectionBar({
+  slug,
+  statuses,
+  selection,
+}: {
+  slug: string;
+  statuses: Status[];
+  selection: Selection<number>;
+}) {
+  const count = selection.selected.length;
+  return (
+    <div className="ml-[15px] flex items-center gap-2">
+      <Checkbox
+        aria-label="select all issues"
+        checked={selection.state === "all"}
+        indeterminate={selection.state === "some"}
+        onChange={selection.toggleAll}
+      />
+      {count > 0 && (
+        <>
+          <span className="text-sm text-muted-foreground tabular-nums">
+            {count} selected
+          </span>
+          <BulkStatusMenu
+            slug={slug}
+            statuses={statuses}
+            issueNumbers={selection.selected}
+            onMoved={selection.clear}
+          />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Clear selection"
+            title="Clear selection"
+            onClick={selection.clear}
+          >
+            <XIcon />
+          </Button>
+        </>
       )}
     </div>
   );
@@ -756,7 +886,6 @@ function IssueGroup({
     ...issueGroupQuery(slug, status.id, search),
     placeholderData: keepPreviousData,
   });
-  const grid = useIssueListGrid();
   const queryClient = useQueryClient();
   const cancelRestore = useCancelReturnRestore();
 
@@ -778,6 +907,8 @@ function IssueGroup({
     () => (narrowing ? narrowByTitle(items, typed) : items),
     [narrowing, items, typed],
   );
+  const selectable = useReportShown(`status:${status.id}`, shown);
+  const grid = useIssueListGrid({ select: selectable });
   const lastCursor =
     paged.pages.length === 0
       ? (group.data?.next_cursor ?? null)
@@ -958,7 +1089,6 @@ export function IssueList({
   narrowing?: boolean;
   onCreateLabel?: (name: string) => Promise<Label>;
 }) {
-  const grid = useIssueListGrid();
   const queryClient = useQueryClient();
   const cancelRestore = useCancelReturnRestore();
 
@@ -976,6 +1106,8 @@ export function IssueList({
     () => (narrowing ? narrowByTitle(items, typed) : items),
     [narrowing, items, typed],
   );
+  const selectable = useReportShown("flat", shown);
+  const grid = useIssueListGrid({ select: selectable });
   // A null next_cursor on the newest loaded page means the end was reached;
   // `??` would resurrect page 1's cursor there and Load More would re-append
   // page 2 forever.
@@ -1136,6 +1268,18 @@ export function ProjectIssueRows({
     },
     [assigneesMutate, members, slug],
   );
+  // Through a ref, so the callback keeps its identity while the selection
+  // changes under it: a click re-renders the rows it flips, not all of them.
+  const selection = useContext(SelectionContext);
+  const selectionRef = useRef(selection);
+  useEffect(() => {
+    selectionRef.current = selection;
+  });
+  const onSelect = useCallback(
+    (issue: IssueListItem, extend: boolean) =>
+      selectionRef.current?.toggle(issue.number, { extend }),
+    [],
+  );
   return items.map((issue) => (
     <ProjectIssueRow
       key={issue.id}
@@ -1149,6 +1293,8 @@ export function ProjectIssueRows({
       onToggleLabel={onToggleLabel}
       onCreateLabel={onCreateLabel}
       onToggleAssignee={canTriage ? onToggleAssignee : undefined}
+      selected={selection?.isSelected(issue.number) ?? false}
+      onSelect={selection ? onSelect : undefined}
     />
   ));
 }
@@ -1171,6 +1317,8 @@ const ProjectIssueRow = memo(function ProjectIssueRow({
   onCreateLabel,
   onToggleAssignee,
   watchers,
+  selected,
+  onSelect,
 }: {
   slug: string;
   issue: IssueListItem;
@@ -1182,11 +1330,20 @@ const ProjectIssueRow = memo(function ProjectIssueRow({
   onToggleLabel: (issue: IssueListItem, label: Label) => void;
   onCreateLabel?: (name: string) => Promise<Label>;
   onToggleAssignee?: (issue: IssueListItem, userId: number) => void;
+  selected: boolean;
+  /** Absent where the list offers no selection; the row has no checkbox. */
+  onSelect?: (issue: IssueListItem, extend: boolean) => void;
 }) {
   return (
     <IssueRow
       slug={slug}
       issue={issue}
+      select={
+        onSelect && {
+          checked: selected,
+          onToggle: (extend) => onSelect(issue, extend),
+        }
+      }
       meta={
         <IssueRowMeta
           issue={issue}

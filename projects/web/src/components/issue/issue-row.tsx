@@ -27,6 +27,7 @@ import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { groupWatchers } from "@/components/shared/watcher-stack.tsx";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 
 /**
@@ -71,16 +72,32 @@ const ISSUE_LIST_GRID_NO_MARKER_TRAILING_REF =
   "grid grid-cols-[minmax(0,1fr)] gap-x-2 px-3.5";
 
 /**
+ * The two layouts with a checkbox track ahead of the read marker, for a list
+ * the reader can select from (T-707).
+ */
+const ISSUE_LIST_GRID_SELECT =
+  "grid grid-cols-[16px_27px_max-content_minmax(0,1fr)] gap-x-2 px-3.5";
+const ISSUE_LIST_GRID_SELECT_TRAILING_REF =
+  "grid grid-cols-[16px_27px_minmax(0,1fr)] gap-x-2 px-3.5";
+
+/**
  * The column layout a list of `IssueRow`s must wear, per the viewer's
- * preference. `readMarker: false` must match the rows' own prop: the track and
- * the control are one decision, made once by the list.
+ * preference. `readMarker: false` and `select: true` must match the rows' own
+ * props: the track and the control are one decision, made once by the list.
+ * Selecting is only offered beside a read marker, which every list that
+ * selects has.
  */
 export function useIssueListGrid({
   readMarker = true,
+  select = false,
 }: {
   readMarker?: boolean;
+  select?: boolean;
 } = {}): string {
   const leads = useRefPlacement("list") === "before";
+  if (select && readMarker) {
+    return leads ? ISSUE_LIST_GRID_SELECT : ISSUE_LIST_GRID_SELECT_TRAILING_REF;
+  }
   if (!readMarker) {
     return leads
       ? ISSUE_LIST_GRID_NO_MARKER
@@ -140,6 +157,7 @@ export function IssueRow({
   badges = true,
   blocked = true,
   returnAnchor = true,
+  select,
 }: {
   slug: string;
   issue: IssueRowIssue;
@@ -167,6 +185,11 @@ export function IssueRow({
    * would offer the restorer two anchors carrying one id.
    */
   returnAnchor?: boolean;
+  /**
+   * The row's checkbox (T-707), in a track the list adds with
+   * `useIssueListGrid({ select: true })`. `extend` is a shift-click.
+   */
+  select?: { checked: boolean; onToggle: (extend: boolean) => void };
 }) {
   const refPrefix = useRefPrefix(slug);
   const refLeads = useRefPlacement("list") === "before";
@@ -181,8 +204,27 @@ export function IssueRow({
       className={cn(
         ISSUE_LIST_ROW,
         "grid grid-cols-subgrid items-center border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50",
+        select?.checked && "bg-muted/60",
       )}
     >
+      {select && (
+        // The label is the hit area: it reaches back over the row's padding
+        // to the list's edge, so the box is not a 16px target.
+        <label
+          htmlFor={`issue-select-${issue.id}`}
+          className="-my-2.5 -ml-3.5 flex cursor-pointer items-center self-stretch py-2.5 pl-3.5"
+        >
+          <Checkbox
+            id={`issue-select-${issue.id}`}
+            aria-label={`select ${ref}`}
+            checked={select.checked}
+            // onClick rather than onChange: only the click carries shiftKey,
+            // and it fires for Space as well.
+            onClick={(e) => select.onToggle(e.shiftKey)}
+            onChange={() => {}}
+          />
+        </label>
+      )}
       {/* Centering keeps the ring and the 99+ badge on one axis; the width of
           the slot is the grid's first column (the CLI's ● column). */}
       {readMarker && (
@@ -253,14 +295,19 @@ export function IssueRow({
         <div
           className={cn(
             "mt-1 flex flex-wrap items-center gap-1.5",
-            // One track earlier when the marker's column is not there.
-            readMarker
+            // One track later behind a checkbox, one earlier when the
+            // marker's column is not there.
+            select && readMarker
               ? refLeads
-                ? "col-start-3"
-                : "col-start-2"
-              : refLeads
-                ? "col-start-2"
-                : "col-start-1",
+                ? "col-start-4"
+                : "col-start-3"
+              : readMarker
+                ? refLeads
+                  ? "col-start-3"
+                  : "col-start-2"
+                : refLeads
+                  ? "col-start-2"
+                  : "col-start-1",
           )}
         >
           {meta}
