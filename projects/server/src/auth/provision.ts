@@ -26,30 +26,54 @@ export class ProvisionError extends ForbiddenError {
 }
 
 /**
- * Lowercase and validate an upstream-asserted login (oidc claim or forward
- * header). Returns null when the value cannot be a todou login — the CALLER
- * decides the status: 401 for forward (identity not establishable), a
- * claim_missing redirect for the oidc callback.
- *
- * A forward deployment without auth.forward.subject_header stores this
- * output as the durable subject, so for every value it accepts today the
- * output must never change — or those accounts stop matching. Widening
- * what it accepts (T-676) is safe only for inputs that now return null.
+ * The upstream username as an identity key: what a forward deployment
+ * without auth.forward.subject_header stores as the durable subject, and
+ * what migrate_legacy_subjects matches against. Must never change — every
+ * account keyed by it would stop matching.
  */
-export function normalizeLogin(raw: string): string | null {
-  const login = raw.trim().toLowerCase();
-  return Login.safeParse(login).success ? login : null;
+export function upstreamName(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+/**
+ * The login a JIT account starts from, for an upstream username (oidc
+ * claim or forward header). A name that is already a valid login is kept
+ * as is; anything else is folded into one — Tailscale and many IdPs send
+ * `alice@example.com` or `john.doe`, and refusing those would lock the
+ * person out (T-676). The result only seeds a new account: provisionUser
+ * suffixes it when taken, reserved or all digits, and it is never matched
+ * against existing accounts, so two names folding together is harmless.
+ * Null only for a blank name.
+ */
+export function deriveLogin(raw: string): string | null {
+  const name = upstreamName(raw);
+  if (name === "") return null;
+  if (Login.safeParse(name).success) return name;
+  // An email-shaped name is the person's handle at some domain; the domain
+  // would only make the login long and leak an address.
+  const at = name.indexOf("@");
+  const handle = at > 0 ? name.slice(0, at) : name;
+  const folded = handle
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 64)
+    .replace(/-+$/, "");
+  // Nothing foldable (a CJK-only name, say): still a person who signed in.
+  return folded === "" ? "user" : folded;
 }
 
 export type IdentityInput = {
   /**
    * IdP `sub` claim; in forward mode the subject_header value, or the
-   * normalized username when none is configured.
+   * upstreamName of the username when none is configured.
    */
   subject: string;
   /**
-   * Already normalized via normalizeLogin, which does not make it a login
-   * a new account may take as is (all digits would shadow /users/<id>).
+   * From deriveLogin, which does not make it a login a new account may
+   * take as is (taken, reserved, or all digits shadowing /users/<id>).
    */
   login: string;
   name?: string | null;
@@ -149,7 +173,8 @@ export async function provisionUser(
       : null;
   const suffix = opts.suffix ?? randomLoginSuffix;
   // JIT is the one path that skips the LoginInput rules renames obey; a
-  // suffixed login always contains "-", so starting there satisfies them.
+  // suffixed login always contains "-" and is never reserved, so starting
+  // there satisfies them.
   const first = LoginInput.safeParse(input.login).success ? 0 : 1;
 
   for (let attempt = first; attempt <= SUFFIX_ATTEMPTS; attempt++) {

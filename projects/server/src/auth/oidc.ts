@@ -12,7 +12,7 @@ import {
   oidcAdmissionPolicy,
 } from "./admission.ts";
 import { cookieSecure } from "./cookies.ts";
-import { normalizeLogin, ProvisionError, provisionUser } from "./provision.ts";
+import { deriveLogin, ProvisionError, provisionUser } from "./provision.ts";
 import { createSession, SESSION_COOKIE } from "./session.ts";
 
 /** state + PKCE verifier + resume path, alive only for the IdP round-trip. */
@@ -325,13 +325,8 @@ export async function oidcCallback(
     }
   }
   if (typeof rawLogin !== "string") return fail("claim_missing");
-  const login = normalizeLogin(rawLogin);
-  if (login === null) {
-    console.error(
-      `oidc login_claim "${loginClaim}" value ${JSON.stringify(rawLogin)} is not a usable login`,
-    );
-    return fail("claim_missing");
-  }
+  const login = deriveLogin(rawLogin);
+  if (login === null) return fail("claim_missing");
 
   // Before provisioning, so a refused identity never gets an account, and
   // on every login, so an existing account that stops qualifying stops

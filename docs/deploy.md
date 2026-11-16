@@ -644,14 +644,17 @@ origin: todou serves user-uploaded attachments on the same origin, and an
 origin-wide pattern lets an authorization code be redirected onto
 user-controlled content.
 
-Login maps the `login_claim` value to a todou login (lowercased; must be
-lowercase letters, digits, dashes). Accounts are matched by the IdP's
+Login maps the `login_claim` value to a todou login: lowercased, and a
+value that is not already letters, digits and dashes is folded into one —
+`alice@example.com` becomes `alice`, `John.Doe` becomes `john-doe`,
+accents are dropped, and a name with nothing left (all CJK, say) becomes
+`user`. Accounts are matched by the IdP's
 `sub` claim alone — an asserted username is a public, re-registrable
 name, never proof of owning an existing account, so it never matches
 one. Unknown subjects are auto-created when `auto_create` is on, with
-the username as the login; a taken login (human or machine alike), or
-one made only of digits (which `/users/<id>` would read as an id), gets
-a random `-xxxx` suffix instead.
+the username as the login; a taken login (human or machine alike), a
+reserved one (`me`, `ghost`), or one made only of digits (which
+`/users/<id>` would read as an id), gets a random `-xxxx` suffix instead.
 
 Logging out ends the todou session only; the IdP session stays, so a
 user who holds several accounts there can sign back in as another. The
@@ -896,8 +899,11 @@ belong to another reverse proxy, so it never appears in a response.
 Provisioning follows the same rules as oidc (subject keying, auto-create
 with suffixing, and [the first sign-in becomes instance
 admin](#the-first-sign-in-becomes-instance-admin) — here any request the
-proxy authenticates counts as one). Without `subject_header` the
-`user_header` value, lowercased, doubles as the stored subject, so
+proxy authenticates counts as one), and the login comes from
+`user_header` the same way — so Tailscale serve's email-shaped
+`Tailscale-User-Login` signs in fine. Without `subject_header` the
+`user_header` value, lowercased but otherwise as sent, doubles as the
+stored subject, so
 renaming a login inside todou never detaches the identity. One caveat
 comes with that: an ex-single-mode builtin account
 is tracked by the sentinel subject `builtin`, which is also a valid

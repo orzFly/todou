@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  normalizeLogin,
+  deriveLogin,
   ProvisionError,
   provisionUser,
   randomLoginSuffix,
   uniqueViolation,
+  upstreamName,
 } from "../src/auth/provision.ts";
 import { BUILTIN_SUBJECT, ensureBuiltinUser } from "../src/bootstrap.ts";
 import type { Db } from "../src/db/driver.ts";
@@ -44,15 +45,55 @@ async function rowById(id: number) {
   return rows[0];
 }
 
-describe("normalizeLogin", () => {
-  it("lowercases and validates", () => {
-    expect(normalizeLogin("Alice")).toBe("alice");
-    expect(normalizeLogin("  bob-2 ")).toBe("bob-2");
-    expect(normalizeLogin("john.doe")).toBeNull();
-    expect(normalizeLogin("")).toBeNull();
-    expect(normalizeLogin("-lead")).toBeNull();
-    // Reserved logins must never be minted by an IdP claim.
-    expect(normalizeLogin("me")).toBeNull();
+describe("deriveLogin", () => {
+  it("keeps a name that is already a login, lowercased", () => {
+    expect(deriveLogin("Alice")).toBe("alice");
+    expect(deriveLogin("  bob-2 ")).toBe("bob-2");
+    // Valid today, so folding must not touch them: they key accounts.
+    expect(deriveLogin("a--b-")).toBe("a--b-");
+  });
+
+  it("folds names a login cannot hold", () => {
+    expect(deriveLogin("john.doe")).toBe("john-doe");
+    expect(deriveLogin("John_Doe")).toBe("john-doe");
+    expect(deriveLogin("John Doe!")).toBe("john-doe");
+    expect(deriveLogin("-lead")).toBe("lead");
+    expect(deriveLogin("José")).toBe("jose");
+    expect(deriveLogin("a/b\\c")).toBe("a-b-c");
+  });
+
+  it("keeps only the handle of an email-shaped name", () => {
+    expect(deriveLogin("Alice.Smith@example.com")).toBe("alice-smith");
+    expect(deriveLogin("alice@github")).toBe("alice");
+    expect(deriveLogin("@alice")).toBe("alice");
+  });
+
+  it("caps the folded login at 64 without a trailing dash", () => {
+    const login = deriveLogin(`${"a".repeat(63)}.b.c`);
+    expect(login).toBe("a".repeat(63));
+  });
+
+  it("falls back to a placeholder when nothing survives folding", () => {
+    expect(deriveLogin("张三")).toBe("user");
+    expect(deriveLogin("@@")).toBe("user");
+  });
+
+  it("leaves reserved names for provisionUser to suffix", () => {
+    expect(deriveLogin("me")).toBe("me");
+  });
+
+  it("refuses only a blank name", () => {
+    expect(deriveLogin("")).toBeNull();
+    expect(deriveLogin("   ")).toBeNull();
+  });
+});
+
+describe("upstreamName", () => {
+  it("trims and lowercases, nothing else", () => {
+    expect(upstreamName(" Alice ")).toBe("alice");
+    expect(upstreamName("Alice.Smith@Example.com")).toBe(
+      "alice.smith@example.com",
+    );
   });
 });
 
@@ -340,6 +381,19 @@ describe("provisionUser", () => {
 
 // /users/<all-digits> resolves as an id only, so JIT must not mint a login
 // a rename would refuse (T-637).
+describe("provisionUser reserved logins", () => {
+  it("suffixes a reserved login instead of minting it", async () => {
+    for (const login of ["me", "ghost"]) {
+      const row = await provisionUser(
+        db,
+        { subject: `s-${login}`, login },
+        { autoCreate: true },
+      );
+      expect(row.login).toMatch(new RegExp(`^${login}-[a-z0-9]{4}$`));
+    }
+  });
+});
+
 describe("provisionUser all-digit logins", () => {
   it("suffixes an all-digit login even when it is free", async () => {
     const row = await provisionUser(

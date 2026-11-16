@@ -128,12 +128,10 @@ describe("forward mode", () => {
     expect((await json(res)).error.message).toContain("Remote-User");
   });
 
-  it("401s on an unusable login value", async () => {
-    const res = await me(fromPeer("127.0.0.1"), {
-      "Remote-User": "John Doe!",
-    });
+  it("401s on a blank identity header", async () => {
+    const res = await me(fromPeer("127.0.0.1"), { "Remote-User": "  " });
     expect(res.status).toBe(401);
-    expect((await json(res)).error.message).toContain("invalid login");
+    expect((await json(res)).error.message).toContain("Remote-User");
   });
 
   it("JIT-creates from the headers; first human becomes admin", async () => {
@@ -710,6 +708,44 @@ describe("forward mode with subject_header", () => {
   });
 });
 
+describe("forward mode email-shaped usernames", () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await freshForward();
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  it("signs in with a folded login, keyed by the name as sent", async () => {
+    const first = await forwardMe(t, {
+      "Remote-User": "Alice.Smith@example.com",
+    });
+    expect(first.status).toBe(200);
+    const alice = await json(first);
+    expect(alice.login).toBe("alice-smith");
+    expect((await userRow(t, alice.id))?.oidcSubject).toBe(
+      "alice.smith@example.com",
+    );
+
+    const again = await json(
+      await forwardMe(t, { "Remote-User": "alice.smith@example.com" }),
+    );
+    expect(again.id).toBe(alice.id);
+  });
+
+  it("never lets a folded name claim the account its login names", async () => {
+    const bob = await seedUser(t, { login: "bob-lee", oidcSubject: "bob-lee" });
+    const body = await json(
+      await forwardMe(t, { "Remote-User": "bob.lee@example.com" }),
+    );
+    expect(body.id).not.toBe(bob.id);
+    expect(body.login).toMatch(/^bob-lee-[a-z0-9]{4}$/);
+  });
+});
+
 describe("forward mode legacy subject migration", () => {
   let t: TestApp;
   let warned: string[];
@@ -765,6 +801,19 @@ describe("forward mode legacy subject migration", () => {
     const body = await migrate({ "Remote-User": "someone", "X-Uid": "AB-CD" });
     expect(body.id).toBe(old.id);
     expect((await userRow(t, old.id))?.oidcSubject).toBe("AB-CD");
+  });
+
+  it("re-keys an account keyed by an email-shaped username", async () => {
+    const old = await seedUser(t, {
+      login: "carol",
+      oidcSubject: "carol@example.com",
+    });
+    const body = await migrate({
+      "Remote-User": "Carol@example.com",
+      "X-Uid": "c-1",
+    });
+    expect(body.id).toBe(old.id);
+    expect((await userRow(t, old.id))?.oidcSubject).toBe("c-1");
   });
 
   it("re-keys an all-digit login without renaming it", async () => {

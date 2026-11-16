@@ -7,7 +7,7 @@ import { ForbiddenError, UnauthorizedError } from "../errors.ts";
 import { peerTrust, type RequestLike } from "../http/proxy.ts";
 import { admissionRefusal, forwardAdmissionPolicy } from "./admission.ts";
 import { type UserRow, verifyPat } from "./pat.ts";
-import { normalizeLogin, provisionUser } from "./provision.ts";
+import { deriveLogin, provisionUser, upstreamName } from "./provision.ts";
 import { SESSION_COOKIE, validateSession } from "./session.ts";
 
 export type AppEnv = {
@@ -96,13 +96,9 @@ async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
       `identity header ${userHeader} missing (the proxy must set it)`,
     );
   }
-  const login = normalizeLogin(raw);
-  if (login === null) {
-    throw new UnauthorizedError(
-      `identity header ${userHeader} carries an invalid login`,
-    );
-  }
-  const subject = forwardSubject(c, forward, login);
+  // Non-null: the blank check above is the only way deriveLogin refuses.
+  const login = deriveLogin(raw) as string;
+  const subject = forwardSubject(c, forward, upstreamName(raw));
   const email = forward.email_header
     ? c.req.header(forward.email_header)
     : null;
@@ -128,7 +124,7 @@ async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
       name: forward.name_header ? c.req.header(forward.name_header) : null,
       email,
       legacySubjects: forward.migrate_legacy_subjects
-        ? [normalizeLogin(subject), login].filter((s) => s !== null)
+        ? [upstreamName(subject), upstreamName(raw)]
         : undefined,
     },
     { autoCreate: forward.auto_create },
@@ -144,9 +140,9 @@ async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
 function forwardSubject(
   c: RequestLike,
   forward: Config["auth"]["forward"],
-  login: string,
+  username: string,
 ): string {
-  if (!forward.subject_header) return login;
+  if (!forward.subject_header) return username;
   const subject = c.req.header(forward.subject_header);
   if (subject === undefined || subject === "") {
     throw new UnauthorizedError(

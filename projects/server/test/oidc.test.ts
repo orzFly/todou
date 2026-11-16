@@ -131,6 +131,17 @@ describe("oidc login flow", () => {
     expect(res.headers.get("location")).toBe("/projects");
   });
 
+  it("folds an email-shaped login claim instead of refusing it", async () => {
+    idp.subject = "email-sub";
+    idp.idTokenClaims = { preferred_username: "John.Doe@example.com" };
+    const res = await completeCallback();
+    expect(res.headers.get("location")).toBe("/projects");
+    const me = await t.app.request("/api/me", {
+      headers: { cookie: sessionCookieOf(res) },
+    });
+    expect((await json(me)).login).toBe("john-doe");
+  });
+
   it("redirects to /login?error=state_mismatch on a tampered state", async () => {
     const res = await completeCallback({ state: "forged-state" });
     expect(res.status).toBe(302);
@@ -156,9 +167,9 @@ describe("oidc login flow", () => {
     expect(res.headers.get("location")).toBe("/login?error=claim_missing");
   });
 
-  it("redirects with claim_missing for an unusable login value", async () => {
-    idp.subject = "spacey-sub";
-    idp.idTokenClaims = { preferred_username: "John Doe" };
+  it("redirects with claim_missing for a blank login value", async () => {
+    idp.subject = "blank-sub";
+    idp.idTokenClaims = { preferred_username: "  " };
     const res = await completeCallback();
     expect(res.headers.get("location")).toBe("/login?error=claim_missing");
   });
