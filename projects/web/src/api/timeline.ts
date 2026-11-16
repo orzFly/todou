@@ -20,8 +20,8 @@ const DRAIN_PAGE_LIMIT = 100;
  *
  * No `include_hidden`: the selection needs `hidden_at`, `component`,
  * `resolved_at` and the author, never a body, and a blanked body is a
- * smaller response. `question_answered` rides along because it is the only
- * event `selectHidable` reads.
+ * smaller response. `question_answered` and `question_withdrawn` ride along
+ * because they are the only events `selectHidable` reads.
  *
  * Keyed under the card's timeline prefix so the existing
  * `invalidateQueries(["timeline", slug, number])` reaches it.
@@ -36,7 +36,7 @@ export function allCommentsQuery(slug: string, issueNumber: number) {
         (after) =>
           api.getTimeline(slug, issueNumber, {
             after,
-            types: "comment,question_answered",
+            types: "comment,question_answered,question_withdrawn",
             limit: DRAIN_PAGE_LIMIT,
           }),
       );

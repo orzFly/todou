@@ -131,18 +131,31 @@ const markdownBodyOf = (
   return body as Element;
 };
 
-const item = (answer: unknown, comp: QuestionsComponent) => ({
+const withdrawal = {
+  event_id: 9,
+  actor: user,
+  created_at: "2026-08-12T02:00:00Z",
+  reason: "settled in #12 by @alice, see **notes**",
+};
+
+const item = (
+  answer: unknown,
+  comp: QuestionsComponent,
+  withdrawn: unknown = null,
+) => ({
   comment_id: 42,
   author: user,
   created_at: "2026-08-12T00:00:00Z",
   questions: comp.questions,
   answer,
+  withdrawal: withdrawn,
 });
 
 /** Route-table fetch stub; records POST bodies for assertions. */
 function stubFetch(
   answer: unknown = null,
   comp: QuestionsComponent = component,
+  withdrawn: unknown = null,
 ) {
   const posts: unknown[] = [];
   vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
@@ -150,8 +163,8 @@ function stubFetch(
     const method = init?.method ?? "GET";
     if (method === "GET" && url.includes("/questions")) {
       return Response.json({
-        items: [item(answer, comp)],
-        open: answer ? 0 : 2,
+        items: [item(answer, comp, withdrawn)],
+        open: answer || withdrawn ? 0 : 2,
       });
     }
     if (method === "POST" && url.includes("/comments/42/answers")) {
@@ -734,6 +747,34 @@ describe("QuestionsCard (answered)", () => {
     // A compact chip is a bare avatar with an empty `alt`; without the label
     // its accessible name degrades to the fallback initials.
     expect(link?.getAttribute("aria-label")).toBe("User");
+  });
+});
+
+describe("QuestionsCard (withdrawn)", () => {
+  it("says who withdrew it and why, and takes no answer", async () => {
+    stubFetch(null, component, withdrawal);
+    const view = renderCard();
+
+    const meta = await view.findByText("withdrawn by");
+    // The reason is literal: its ref, mention and emphasis stay text, in an
+    // element of its own beside the withdrawer's chip.
+    const reason = [...meta.children].find(
+      (child) => child.textContent === `— ${withdrawal.reason}`,
+    );
+    expect(reason).toBeDefined();
+    expect(reason?.children).toHaveLength(0);
+    expect(view.getByText("Where does the payload live?")).toBeTruthy();
+    expect(view.queryByText("declined to answer")).toBeNull();
+    expect(view.queryByText("awaiting answer")).toBeNull();
+    expect(
+      view.queryByRole("button", {
+        name: /^(Submit answers|Answer all to submit|Skip unanswered…)$/,
+      }),
+    ).toBeNull();
+    expect(view.getByText("Inline").closest("button")).toBeNull();
+    // Nobody picked anything, so no option is marked picked.
+    expect(view.container.querySelector(".bg-primary\\/10")).toBeNull();
+    expect(view.getByText("show option descriptions")).toBeTruthy();
   });
 });
 

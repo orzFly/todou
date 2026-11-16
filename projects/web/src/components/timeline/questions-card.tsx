@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AnsweredComment,
+  IssueQuestionsItem,
   Question,
   QuestionAnswer,
   QuestionAnswerInput,
+  QuestionSettlement,
   QuestionsComponent,
 } from "@todou/shared";
 import { answerRecordOf } from "@todou/shared";
@@ -12,6 +14,7 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   CircleIcon,
+  CirclePauseIcon,
   CircleSlashIcon,
   PictureInPicture2Icon,
   SquareCheckIcon,
@@ -27,7 +30,7 @@ import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import type { Target } from "@/components/timeline/comment-item.tsx";
-import { useTimelineAnswer } from "@/components/timeline/timeline-answers.tsx";
+import { useTimelineSettlement } from "@/components/timeline/timeline-answers.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
@@ -128,14 +131,37 @@ function InlineMarkdown({
 }
 
 /**
+ * The `/questions` item's verdict in the shape the other two sources carry:
+ * the comment id moves inside the record, the fields are otherwise the same.
+ */
+function settlementOf(
+  item: IssueQuestionsItem | undefined,
+): QuestionSettlement | null {
+  if (item?.answer) {
+    return {
+      kind: "answered",
+      answer: { comment_id: item.comment_id, ...item.answer },
+    };
+  }
+  if (item?.withdrawal) {
+    return {
+      kind: "withdrawn",
+      withdrawal: { comment_id: item.comment_id, ...item.withdrawal },
+    };
+  }
+  return null;
+}
+
+/**
  * The interactive tail of a question comment (T-19). One submission covers
- * every question and is final — answered cards render read-only.
+ * every question and is final — answered and withdrawn cards render
+ * read-only.
  *
- * The answer comes from three sources in order (T-365): the loaded
- * timeline's `question_answered` event, this mount's own submission, and
- * only then `/questions`. A card none of them settles yet renders the
- * neutral state — "unknown" is not "unanswered", and the amber form
- * asserts the latter.
+ * The settlement comes from three sources in order (T-365): the loaded
+ * timeline's `question_answered` or `question_withdrawn` event, this
+ * mount's own submission, and only then `/questions`. A card none of them
+ * settles yet renders the neutral state — "unknown" is not "unanswered",
+ * and the amber form asserts the latter.
  */
 export function QuestionsCard({
   slug,
@@ -149,33 +175,32 @@ export function QuestionsCard({
   component: QuestionsComponent;
   /** The question comment's created_at (T-80 time cutoff). */
 }) {
-  const fromTimeline = useTimelineAnswer(commentId);
+  const fromTimeline = useTimelineSettlement(commentId);
   const [submitted, setSubmitted] = useState<AnsweredComment | null>(null);
-  const established = fromTimeline ?? submitted;
+  const established: QuestionSettlement | null =
+    fromTimeline ??
+    (submitted === null ? null : { kind: "answered", answer: submitted });
   const status = useQuery({
     ...questionsQuery(slug, issueNumber),
     // Sent only when the timeline and this mount's own submission both
-    // prove nothing — commonly the answer is already in the loaded window,
-    // and then this request never goes out.
+    // prove nothing — commonly the settlement is already in the loaded
+    // window, and then this request never goes out.
     enabled: established === null,
   });
-  const answered =
+  const settlement =
     established ??
-    status.data?.items.find((i) => i.comment_id === commentId)?.answer ??
-    null;
+    settlementOf(status.data?.items.find((i) => i.comment_id === commentId));
 
-  if (answered) {
+  if (settlement) {
     const hasDescriptions = component.questions.some((q) =>
       q.options.some((o) => o.description !== undefined),
     );
-    // The /questions item carries the comment id outside the answer shape;
-    // the other two sources carry it inside. Same five fields either way.
     return (
-      <AnsweredCard
+      <SettledCard
         slug={slug}
         issueNumber={issueNumber}
         component={component}
-        answer={established ?? { comment_id: commentId, ...answered }}
+        settlement={settlement}
         hasDescriptions={hasDescriptions}
       />
     );
@@ -223,25 +248,26 @@ export function QuestionsCard({
   );
 }
 
-function AnsweredCard({
+/**
+ * An answered or withdrawn card: the same grey frame and read-only rows.
+ * A withdrawn card's rows stay neutral (`known={false}`), since nobody
+ * picked anything, and only the footer says what became of the questions.
+ */
+function SettledCard({
   slug,
   issueNumber,
   component,
-  answer,
+  settlement,
   hasDescriptions,
 }: {
   slug: string;
   issueNumber: number;
   component: QuestionsComponent;
-  /**
-   * The established verdict: `AnsweredComment` from the timeline and this
-   * mount's own submission, the `/questions` item's `answer` shape from
-   * the request — field-for-field the same.
-   */
-  answer: AnsweredComment;
+  settlement: QuestionSettlement;
   hasDescriptions: boolean;
 }) {
   const [showDescriptions, setShowDescriptions] = useState(false);
+  const answer = settlement.kind === "answered" ? settlement.answer : null;
   return (
     <div className="mt-1 space-y-3 rounded-md border bg-muted/20 p-3">
       {component.questions.map((q) => (
@@ -250,9 +276,9 @@ function AnsweredCard({
           slug={slug}
           issueNumber={issueNumber}
           question={q}
-          record={answer.answers.find((a) => a.key === q.key)}
+          record={answer?.answers.find((a) => a.key === q.key)}
           showDescriptions={showDescriptions}
-          known
+          known={answer !== null}
         />
       ))}
       {/*
@@ -261,15 +287,25 @@ function AnsweredCard({
         out of this group alone, crushing it and still overflowing sideways (T-362).
       */}
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <CheckIcon className="size-3.5 shrink-0 text-green-600" />
-          answered by <UserChip user={answer.actor} compact />
-          <span className="whitespace-nowrap" title={answer.created_at}>
-            <time dateTime={answer.created_at}>
-              {new Date(answer.created_at).toLocaleString()}
-            </time>
+        {settlement.kind === "answered" ? (
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <CheckIcon className="size-3.5 shrink-0 text-green-600" />
+            answered by <UserChip user={settlement.answer.actor} compact />
+            <SettledAt at={settlement.answer.created_at} />
           </span>
-        </span>
+        ) : (
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <CirclePauseIcon className="size-3.5 shrink-0" />
+            withdrawn by <UserChip user={settlement.withdrawal.actor} compact />
+            <SettledAt at={settlement.withdrawal.created_at} />
+            {/* Literal text, as the reason was written: no refs, no markdown. */}
+            {settlement.withdrawal.reason !== null && (
+              <span className="min-w-0 wrap-anywhere">
+                — {settlement.withdrawal.reason}
+              </span>
+            )}
+          </span>
+        )}
         {hasDescriptions && (
           <Button
             variant="ghost"
@@ -285,6 +321,14 @@ function AnsweredCard({
         )}
       </div>
     </div>
+  );
+}
+
+function SettledAt({ at }: { at: string }) {
+  return (
+    <span className="whitespace-nowrap" title={at}>
+      <time dateTime={at}>{new Date(at).toLocaleString()}</time>
+    </span>
   );
 }
 
@@ -332,7 +376,7 @@ function AnswerForm({
     },
     onError: (error, vars) => {
       toast.error(error.message);
-      // A conflict means someone answered first; show their answers.
+      // A conflict means someone answered or withdrew first; show which.
       queryClient.invalidateQueries({
         queryKey: ["questions", vars.slug, vars.issueNumber],
       });

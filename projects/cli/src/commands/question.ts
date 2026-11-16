@@ -9,6 +9,7 @@ import type {
 import {
   AnswersSubmitInput as AnswersSubmitInputSchema,
   formatRef,
+  QuestionWithdrawInput,
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { z } from "zod";
@@ -25,8 +26,10 @@ import {
 import { parseCommentId, parseSeconds } from "../parse.ts";
 import {
   decodeAnswerEvent,
+  decodeWithdrawalEvent,
   renderAnswerRecords,
   renderQuestions,
+  withdrawalOf,
 } from "../questions.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import { commentRef, drainTimeline } from "../timeline.ts";
@@ -39,20 +42,34 @@ import {
   watchTimeoutSec,
 } from "../watch-loop.ts";
 
-/** The wait/answer output once a comment's questions are resolved. */
-type AnswerResult = {
-  comment_id: number;
-  event_id: number;
-  actor: UserRef;
-  created_at: string;
-  answers: QuestionAnswer[];
-};
+/**
+ * The wait's output once a comment's questions are settled: answered, or
+ * withdrawn by the asker. Both exit 0, so `kind` is what a script branches on.
+ */
+type SettledResult =
+  | {
+      kind: "answered";
+      comment_id: number;
+      event_id: number;
+      actor: UserRef;
+      created_at: string;
+      answers: QuestionAnswer[];
+    }
+  | {
+      kind: "withdrawn";
+      comment_id: number;
+      event_id: number;
+      actor: UserRef;
+      created_at: string;
+      reason: string | null;
+    };
 
-function renderAnswerResult(result: AnswerResult, paint: Painter): string {
-  return [
-    `${paint("cyan", personName(result.actor))} answered ${commentRef(result.comment_id)} ${relativeTime(result.created_at)}:`,
-    ...renderAnswerRecords(result.answers, paint),
-  ].join("\n");
+function renderSettledResult(result: SettledResult, paint: Painter): string {
+  const head = `${paint("cyan", personName(result.actor))} ${result.kind === "answered" ? "answered" : "withdrew"} ${commentRef(result.comment_id)} ${relativeTime(result.created_at)}`;
+  if (result.kind === "withdrawn") {
+    return result.reason === null ? head : `${head} — ${result.reason}`;
+  }
+  return [`${head}:`, ...renderAnswerRecords(result.answers, paint)].join("\n");
 }
 
 async function findQuestionComment(
@@ -93,7 +110,9 @@ export class QuestionListCommand extends ProjectCommand {
     const { project, number } = await this.resolveIssueRef(client, this.number);
     const status = await client.getIssueQuestions(project, number);
     const items = this.unanswered
-      ? status.items.filter((i) => i.answer === null)
+      ? status.items.filter(
+          (i) => i.answer === null && withdrawalOf(i) === null,
+        )
       : status.items;
     const paint = makePainter(this.context.stdout, this.context.env);
 
@@ -105,12 +124,18 @@ export class QuestionListCommand extends ProjectCommand {
       }
       const lines: string[] = [];
       for (const item of items) {
+        const withdrawal = withdrawalOf(item);
         const state = item.answer
           ? paint(
               "green",
               `answered by ${personName(item.answer.actor)} ${relativeTime(item.answer.created_at)}`,
             )
-          : paint("yellow", "awaiting answer");
+          : withdrawal
+            ? paint(
+                "dim",
+                `withdrawn by ${personName(withdrawal.actor)} ${relativeTime(withdrawal.created_at)}`,
+              )
+            : paint("yellow", "awaiting answer");
         lines.push(
           `${paint("bold", commentRef(item.comment_id))} · ${personName(item.author)} ${relativeTime(item.created_at)} · ${state}`,
         );
@@ -123,6 +148,9 @@ export class QuestionListCommand extends ProjectCommand {
         if (item.answer) {
           lines.push(...renderAnswerRecords(item.answer.answers, paint));
         }
+        if (withdrawal?.reason != null) {
+          lines.push(`  reason: ${withdrawal.reason.split("\n").join("\n  ")}`);
+        }
       }
       return lines.join("\n");
     });
@@ -132,22 +160,27 @@ export class QuestionListCommand extends ProjectCommand {
 export class QuestionWaitCommand extends ProjectCommand {
   static paths = [["question", "wait"]];
   static usage = Command.Usage({
-    description: "Block until a question comment's answers arrive",
+    description:
+      "Block until a question comment's answers arrive, or its withdrawal",
     details: `
       Waits for the \`question_answered\` event of one comment (answers are
       atomic and comment-level: every question of the comment resolves at
-      once, exactly once). Already-answered comments return immediately.
+      once, exactly once), or for its \`question_withdrawn\` event when the
+      questions are withdrawn instead. Already-settled comments return
+      immediately.
 
-      Exit codes follow \`issue watch\`: 0 = answers delivered (printed,
-      decoded, as JSON under \`--json\`), or a \`--poll\` finished its one
-      check, answered or not; 3 = a blocking wait timed out with no answer;
+      Exit codes follow \`issue watch\`: 0 = the questions were answered or
+      withdrawn (printed, decoded, as JSON under \`--json\`, where \`kind\`
+      is \`answered\` or \`withdrawn\`), or a \`--poll\` finished its one
+      check, settled or not; 3 = a blocking wait timed out with no answer;
       1 = error; 4 = gave up on a network outage after automatic retries
       (rerun the same command; nothing is lost).
 
       \`--forever\` makes the wait one trustworthy call, with no re-run loop
       around it: it never exits on a timeout and never gives up on an
-      outage, so it returns only with the answers (0) or a fatal error (1) —
-      the shape a question that may sit unread for hours actually needs.
+      outage, so it returns only with the answers or the withdrawal (0) or a
+      fatal error (1) — the shape a question that may sit unread for hours
+      actually needs.
       \`--timeout\` then means the heartbeat interval (default 600s): one
       \`still waiting for an answer — nothing new in …\` line to stderr per
       elapsed interval. Conflicts with \`--poll\`.
@@ -181,7 +214,7 @@ export class QuestionWaitCommand extends ProjectCommand {
   });
   forever = Option.Boolean("--forever", false, {
     description:
-      "Wait until the answers arrive or a fatal error — never time out, retry outages indefinitely (conflicts with --poll)",
+      "Wait until the answers or the withdrawal arrive, or a fatal error — never time out, retry outages indefinitely (conflicts with --poll)",
   });
 
   protected async run(client: TodouClient): Promise<number> {
@@ -214,15 +247,28 @@ export class QuestionWaitCommand extends ProjectCommand {
       () => findQuestionComment(client, project, number, commentId),
       retry,
     );
-    if (item.answer) {
-      const result: AnswerResult = {
-        comment_id: commentId,
-        event_id: item.answer.event_id,
-        actor: item.answer.actor,
-        created_at: item.answer.created_at,
-        answers: item.answer.answers,
-      };
-      this.output(result, () => renderAnswerResult(result, paint));
+    const withdrawal = withdrawalOf(item);
+    const settled: SettledResult | null = item.answer
+      ? {
+          kind: "answered",
+          comment_id: commentId,
+          event_id: item.answer.event_id,
+          actor: item.answer.actor,
+          created_at: item.answer.created_at,
+          answers: item.answer.answers,
+        }
+      : withdrawal
+        ? {
+            kind: "withdrawn",
+            comment_id: commentId,
+            event_id: withdrawal.event_id,
+            actor: withdrawal.actor,
+            created_at: withdrawal.created_at,
+            reason: withdrawal.reason,
+          }
+        : null;
+    if (settled !== null) {
+      this.output(settled, () => renderSettledResult(settled, paint));
       return 0;
     }
 
@@ -242,7 +288,7 @@ export class QuestionWaitCommand extends ProjectCommand {
           context: () => this.liveAgentContext(),
         });
     try {
-      return await runWatchLoop<AnswerResult>({
+      return await runWatchLoop<SettledResult>({
         ...mode,
         timeoutSec,
         intervalSec,
@@ -254,30 +300,41 @@ export class QuestionWaitCommand extends ProjectCommand {
           this.note(
             quietNote("still waiting for an answer", timeoutSec, totalMs),
           ),
+        // No `types` filter: a server predating withdrawals refuses
+        // `question_withdrawn` there with a 422, which would end even a
+        // `--forever` wait at its first drain. The settling events are picked
+        // out here instead.
         drain: async (after) => {
-          const page = await drainTimeline(client, project, number, {
-            after,
-            types: "question_answered",
-          });
-          const items = page.items.flatMap((entry: TimelineItem) => {
-            if (entry.type !== "event") return [];
-            const payload = decodeAnswerEvent(entry);
-            if (payload === null || payload.comment_id !== commentId) return [];
-            return [
-              {
+          const page = await drainTimeline(client, project, number, { after });
+          const items = page.items.flatMap(
+            (entry: TimelineItem): SettledResult[] => {
+              if (entry.type !== "event") return [];
+              const event = {
                 comment_id: commentId,
                 event_id: entry.id,
                 actor: entry.actor,
                 created_at: entry.created_at,
-                answers: payload.answers,
-              },
-            ];
-          });
+              };
+              const answered = decodeAnswerEvent(entry);
+              if (answered?.comment_id === commentId) {
+                return [
+                  { kind: "answered", ...event, answers: answered.answers },
+                ];
+              }
+              const withdrawn = decodeWithdrawalEvent(entry);
+              if (withdrawn?.comment_id === commentId) {
+                return [
+                  { kind: "withdrawn", ...event, reason: withdrawn.reason },
+                ];
+              }
+              return [];
+            },
+          );
           return { items, cursor: page.cursor };
         },
         onItems: (items) => {
-          const result = items[0] as AnswerResult;
-          this.output(result, () => renderAnswerResult(result, paint));
+          const result = items[0] as SettledResult;
+          this.output(result, () => renderSettledResult(result, paint));
         },
         onEmpty: () =>
           this.output({ comment_id: commentId, answer: null }, () =>
@@ -436,5 +493,70 @@ export class QuestionAnswerCommand extends ProjectCommand {
         },
       ],
     };
+  }
+}
+
+export class QuestionWithdrawCommand extends ProjectCommand {
+  static paths = [["question", "withdraw"]];
+  static usage = Command.Usage({
+    description: "Withdraw a question comment nobody has answered yet",
+    details: `
+      For questions that no longer need an answer. Only an unanswered
+      comment can be withdrawn, and withdrawing is final: the comment and
+      its questions stay readable, but they take no answer afterwards. Ask
+      again in a new comment if part of it still matters. A
+      \`question wait\` on the comment returns with the withdrawal.
+
+      \`--reason\` is optional plain text, trimmed to 1–2000 characters when
+      supplied; it sends no mention notifications. Retrying an already
+      withdrawn comment succeeds unchanged and returns the original cursor,
+      without saving the new reason.
+
+      The last output line is the withdrawal cursor. \`--json\` prints
+      \`comment_id\`, \`unchanged\` and \`cursor\`; the cursor always
+      identifies the original withdrawal event.
+    `,
+    examples: [
+      [
+        "Withdraw a question the code already answered",
+        '$0 question withdraw 19 231 --reason "answered by the code"',
+      ],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  commentId = Option.String({ required: true });
+  reason = Option.String("--reason", {
+    description:
+      "Optional plain-text reason (1–2000 characters after trimming)",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const commentId = parseCommentId(this.commentId);
+    const input = QuestionWithdrawInput.safeParse(
+      this.reason === undefined ? {} : { reason: this.reason },
+    );
+    if (!input.success) {
+      throw new CliError(
+        `invalid question withdraw (--reason):\n${z.prettifyError(input.error)}`,
+      );
+    }
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const result = await client.withdrawQuestions(
+      project,
+      number,
+      commentId,
+      input.data,
+    );
+    const refPrefix =
+      this.json || result.unchanged
+        ? null
+        : await fetchRefPrefix(client, project);
+    this.output(result, () => {
+      const summary = result.unchanged
+        ? `${commentRef(commentId)} already withdrawn (unchanged)`
+        : `withdrew ${commentRef(commentId)} on ${formatRef(refPrefix, number)}`;
+      return `${summary}\ncursor: ${result.cursor} (issue watch --since <cursor>)`;
+    });
   }
 }

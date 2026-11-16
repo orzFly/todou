@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import type { TimelineComment, TimelineItem } from "@todou/shared";
-import { answersByComment, enumValue } from "@todou/shared";
+import { enumValue, settlementsByComment } from "@todou/shared";
 import { ArrowDownIcon } from "lucide-react";
 import {
   useCallback,
@@ -40,7 +40,7 @@ import {
 import { HiddenBlock } from "@/components/timeline/hidden-block.tsx";
 import { useRevealedRuns } from "@/components/timeline/revealed-runs.tsx";
 import { SpecVersionCard } from "@/components/timeline/spec-version-card.tsx";
-import { TimelineAnswersProvider } from "@/components/timeline/timeline-answers.tsx";
+import { TimelineSettlementsProvider } from "@/components/timeline/timeline-answers.tsx";
 import { useKeepReading } from "@/components/timeline/use-keep-reading.ts";
 import { useQuestionLanding } from "@/components/timeline/use-question-landing.ts";
 import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
@@ -178,13 +178,13 @@ export function Timeline({
     reportHidden(stillHidden);
   }, [stillHidden, reportHidden]);
 
-  // The map is the answers the loaded items carry — `above` and `below`
+  // The map is the settlements the loaded items carry — `above` and `below`
   // merged, not the rendered units, so a comment inside a folded run finds
   // its event once expanded. Keyed on the pages (stable between renders),
   // never on the arrays `mergeFolded` rebuilds every render.
-  const answers = useMemo(
+  const settlements = useMemo(
     () =>
-      answersByComment([
+      settlementsByComment([
         ...(headEnabled ? (head.data?.pages ?? []) : []).flatMap(
           (p) => p.items,
         ),
@@ -548,7 +548,7 @@ export function Timeline({
   return (
     // Native scroll anchoring would fight the manual insert compensation
     // above, adjusting the viewport a second time for the same insertion.
-    <TimelineAnswersProvider answers={answers}>
+    <TimelineSettlementsProvider settlements={settlements}>
       <div
         ref={listRef}
         className="[overflow-anchor:none]"
@@ -618,6 +618,6 @@ export function Timeline({
           </div>
         )}
       </div>
-    </TimelineAnswersProvider>
+    </TimelineSettlementsProvider>
   );
 }

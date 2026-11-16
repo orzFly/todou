@@ -5,9 +5,10 @@ import type {
 } from "@todou/shared";
 import {
   answerRecordOf,
-  answersByComment,
   QuestionAnsweredPayload,
   selectHidable,
+  settlementsByComment,
+  withdrawalRecordOf,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 
@@ -158,9 +159,43 @@ describe("answerRecordOf", () => {
   });
 });
 
-describe("answersByComment", () => {
+const withdrawnEvent = (id: number, commentId: number, reason: string | null) =>
+  event(id, "question_withdrawn", { comment_id: commentId, reason });
+
+describe("withdrawalRecordOf", () => {
+  it.each(["answered by the code", null])(
+    "reads a withdrawal with reason %j as a record",
+    (reason) => {
+      expect(withdrawalRecordOf(withdrawnEvent(7, 42, reason))).toEqual({
+        comment_id: 42,
+        event_id: 7,
+        actor,
+        created_at: "2026-09-16T12:00:00.000Z",
+        reason,
+      });
+    },
+  );
+
+  it("gives null for a payload carrying an extra key", () => {
+    expect(
+      withdrawalRecordOf(
+        event(7, "question_withdrawn", {
+          comment_id: 42,
+          reason: null,
+          questions: 2,
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("gives null for an answer event", () => {
+    expect(withdrawalRecordOf(answeredEvent(7, 42, "answer"))).toBeNull();
+  });
+});
+
+describe("settlementsByComment", () => {
   it("merges only the answered comments out of a mixed list", () => {
-    const map = answersByComment([
+    const map = settlementsByComment([
       comment(1),
       answeredEvent(2, 41),
       event(3, "label_added", { label: { name: "bug" } }),
@@ -169,13 +204,45 @@ describe("answersByComment", () => {
       answeredEvent(6, 44, "hide", true),
       comment(42),
     ]);
+    const answer = (id: number) => {
+      const settlement = map.get(id);
+      return settlement?.kind === "answered" ? settlement.answer : undefined;
+    };
     expect([...map.keys()].sort()).toEqual([41, 42, 43, 44]);
     expect(map.has(1)).toBe(false);
-    expect(map.get(41)?.event_id).toBe(2);
-    expect(map.get(43)?.answers[0]?.declined).toBe(true);
-    expect(map.get(44)?.answers[0]?.declined).toBe(true);
-    expect(map.get(42)?.event_id).toBe(4);
-    expect(map.get(42)?.answers[0]?.key).toBe("q1");
+    expect(answer(41)?.event_id).toBe(2);
+    expect(answer(43)?.answers[0]?.declined).toBe(true);
+    expect(answer(44)?.answers[0]?.declined).toBe(true);
+    expect(answer(42)?.event_id).toBe(4);
+    expect(answer(42)?.answers[0]?.key).toBe("q1");
+  });
+
+  it.each(["answered by the code", null])(
+    "settles a withdrawn comment as withdrawn (reason %j)",
+    (reason) => {
+      const map = settlementsByComment([
+        comment(42),
+        withdrawnEvent(7, 42, reason),
+      ]);
+      expect(map.get(42)).toEqual({
+        kind: "withdrawn",
+        withdrawal: {
+          comment_id: 42,
+          event_id: 7,
+          actor,
+          created_at: "2026-09-16T12:00:00.000Z",
+          reason,
+        },
+      });
+    },
+  );
+
+  it("keeps the first settlement when an answer follows a withdrawal", () => {
+    const map = settlementsByComment([
+      withdrawnEvent(7, 42, null),
+      answeredEvent(8, 42, "answer"),
+    ]);
+    expect(map.get(42)?.kind).toBe("withdrawn");
   });
 
   it.each(answerCases)(

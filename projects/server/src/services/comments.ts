@@ -11,11 +11,7 @@ import type {
   SettledByHide,
   TimelineComment,
 } from "@todou/shared";
-import {
-  actionTextProblem,
-  formatRef,
-  QuestionAnsweredPayload,
-} from "@todou/shared";
+import { actionTextProblem, formatRef } from "@todou/shared";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -36,9 +32,10 @@ import { commitDraftAttachments } from "./attachments.ts";
 import { loadReferenceInputs } from "./cross-references.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
 import {
-  answerEventFor,
   canonicalizeComponent,
   questionCount,
+  settlementFor,
+  settlingEvents,
 } from "./questions.ts";
 import { currentRefPrefix } from "./references.ts";
 import { throwIfCommentAliased } from "./relocation.ts";
@@ -547,9 +544,31 @@ export async function deleteComment(
   const projectId = project.id;
   let counterChanged = false;
   await db.transaction(async (tx) => {
+    // The card before the comment, as answering takes them.
+    await tx
+      .select({ id: issues.id })
+      .from(issues)
+      .where(eq(issues.id, row.issueId))
+      .for("no key update");
+    // Lock the row before reading what it already gave back: an answer or a
+    // resolve that committed while this request waited is then visible here,
+    // and a delete that won the race leaves nothing to lock. Read outside
+    // this lock, either one refunds a counter twice.
+    const [locked] = await tx
+      .select({
+        component: comments.component,
+        resolvedAt: comments.resolvedAt,
+      })
+      .from(comments)
+      .where(and(eq(comments.id, row.id), eq(comments.issueId, row.issueId)))
+      .for("update");
+    if (!locked) throw new NotFoundError("comment not found");
     // A still-unresolved spec comment gives its count back (T-23); a
     // resolved one already surrendered it at resolve time.
-    if (row.component?.type === "spec_comment" && row.resolvedAt === null) {
+    if (
+      locked.component?.type === "spec_comment" &&
+      locked.resolvedAt === null
+    ) {
       await tx
         .update(issues)
         .set({
@@ -560,23 +579,13 @@ export async function deleteComment(
     }
     // A still-unanswered question comment gives its count back; an answered
     // one already surrendered it when the answer landed.
-    const asked = questionCount(row.component);
+    const asked = questionCount(locked.component);
     if (asked > 0) {
-      const answered = (
-        await tx
-          .select({ payload: issueEvents.payload })
-          .from(issueEvents)
-          .where(
-            and(
-              eq(issueEvents.issueId, row.issueId),
-              eq(issueEvents.type, "question_answered"),
-            ),
-          )
-      ).some((e) => {
-        const parsed = QuestionAnsweredPayload.safeParse(e.payload);
-        return parsed.success && parsed.data.comment_id === row.id;
-      });
-      if (!answered) {
+      const settled = settlementFor(
+        await settlingEvents(tx, row.issueId),
+        row.id,
+      );
+      if (settled === undefined) {
         await tx
           .update(issues)
           .set({
@@ -667,20 +676,12 @@ export async function settleHiddenInTx(
     (row) => row.component?.type === "questions",
   );
   if (withQuestions.length > 0) {
-    const answerRows = await tx
-      .select()
-      .from(issueEvents)
-      .where(
-        and(
-          eq(issueEvents.issueId, args.issueId),
-          eq(issueEvents.type, "question_answered"),
-        ),
-      );
+    const settling = await settlingEvents(tx, args.issueId);
     let closed = 0;
     for (const row of withQuestions) {
       const component = row.component;
       if (component?.type !== "questions") continue;
-      if (answerEventFor(answerRows, row.id) !== undefined) continue;
+      if (settlementFor(settling, row.id) !== undefined) continue;
       const answers = component.questions.map((question) => ({
         key: question.key,
         selected: [],
@@ -820,6 +821,12 @@ export async function hideCommentsInTx(
   // Settling counts one decline per entry it is handed, so a repeated id
   // would take other comments' open questions off the card with it (T-651).
   const ids = [...new Set(input.comment_ids)];
+  // The card before the comments, as answering and deleting take them.
+  await tx
+    .select({ id: issues.id })
+    .from(issues)
+    .where(eq(issues.id, args.issueId))
+    .for("no key update");
   const rows = await tx
     .select({
       id: comments.id,
@@ -924,18 +931,10 @@ async function settleScan(
   );
   const asked = rows.filter((row) => row.component?.type === "questions");
   if (asked.length === 0) return { questions: false, annotations };
-  const answerRows = await db
-    .select()
-    .from(issueEvents)
-    .where(
-      and(
-        eq(issueEvents.issueId, issueId),
-        eq(issueEvents.type, "question_answered"),
-      ),
-    );
+  const settling = await settlingEvents(db, issueId);
   return {
     questions: asked.some(
-      (row) => answerEventFor(answerRows, row.id) === undefined,
+      (row) => settlementFor(settling, row.id) === undefined,
     ),
     annotations,
   };

@@ -209,6 +209,25 @@ describe("selectHidable exemptions", () => {
     expect(selectHidable(withAnswer, policy, hide).pick).toEqual([1, 2]);
   });
 
+  it("lets a withdrawn questions comment be picked", () => {
+    const items = [
+      comment(1, { component: questions }),
+      {
+        type: "event",
+        id: 50,
+        event_type: "question_withdrawn",
+        actor,
+        payload: { comment_id: 1, reason: null },
+        created_at: "2026-09-08T12:00:00.000Z",
+        agent_context: null,
+      } satisfies TimelineItem,
+    ];
+    const result = selectHidable(items, { by: "all", keep_last: 0 }, hide);
+
+    expect(result.pick).toEqual([1]);
+    expect(result.skip).toEqual([]);
+  });
+
   it("turns on an unresolved anchor and off once resolved", () => {
     const policy: HidePolicy = { by: "all", keep_last: 0 };
     const open = [comment(1, { component: anchor, resolved_at: null })];

@@ -1,9 +1,14 @@
-import type { Question } from "@todou/shared";
-import { eq } from "drizzle-orm";
+import type { MemberRole, Question } from "@todou/shared";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { issueEvents } from "../src/db/project-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
-import { makeTestApp, PLACEMENTS, type TestApp } from "./helpers.ts";
+import {
+  addUserWithToken,
+  makeTestApp,
+  PLACEMENTS,
+  type TestApp,
+} from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -413,5 +418,287 @@ describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
     );
     expect(res.status).toBe(204);
     expect((await getIssue(issue.number)).open_questions).toBe(0);
+  });
+
+  describe("withdrawing", () => {
+    type Who = { authorization: string } | null;
+    const as = (who: Who) =>
+      who === null ? headers() : { "content-type": "application/json", ...who };
+
+    function withdraw(
+      number: number,
+      commentId: number,
+      body: unknown = {},
+      who: Who = null,
+    ): Promise<Response> {
+      return Promise.resolve(
+        t.app.request(
+          `/api/projects/${slug}/issues/${number}/comments/${commentId}/questions/withdraw`,
+          { method: "POST", headers: as(who), body: JSON.stringify(body) },
+        ),
+      );
+    }
+
+    async function eventsOf(issueId: number, type: string) {
+      const db = await t.ctx.router.forProject(
+        routeInfoOf({ id: projectId, slug, databaseUrl: null } as Parameters<
+          typeof routeInfoOf
+        >[0]),
+      );
+      return db
+        .select()
+        .from(issueEvents)
+        .where(
+          and(
+            eq(issueEvents.issueId, issueId),
+            eq(issueEvents.type, type as "question_withdrawn"),
+          ),
+        );
+    }
+
+    async function setRole(userId: number, role: MemberRole) {
+      const res = await t.app.request(
+        `/api/projects/${slug}/members/${userId}`,
+        { method: "PUT", headers: headers(), body: JSON.stringify({ role }) },
+      );
+      expect(res.status).toBe(204);
+    }
+
+    async function member(role: MemberRole) {
+      const added = await addUserWithToken(
+        t.ctx,
+        `${slug}-${role}-${Math.random().toString(36).slice(2, 8)}`,
+      );
+      await setRole(added.user.id, role);
+      return added;
+    }
+
+    it("withdraws an unsettled comment: one event, counters down, item marked", async () => {
+      const issue = await createIssue();
+      const comment = await json(await ask(issue.number));
+      await expectOpenQuestions(issue.number, 2);
+
+      const res = await withdraw(issue.number, comment.id, {
+        reason: "  answered by the code \n",
+      });
+      expect(res.status).toBe(200);
+      const result = await json(res);
+      expect(result).toMatchObject({
+        comment_id: comment.id,
+        unchanged: false,
+      });
+      expect(typeof result.cursor).toBe("string");
+
+      const events = await eventsOf(issue.id, "question_withdrawn");
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toEqual({
+        comment_id: comment.id,
+        reason: "answered by the code",
+      });
+
+      const status = await expectOpenQuestions(issue.number, 0);
+      expect(status.items).toHaveLength(1);
+      expect(status.items[0].answer).toBeNull();
+      expect(status.items[0].withdrawal).toMatchObject({
+        event_id: events[0]?.id,
+        reason: "answered by the code",
+      });
+
+      const timeline = await json(
+        await t.app.request(
+          `/api/projects/${slug}/issues/${issue.number}/timeline?types=question_withdrawn`,
+          { headers: { cookie } },
+        ),
+      );
+      expect(
+        timeline.items.map((item: { id: number; event_type: string }) => [
+          item.id,
+          item.event_type,
+        ]),
+      ).toEqual([[events[0]?.id, "question_withdrawn"]]);
+    });
+
+    it("answers a retry unchanged, with the first cursor and reason", async () => {
+      const issue = await createIssue();
+      const comment = await json(await ask(issue.number));
+      // Still open: a retry that took the count again would show here, where
+      // a card already at 0 would hide it behind `greatest(…, 0)`.
+      expect((await ask(issue.number)).status).toBe(201);
+      const first = await json(
+        await withdraw(issue.number, comment.id, { reason: "first" }),
+      );
+      await expectOpenQuestions(issue.number, 2);
+      const again = await withdraw(issue.number, comment.id, {
+        reason: "second",
+      });
+      expect(again.status).toBe(200);
+      expect(await json(again)).toEqual({ ...first, unchanged: true });
+      const events = await eventsOf(issue.id, "question_withdrawn");
+      expect(events.map((event) => event.payload)).toEqual([
+        { comment_id: comment.id, reason: "first" },
+      ]);
+      await expectOpenQuestions(issue.number, 2);
+    });
+
+    it("keeps the reason null when none was given", async () => {
+      const issue = await createIssue();
+      const comment = await json(await ask(issue.number));
+      expect((await withdraw(issue.number, comment.id)).status).toBe(200);
+      const events = await eventsOf(issue.id, "question_withdrawn");
+      expect(events[0]?.payload).toEqual({
+        comment_id: comment.id,
+        reason: null,
+      });
+      const status = await getQuestions(issue.number);
+      expect(status.items[0].withdrawal.reason).toBeNull();
+    });
+
+    it("refuses an answer after a withdrawal, and a withdrawal after an answer or a hide", async () => {
+      const issue = await createIssue();
+      const withdrawn = await json(await ask(issue.number));
+      expect((await withdraw(issue.number, withdrawn.id)).status).toBe(200);
+      const late = await answer(issue.number, withdrawn.id, GOOD_ANSWERS);
+      expect(late.status).toBe(409);
+      expect((await json(late)).error.message).toContain(
+        `comment ${withdrawn.id} was withdrawn at`,
+      );
+
+      const answered = await json(await ask(issue.number));
+      expect(
+        (await answer(issue.number, answered.id, GOOD_ANSWERS)).status,
+      ).toBe(201);
+      const afterAnswer = await withdraw(issue.number, answered.id);
+      expect(afterAnswer.status).toBe(409);
+      expect((await json(afterAnswer)).error.message).toContain(
+        "answered questions cannot be withdrawn",
+      );
+
+      const hidden = await json(await ask(issue.number));
+      const hide = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments/hide`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ hidden: true, comment_ids: [hidden.id] }),
+        },
+      );
+      expect(hide.status).toBe(200);
+      expect((await withdraw(issue.number, hidden.id)).status).toBe(409);
+
+      await expectOpenQuestions(issue.number, 0);
+      expect(await eventsOf(issue.id, "question_withdrawn")).toHaveLength(1);
+    });
+
+    it("lets the asker or a writer withdraw, and nobody else", async () => {
+      const reporter = (await member("reporter")).headers;
+      const writer = (await member("writer")).headers;
+      const reader = (await member("reader")).headers;
+      const issue = await createIssue();
+      const askAs = async (who: Who) => {
+        const res = await t.app.request(
+          `/api/projects/${slug}/issues/${issue.number}/comments`,
+          {
+            method: "POST",
+            headers: as(who),
+            body: JSON.stringify({
+              body: "context…",
+              component: { type: "questions", questions: QUESTIONS },
+            }),
+          },
+        );
+        expect(res.status).toBe(201);
+        return (await json(res)).id as number;
+      };
+
+      const own = await askAs(reporter);
+      expect((await withdraw(issue.number, own, {}, reporter)).status).toBe(
+        200,
+      );
+
+      const writers = await askAs(writer);
+      const refused = await withdraw(issue.number, writers, {}, reporter);
+      expect(refused.status).toBe(403);
+      expect((await json(refused)).error.message).toContain(
+        "only the asker or a writer",
+      );
+
+      const reporters = await askAs(reporter);
+      expect((await withdraw(issue.number, reporters, {}, writer)).status).toBe(
+        200,
+      );
+
+      expect((await withdraw(issue.number, writers, {}, reader)).status).toBe(
+        403,
+      );
+
+      // A reader may not withdraw even the questions they asked as a reporter.
+      const demoted = await member("reporter");
+      const asked = await askAs(demoted.headers);
+      await setRole(demoted.user.id, "reader");
+      expect(
+        (await withdraw(issue.number, asked, {}, demoted.headers)).status,
+      ).toBe(403);
+      await expectOpenQuestions(issue.number, 4);
+    });
+
+    it("rejects a comment without questions, a missing comment and a bad reason", async () => {
+      const issue = await createIssue();
+      const plain = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ body: "no questions here" }),
+        },
+      );
+      const plainId = (await json(plain)).id;
+      const none = await withdraw(issue.number, plainId);
+      expect(none.status).toBe(422);
+      expect((await json(none)).error.message).toContain(
+        `comment ${plainId} carries no questions`,
+      );
+
+      expect((await withdraw(issue.number, 999_999)).status).toBe(404);
+
+      const comment = await json(await ask(issue.number));
+      for (const reason of [" \n\t", "x".repeat(2001)]) {
+        expect(
+          (await withdraw(issue.number, comment.id, { reason })).status,
+        ).toBe(422);
+      }
+      expect(
+        (await withdraw(issue.number, comment.id, { reason: "ok", extra: 1 }))
+          .status,
+      ).toBe(422);
+      await expectOpenQuestions(issue.number, 2);
+    });
+
+    it("counts a withdrawn comment as settled when it is hidden or deleted", async () => {
+      const issue = await createIssue();
+      const withdrawn = await json(await ask(issue.number));
+      expect((await ask(issue.number)).status).toBe(201);
+      expect((await withdraw(issue.number, withdrawn.id)).status).toBe(200);
+      await expectOpenQuestions(issue.number, 2);
+
+      const hide = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments/hide`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ hidden: true, comment_ids: [withdrawn.id] }),
+        },
+      );
+      expect(hide.status).toBe(200);
+      expect(await json(hide)).not.toHaveProperty("settled");
+      expect(await eventsOf(issue.id, "question_answered")).toEqual([]);
+      await expectOpenQuestions(issue.number, 2);
+
+      const deleted = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments/${withdrawn.id}`,
+        { method: "DELETE", headers: { cookie } },
+      );
+      expect(deleted.status).toBe(204);
+      await expectOpenQuestions(issue.number, 2);
+    });
   });
 });

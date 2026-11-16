@@ -1,4 +1,4 @@
-import { answersByComment } from "./question-answers.ts";
+import { settlementsByComment } from "./question-answers.ts";
 import type { TimelineComment, TimelineItem } from "./schemas/timeline.ts";
 
 /**
@@ -172,6 +172,7 @@ function keptTail(comments: TimelineComment[], keepLast: number): Set<number> {
   return new Set(comments.slice(from).map((comment) => comment.id));
 }
 
+/** Answered or withdrawn: either way, nobody is waiting on these questions. */
 function answeredIds(items: TimelineItem[]): Set<number> {
-  return new Set(answersByComment(items).keys());
+  return new Set(settlementsByComment(items).keys());
 }

@@ -101,7 +101,7 @@ todou agent can-i-follow                                               # ask fir
 todou issue watch 16 -p <proj> --since <cursor> --forever              # one issue
 todou watch -p <proj> --since <cursor> --debounce 60 --forever         # whole project, other people's entries
 todou watch -p <proj> --mine --since <cursor> --forever                # only this account's cards and @-mentions
-todou question wait 16 <commentId> -p <proj> --forever                 # answers to one question comment
+todou question wait 16 <commentId> -p <proj> --forever                 # answers to one question comment, or its withdrawal
 todou spec push 16 <dir> -p <proj> --message "v2" --wait               # push, then wait for the verdict
 todou spec wait 16 -p <proj> [--since <cursor>]                        # re-enter that wait
 ```
@@ -196,7 +196,15 @@ EOF
 EOF2
 )                          # prints the wait command, comment id filled in
 todou question wait 16 <commentId> -p <proj> --forever   # blocks until answered
+todou question withdraw 16 <commentId> -p <proj> --reason "answered by the code"   # no answer needed any more
 ```
+
+A question that no longer needs an answer is withdrawn, not left open: the code or a comment
+answered it, or a later decision made it moot. An open question keeps the card in the user's
+inbox and its answer form live. Only an unanswered question can be withdrawn, and a withdrawn one
+takes no answer, so ask again in a new comment if part of it still matters. A `question wait` on
+it returns with the withdrawal. Withdraw before hiding: hiding an unanswered question declines it
+in the hider's name.
 
 One comment carries as many closely related questions as the decision needs — asking more beats
 guessing — each with your recommendation and its reasoning, so the user can answer with a few

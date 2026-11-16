@@ -303,6 +303,51 @@ describe("renderActivityLine", () => {
     );
   });
 
+  it("names a withdrawal's comment and keeps a multi-line reason in its block", () => {
+    const line = renderActivityLine(
+      event({
+        event_type: "question_withdrawn",
+        payload: {
+          comment_id: 757,
+          reason: "answered by the code\nsee #12",
+        },
+      }),
+      paint,
+      ctx,
+    );
+    expect(line).toMatch(
+      /^T-146 User withdrew #comment-757 .+ ago: answered by the code\n {2}see #12$/,
+    );
+  });
+
+  it("cuts a withdrawal's reason to one line under --summary", () => {
+    const line = renderActivityLine(
+      event({
+        event_type: "question_withdrawn",
+        payload: { comment_id: 757, reason: `first line\n${"x".repeat(300)}` },
+      }),
+      paint,
+      { ...ctx, summaryChars: 40 },
+    );
+    expect(line).not.toContain("\n");
+    expect(line).toMatch(
+      /^T-146 User withdrew #comment-757 .+ ago: first line/,
+    );
+    expect(line.length).toBeLessThan(120);
+  });
+
+  it("ends a withdrawal without a reason at its time", () => {
+    const line = renderActivityLine(
+      event({
+        event_type: "question_withdrawn",
+        payload: { comment_id: 757, reason: null },
+      }),
+      paint,
+      ctx,
+    );
+    expect(line).toMatch(/^T-146 User withdrew #comment-757 .+ ago$/);
+  });
+
   /**
    * The two renderers share `eventDetail` precisely so a status change
    * cannot come out worded one way in a watch and another in `issue view`.
@@ -723,5 +768,31 @@ describe("renderTimelineItem", () => {
         ctx,
       ),
     ).toContain("answered #comment-757");
+  });
+
+  it("spells a withdrawal with its reason after a dash", () => {
+    expect(
+      renderTimelineItem(
+        event({
+          event_type: "question_withdrawn",
+          payload: { comment_id: 757, reason: "answered by the code" },
+        }),
+        paint,
+        ctx,
+      ),
+    ).toMatch(/^User withdrew #comment-757 .+ ago — answered by the code$/);
+  });
+
+  it("spells a withdrawal without a reason as the bare event", () => {
+    expect(
+      renderTimelineItem(
+        event({
+          event_type: "question_withdrawn",
+          payload: { comment_id: 757, reason: null },
+        }),
+        paint,
+        ctx,
+      ),
+    ).toMatch(/^User withdrew #comment-757 .+ ago$/);
   });
 });

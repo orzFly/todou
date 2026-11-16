@@ -28,6 +28,7 @@ import {
 import { drainPaged } from "./paginate.ts";
 import {
   decodeAnswerEvent,
+  decodeWithdrawalEvent,
   renderAnswerRecords,
   renderQuestions,
 } from "./questions.ts";
@@ -306,6 +307,12 @@ export function renderTimelineItem(
       ...renderAnswerRecords(answered.answers, paint),
     ].join("\n");
   }
+  const withdrawn = decodeWithdrawalEvent(item);
+  if (withdrawn !== null) {
+    const reason =
+      withdrawn.reason === null ? "" : ` — ${bodyBlock(withdrawn.reason, 0)}`;
+    return `${who(item.actor)} withdrew ${commentRef(withdrawn.comment_id)} ${when}${reason}`;
+  }
   if (item.event_type === "title_changed") {
     return paint(
       "dim",
@@ -416,6 +423,13 @@ export function renderActivityLine(
       })
       .join("; ");
     return `${ref} ${who(item.actor)} answered ${commentRef(answered.comment_id)} ${when}: ${bodyBlock(answers, ctx.summaryChars)}`;
+  }
+  const withdrawn = decodeWithdrawalEvent(item);
+  if (withdrawn !== null) {
+    const head = `${ref} ${who(item.actor)} withdrew ${commentRef(withdrawn.comment_id)} ${when}`;
+    return withdrawn.reason === null
+      ? head
+      : `${head}: ${bodyBlock(withdrawn.reason, ctx.summaryChars)}`;
   }
   const opened = openedCard(item, ctx);
   if (opened !== undefined) {

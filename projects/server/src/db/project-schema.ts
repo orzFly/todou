@@ -343,6 +343,7 @@ export const issueEvents = pgTable(
         "attachment_added",
         "attachment_deleted",
         "question_answered",
+        "question_withdrawn",
         "spec_pushed",
         "spec_withdrawn",
         "spec_review",

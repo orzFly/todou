@@ -436,6 +436,40 @@ export function renderEvent(
         text,
       };
     }
+    case "question_withdrawn": {
+      const label = "withdrew questions";
+      // Withdrawal reasons are literal text, including mentions and issue
+      // refs, as with `spec_withdrawn`: `plain` would turn those refs into links.
+      const reason =
+        typeof payload.reason === "string" ? ` — ${payload.reason}` : "";
+      const text = `${label}${reason}`;
+      const commentId =
+        typeof payload.comment_id === "number" ? payload.comment_id : undefined;
+      if (
+        commentId === undefined ||
+        ctx.slug === undefined ||
+        ctx.issueNumber === undefined
+      )
+        return { node: text, text };
+      return {
+        node: (
+          <>
+            <Link
+              to="/projects/$slug/issues/$number"
+              params={{ slug: ctx.slug, number: String(ctx.issueNumber) }}
+              hash={commentAnchor(commentId)}
+              hashScrollIntoView={false}
+              state={ctx.returnState}
+              className="hover:underline"
+            >
+              {label}
+            </Link>
+            {reason}
+          </>
+        ),
+        text,
+      };
+    }
     case "spec_pushed": {
       const list = (v: unknown) => (Array.isArray(v) ? v.length : 0);
       const parts = [
@@ -772,6 +806,7 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
     <PaperclipIcon className="size-3.5 text-muted-foreground" />
   ),
   question_answered: <ListChecksIcon className="size-3.5 text-green-600" />,
+  question_withdrawn: <CirclePauseIcon className="size-3.5" />,
   spec_pushed: <BookOpenTextIcon className="size-3.5" />,
   spec_withdrawn: <CirclePauseIcon className="size-3.5" />,
   spec_review: <FileCheck2Icon className="size-3.5 text-amber-600" />,

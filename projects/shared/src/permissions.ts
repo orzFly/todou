@@ -147,6 +147,18 @@ export const CAPABILITIES = [
 
   { id: "question.read", minRole: "reader", enforce: "addressed" },
   { id: "question.answer", minRole: "writer", enforce: "gate" },
+  // Withdrawing questions takes two entries, the way deleting an attachment
+  // does: `question.withdraw` opens the endpoint to whoever asked, and
+  // `question.withdraw_any` is what withdrawing someone else's is checked
+  // against. A writer, like answering: settling other people's questions is
+  // the same job.
+  {
+    id: "question.withdraw",
+    minRole: "reporter",
+    enforce: "gate",
+    ownerOnly: { until: "writer" },
+  },
+  { id: "question.withdraw_any", minRole: "writer", enforce: "gate" },
 
   { id: "revision.read", minRole: "reader", enforce: "addressed" },
 
