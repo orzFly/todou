@@ -748,7 +748,7 @@ describe("the spec page reads the version its URL names", () => {
     await waitFor(() => expect(shownTitle()).toBe("Version 2"));
     const finish = screen.getByRole("button", { name: /finish review/i });
     expectDisabled(finish, false);
-    expect(document.querySelector("[data-old-version-notice]")).toBeNull();
+    expect(newerToast()).toBeNull();
     const status = document.querySelector(
       '[data-toolbar-slot="review-status"]',
     )?.textContent;
@@ -761,15 +761,15 @@ describe("the spec page reads the version its URL names", () => {
     expect(approve.title).toBe("");
   });
 
-  it("leads from an older version to the current one by a notice", async () => {
+  it("leads from an older version to the current one by a toast", async () => {
     await mountPage({ version: 2, viewedVersion: 1 });
     const slot = () =>
       document.querySelector('[data-toolbar-slot="review-status"]');
     // The status is the current version's, so an older one shows none.
     expect(slot()).toBeNull();
     // Named by its words alone: the arrow is decoration.
-    const link = screen.getByRole("link", { name: "Newer version: v2" });
-    expect(link.matches("[data-old-version-notice]")).toBe(true);
+    const link = await screen.findByRole("link", { name: "Newer version: v2" });
+    expect(link.closest("[data-sonner-toast]")).not.toBeNull();
     const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
     expect(href.searchParams.get("v")).toBe("2");
     expect(href.searchParams.get("file")).toBe("design.md");
@@ -778,7 +778,7 @@ describe("the spec page reads the version its URL names", () => {
     await waitFor(() => expect(router.state.location.search.v).toBe(2));
     await waitFor(() => expect(shownTitle()).toBe("Version 2"));
     expect(slot()?.textContent).toBe("awaiting review");
-    expect(document.querySelector("[data-old-version-notice]")).toBeNull();
+    await waitFor(() => expect(newerToast()).toBeNull());
   });
 
   it("keeps the comparison the reader pinned on the way to the latest", async () => {
@@ -793,6 +793,128 @@ describe("the spec page reads the version its URL names", () => {
       compare: "1",
       view: "rendered",
     });
+  });
+});
+
+/**
+ * The newer-version toast, while one is up. Looked up in the DOM rather than
+ * by role: a modal dialog hides everything outside it from the role queries,
+ * and the toast with it.
+ */
+function newerToast() {
+  return (
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        "[data-sonner-toast]:not([data-removed='true'])",
+      ),
+    ].find((toast) => /Newer version: v\d+/.test(toast.textContent ?? "")) ??
+    null
+  );
+}
+
+/** Waits for the toast to name `version`, past any that is on its way out. */
+function shownNewerToast(version: number) {
+  return waitFor(() => {
+    const toast = newerToast();
+    expect(toast?.textContent).toContain(`Newer version: v${version}`);
+    return toast as HTMLElement;
+  });
+}
+
+async function closeNewerToast(version: number) {
+  const shown = await shownNewerToast(version);
+  fireEvent.click(within(shown).getByRole("button", { name: "Close toast" }));
+  await waitFor(() => expect(newerToast()).toBeNull());
+}
+
+async function openAndCancelComposer() {
+  fireEvent.click(screen.getByRole("button", { name: "Comment file" }));
+  const composer = await screen.findByTestId("spec-composer");
+  await waitFor(() => expect(newerToast()).toBeNull());
+  fireEvent.click(
+    within(composer).getByRole("button", { name: "cancel comment" }),
+  );
+  await waitFor(() => expect(screen.queryByTestId("spec-composer")).toBeNull());
+}
+
+describe("the newer-version toast", () => {
+  it("stays past a toast's usual time, outside the toolbar", async () => {
+    const page = await mountPage();
+    await waitFor(() => expect(router.state.location.search.v).toBe(1));
+    expect(newerToast()).toBeNull();
+    await pushNext(page);
+    await shownNewerToast(2);
+    expect(
+      newerToast()?.closest(".sticky"),
+      "the toolbar holds no notice row",
+    ).toBeNull();
+    // sonner's own default is 4s.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 4500)));
+    expect(newerToast()).not.toBeNull();
+  }, 10_000);
+
+  it("stays closed once closed, until a newer version comes", async () => {
+    const page = await mountPage({ version: 3, viewedVersion: 2 });
+    await closeNewerToast(3);
+    await viewVersion(page, 1);
+    await viewVersion(page, 2);
+    // Gives the page a reason to put it back, which it must not take.
+    await openAndCancelComposer();
+    await act(async () => {});
+    expect(newerToast()).toBeNull();
+
+    await pushNext(page);
+    await shownNewerToast(4);
+  });
+
+  it("goes when the reader follows it, without counting as closed", async () => {
+    const page = await mountPage({ version: 2, viewedVersion: 1 });
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Newer version: v2" }),
+    );
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+    await waitFor(() => expect(newerToast()).toBeNull());
+
+    await pushNext(page);
+    await shownNewerToast(3);
+  });
+
+  it("makes way for the review dialog and the composer", async () => {
+    const page = await mountPage();
+    const dialog = await openReview();
+    await pushNext(page);
+    await within(dialog).findByRole("link", { name: "Review v2" });
+    await act(async () => {});
+    expect(newerToast()).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await shownNewerToast(2);
+
+    // Taken down by the page, which is not the reader closing it.
+    await openAndCancelComposer();
+    await shownNewerToast(2);
+  });
+
+  it("goes with the page", async () => {
+    const page = await mountPage({ version: 2, viewedVersion: 1 });
+    await shownNewerToast(2);
+    const shown = toast.getToasts().map((active) => active.id);
+    expect(shown).not.toHaveLength(0);
+    void router
+      .navigate({
+        to: "/projects/$slug/issues/$number",
+        params: { slug: "demo", number: String(page.issueNumber) },
+      })
+      .catch(() => undefined);
+    await waitFor(() =>
+      expect(router.state.location.pathname).not.toMatch(/\/spec$/),
+    );
+    // Asked of sonner, not the DOM: the issue page's own render can take the
+    // Toaster's list down with it, and that would pass for a dismiss.
+    await waitFor(() =>
+      expect(
+        toast.getToasts().filter((active) => shown.includes(active.id)),
+      ).toEqual([]),
+    );
   });
 });
 
@@ -835,7 +957,7 @@ describe("an address without a version", () => {
     await waitFor(() => expect(router.state.location.search.v).toBe(2));
     await waitFor(() => expect(shownTitle()).toBe("Version 2"));
     expect(page.specReads()).toBe(1);
-    expect(document.querySelector("[data-old-version-notice]")).toBeNull();
+    expect(newerToast()).toBeNull();
   });
 
   it("pins a stale cache when its refetch fails", async () => {

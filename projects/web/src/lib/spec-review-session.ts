@@ -39,6 +39,8 @@ export type SpecReviewSessionSnapshot = {
   composerBody: string;
   summary: string;
   finishOpen: boolean;
+  /** The current version as it stood when the reader closed the newer-version toast. */
+  newerDismissedAt: number | null;
   pending: PendingSpecReview | null;
 };
 
@@ -52,6 +54,7 @@ export type SpecReviewSession = {
   clearComposer: () => void;
   setSummary: (summary: string) => void;
   setFinishOpen: (open: boolean) => void;
+  setNewerDismissedAt: (version: number) => void;
   beginSubmit: (verdict: SpecReviewVerdict) => PendingSpecReview | null;
   finishSubmit: (pendingId: number, submittedSummary: string) => void;
   failSubmit: (pendingId: number) => void;
@@ -132,6 +135,7 @@ export function createSpecReviewSession(
     composerBody: "",
     summary: "",
     finishOpen: false,
+    newerDismissedAt: null,
     pending: sharedPending.pending,
   };
 
@@ -179,6 +183,7 @@ export function createSpecReviewSession(
     },
     setSummary: (summary) => update({ summary }),
     setFinishOpen: (finishOpen) => update({ finishOpen }),
+    setNewerDismissedAt: (newerDismissedAt) => update({ newerDismissedAt }),
     beginSubmit: (verdict) => {
       if (sharedPending.pending !== null) return null;
       const pending = { id: ++nextSubmitNumber, verdict };

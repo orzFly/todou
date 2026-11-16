@@ -770,7 +770,7 @@ describe("the spec page's own moves", () => {
       }),
     );
 
-    // v2 is an old version now, and its notice leads back to the latest.
+    // v2 is an old version now, and its toast leads back to the latest.
     fireEvent.click(
       await screen.findByRole("link", {
         name: "Newer version: v3",

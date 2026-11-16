@@ -80,6 +80,7 @@ import {
   AnnotatedMarkdown,
   type DisplayedAnnotation,
 } from "@/components/spec/annotated-markdown.tsx";
+import { useNewerVersionToast } from "@/components/spec/newer-version-toast.tsx";
 import { ReviewSubmitDialog } from "@/components/spec/review-submit.tsx";
 import { SpecBaselinePicker } from "@/components/spec/spec-baseline-picker.tsx";
 import { SpecCompareToggle } from "@/components/spec/spec-compare-toggle.tsx";
@@ -574,6 +575,10 @@ function SpecViewBody({
   );
   const staging = useSpecReviewSessionValue(session, (s) => s.staging);
   const finishOpen = useSpecReviewSessionValue(session, (s) => s.finishOpen);
+  const newerDismissedAt = useSpecReviewSessionValue(
+    session,
+    (s) => s.newerDismissedAt,
+  );
   const pendingVerdict = useSpecReviewSessionValue(
     session,
     (s) => s.pending?.verdict ?? null,
@@ -1347,37 +1352,45 @@ function SpecViewBody({
     />
   );
   // The status is the current version's. Beside an older one it would read
-  // as that version's own, so there is none, and the notice below says the
+  // as that version's own, so there is none, and the toast below says the
   // version is not the latest.
   const reviewStatus = isCurrent ? (
     <ToolbarSlot name="review-status">
       <SpecStatusBadge status={spec.review_status} />
     </ToolbarSlot>
   ) : null;
-  /* The toolbar's last row on an older version, sticky at every width. One
-     link with no role of its own: a push that makes this version old while
-     the review dialog is open is already announced there. */
-  const oldVersionNotice = isCurrent ? null : (
-    <Link
-      to="/projects/$slug/issues/$number/spec"
-      params={params}
-      search={versionSearch(spec.current_version)}
-      state={returnState}
-      data-old-version-notice=""
-      className="flex items-center rounded-md border bg-muted/40 px-3 py-1.5 text-sm font-medium hover:bg-muted"
-    >
-      <span>
+  const newerSearch = versionSearch(spec.current_version);
+  // Held back while the review dialog or the composer is open: the dialog
+  // links the newer version itself, and on a phone the toast would sit on
+  // the composer.
+  useNewerVersionToast({
+    open:
+      !isCurrent &&
+      !finishOpen &&
+      staging === null &&
+      newerDismissedAt !== spec.current_version,
+    current: spec.current_version,
+    contentKey: JSON.stringify(newerSearch),
+    content: (
+      <Link
+        to="/projects/$slug/issues/$number/spec"
+        params={params}
+        search={newerSearch}
+        state={returnState}
+        className="font-medium hover:underline"
+      >
         Newer version: v{spec.current_version}
         <span aria-hidden> →</span>
-      </span>
-    </Link>
-  );
+      </Link>
+    ),
+    onReaderDismiss: session.setNewerDismissedAt,
+  });
   // The same destination, offered where a push lands on an open review.
   const newerVersionLink = isCurrent ? null : (
     <Link
       to="/projects/$slug/issues/$number/spec"
       params={params}
-      search={versionSearch(spec.current_version)}
+      search={newerSearch}
       state={returnState}
       className="font-medium text-foreground underline underline-offset-2"
     >
@@ -1667,11 +1680,7 @@ function SpecViewBody({
           One element in both layouts, so the height observers measuring it
           keep their target across the lg boundary. Below lg it holds a
           single row and the rest of the controls follow it in flow — five
-          wrapped rows pinned there took 205 of a phone's 844px (T-593).
-
-          On an older version the old-version notice is its last row, pinned
-          below lg too: a reader scrolled deep into the document still needs
-          to know they are not reading the current version. */}
+          wrapped rows pinned there took 205 of a phone's 844px (T-593). */}
       <div
         ref={toolbarRef}
         data-header-follow=""
@@ -1765,10 +1774,6 @@ function SpecViewBody({
             </Button>
             {finishReview}
           </div>
-        )}
-        {oldVersionNotice !== null && (
-          // Below lg there is no `space-y` to set it apart from the row.
-          <div className={wide ? undefined : "mt-1.5"}>{oldVersionNotice}</div>
         )}
       </div>
       {!wide && (
