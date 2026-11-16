@@ -8,6 +8,7 @@ import {
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { writeClipboard } from "@/lib/clipboard.ts";
+import { cn } from "@/lib/utils";
 
 const COPIED_MS = 1500;
 
@@ -150,8 +151,15 @@ export function FenceFrame({
           </span>
         </div>
       ) : (
+        // In the flow, not floating over the code: on touch it never hides,
+        // and anywhere it would cover the end of a long first line. It
+        // reaches down into the content's own top padding to cost less
+        // height — but not over a scroller, whose lines would pass under it.
         <div
-          className="fence-tools absolute top-1 right-1 z-10 flex items-center gap-0.5 rounded-md border bg-background/90 p-px shadow-xs select-none"
+          className={cn(
+            "fence-tools relative z-10 mt-1 mr-1 ml-auto flex w-fit items-center gap-0.5 rounded-md border bg-background/90 p-px shadow-xs select-none",
+            !collapsible && "-mb-3",
+          )}
           data-always={toolbarAlwaysVisible ? "" : undefined}
         >
           {lang !== undefined && lang !== "" && (

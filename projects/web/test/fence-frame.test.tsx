@@ -35,6 +35,8 @@ describe("FenceFrame", () => {
     const tools = container.querySelector(".fence-tools");
     expect(tools?.textContent).toContain("ts");
     expect(tools?.className).toContain("select-none");
+    // Floating, it covered the end of the first line wherever it showed.
+    expect(tools?.className).not.toMatch(/\babsolute\b/);
     expect(tools?.hasAttribute("data-always")).toBe(false);
     expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
     expect(container.querySelector(".fence-head")).toBeNull();
