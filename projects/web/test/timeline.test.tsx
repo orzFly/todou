@@ -1610,6 +1610,12 @@ describe("first load fills in from the bottom (T-602)", () => {
     }) as typeof fetch);
     return {
       pending: () => queue.length,
+      runOne: async () => {
+        const run = queue.shift();
+        await act(async () => {
+          run?.({ didTimeout: true, timeRemaining: () => 0 });
+        });
+      },
       runAll: async () => {
         for (let callback = queue.shift(); callback; callback = queue.shift()) {
           const run = callback;
@@ -1639,6 +1645,30 @@ describe("first load fills in from the bottom (T-602)", () => {
     await callbacks.runAll();
     expect(container.querySelectorAll("[data-unfilled]")).toHaveLength(0);
     for (let n = 1; n <= 20; n++) expect(queryByText(`c${n}`)).not.toBeNull();
+  });
+
+  // Each unit landing on its own would re-land the page once per unit, and a
+  // re-landing is only exact to a whole scroll step (T-690).
+  it("keeps filled units behind their placeholders until the fill is done", async () => {
+    const callbacks = idle();
+    const { container, findByText, getByText } = mount();
+    expect(await findByText("c20")).toBeTruthy();
+    const unit = (n: number) =>
+      getByText(`c${n}`).closest("[data-testid=timeline-scroll] > *");
+
+    await callbacks.runOne();
+    await callbacks.runOne();
+    expect(container.querySelectorAll("[data-unfilled]")).toHaveLength(14);
+    expect(unit(14)?.className).toContain("h-0");
+    expect(unit(13)?.className).toContain("h-0");
+    expect(unit(15)?.className).not.toContain("h-0");
+
+    const revealed = unit(14);
+    await callbacks.runAll();
+    expect(container.querySelectorAll("[data-unfilled]")).toHaveLength(0);
+    expect(container.querySelector(".h-0")).toBeNull();
+    // Revealed in place, not remounted.
+    expect(unit(14)).toBe(revealed);
   });
 
   it("draws everything at once when a permalink lands above the bottom", async () => {

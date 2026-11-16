@@ -7,9 +7,9 @@ const INPUTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
  * above it (T-602).
  *
  * The timeline's own scroll anchoring is off (see `Timeline`), and a fill
- * grows the list above the reader twice over: once as each unit replaces its
- * placeholder, and again moments later as its code blocks swap their plain
- * text for the highlighted view. Until the reader's first input the page's
+ * grows the list above the reader twice over: once as the filled units replace
+ * their placeholders, and again moments later as their code blocks swap their
+ * plain text for the highlighted view. Until the reader's first input the page's
  * hold owns the viewport, so this only starts then; it ends at the first input
  * after the fill completes, the late resizes having had their chance.
  */
@@ -39,8 +39,12 @@ export function useKeepReading(
         Number.parseFloat(
           getComputedStyle(document.documentElement).scrollPaddingTop,
         ) || 0;
+      // Not a placeholder: a filled unit's goes away when it is revealed, and
+      // a detached anchor holds nothing (T-690).
       const el = [...list.children].find(
-        (child) => child.getBoundingClientRect().bottom > inset,
+        (child) =>
+          !child.hasAttribute("data-unfilled") &&
+          child.getBoundingClientRect().bottom > inset,
       );
       anchor = el ? { el, top: el.getBoundingClientRect().top } : null;
     };
