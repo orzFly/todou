@@ -51,7 +51,7 @@ output; the transport is never inferred from the environment, because such
 a supervisor is started *by* the session and has the variable set too.
 
 Choosing the transport is therefore the caller's job, and `todou agent
-can-i-follow` does it: it reports which one this environment supports, and
+how-to-watch` does it: it reports which one this environment supports, and
 what to run instead where neither does. It talks to no server and resolves no
 project, so it answers at any point in a session, including one that starts
 with the tracker down. Where a session keeps refusing or holding pushed

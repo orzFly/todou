@@ -529,7 +529,7 @@ describe("Codex queue transport", () => {
 
   it("advises the queue where there is no socket, and poll where there is neither", async () => {
     const { dir } = codexOnPath();
-    const queued = await runCli(["agent", "can-i-follow"], {
+    const queued = await runCli(["agent", "how-to-watch"], {
       env: { CODEX_THREAD_ID: THREAD, PATH: dir },
     });
     expect(queued.exitCode).toBe(0);
@@ -543,7 +543,7 @@ describe("Codex queue transport", () => {
         optedOut: false,
       }).situation,
     ).toBe("codex-queue");
-    const none = await runCli(["agent", "can-i-follow"], {
+    const none = await runCli(["agent", "how-to-watch"], {
       env: { CODEX_THREAD_ID: THREAD, PATH: "" },
     });
     expect(none.stdout).toContain("poll mode");

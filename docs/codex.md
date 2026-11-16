@@ -7,7 +7,7 @@ plugin installation or replacement Codex launcher is required.
 
 ```sh
 todou login https://todou.example --profile codex
-todou agent can-i-follow
+todou agent how-to-watch
 ```
 
 Run the second command from the Codex conversation so it inherits the thread

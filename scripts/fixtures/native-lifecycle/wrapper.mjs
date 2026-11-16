@@ -279,7 +279,7 @@ export default function probe(api) {
                 }
               });
               child.stdin.write(
-                `${JSON.stringify({ id: "nested-follow", type: "bash", command: `${quote(args.node)} ${quote(args.cli)} agent can-i-follow` })}\n`,
+                `${JSON.stringify({ id: "nested-follow", type: "bash", command: `${quote(args.node)} ${quote(args.cli)} agent how-to-watch` })}\n`,
               );
             });
           } finally {

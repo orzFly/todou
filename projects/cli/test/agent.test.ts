@@ -22,16 +22,16 @@ function expected(input: Parameters<typeof followAdvice>[0]): string {
   return `${followAdvice(input).paragraphs.join("\n\n")}\n`;
 }
 
-async function canIFollow(env: Record<string, string | undefined>) {
-  const result = await runCli(["agent", "can-i-follow"], { env });
+async function howToWatch(env: Record<string, string | undefined>) {
+  const result = await runCli(["agent", "how-to-watch"], { env });
   expect(result.exitCode).toBe(0);
   expect(result.stderr).toBe("");
   return result.stdout;
 }
 
-describe("agent can-i-follow", () => {
+describe("agent how-to-watch", () => {
   it("offers uds under Claude Code with a socket", async () => {
-    const stdout = await canIFollow({
+    const stdout = await howToWatch({
       CLAUDECODE: "1",
       CLAUDE_CODE_MESSAGING_SOCKET: SOCKET,
     });
@@ -42,7 +42,7 @@ describe("agent can-i-follow", () => {
   });
 
   it("reports the missing socket under Claude Code without one", async () => {
-    const stdout = await canIFollow({ CLAUDECODE: "1" });
+    const stdout = await howToWatch({ CLAUDECODE: "1" });
     expect(stdout).toBe(
       expected({
         harness: "claude-code",
@@ -54,7 +54,7 @@ describe("agent can-i-follow", () => {
   });
 
   it("names another harness it cannot answer for", async () => {
-    const stdout = await canIFollow({ CODEX_THREAD_ID: "t-1" });
+    const stdout = await howToWatch({ CODEX_THREAD_ID: "t-1" });
     expect(stdout).toBe(
       expected({ harness: "codex", socket: undefined, optedOut: false }),
     );
@@ -62,7 +62,7 @@ describe("agent can-i-follow", () => {
   });
 
   it("answers with no harness at all", async () => {
-    const stdout = await canIFollow({});
+    const stdout = await howToWatch({});
     expect(stdout).toBe(
       expected({ harness: null, socket: undefined, optedOut: false }),
     );
@@ -82,16 +82,27 @@ describe("agent can-i-follow", () => {
       {},
       { ...optedOut, CLAUDECODE: "1", CLAUDE_CODE_MESSAGING_SOCKET: SOCKET },
     ]) {
-      const stdout = await canIFollow(env);
+      const stdout = await howToWatch(env);
       expect(stdout).not.toContain("opt-out-uds");
       expect(stdout).not.toContain("opt-in-uds");
     }
   });
+
+  it("still answers as can-i-follow, which help no longer lists", async () => {
+    const env = { CLAUDECODE: "1", CLAUDE_CODE_MESSAGING_SOCKET: SOCKET };
+    const old = await runCli(["agent", "can-i-follow"], { env });
+    expect(old.exitCode).toBe(0);
+    expect(old.stdout).toBe(await howToWatch(env));
+
+    const help = await runCli(["--help"], { env });
+    expect(help.stdout).toContain("agent how-to-watch");
+    expect(help.stdout).not.toContain("can-i-follow");
+  });
 });
 
-describe("agent can-i-follow under omp with the tool", () => {
+describe("agent how-to-watch under omp with the tool", () => {
   it("answers with the tool's paragraphs when the extension published it", async () => {
-    const stdout = await canIFollow({
+    const stdout = await howToWatch({
       OMPCODE: "1",
       CLAUDECODE: "1",
       TODOU_MESSAGING_SOCKET: SOCKET,
@@ -109,7 +120,7 @@ describe("agent can-i-follow under omp with the tool", () => {
   });
 
   it("keeps the plain uds answer with the variable absent", async () => {
-    const stdout = await canIFollow({
+    const stdout = await howToWatch({
       OMPCODE: "1",
       CLAUDECODE: "1",
       TODOU_MESSAGING_SOCKET: SOCKET,
@@ -137,14 +148,14 @@ describe("agent opt-out-uds / opt-in-uds", () => {
     const out = await runCli(["agent", "opt-out-uds"], { env });
     expect(out.exitCode).toBe(0);
     expect(out.stdout).toContain("--follow=uds opted out");
-    // The one place an agent must not read it is `can-i-follow`; the person
+    // The one place an agent must not read it is `how-to-watch`; the person
     // who just ran this is exactly who the way back is for.
     expect(out.stdout).toContain("todou agent opt-in-uds");
     expect(readFileSync(configPath(env), "utf8")).toContain(
       "follow_uds = false",
     );
 
-    expect(await canIFollow(udsEnv)).toBe(
+    expect(await howToWatch(udsEnv)).toBe(
       expected({ harness: "claude-code", socket: SOCKET, optedOut: true }),
     );
 
@@ -154,7 +165,7 @@ describe("agent opt-out-uds / opt-in-uds", () => {
     // Removed, not set to `true`.
     expect(readFileSync(configPath(env), "utf8")).not.toContain("follow_uds");
 
-    expect(await canIFollow(udsEnv)).toBe(
+    expect(await howToWatch(udsEnv)).toBe(
       expected({ harness: "claude-code", socket: SOCKET, optedOut: false }),
     );
   });
@@ -234,7 +245,7 @@ describe("agent opt-in against a fragment's opt-out (T-366)", () => {
     );
 
     // The fragment opts out on its own.
-    expect(await canIFollow({ ...env, ...SOCKET_ENV })).toBe(
+    expect(await howToWatch({ ...env, ...SOCKET_ENV })).toBe(
       expected({
         harness: "claude-code",
         socket: "/run/cc-socks/4242.sock",
@@ -249,7 +260,7 @@ describe("agent opt-in against a fragment's opt-out (T-366)", () => {
     expect(readFileSync(configPath(env), "utf8")).toContain(
       "follow_uds = true",
     );
-    expect(await canIFollow({ ...env, ...SOCKET_ENV })).toBe(
+    expect(await howToWatch({ ...env, ...SOCKET_ENV })).toBe(
       expected({
         harness: "claude-code",
         socket: "/run/cc-socks/4242.sock",

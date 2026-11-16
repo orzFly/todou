@@ -60,7 +60,7 @@ const STATE_VERSION = 1;
 const MAX_PAYLOAD_CHARS = 1_048_576;
 
 /**
- * The tool this extension registers, published so `todou agent can-i-follow`
+ * The tool this extension registers, published so `todou agent how-to-watch`
  * can tell an agent it exists. The name lives again in
  * `src/follow-advice.ts` (`OMP_WATCH_TOOL`) because this file may import
  * nothing from `src/`; a test pins the two spellings together.

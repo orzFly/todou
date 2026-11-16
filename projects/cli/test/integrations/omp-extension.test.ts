@@ -52,7 +52,7 @@ describe("the omp extension's half of the push protocol", () => {
   });
 
   it("pins the tool name to the CLI's own spelling of it", () => {
-    // `OMP_WATCH_TOOL` names the device `can-i-follow` tells an agent to
+    // `OMP_WATCH_TOOL` names the device `how-to-watch` tells an agent to
     // call; `TOOL_NAME` is what omp registers under. The extension cannot
     // import the CLI's constant, so the two spellings are pinned by test
     // instead — a silent disagreement would send every agent to a device

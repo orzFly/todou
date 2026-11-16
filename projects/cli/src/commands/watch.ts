@@ -254,7 +254,7 @@ export class WatchCommand extends ProjectCommand {
       started this command, and refuses up front where there is none to push
       to — Claude Code offers that socket itself, omp once
       \`todou integration install omp\` has been run in it, and
-      \`todou agent can-i-follow\` answers for the session you are in.
+      \`todou agent how-to-watch\` answers for the session you are in.
       Auto-detection would get the first case wrong: a supervisor runs this
       command *from* the session, so the socket is in its environment too.
 

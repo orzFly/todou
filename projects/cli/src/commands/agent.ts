@@ -36,8 +36,14 @@ function whereItLives(env: Env): string {
  * makes "run it and do what it says" a reasonable thing for a skill to ask
  * of every session.
  */
-export class AgentCanIFollowCommand extends Command<CliContext> {
-  static paths = [["agent", "can-i-follow"]];
+export class AgentHowToWatchCommand extends Command<CliContext> {
+  // `can-i-follow` was the first name. Help lists only the first path, so the
+  // old one stays callable for skills and scripts written against it without
+  // being offered to anyone new.
+  static paths = [
+    ["agent", "how-to-watch"],
+    ["agent", "can-i-follow"],
+  ];
   static usage = Command.Usage({
     description: "Report which watch follow mode this environment supports",
     details:
@@ -48,9 +54,7 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
       "state a session can start in.\n\n" +
       "Exit code is always 0: this is advice, not a test, and a wrapper " +
       'should not read "this harness cannot push" as a failure.',
-    examples: [
-      ["Which follow mode should I use here", "$0 agent can-i-follow"],
-    ],
+    examples: [["How should I watch from here", "$0 agent how-to-watch"]],
   });
 
   async execute(): Promise<number | undefined> {
@@ -65,7 +69,7 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
 }
 
 /**
- * The inputs `can-i-follow` decides on and the decision, computed once for it
+ * The inputs `how-to-watch` decides on and the decision, computed once for it
  * and for `doctor`, so the report describes the very advice an agent got.
  */
 function adviseHere(context: CliContext): {
@@ -96,12 +100,12 @@ export class AgentDoctorCommand extends Command<CliContext> {
   static paths = [["agent", "doctor"]];
   static usage = Command.Usage({
     description:
-      "Report what `can-i-follow` saw, for pasting into a bug report",
+      "Report what `how-to-watch` saw, for pasting into a bug report",
     details:
       "Prints how the harness was detected, the process tree it was read " +
       "from, the variables follow depends on, which `todou` is running and " +
       "which ones PATH finds, the account a bare command would use, the push " +
-      "channel, the installed integrations and the advice `can-i-follow` " +
+      "channel, the installed integrations and the advice `how-to-watch` " +
       "chose. Run it in the same place the failing watch runs — inside a " +
       "background job or service, not in a fresh terminal.\n\n" +
       "No todou token appears in it: secret variables print as " +
@@ -109,7 +113,7 @@ export class AgentDoctorCommand extends Command<CliContext> {
       "anything shaped like a personal access token, is masked in the " +
       "finished text. Ancestors' variables are named, never shown; their " +
       "command lines are printed, cut at 120 characters. Like " +
-      "`can-i-follow`, it talks to no server and exits 0.",
+      "`how-to-watch`, it talks to no server and exits 0.",
     examples: [["Diagnose follow here", "$0 agent doctor"]],
   });
 
@@ -141,7 +145,7 @@ export class AgentOptOutUdsCommand extends Command<CliContext> {
   static usage = Command.Usage({
     description: "Stop advising `--follow=uds` on this machine",
     details:
-      "Records in the user config that `todou agent can-i-follow` must not " +
+      "Records in the user config that `todou agent how-to-watch` must not " +
       "offer the push transport here, which is the answer when a session " +
       "keeps holding, refusing or dropping pushed messages.\n\n" +
       "It changes advice only. `todou watch --follow=uds` keeps working " +
@@ -169,7 +173,7 @@ export class AgentOptOutUdsCommand extends Command<CliContext> {
       saveCliConfig(own, env);
       this.context.stdout.write(
         `--follow=uds opted out · ${whereItLives(env)}\n` +
-          "`todou agent can-i-follow` will stop offering it; " +
+          "`todou agent how-to-watch` will stop offering it; " +
           "`todou agent opt-in-uds` undoes this.\n",
       );
       return 0;
@@ -185,7 +189,7 @@ export class AgentOptInUdsCommand extends Command<CliContext> {
     description: "Advise `--follow=uds` again on this machine",
     details:
       "Undoes `todou agent opt-out-uds` by removing the preference, after " +
-      "which `todou agent can-i-follow` offers the push transport wherever " +
+      "which `todou agent how-to-watch` offers the push transport wherever " +
       "a Claude Code session exports a socket.",
     examples: [["Offer the push transport again", "$0 agent opt-in-uds"]],
   });

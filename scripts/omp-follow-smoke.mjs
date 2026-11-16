@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Does what `todou agent can-i-follow` tells an omp agent to do, inside a real
+ * Does what `todou agent how-to-watch` tells an omp agent to do, inside a real
  * interactive omp, and checks that a comment on the card then wakes the agent
  * (T-564). Run from any directory:
  *   node scripts/omp-follow-smoke.mjs
@@ -13,10 +13,10 @@
  * comment; omp also hands a running job's output to a side model that draws
  * the job's status line, and that request does not count.
  *
- *   tool     — extension installed: can-i-follow names `xd://todou_watch`,
+ *   tool     — extension installed: how-to-watch names `xd://todou_watch`,
  *              the tool's own documentation declares `profile`, and a watch
  *              started through it as the account the agent uses wakes it;
- *   batch    — no extension: can-i-follow prescribes a one-batch watch as an
+ *   batch    — no extension: how-to-watch prescribes a one-batch watch as an
  *              async job, and doing exactly that wakes the agent, twice, the
  *              second time from the cursor the first wake carried;
  *   service  — extension installed: `--follow=uds` from a named bash service
@@ -532,7 +532,7 @@ async function check(name, body) {
 await check("tool", async () => {
   const where = home("tool", { extension: true });
   script = [
-    bash("todou agent can-i-follow"),
+    bash("todou agent how-to-watch"),
     { tool: "read", args: { path: "xd://todou_watch" } },
     {
       tool: "write",
@@ -549,7 +549,7 @@ await check("tool", async () => {
   ];
   const host = await session("tool", where);
   try {
-    assert.match(toolResult(0), /xd:\/\/todou_watch/, "can-i-follow");
+    assert.match(toolResult(0), /xd:\/\/todou_watch/, "how-to-watch");
     assert.match(toolResult(1), /`profile`/, "the tool's documentation");
     assert.match(toolResult(2), /^started w1/, "the tool's start");
     await wakes("tool");
@@ -565,7 +565,7 @@ await check("batch", async () => {
       `todou issue watch ${issue} --profile alt${since ? ` --since ${since}` : ""}`,
       { async: true, timeout: 0 },
     );
-  script = [bash("todou agent can-i-follow"), watch()];
+  script = [bash("todou agent how-to-watch"), watch()];
   const host = await session("batch", where);
   try {
     const advice = toolResult(0);
@@ -574,12 +574,12 @@ await check("batch", async () => {
     assert.match(
       advice,
       /Run `todou watch` or `todou issue watch` without `--follow`, started with the bash tool's `async: true` and `timeout: 0`/,
-      "can-i-follow prescribes the one-batch async watch",
+      "how-to-watch prescribes the one-batch async watch",
     );
     assert.doesNotMatch(
       advice,
       /try `--follow=stdout`/,
-      "can-i-follow offers --follow=stdout",
+      "how-to-watch offers --follow=stdout",
     );
     // The restart the advice asks for, from the cursor the wake carried.
     script = [

@@ -200,7 +200,7 @@ export function followTransport(opts: {
     throw new CliError(
       "no agent session in this environment exports a push socket",
       "--follow=uds pushes into the session that started this command; " +
-        "`todou agent can-i-follow` says whether this one can, and what to " +
+        "`todou agent how-to-watch` says whether this one can, and what to " +
         "do instead — `--follow=stdout` works anywhere",
     );
   }

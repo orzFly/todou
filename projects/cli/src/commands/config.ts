@@ -91,7 +91,7 @@ export type ConfigReport = {
     active: boolean;
   }>;
   agent: {
-    /** Whether `can-i-follow` may offer the push transport here. */
+    /** Whether `how-to-watch` may offer the push transport here. */
     follow_uds: boolean;
   };
 };
