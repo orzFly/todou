@@ -66,12 +66,21 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
       ["Ready to Ship", "#f59e0b"],
       ["Shipped", "#8b5cf6"],
       ["Done", "#22c55e"],
+      ["Invalid", "#475569"],
     ]);
     expect(
       statuses
         .filter((x: { category: string }) => x.category === "closed")
         .map((x: { name: string }) => x.name),
-    ).toEqual(["Done"]);
+    ).toEqual(["Done", "Invalid"]);
+    // A blocker clears once it ships (T-711), not only once it is verified.
+    expect(
+      (
+        await json(
+          await t.app.request(`/api/projects/${s}`, { headers: { cookie } }),
+        )
+      ).block_clear_status_id,
+    ).toBe(statuses.find((x: { name: string }) => x.name === "Shipped").id);
     // Todo is pinned, so new issues land there rather than in Backlog.
     expect(
       statuses
@@ -441,7 +450,7 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
         body: JSON.stringify({ name: "Blocked", category: "open" }),
       }),
     );
-    expect(created.position).toBe(7);
+    expect(created.position).toBe(8);
 
     const rename = await t.app.request(
       `/api/projects/${s}/statuses/${created.id}`,

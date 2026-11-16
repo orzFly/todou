@@ -257,7 +257,7 @@ export class StatusInitCommand extends ProjectCommand {
   static paths = [["status", "init"]];
   static usage = Command.Usage({
     description:
-      "Apply the canonical status set (Backlog → … → Done) to an existing project: create what is missing, sync colors",
+      "Apply the canonical status set (Backlog → … → Done, Invalid) to an existing project: create what is missing, sync colors",
   });
 
   protected async run(client: TodouClient): Promise<void> {

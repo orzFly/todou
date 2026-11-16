@@ -548,8 +548,8 @@ describe("issue block edges T-377", () => {
 
   it("re-decides every edge when a status changes category", async () => {
     // A project of its own, with no clear line: the verdict is then the
-    // category fallback, which every project starts on — a migration leaves
-    // `block_clear_status_id` NULL everywhere.
+    // category fallback, which every project predating T-711 still sits on —
+    // a migration left `block_clear_status_id` NULL everywhere.
     const slug = "block-category";
     expect(
       (
@@ -560,6 +560,7 @@ describe("issue block edges T-377", () => {
         })
       ).status,
     ).toBe(201);
+    expect((await setClearLine(slug, null)).status).toBe(200);
     const blocked = await createIssue(slug, "waits on a category");
     const blocker = await createIssue(slug, "sits in next");
     await block(slug, blocked, "blocked-by", `#${blocker}`);

@@ -52,7 +52,8 @@ description: todou CLI quick reference — issue/comment/attach/watch commands, 
 
 ## Status flow
 
-- Backlog → Todo → Next → In Progress → Ready to Ship → Shipped → Done
+- Backlog → Todo → Next → In Progress → Ready to Ship → Shipped → Done; Invalid closes a card without doing it.
+- A blocker stops blocking at the project's Blocks clear at status — Shipped by default.
 - Worker: Ready to Ship + summary comment. Orchestrator: Shipped. Only the user: Done.
 
 ### Taking an issue

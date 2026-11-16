@@ -208,20 +208,27 @@ async function seedProject(
     slug: row.slug,
     effectiveFrom: row.createdAt,
   });
+  const seeded = await db
+    .insert(statuses)
+    .values(
+      CANONICAL_STATUSES.map((s, i) => ({
+        projectId: row.id,
+        name: s.name,
+        category: s.category,
+        color: s.color,
+        position: i,
+        isDefault: s.is_default ?? false,
+      })),
+    )
+    .returning({ id: statuses.id, name: statuses.name });
+  const clearName = CANONICAL_STATUSES.find((s) => s.block_clear)?.name;
   await db
     .insert(projectMeta)
-    .values({ projectId: row.id })
-    .onConflictDoNothing();
-  await db.insert(statuses).values(
-    CANONICAL_STATUSES.map((s, i) => ({
+    .values({
       projectId: row.id,
-      name: s.name,
-      category: s.category,
-      color: s.color,
-      position: i,
-      isDefault: s.is_default ?? false,
-    })),
-  );
+      blockClearStatusId: seeded.find((s) => s.name === clearName)?.id ?? null,
+    })
+    .onConflictDoNothing();
   // Anchored at the registry row's own createdAt, not now(): the history
   // then covers every instant the project could already hold content.
   if (input.ref_prefix != null) {

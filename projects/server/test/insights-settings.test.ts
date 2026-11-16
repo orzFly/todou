@@ -22,16 +22,6 @@ describe.each(PLACEMENTS)("insights settings (%s placement)", (placement) => {
     });
     expect(created.status).toBe(201);
     const body = (await json(created)) as { id: number };
-    const invalid = await t.app.request(`/api/projects/${slug}/statuses`, {
-      method: "POST",
-      headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({
-        name: "Invalid",
-        category: "closed",
-        color: "#999999",
-      }),
-    });
-    expect(invalid.status).toBe(201);
     projectId = body.id;
   });
 

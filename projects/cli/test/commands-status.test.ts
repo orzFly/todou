@@ -30,7 +30,7 @@ const seeded = [
   },
 ];
 
-/** What a project seeded by today's server looks like, ids 1..7 in order. */
+/** What a project seeded by today's server looks like, ids 1..8 in order. */
 function canonicalBoard() {
   return [
     ["Backlog", "open", "#9ca3af"],
@@ -40,6 +40,7 @@ function canonicalBoard() {
     ["Ready to Ship", "open", "#f59e0b"],
     ["Shipped", "open", "#8b5cf6"],
     ["Done", "closed", "#22c55e"],
+    ["Invalid", "closed", "#475569"],
   ].map(([name, category, color], i) => ({
     id: i + 1,
     name,
@@ -451,6 +452,8 @@ describe("status init", () => {
         position: 4,
       },
       { name: "Shipped", category: "open", color: "#8b5cf6", position: 5 },
+      // After Done, which is last by then: nothing gives way.
+      { name: "Invalid", category: "closed", color: "#475569", position: 7 },
     ]);
     // The seeded three already carry their canonical colors, so nothing
     // here is a `PATCH { color }` — only position shifts and the default.
@@ -470,7 +473,7 @@ describe("status init", () => {
       { id: "1", body: { is_default: true } },
     ]);
     expect(result.stdout).toBe(
-      "created Backlog, Next, Ready to Ship, Shipped\nmade Todo the default status\n",
+      "created Backlog, Next, Ready to Ship, Shipped, Invalid\nmade Todo the default status\n",
     );
   });
 
