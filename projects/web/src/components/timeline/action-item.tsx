@@ -45,6 +45,16 @@ const TIME = cn(
 );
 
 /**
+ * From sm up the time shares a flex box with the `…`, and that box is aligned
+ * to the sentence's first baseline (T-705). Set as a 12px line the time
+ * carries a higher baseline than a 20px line of 14px text, and lining the two
+ * up pushed the box, and with it the row, three pixels down. Set as the
+ * sentence's line with only the `<time>` drawn small, it sits on that line's
+ * baseline, as `TIMELINE_TIME_NARROW` does for the float.
+ */
+const TIME_ON_FIRST_LINE = "sm:text-sm sm:leading-5 sm:*:text-xs";
+
+/**
  * A `/me` line (T-575): one sentence that starts with its author's name, laid
  * out like an event row because that is the shape of a sentence on this
  * timeline, but in the body's colour, because a person wrote it. Every write a
@@ -95,190 +105,225 @@ export function ActionItem({
     </time>
   );
 
-  // EventRow's classes, element for element: inline flow below sm, one
-  // baseline-aligned flex line from sm up. The {" "} separators are for the
-  // inline mode, as there.
+  // Below sm, EventRow's inline flow element for element. From sm up an event
+  // is one truncated line, but an action is a sentence somebody wrote, up to
+  // 500 characters, and a flex line made it a column of its own beside the
+  // name, with the icon and the badge centred on the whole block (T-705). So
+  // the name, badge and sentence share one paragraph that wraps back under
+  // the avatar, and the icon, `…` and time hold the first line, the time on
+  // the right edge where an event's is. The {" "} separators are for the
+  // inline modes; whitespace between grid or flex items is never rendered.
   return (
     <div
       id={pending ? undefined : commentAnchor(comment.id)}
       data-comment-id={comment.id}
       data-comment-kind="action"
       className={cn(
-        "py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2",
+        "py-1.5 pl-1 text-sm text-muted-foreground sm:grid sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-baseline sm:gap-x-2",
         TIMELINE_ROW_NARROW,
         pending && "opacity-60",
       )}
     >
-      <span className="inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center">
+      {/* As tall as the first line, the editor's included, to centre on it. */}
+      <span
+        className={cn(
+          "inline-flex shrink-0 align-middle text-muted-foreground/70 sm:items-center sm:self-start",
+          editing ? "sm:h-7" : "sm:h-5",
+        )}
+      >
         <AsteriskIcon className="size-3.5" />
       </span>{" "}
-      <UserChip
-        user={comment.author}
-        nameClassName="font-medium text-foreground"
-      />{" "}
-      <AgentContextBadge
-        context={comment.agent_context}
-        className="align-middle sm:self-center"
-      />{" "}
-      {editing ? (
-        <form
-          className="mt-1 flex min-w-0 flex-col gap-1 sm:mt-0 sm:flex-1"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submitEdit();
-          }}
-        >
-          <div className="flex gap-2">
-            {/* No autoFocus: the menu that opens this still holds a focus
-                trap when it mounts, and takes the focus straight back. */}
-            <Input
-              ref={editInput}
-              aria-label="Edit action"
-              aria-invalid={problem !== null}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") closeEditor();
-              }}
-              className="h-7"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={closeEditor}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={problem !== null || save.isPending}
-            >
-              Save
-            </Button>
-          </div>
-          {problem !== null && draft.trim() !== "" && (
-            <p className="text-xs text-destructive">{problem}</p>
+      <div
+        className={cn(
+          "max-sm:inline",
+          editing && "sm:flex sm:items-baseline sm:gap-2",
+        )}
+      >
+        {/* A space plus these margins comes to the gap-2 an event row puts
+            between the same three, within half a pixel. */}
+        <span className={editing ? undefined : "sm:me-1"}>
+          <UserChip
+            user={comment.author}
+            nameClassName="font-medium text-foreground"
+          />
+        </span>{" "}
+        <AgentContextBadge
+          context={comment.agent_context}
+          // A pixel taller than the line it sits in, so without the margins
+          // the first line of a wrapped sentence came out taller than the rest.
+          className={cn(
+            "align-middle sm:-my-1 sm:self-center",
+            !editing && "sm:me-1",
           )}
-        </form>
-      ) : (
-        <div
-          ref={bodyRef}
-          // The prose line height a markdown body brings along would make
-          // this line taller than an event's.
-          className="inline min-w-0 flex-1 wrap-anywhere text-foreground [&_.markdown-body]:inline [&_.markdown-body]:leading-[inherit] [&_p]:inline"
-        >
-          <MarkdownView
-            slug={slug}
-            issueNumber={issueNumber}
-            rehypePlugins={QUOTE_REHYPE_PLUGINS}
+        />{" "}
+        {editing ? (
+          <form
+            className="mt-1 flex min-w-0 flex-col gap-1 sm:mt-0 sm:flex-1"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitEdit();
+            }}
           >
-            {inlineActionSource(comment.body)}
-          </MarkdownView>
-        </div>
-      )}{" "}
-      {comment.edited_at && !pending && (
-        <>
-          <RevisionHistory
-            label="action"
-            editedAt={comment.edited_at}
-            filename="action.md"
-            queryKey={["revisions", slug, issueNumber, "comment", comment.id]}
-            fetchRevisions={() =>
-              api.getCommentRevisions(slug, issueNumber, comment.id)
-            }
-          />{" "}
-        </>
-      )}
+            <div className="flex gap-2">
+              {/* No autoFocus: the menu that opens this still holds a focus
+                  trap when it mounts, and takes the focus straight back. */}
+              <Input
+                ref={editInput}
+                aria-label="Edit action"
+                aria-invalid={problem !== null}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") closeEditor();
+                }}
+                className="h-7"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={closeEditor}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={problem !== null || save.isPending}
+              >
+                Save
+              </Button>
+            </div>
+            {problem !== null && draft.trim() !== "" && (
+              <p className="text-xs text-destructive">{problem}</p>
+            )}
+          </form>
+        ) : (
+          <div
+            ref={bodyRef}
+            // The prose line height a markdown body brings along would make
+            // this line taller than an event's.
+            className="inline min-w-0 flex-1 wrap-anywhere text-foreground [&_.markdown-body]:inline [&_.markdown-body]:leading-[inherit] [&_p]:inline"
+          >
+            <MarkdownView
+              slug={slug}
+              issueNumber={issueNumber}
+              rehypePlugins={QUOTE_REHYPE_PLUGINS}
+            >
+              {inlineActionSource(comment.body)}
+            </MarkdownView>
+          </div>
+        )}{" "}
+        {comment.edited_at && !pending && (
+          <>
+            <RevisionHistory
+              label="action"
+              editedAt={comment.edited_at}
+              filename="action.md"
+              queryKey={["revisions", slug, issueNumber, "comment", comment.id]}
+              fetchRevisions={() =>
+                api.getCommentRevisions(slug, issueNumber, comment.id)
+              }
+            />{" "}
+          </>
+        )}
+      </div>
       {/* The time is last on a wide row, where every event's time lines up
           against the right edge, so the `…` sits before it there; below sm
           an event's time runs on from its sentence, and the `…` follows. */}
-      {pending ? (
-        <>
-          <span className={cn(TIME, "sm:order-last")}>{time}</span>{" "}
-          <span className="text-xs">sending…</span>
-        </>
-      ) : (
-        <>
-          <Link
-            to="/projects/$slug/issues/$number"
-            params={{ slug, number: String(issueNumber) }}
-            hash={commentAnchor(comment.id)}
-            hashScrollIntoView={false}
-            state={returnState}
-            className={cn(TIME, "hover:underline sm:order-last")}
-          >
-            {time}
-          </Link>{" "}
-          <EntryActionsMenu
-            slug={slug}
-            issueNumber={issueNumber}
-            commentId={comment.id}
-            body={comment.body}
-            bodyRef={bodyRef}
-            label="action actions"
-            triggerRef={menuTrigger}
-            // One line tall, so the row is exactly as tall as an event's.
-            // Inline, a middle-aligned box that tall still pokes out of the
-            // line box; the negative margin keeps it from counting.
-            triggerClassName="-my-1 size-5 align-middle text-muted-foreground/70 sm:my-0 sm:self-center"
-            onCloseAutoFocus={(e) => {
-              if (!openingEditor.current) return;
-              openingEditor.current = false;
-              e.preventDefault();
-              editInput.current?.focus();
-            }}
-          >
-            {mayEdit || mayHide || mayUnhide ? (
-              <>
-                {mayEdit && (
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      openingEditor.current = true;
-                      setDraft(comment.body);
-                      setEditing(true);
-                    }}
-                  >
-                    <PencilIcon className="size-3.5" />
-                    Edit action
-                  </DropdownMenuItem>
-                )}
-                {mayHide && (
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      setHidden.mutate({ ...target, hidden: true })
-                    }
-                  >
-                    <EyeOffIcon className="size-3.5" />
-                    Hide action
-                  </DropdownMenuItem>
-                )}
-                {mayUnhide && (
-                  <DropdownMenuItem
-                    disabled={setHidden.isPending}
-                    onSelect={() =>
-                      setHidden.mutate({ ...target, hidden: false })
-                    }
-                  >
-                    <EyeIcon className="size-3.5" />
-                    Unhide action
-                  </DropdownMenuItem>
-                )}
-                {mayEdit && (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onSelect={() => setConfirmingDelete(true)}
-                  >
-                    <Trash2Icon className="size-3.5" />
-                    Delete action…
-                  </DropdownMenuItem>
-                )}
-              </>
-            ) : null}
-          </EntryActionsMenu>
-        </>
-      )}
+      <span className="max-sm:contents sm:flex sm:items-baseline sm:gap-2">
+        {pending ? (
+          <>
+            <span className={cn(TIME, TIME_ON_FIRST_LINE, "sm:order-last")}>
+              {time}
+            </span>{" "}
+            <span className="text-xs">sending…</span>
+          </>
+        ) : (
+          <>
+            <Link
+              to="/projects/$slug/issues/$number"
+              params={{ slug, number: String(issueNumber) }}
+              hash={commentAnchor(comment.id)}
+              hashScrollIntoView={false}
+              state={returnState}
+              className={cn(
+                TIME,
+                TIME_ON_FIRST_LINE,
+                "hover:underline sm:order-last",
+              )}
+            >
+              {time}
+            </Link>{" "}
+            <EntryActionsMenu
+              slug={slug}
+              issueNumber={issueNumber}
+              commentId={comment.id}
+              body={comment.body}
+              bodyRef={bodyRef}
+              label="action actions"
+              triggerRef={menuTrigger}
+              // One line tall, so the row is exactly as tall as an event's.
+              // Inline, a middle-aligned box that tall still pokes out of the
+              // line box; the negative margin keeps it from counting.
+              triggerClassName="-my-1 size-5 align-middle text-muted-foreground/70 sm:my-0 sm:self-center"
+              onCloseAutoFocus={(e) => {
+                if (!openingEditor.current) return;
+                openingEditor.current = false;
+                e.preventDefault();
+                editInput.current?.focus();
+              }}
+            >
+              {mayEdit || mayHide || mayUnhide ? (
+                <>
+                  {mayEdit && (
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        openingEditor.current = true;
+                        setDraft(comment.body);
+                        setEditing(true);
+                      }}
+                    >
+                      <PencilIcon className="size-3.5" />
+                      Edit action
+                    </DropdownMenuItem>
+                  )}
+                  {mayHide && (
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        setHidden.mutate({ ...target, hidden: true })
+                      }
+                    >
+                      <EyeOffIcon className="size-3.5" />
+                      Hide action
+                    </DropdownMenuItem>
+                  )}
+                  {mayUnhide && (
+                    <DropdownMenuItem
+                      disabled={setHidden.isPending}
+                      onSelect={() =>
+                        setHidden.mutate({ ...target, hidden: false })
+                      }
+                    >
+                      <EyeIcon className="size-3.5" />
+                      Unhide action
+                    </DropdownMenuItem>
+                  )}
+                  {mayEdit && (
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      Delete action…
+                    </DropdownMenuItem>
+                  )}
+                </>
+              ) : null}
+            </EntryActionsMenu>
+          </>
+        )}
+      </span>
       <ConfirmDialog
         open={confirmingDelete}
         onOpenChange={(next) => {
