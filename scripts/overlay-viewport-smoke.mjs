@@ -678,9 +678,15 @@ async function closeOverlay(page, how) {
   if (how === "outside") {
     const point = await evaluate(page, () => window.__smoke.outsidePoint());
     if (point !== null) return await tap(page, point);
+    // Counted, because the header still says "closing by a tap outside": on a
+    // narrow viewport the 16px clearance can leave no point at all, and every
+    // close that lands here grades Escape's restore instead.
+    escapeFallbacks++;
   }
   return await pressEscape(page);
 }
+
+let escapeFallbacks = 0;
 
 async function pressEscape(page) {
   for (const type of ["rawKeyDown", "keyUp"]) {
@@ -1119,6 +1125,7 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
       }
     }
   };
+  const fallbacksBefore = escapeFallbacks;
   /** Fault passes stop at the failure they were seeded to cause, not at any. */
   const done = () => stopWhen !== null && tally.failures.some(stopWhen);
 
@@ -1217,6 +1224,7 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
     if (done()) return tally;
   }
 
+  tally.escapeFallbacks = escapeFallbacks - fallbacksBefore;
   return tally;
 }
 
@@ -1268,6 +1276,10 @@ function report(label, tally) {
   for (const known of tally.known)
     console.log(`  known ${known.key}: ${known.detail} — ${known.why}`);
   for (const inert of tally.inert) console.log(`  ? ${inert}`);
+  if (tally.escapeFallbacks > 0)
+    console.log(
+      `  ${tally.escapeFallbacks} closes found no clear point outside and pressed Escape`,
+    );
   return tally;
 }
 
