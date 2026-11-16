@@ -7,6 +7,7 @@ import type { SelectedLineRange } from "@pierre/diffs";
 import { MultiFileDiff, File as PierreFile } from "@pierre/diffs/react";
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   useSuspenseQuery,
@@ -121,6 +122,7 @@ import {
   stepIndex,
 } from "@/lib/spec-change-nav.ts";
 import { changedLineRanges } from "@/lib/spec-changes.ts";
+import { type DraftPlacement, placeDraft } from "@/lib/spec-draft-placement.ts";
 import {
   type SpecReviewDraft,
   useSpecReviewDrafts,
@@ -1163,6 +1165,67 @@ function SpecViewBody({
     [resolveMutate, slug, issueNumber],
   );
 
+  // Drafts staged on an older version follow the text onto the current one,
+  // as their comments will once submitted. An older version on screen shows
+  // only its own: what it would be reviewed against is not on screen.
+  const draftVersions = isCurrent
+    ? [
+        ...new Set(
+          drafts.drafts
+            .map((draft) => draft.anchor.version)
+            .filter((v) => v !== version),
+        ),
+      ].sort((a, b) => a - b)
+    : [];
+  const draftVersionFiles = useQueries({
+    queries: draftVersions.map((v) => specFilesQuery(slug, issueNumber, v)),
+  });
+  const draftFilesKey = draftVersionFiles
+    .map((query) => query.dataUpdatedAt || (query.isError ? -1 : 0))
+    .join();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `draftFilesKey` stands for the query results, whose array is new on every render.
+  const placements = useMemo(() => {
+    const viewedFiles = new Map(
+      files.data.files.map((file) => [file.path, file.body]),
+    );
+    const anchorFiles = new Map<number, ReadonlyMap<string, string>>();
+    draftVersions.forEach((v, index) => {
+      const query = draftVersionFiles[index];
+      if (query?.data !== undefined) {
+        anchorFiles.set(
+          v,
+          new Map(query.data.files.map((file) => [file.path, file.body])),
+        );
+      } else if (query?.isError) {
+        // Nothing to carry it across with, so it has no place here.
+        anchorFiles.set(v, new Map());
+      }
+    });
+    const placements = new Map<string, DraftPlacement>();
+    for (const draft of drafts.drafts) {
+      if (!isCurrent && draft.anchor.version !== version) continue;
+      placements.set(
+        draft.id,
+        placeDraft(
+          draft,
+          version,
+          viewedFiles,
+          anchorFiles.get(draft.anchor.version),
+        ),
+      );
+    }
+    return placements;
+  }, [files.data, drafts.drafts, version, isCurrent, draftFilesKey]);
+  const outdatedDraftIds = useMemo(
+    () =>
+      new Set(
+        [...placements]
+          .filter(([, placement]) => placement.kind === "unplaced")
+          .map(([id]) => id),
+      ),
+    [placements],
+  );
+
   // Comments that can hang inline on the viewed version of the selected
   // file; everything else (outdated, anchored to another version while an
   // old one is viewed) lands in the flat list below the document.
@@ -1209,29 +1272,31 @@ function SpecViewBody({
     }
     for (const draft of drafts.drafts) {
       if (draft.anchor.path !== selectedPath) continue;
-      if (draft.anchor.version !== version) continue;
-      if (draft.anchor.line_start === null || draft.anchor.line_end === null) {
-        continue; // file-level drafts render in the file-level strip below
-      }
+      const placement = placements.get(draft.id);
+      // File-level drafts render in the file-level strip below.
+      if (placement?.kind !== "line") continue;
       displayed.push({
         key: draft.id,
         kind: "draft",
         draft,
-        start: draft.anchor.line_start,
-        end: draft.anchor.line_end,
+        start: placement.start,
+        end: placement.end,
+        // Moved only when the lines read the same, so the columns still cut
+        // them where they did.
         colStart: draft.anchor.col_start,
         colEnd: draft.anchor.col_end,
       });
     }
     return { displayed, unplaced, fileLevel };
-  }, [comments.data, drafts.drafts, selectedPath, version]);
+  }, [comments.data, drafts.drafts, placements, selectedPath, version]);
 
-  const fileLevelDrafts = drafts.drafts.filter(
-    (d) =>
-      d.anchor.path === selectedPath &&
-      d.anchor.version === version &&
-      d.anchor.line_start === null,
-  );
+  const draftsPlacedAs = (kind: DraftPlacement["kind"]) =>
+    drafts.drafts.filter(
+      (d) =>
+        d.anchor.path === selectedPath && placements.get(d.id)?.kind === kind,
+    );
+  const fileLevelDrafts = draftsPlacedAs("file");
+  const unplacedDrafts = draftsPlacedAs("unplaced");
 
   const unresolvedByPath = useMemo(() => {
     const counts = new Map<string, number>();
@@ -1879,7 +1944,7 @@ function SpecViewBody({
                   )}
                 </div>
               )}
-              {unplaced.length > 0 && (
+              {(unplaced.length > 0 || unplacedDrafts.length > 0) && (
                 <div className="space-y-2 rounded-lg border px-4 py-3">
                   <h3 className="text-xs font-medium text-muted-foreground uppercase">
                     Comments without a place in v{version}
@@ -1894,6 +1959,14 @@ function SpecViewBody({
                         resolve.mutate({ slug, issueNumber, commentId: id })
                       }
                       resolving={resolve.isPending}
+                    />
+                  ))}
+                  {unplacedDrafts.map((draft) => (
+                    <UnplacedDraft
+                      key={draft.id}
+                      draft={draft}
+                      onEdit={() => editDraft(draft)}
+                      onDiscard={() => drafts.remove(draft.id)}
                     />
                   ))}
                 </div>
@@ -1939,6 +2012,7 @@ function SpecViewBody({
         issueNumber={issueNumber}
         currentVersion={version}
         drafts={drafts.drafts}
+        outdatedDraftIds={outdatedDraftIds}
         newerVersionLink={newerVersionLink}
         open={finishOpen}
         pendingVerdict={pendingVerdict}
@@ -2118,6 +2192,56 @@ function RemovedFileNotice({
           Open the source diff
         </Link>
       </Button>
+    </div>
+  );
+}
+
+/** A staged comment whose lines no longer read the same here. */
+function UnplacedDraft({
+  draft,
+  onEdit,
+  onDiscard,
+}: {
+  draft: SpecReviewDraft;
+  onEdit: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-indigo-500/40 p-2 text-sm">
+      <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium text-indigo-700 dark:text-indigo-400">
+          draft
+        </span>
+        <span>
+          {formatAnchorRange(draft.anchor)} · v{draft.anchor.version}
+        </span>
+        <span className="rounded-full border px-1.5 text-muted-foreground">
+          outdated
+        </span>
+        <span className="ml-auto" />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          onClick={onEdit}
+        >
+          Edit
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          onClick={onDiscard}
+        >
+          Discard
+        </Button>
+      </div>
+      {draft.quote !== "" && (
+        <blockquote className="mb-1 border-l-2 pl-2 text-xs whitespace-pre-wrap text-muted-foreground">
+          {draft.quote}
+        </blockquote>
+      )}
+      <p className="whitespace-pre-wrap">{draft.body}</p>
     </div>
   );
 }

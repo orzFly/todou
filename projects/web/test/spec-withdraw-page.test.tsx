@@ -90,6 +90,10 @@ type FixtureOptions = {
   staleCache?: boolean;
   /** `GET …/spec` answers 500. */
   specFails?: boolean;
+  /** Staged instead of `DRAFT` when given. */
+  stagedDrafts?: SpecReviewDraft[];
+  /** Each version's files, path to body, in place of the stock `design.md`. */
+  filesFor?: (version: number) => Record<string, string>;
 };
 
 function pageFixture(options: FixtureOptions = {}) {
@@ -248,13 +252,18 @@ function pageFixture(options: FixtureOptions = {}) {
       );
       const files: SpecFiles = {
         version: requestedVersion,
-        files: [
-          {
-            path: "design.md",
-            body: `# Version ${requestedVersion}\n\nA reviewable paragraph.\n`,
-            size: 50,
-          },
-        ],
+        files:
+          options.filesFor === undefined
+            ? [
+                {
+                  path: "design.md",
+                  body: `# Version ${requestedVersion}\n\nA reviewable paragraph.\n`,
+                  size: 50,
+                },
+              ]
+            : Object.entries(options.filesFor(requestedVersion)).map(
+                ([path, body]) => ({ path, body, size: body.length }),
+              ),
       };
       return Response.json(files);
     }
@@ -302,8 +311,11 @@ afterAll(teardownAppRouter);
 async function mountPage(options: FixtureOptions = {}) {
   const fixture = pageFixture(options);
   vi.stubGlobal("fetch", fixture.fetch);
-  if (options.staged) {
-    localStorage.setItem(fixture.storageKey, JSON.stringify([DRAFT]));
+  if (options.staged || options.stagedDrafts !== undefined) {
+    localStorage.setItem(
+      fixture.storageKey,
+      JSON.stringify(options.stagedDrafts ?? [DRAFT]),
+    );
   }
   const client = testQueryClient();
   // A new dialog observer or close/reopen must not accidentally rescue missing
@@ -861,5 +873,172 @@ describe("an address without a version", () => {
     expect(shownTitle()).toBe("Version 2");
     expect(page.reads).not.toContain(`${page.base}/spec/files?version=3`);
     expect(router.state.location.search.v).toBe(2);
+  });
+});
+
+/** v2 adds an intro, keeps one paragraph, rewrites another, drops a file. */
+function movingFiles(version: number): Record<string, string> {
+  if (version === 1) {
+    return {
+      "design.md": "# Version 1\n\nKept paragraph.\n\nChanged paragraph.\n",
+      "other.md": "Other file.\n",
+    };
+  }
+  return {
+    "design.md": `# Version ${version}\n\nIntro added.\n\nKept paragraph.\n\nChanged paragraph, rewritten.\n`,
+  };
+}
+
+const stagedOnV1 = (
+  id: string,
+  path: string,
+  line: number,
+  quote: string,
+  body: string,
+): SpecReviewDraft => ({
+  id,
+  anchor: {
+    path,
+    version: 1,
+    line_start: line,
+    line_end: line,
+    col_start: null,
+    col_end: null,
+  },
+  quote,
+  body,
+});
+
+const KEPT = stagedOnV1("kept", "design.md", 3, "Kept paragraph.", "On kept");
+const CHANGED = stagedOnV1(
+  "changed",
+  "design.md",
+  5,
+  "Changed paragraph.",
+  "On changed",
+);
+const OTHER = stagedOnV1("other", "other.md", 1, "Other file.", "On other");
+
+const storedDrafts = (storageKey: string): SpecReviewDraft[] =>
+  JSON.parse(localStorage.getItem(storageKey) ?? "[]");
+
+function unplacedSection() {
+  const heading = screen.queryByRole("heading", {
+    name: /comments without a place/i,
+  });
+  return heading?.parentElement ?? null;
+}
+
+describe("staged comments on a newer version", () => {
+  it("follows the text onto the newer version, and sets aside what changed", async () => {
+    const page = await mountPage({
+      filesFor: movingFiles,
+      stagedDrafts: [KEPT, CHANGED],
+    });
+    await pushNext(page);
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Newer version: v2" }),
+    );
+    await waitFor(() => expect(shownTitle()).toBe("Version 2"));
+
+    // Kept: drawn on the line its paragraph moved to.
+    fireEvent.click(await screen.findByLabelText("1 comment(s) on this block"));
+    expect(await screen.findByRole("button", { name: "L5" })).toBeTruthy();
+    expect(screen.getAllByText("On kept")).toHaveLength(1);
+
+    // Changed: set aside, still editable on its own version.
+    const section = await waitFor(() => {
+      const found = unplacedSection();
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(within(section).getByText("On changed")).toBeTruthy();
+    expect(within(section).getByText("L5 · v1")).toBeTruthy();
+    expect(within(section).getByText("outdated")).toBeTruthy();
+    expect(within(section).getByText("Changed paragraph.")).toBeTruthy();
+    expect(within(section).queryByText("On kept")).toBeNull();
+
+    fireEvent.click(within(section).getByRole("button", { name: "Edit" }));
+    const composer = await screen.findByTestId("spec-composer");
+    act(() => cmSetValue(composer, "On changed, edited"));
+    fireEvent.click(
+      within(composer).getByRole("button", { name: "Update draft" }),
+    );
+    await waitFor(() =>
+      expect(
+        storedDrafts(page.storageKey).find((d) => d.id === "changed"),
+      ).toMatchObject({ body: "On changed, edited", anchor: CHANGED.anchor }),
+    );
+
+    fireEvent.click(
+      within(unplacedSection() as HTMLElement).getByRole("button", {
+        name: "Discard",
+      }),
+    );
+    await waitFor(() =>
+      expect(storedDrafts(page.storageKey).map((d) => d.id)).toEqual(["kept"]),
+    );
+    await waitFor(() => expect(unplacedSection()).toBeNull());
+  });
+
+  it("marks a draft whose file is gone in the review, which posts every anchor as staged", async () => {
+    const page = await mountPage({
+      version: 2,
+      viewedVersion: 2,
+      filesFor: movingFiles,
+      stagedDrafts: [KEPT, OTHER],
+    });
+    await waitFor(() =>
+      expect(page.reads).toContain(`${page.base}/spec/files?version=1`),
+    );
+    // design.md is on screen; other.md has nowhere to be shown.
+    expect(unplacedSection()).toBeNull();
+
+    const dialog = await openReview(2);
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText(
+          "2 staged comment(s) will be posted with this review; 1 no longer matches v2 and will be posted as outdated.",
+        ),
+      ).toBeTruthy(),
+    );
+    const items = within(dialog).getAllByRole("listitem");
+    const outdated = items.filter((item) =>
+      within(item).queryByText("outdated"),
+    );
+    expect(outdated).toHaveLength(1);
+    expect(outdated[0]?.textContent).toContain("other.md");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(page.reviews).toHaveLength(1));
+    expect(page.reviews[0]?.version).toBe(2);
+    // Each on the version it was staged on, which the server judges.
+    expect(page.reviews[0]?.comments).toEqual([
+      {
+        anchor: { path: "design.md", version: 1, line_start: 3, line_end: 3 },
+        body: KEPT.body,
+      },
+      {
+        anchor: { path: "other.md", version: 1, line_start: 1, line_end: 1 },
+        body: OTHER.body,
+      },
+    ]);
+  });
+
+  it("leaves an older version on screen alone", async () => {
+    const onV2: SpecReviewDraft = {
+      ...KEPT,
+      id: "on-v2",
+      anchor: { ...KEPT.anchor, version: 2, line_start: 5, line_end: 5 },
+    };
+    const page = await mountPage({
+      version: 2,
+      viewedVersion: 1,
+      filesFor: movingFiles,
+      stagedDrafts: [onV2],
+    });
+    expect(screen.queryByLabelText(/comment\(s\) on this block/)).toBeNull();
+    expect(unplacedSection()).toBeNull();
+    expect(page.reads).not.toContain(`${page.base}/spec/files?version=2`);
   });
 });

@@ -78,11 +78,14 @@ function submitComments(
  * The atomic review form. Its text and request lifecycle live in the stable
  * spec session; this dialog may disappear without taking either with it.
  */
+const NO_DRAFTS: ReadonlySet<string> = new Set();
+
 export function ReviewSubmitDialog({
   slug,
   issueNumber,
   currentVersion,
   drafts,
+  outdatedDraftIds = NO_DRAFTS,
   newerVersionLink,
   summary: controlledSummary,
   open,
@@ -96,6 +99,8 @@ export function ReviewSubmitDialog({
   issueNumber: number;
   currentVersion: number;
   drafts: SpecReviewDraft[];
+  /** Drafts whose lines no longer read the same in this version. */
+  outdatedDraftIds?: ReadonlySet<string>;
   /** Where to go once a push has made this version stale. */
   newerVersionLink?: ReactNode;
   summary?: string;
@@ -183,6 +188,9 @@ export function ReviewSubmitDialog({
   const commentDisabled = pending || staleVersion || saysNothing;
   const verdictDisabled = pending || staleVersion || withdrawn || isPusher;
   const approveDisabled = verdictDisabled || approvedInCurrentRound;
+  const outdatedCount = drafts.filter((draft) =>
+    outdatedDraftIds.has(draft.id),
+  ).length;
   const staleTitle = saysNothing
     ? `Spec v${currentVersion} is no longer current.`
     : `Spec v${currentVersion} is no longer current. Your review draft has been kept.`;
@@ -278,6 +286,13 @@ export function ReviewSubmitDialog({
                   (v{draft.anchor.version}
                   {draft.anchor.line_start === null && ", file"})
                 </span>{" "}
+                {outdatedDraftIds.has(draft.id) && (
+                  <>
+                    <span className="rounded-full border px-1.5 text-muted-foreground">
+                      outdated
+                    </span>{" "}
+                  </>
+                )}
                 <span className="text-muted-foreground">
                   {draft.body.split("\n")[0]}
                 </span>
@@ -288,7 +303,9 @@ export function ReviewSubmitDialog({
         <p className="text-xs text-muted-foreground">
           {drafts.length === 0
             ? "No staged comments — this review carries the summary only."
-            : `${drafts.length} staged comment(s) will be posted with this review.`}
+            : outdatedCount === 0
+              ? `${drafts.length} staged comment(s) will be posted with this review.`
+              : `${drafts.length} staged comment(s) will be posted with this review; ${outdatedCount} no longer ${outdatedCount === 1 ? "matches" : "match"} v${currentVersion} and will be posted as outdated.`}
         </p>
 
         <MarkdownEditor
