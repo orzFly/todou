@@ -49,15 +49,35 @@ export function useOverlayScrollbars(ready: boolean) {
     const slotElement = slot.current;
     const viewportElement = viewport.current;
     if (!ready || slotElement === null || viewportElement === null) return;
-    const instance = OverlayScrollbars(
-      {
-        target: viewportElement,
-        elements: { viewport: viewportElement },
-        scrollbars: { slot: slotElement },
-      },
-      OPTIONS,
-    );
-    return () => instance.destroy();
+    let instance: ReturnType<typeof OverlayScrollbars> | null = null;
+    const create = () => {
+      instance = OverlayScrollbars(
+        {
+          target: viewportElement,
+          elements: { viewport: viewportElement },
+          scrollbars: { slot: slotElement },
+        },
+        OPTIONS,
+      );
+    };
+    // Each instance forces a style and layout pass over the whole page as it
+    // builds itself, about 50ms under a board of 150 cards; created in the
+    // effect, a board's columns did it back to back inside the task that
+    // committed them, one 340ms block (T-691). An idle callback apiece puts
+    // input between them.
+    if (typeof requestIdleCallback === "function") {
+      const id = requestIdleCallback(create, { timeout: 1000 });
+      return () => {
+        cancelIdleCallback(id);
+        instance?.destroy();
+      };
+    }
+    // Safari has no idle callbacks.
+    const id = setTimeout(create, 0);
+    return () => {
+      clearTimeout(id);
+      instance?.destroy();
+    };
   }, [ready]);
 
   return { slot, viewport };

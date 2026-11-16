@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import type { InboxItem, Status, Watcher } from "@todou/shared";
-import { useCallback, useMemo, useRef } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
 import { useIssueStatusMutation } from "@/api/issues.ts";
 import { mutesQuery } from "@/api/mutes.ts";
@@ -302,11 +302,7 @@ function InboxGroupSection({
             item={item}
             statuses={statuses}
             watchers={watchers?.[String(item.number)]}
-            onStatus={
-              canTriage && statuses.length > 0
-                ? (status) => onStatus(item.number, status)
-                : undefined
-            }
+            onStatus={canTriage && statuses.length > 0 ? onStatus : undefined}
           />
         ))}
       </ul>
@@ -324,8 +320,12 @@ const NO_STATUSES: Status[] = [];
  *
  * The status survives the phone; the avatars and the time are hidden there
  * instead, so the title keeps the room.
+ *
+ * Memoized, so that a refetch of the inbox re-renders the rows it changed and
+ * not the whole page (T-692). The query keeps an unchanged row's identity,
+ * and every other prop is stable per group.
  */
-function InboxRow({
+const InboxRow = memo(function InboxRow({
   item,
   statuses,
   watchers,
@@ -334,7 +334,7 @@ function InboxRow({
   item: InboxItem;
   statuses: readonly Status[];
   watchers?: readonly Watcher[];
-  onStatus?: (status: Status) => void;
+  onStatus?: (issueNumber: number, status: Status) => void;
 }) {
   // No wrapper when empty: an empty flex item would still take a gap.
   const hasAvatars = item.assignees.length > 0 || (watchers?.length ?? 0) > 0;
@@ -355,7 +355,7 @@ function InboxRow({
           <StatusMenu
             status={item.status}
             statuses={statuses}
-            onStatus={onStatus}
+            onStatus={onStatus && ((status) => onStatus(item.number, status))}
           />
           <span
             className="text-xs text-muted-foreground max-sm:hidden"
@@ -369,4 +369,4 @@ function InboxRow({
       }
     />
   );
-}
+});

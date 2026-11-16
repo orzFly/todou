@@ -1,13 +1,15 @@
 import {
+  type QueryClient,
   queryOptions,
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import type { IssueListPage, Status } from "@todou/shared";
+import type { Issue, IssueListPage, Status } from "@todou/shared";
 import { toast } from "sonner";
 import { prependIssue, removeIssue } from "@/api/issues.ts";
 import { issuesEntry } from "@/api/issues-cache.ts";
 import { api } from "@/api/queries.ts";
+import { applyInvalidation } from "@/api/useUserEvents.ts";
 
 export const boardColumnQuery = (slug: string, statusId: number) =>
   queryOptions({
@@ -43,6 +45,49 @@ export function moveIssue(
         ? prependIssue(target, { ...item, status: newStatus })
         : target,
   };
+}
+
+/**
+ * What a settled move asks of the project's lists (T-691). A broad refetch
+ * here re-read every column of the board, one request each, to learn that two
+ * of them changed. A move names only the status, so the row's verdict is the
+ * same one the change feed would give it (T-279): the column holding the card
+ * refetches, a column it left whose optimistic copy already dropped it does
+ * not. Pages that are not on screen are marked stale for their next mount,
+ * because the verdict judges a counts entry against the optimistic copy,
+ * which already carries the new status.
+ *
+ * A failed move has no row to judge with, and the rollback may have restored
+ * a page that the server moved anyway, so it keeps the broad refetch.
+ */
+function invalidateAfterMove(
+  queryClient: QueryClient,
+  slug: string,
+  issueNumber: number,
+  moved: Issue | undefined,
+): void {
+  const key = ["issues", slug];
+  if (moved === undefined) {
+    queryClient.invalidateQueries({ queryKey: key });
+    return;
+  }
+  queryClient.invalidateQueries({
+    queryKey: key,
+    type: "inactive",
+    refetchType: "none",
+  });
+  applyInvalidation(queryClient, {
+    key,
+    scope: {
+      issueRows: [
+        {
+          verdict: "fields",
+          number: issueNumber,
+          row: { kind: "fields", status_id: moved.status.id },
+        },
+      ],
+    },
+  });
 }
 
 export function useBoardMove() {
@@ -82,8 +127,8 @@ export function useBoardMove() {
       }
       toast.error(`Could not move issue: ${error.message}`);
     },
-    onSettled: (_data, _error, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
+    onSettled: (data, _error, vars) => {
+      invalidateAfterMove(queryClient, vars.slug, vars.issueNumber, data);
       queryClient.invalidateQueries({
         queryKey: ["issue", vars.slug, vars.issueNumber],
       });
