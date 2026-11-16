@@ -248,6 +248,12 @@ describe("useScrollInsets (T-299)", () => {
     fireEvent.pointerCancel(quote, { pointerType: "mouse" });
     expect(insets().bottom).toBe("93px");
 
+    // Leaving the window mid-press sends its pointerup somewhere else.
+    fireEvent.pointerDown(quote, { pointerType: "mouse" });
+    expect(insets().bottom).toBe("0px");
+    fireEvent.blur(window);
+    expect(insets().bottom).toBe("93px");
+
     // iOS drags a selection handle with one touch pointerdown and never ends
     // it: a finger would leave the inset at 0 until the next press.
     fireEvent.pointerDown(quote, { pointerType: "touch" });

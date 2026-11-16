@@ -335,6 +335,10 @@ export function useScrollInsets({
     window.addEventListener("pointerdown", press, pointer);
     window.addEventListener("pointerup", release, pointer);
     window.addEventListener("pointercancel", release, pointer);
+    // A press held while the window loses focus — switching apps, a native
+    // dialog — ends with its pointerup delivered elsewhere, and until the next
+    // press any scrollIntoView could park its target behind the overlay.
+    window.addEventListener("blur", release);
     return () => {
       window.removeEventListener("resize", measure);
       window.removeEventListener(VIEWPORT_CHROME_EVENT, measure);
@@ -343,6 +347,7 @@ export function useScrollInsets({
       window.removeEventListener("pointerdown", press, true);
       window.removeEventListener("pointerup", release, true);
       window.removeEventListener("pointercancel", release, true);
+      window.removeEventListener("blur", release);
       observer?.disconnect();
       root.style.removeProperty("scroll-padding-top");
       root.style.removeProperty("scroll-padding-bottom");
