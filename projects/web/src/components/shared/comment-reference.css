@@ -79,7 +79,12 @@
   color: var(--foreground);
 }
 
+/* A CJK name offers a break between every two characters, so the chip's end
+   split 西園寺 from 玲咲 (T-720). `keep-all` treats the name as one word and
+   moves it to the next line whole; `anywhere` still breaks one too long for
+   a line of its own. */
 .comment-reference-body [data-comment-author] {
   white-space: normal;
+  word-break: keep-all;
   overflow-wrap: anywhere;
 }

@@ -287,6 +287,9 @@ function expectComment(
   expect(by?.classList.contains("truncate")).toBe(false);
   expect(by?.hasAttribute("data-ref-title-cap")).toBe(false);
   expect(by?.querySelector("[data-ref-part]")).toBeNull();
+  // The name is kept whole (T-720), so the chip hands the line back a break
+  // after it.
+  expect(by?.nextElementSibling?.tagName).toBe("WBR");
   const suffix = `#comment-${id}`;
   const issueRef = token.slice(0, -suffix.length);
   const label = title

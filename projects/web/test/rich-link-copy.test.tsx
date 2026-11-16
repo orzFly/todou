@@ -403,4 +403,22 @@ describe("the sheet says which parts are selectable (T-427)", () => {
     expect(body, `no rule for ${selector} in ${file}`).toBeDefined();
     expect(body).toMatch(/(^|[;{\s])line-height:\s*inherit\s*;/);
   });
+
+  // A CJK name otherwise breaks between any two of its characters, and the
+  // chip's end split one across two lines (T-720).
+  it("keeps a comment author's name whole unless it cannot fit a line", () => {
+    const sheet = readFileSync(
+      resolve(process.cwd(), "src/components/shared/comment-reference.css"),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
+    let body = "";
+    for (const [, one, rule] of sheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (
+        (one ?? "").trim() === ".comment-reference-body [data-comment-author]"
+      )
+        body += rule ?? "";
+    }
+    expect(body).toMatch(/(^|[;{\s])word-break:\s*keep-all\s*;/);
+    expect(body).toMatch(/(^|[;{\s])overflow-wrap:\s*anywhere\s*;/);
+  });
 });

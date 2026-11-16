@@ -256,6 +256,9 @@ export function CommentReference({
       <span data-comment-author className="font-normal text-muted-foreground">
         {` by ${author}`}
       </span>
+      {/* `keep-all` on the author also removes the break between the name's
+          last character and the prose after the chip (T-720). */}
+      {inBody ? <wbr /> : null}
     </span>
   );
 }
