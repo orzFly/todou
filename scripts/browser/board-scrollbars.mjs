@@ -19,6 +19,7 @@ const EMPTY_STATUSES = [
   "Ready to Ship",
   "Shipped",
   "Done",
+  "Invalid",
 ];
 const CANONICAL = [
   "Backlog",
@@ -28,6 +29,7 @@ const CANONICAL = [
   "Ready to Ship",
   "Shipped",
   "Done",
+  "Invalid",
 ];
 
 function failure(name, detail) {
@@ -66,7 +68,7 @@ async function apiFixture(serverPort) {
   const names = statuses.map((status) => status.name);
   if (JSON.stringify(names) !== JSON.stringify(CANONICAL)) {
     throw new Error(
-      `project did not seed the seven canonical statuses: ${JSON.stringify(names)}`,
+      `project did not seed the eight canonical statuses: ${JSON.stringify(names)}`,
     );
   }
   const todo = statuses.find((status) => status.name === TODO);
@@ -367,12 +369,12 @@ async function runPass({ browser, stack, fixture, fault, label }) {
         const columns = document.querySelectorAll('[data-testid^="column-"]');
         const todo = document.querySelector('[data-testid="column-Todo"]');
         return (
-          columns.length === 7 &&
+          columns.length === 8 &&
           todo?.querySelectorAll('a[href*="/issues/"]').length === 15 &&
           !!todo.querySelector(".os-scrollbar-vertical")
         );
       },
-      "seven board columns, fifteen Todo cards, and scrollbar",
+      "eight board columns, fifteen Todo cards, and scrollbar",
     );
 
     await evaluate(page, () => window.__boardSmoke.setPhase("initial-reveal"));
