@@ -22,8 +22,8 @@ import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
 import {
   expectHeaderMeta,
+  expectOnTextLine,
   expectSplitHeader,
-  headerItems,
   headerRowOf,
 } from "./header-meta.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -441,16 +441,11 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
     const strip = (await view.findByText("File comments"))
       .parentElement as HTMLElement;
     const row = headerRowOf(strip);
-    // No button left, so the `resolved` mark is what holds the right-hand
-    // column — the branch a fix applied only to the button would miss.
+    // No button left, and the `resolved` mark stays on the text line beside
+    // the time rather than taking the button's column.
     expect(row.querySelector("button")).toBeNull();
-    expectSplitHeader(row, {
-      identity: ["Alice", "v2"],
-      actions: [
-        headerItems(row).find((child) => child.textContent === "resolved"),
-      ],
-      spacer: true,
-    });
+    expectSplitHeader(row, { identity: ["Alice", "v2"], spacer: true });
+    expectOnTextLine(row, "resolved");
   });
 
   it("splits the strip for comments with no place left in this version", async () => {

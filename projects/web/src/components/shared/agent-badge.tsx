@@ -68,9 +68,11 @@ export function AgentContextBadge({
   // Badge's base class pins shrink-0; in narrow flex rows (comment and
   // body headers on phones) the badge is the only member allowed to give
   // way, else the row's fixed items push the edit button off-screen and
-  // the whole page gains a horizontal scrollbar.
+  // the whole page gains a horizontal scrollbar. It gives way before the
+  // author's name does: a header that keeps `claude-opus-5-5-…` and cuts
+  // the name to `Us…` has kept the wrong half (T-696).
   const baseClass = cn(
-    "min-w-0 px-1.5 py-0 text-[10px] font-normal max-sm:shrink",
+    "min-w-0 px-1.5 py-0 text-[10px] font-normal max-sm:shrink-[999]",
     className,
   );
 

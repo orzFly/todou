@@ -5,6 +5,7 @@ import {
   COMMENT_HEADER_LINE,
   COMMENT_HEADER_ROW,
 } from "../src/components/shared/comment-header-meta.tsx";
+import { formatTimelineTime } from "../src/lib/timeline-time.ts";
 
 /**
  * What every comment header has to show since T-435, shared by the suites
@@ -13,15 +14,20 @@ import {
  * optimistic states in comment-header-meta-optimistic.
  */
 
-/** The pair of links a settled header draws, told apart by the `<time>`. */
+/**
+ * The one link a settled header draws (T-696), with the id and the time it
+ * holds. `id` is the selectable token, not a link of its own any more.
+ */
 export function metaLinks(root: ParentNode, href: string) {
   const links = [
     ...root.querySelectorAll<HTMLAnchorElement>(`a[href='${href}']`),
-  ];
+  ].filter((link) => link.dataset.testid === "comment-header-meta");
+  const link = links[0];
   return {
     links,
-    id: links.find((link) => link.querySelector("time") === null),
-    stamp: links.find((link) => link.querySelector("time") !== null),
+    link,
+    id: link?.querySelector<HTMLElement>(".select-all") ?? undefined,
+    stamp: link?.querySelector("time") ?? undefined,
   };
 }
 
@@ -35,30 +41,26 @@ export function expectHeaderMeta(
   id: number,
   createdAt: string,
 ) {
-  const { links, id: idLink, stamp } = metaLinks(root, href);
-  expect(links).toHaveLength(2);
-  expect(idLink?.textContent).toBe(`#comment-${id}`);
-  expect(idLink?.textContent).not.toContain("T-");
+  const { links, link, id: token, stamp } = metaLinks(root, href);
+  // One link around both: two side by side went to the same place and
+  // cost the keyboard two stops for one destination.
+  expect(links).toHaveLength(1);
+  // Navigation is a link, not a handler hung on a button.
+  expect(link?.tagName).toBe("A");
   // One selectable token holding the suffix alone — the timestamp is a
-  // sibling, so a drag across the id copies neither it nor the author.
-  const token = idLink?.querySelector(".select-all");
+  // sibling, so a drag across the id copies neither it nor the author. Never
+  // `#12`: in a body that is an issue reference.
   expect(token?.textContent).toBe(`#comment-${id}`);
   expect(token?.querySelector("time")).toBeNull();
-  expect(stamp?.textContent).toBe(new Date(createdAt).toLocaleString());
-  const time = stamp?.querySelector("time");
-  expect(time?.getAttribute("datetime")).toBe(createdAt);
-  expect(time?.getAttribute("title")).toBe(createdAt);
-  // Navigation is a link, not a handler hung on a button.
-  for (const link of links) {
-    expect(link.tagName).toBe("A");
-    expect(link.getAttribute("href")).toBe(href);
-  }
+  expect(stamp?.textContent).toBe(formatTimelineTime(createdAt));
+  expect(stamp?.getAttribute("datetime")).toBe(createdAt);
+  expect(stamp?.getAttribute("title")).toBe(createdAt);
   // The id reads first, the time follows it.
   expect(
-    (idLink?.compareDocumentPosition(stamp as Node) ?? 0) &
+    (token?.compareDocumentPosition(stamp as Node) ?? 0) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  return { idLink, stamp };
+  return { link, idToken: token, stamp };
 }
 
 /** The row a header draws itself in, found through the meta it is built around. */
@@ -79,17 +81,29 @@ export function headerRowOf(root: ParentNode): HTMLElement {
 }
 
 /**
- * What the row lays out, read through the baseline line. Above the breakpoint
- * that line is a box and the identity, the meta and the marks beside them are
- * its children; below it the line is `contents` and the grid places the same
- * elements itself. Either way they are what the row arranges, and every
- * assertion below is about them rather than about which of the two the
- * element tree happens to show.
+ * What the row lays out, read through the baseline line: the identity, the
+ * meta and the marks beside them, which are the line's children at every
+ * width, and the actions beside the line.
  */
 export function headerItems(row: HTMLElement): Element[] {
   return [...row.children].flatMap((child) =>
     child.className === COMMENT_HEADER_LINE ? [...child.children] : [child],
   );
+}
+
+/**
+ * That a mark — `sending…`, `resolved` — rides the header's text line rather
+ * than the action column (T-696). Below `sm` the line is a box of its own
+ * now, so a mark asking for the grid's second column would ask in vain, and
+ * the class it carried would only mislead the next reader.
+ */
+export function expectOnTextLine(row: HTMLElement, text: string) {
+  const mark = headerItems(row).find((child) => child.textContent === text);
+  expect(mark, `no ${text} in this header`).toBeTruthy();
+  expect(mark?.parentElement?.className).toBe(COMMENT_HEADER_LINE);
+  for (const token of COMMENT_HEADER_ACTION.split(" ")) {
+    expect(mark?.classList).not.toContain(token);
+  }
 }
 
 function expectClasses(element: Element, classes: string, what: string) {
@@ -100,10 +114,11 @@ function expectClasses(element: Element, classes: string, what: string) {
 }
 
 /**
- * That a header splits into two lines below `sm` the way the other six do
- * (T-445) — one shared vocabulary reaching every entry point, rather than
- * six copies free to drift apart, which is what the card's "all seven behave
- * alike" criteria would otherwise have to re-prove one surface at a time.
+ * That a header takes its narrow shape below `sm` the way the other six do
+ * (T-445, T-696) — one shared vocabulary reaching every entry point, rather
+ * than six copies free to drift apart, which is what the card's "all seven
+ * behave alike" criteria would otherwise have to re-prove one surface at a
+ * time.
  *
  * Geometry is not asserted here and cannot be: happy-dom computes no layout,
  * so what each class *does* is graded in the browser by
@@ -135,8 +150,8 @@ export function expectSplitHeader(
   for (const text of expected.identity) {
     expect(group.textContent).toContain(text);
   }
-  // The meta is the second line, so it is the one thing that must stay out
-  // of the group holding the first.
+  // The meta is what wraps when the author and the time do not fit side by
+  // side, so it is the one thing that must stay out of the author's group.
   expect(group.querySelector("[data-testid='comment-header-meta']")).toBeNull();
 
   for (const action of expected.actions ?? []) {

@@ -5,7 +5,9 @@ import {
   CircleDotIcon,
   CopyIcon,
   EllipsisIcon,
+  HashIcon,
   LinkIcon,
+  PencilIcon,
   TextQuoteIcon,
 } from "lucide-react";
 import {
@@ -82,6 +84,7 @@ export function EntryActionsMenu({
   triggerRef,
   triggerClassName,
   onCloseAutoFocus,
+  edit,
   children,
 }: {
   slug: string;
@@ -98,6 +101,14 @@ export function EntryActionsMenu({
   triggerClassName?: string;
   /** For an entry that opens an editor, which has to keep the focus. */
   onCloseAutoFocus?: (event: Event) => void;
+  /**
+   * The header's pencil, repeated here for narrow screens, where the header
+   * hides it to keep the author and the time on one line (T-696). Omit it
+   * for a reader who may not edit. `focus` runs once the menu has closed:
+   * the editor mounts while the menu still holds the focus, so its own
+   * `autoFocus` loses to the menu's, and the trigger must not take it next.
+   */
+  edit?: { open: () => void; focus: () => void };
   /** Capability-gated entries; omit them and the rule goes too. */
   children?: ReactNode;
 }) {
@@ -125,6 +136,7 @@ export function EntryActionsMenu({
   // the document clears it silently (T-60). Reading before either happens
   // means never having to argue about which of them opening a menu performs.
   const selected = useRef<{ start: number; end: number } | null>(null);
+  const editing = useRef(false);
 
   const readSelection = (): { start: number; end: number } | null => {
     const container = bodyRef.current;
@@ -176,14 +188,49 @@ export function EntryActionsMenu({
       <DropdownMenuContent
         className="w-auto"
         align="end"
-        onCloseAutoFocus={onCloseAutoFocus}
+        onCloseAutoFocus={(event) => {
+          if (editing.current) {
+            editing.current = false;
+            event.preventDefault();
+            edit?.focus();
+            return;
+          }
+          onCloseAutoFocus?.(event);
+        }}
       >
+        {edit && (
+          <DropdownMenuItem
+            className="sm:hidden"
+            onSelect={() => {
+              editing.current = true;
+              edit.open();
+            }}
+          >
+            <PencilIcon className="size-3.5" />
+            Edit
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem
           onSelect={() => void copyToClipboard(permalink, "Link copied")}
         >
           <LinkIcon className="size-3.5" />
           Copy link
         </DropdownMenuItem>
+        {/* What the header's id would have copied, for the reader who
+            cannot point at the comment to bring the id out (T-696). */}
+        {commentId !== undefined && (
+          <DropdownMenuItem
+            onSelect={() =>
+              void copyToClipboard(
+                `#${commentAnchor(commentId)}`,
+                "Reference copied",
+              )
+            }
+          >
+            <HashIcon className="size-3.5" />
+            Copy reference
+          </DropdownMenuItem>
+        )}
         {hasBody && (
           <DropdownMenuItem
             onSelect={() => void copyToClipboard(body, "Markdown copied")}

@@ -19,6 +19,7 @@ import type Markdown from "react-markdown";
 import {
   COMMENT_HEADER_ACTION,
   COMMENT_HEADER_ROW,
+  COMMENT_SURFACE,
   CommentHeaderIdentity,
   CommentHeaderLine,
   CommentHeaderMeta,
@@ -1215,7 +1216,10 @@ const AnnotationChip = memo(function AnnotationChip({
               <p className="whitespace-pre-wrap">{item.draft.body}</p>
             </div>
           ) : (
-            <div key={item.key} className="rounded-md border p-2 text-sm">
+            <div
+              key={item.key}
+              className={cn("rounded-md border p-2 text-sm", COMMENT_SURFACE)}
+            >
               <div
                 className={cn(
                   "mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground",
@@ -1247,10 +1251,7 @@ const AnnotationChip = memo(function AnnotationChip({
                       across the line's edge (T-487). */}
                   {item.item.resolved !== null && (
                     <span
-                      className={cn(
-                        "text-green-700 dark:text-green-400",
-                        COMMENT_HEADER_ACTION,
-                      )}
+                      className="text-green-700 dark:text-green-400"
                       title={`resolved by ${displayNameOf(item.item.resolved.by)}`}
                     >
                       resolved

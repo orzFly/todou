@@ -35,6 +35,7 @@ import {
 import { specCommentsQuery } from "../src/api/spec.ts";
 import { EventGroup } from "../src/components/timeline/event-group.tsx";
 import type { GroupFold } from "../src/components/timeline/group-events.ts";
+import { formatTimelineTime } from "../src/lib/timeline-time.ts";
 import { renderWithProviders } from "./render.tsx";
 
 const bot: UserRef = {
@@ -594,9 +595,7 @@ describe("EventGroup", () => {
     ) as HTMLAnchorElement | null;
     expect(stamp).toBeTruthy();
     expect(stamp?.title).toBe(`${first.created_at} – ${last.created_at}`);
-    expect(stamp?.textContent).toBe(
-      new Date(first.created_at).toLocaleString(),
-    );
+    expect(stamp?.textContent).toBe(formatTimelineTime(first.created_at));
   });
 
   it("renders references as a resident block list, no expander (T-99)", async () => {

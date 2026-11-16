@@ -171,6 +171,7 @@ describe("EntryActionsMenu on a comment", () => {
     await openMenu(view);
     expect(itemNames()).toEqual([
       "Copy link",
+      "Copy reference",
       "Copy Markdown",
       "Quote reply",
       "Reference in a new issue",
@@ -187,7 +188,9 @@ describe("EntryActionsMenu on a comment", () => {
     });
     await openMenu(view);
     expect(itemNames()).toEqual([
+      "Edit",
       "Copy link",
+      "Copy reference",
       "Copy Markdown",
       "Quote reply",
       "Reference in a new issue",
@@ -209,6 +212,38 @@ describe("EntryActionsMenu on a comment", () => {
       ),
     );
     await waitFor(() => expect(toast.success).toHaveBeenCalledOnce());
+  });
+
+  it("copies the comment's reference, spelled as a body writes it (T-696)", async () => {
+    const view = renderComment();
+    await openMenu(view);
+    fireEvent.click(menuItem("Copy reference"));
+    // Never `#1234`: in a body that names issue 1234.
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledExactlyOnceWith("#comment-1234"),
+    );
+  });
+
+  it("carries the header's pencil for narrow screens only (T-696)", async () => {
+    const view = renderComment({
+      viewer: { id: 2, isAdmin: true, role: "admin" },
+    });
+    const pencil = await waitFor(() =>
+      within(view.container).getByRole("button", { name: "edit comment" }),
+    );
+    // The two halves of one swap: either missing leaves a width with no way
+    // to edit, or with two.
+    expect(pencil.classList).toContain("max-sm:hidden");
+    await openMenu(view);
+    const edit = menuItem("Edit");
+    expect(edit.classList).toContain("sm:hidden");
+    fireEvent.click(edit);
+    // The editor, not the trigger the menu would hand the focus back to.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("textbox", { name: "Edit comment" }),
+      ),
+    );
   });
 
   it("copies the stored markdown, not the rendered text", async () => {
@@ -277,7 +312,11 @@ describe("EntryActionsMenu on a comment", () => {
       onQuote: () => {},
     });
     await openMenu(view);
-    expect(itemNames()).toEqual(["Copy link", "Reference in a new issue"]);
+    expect(itemNames()).toEqual([
+      "Copy link",
+      "Copy reference",
+      "Reference in a new issue",
+    ]);
   });
 
   it("keeps them for a body that renders as nothing but an HTML comment", async () => {
@@ -290,6 +329,7 @@ describe("EntryActionsMenu on a comment", () => {
     await openMenu(view);
     expect(itemNames()).toEqual([
       "Copy link",
+      "Copy reference",
       "Copy Markdown",
       "Quote reply",
       "Reference in a new issue",
@@ -670,6 +710,7 @@ describe("EntryActionsMenu on the issue body", () => {
     const view = renderBody({ withBox: true });
     await openBodyMenu(view);
     expect(itemNames()).toEqual([
+      "Edit",
       "Copy link",
       "Copy Markdown",
       "Quote reply",
@@ -710,7 +751,11 @@ describe("EntryActionsMenu on the issue body", () => {
     // body actions would produce an empty clipboard and a lone `>`.
     await within(view.container).findByText("No description.");
     await openBodyMenu(view);
-    expect(itemNames()).toEqual(["Copy link", "Reference in a new issue"]);
+    expect(itemNames()).toEqual([
+      "Edit",
+      "Copy link",
+      "Reference in a new issue",
+    ]);
   });
 
   it("keeps the menu on a trashed card, minus Quote reply", async () => {
@@ -719,6 +764,7 @@ describe("EntryActionsMenu on the issue body", () => {
     expect(
       within(view.container).queryByRole("button", { name: "edit body" }),
     ).toBeNull();
+    // Nor in the menu, where narrow screens look for it (T-696).
     expect(itemNames()).toEqual([
       "Copy link",
       "Copy Markdown",

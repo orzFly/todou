@@ -65,8 +65,7 @@
      picture was 0.71 of the text in a heading and 1.43 of it in a paragraph
      (T-499). `UserAvatar` is shared with the comment header, the event row and
      every member list, and none of those asked to change — so the scale lives
-     here, under the mention chip's own selector, and `USER_CHIP_NAME_INDENT`
-     and its 1.625rem stay true for the chip that still measures in rem.
+     here, under the mention chip's own selector.
 
      `1em` is the same ratio T-495 gave the other three chips' glyphs, and it
      is the only one a heading's line can hold. The avatar is an atomic inline,

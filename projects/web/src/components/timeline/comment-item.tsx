@@ -19,6 +19,7 @@ import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import {
   COMMENT_HEADER_ACTION,
   COMMENT_HEADER_ROW,
+  COMMENT_SURFACE,
   CommentHeaderIdentity,
   CommentHeaderLine,
   CommentHeaderMeta,
@@ -168,6 +169,7 @@ function PlainCommentItem({
   const refCompletion = useRefCompletion(slug);
   const target: Target = { slug, issueNumber, commentId: comment.id };
   const mayHide = canHideComment(viewer) && !isHidden(comment);
+  const mayEdit = canEditComment(viewer, comment.author.id);
   const mayDelete = canEditComment(viewer, comment.author.id);
   const { save, setHidden, remove } = useCommentWrites({
     onSaved: () => {
@@ -176,6 +178,18 @@ function PlainCommentItem({
     },
     onDeleted: () => setConfirmingDelete(false),
   });
+
+  function toggleEditor() {
+    // The editor mounts fresh off comment.body each time edit mode opens, so
+    // an abandoned draft never survives into the next one.
+    staging.discard();
+    setEditing(!editing);
+  }
+
+  /** The menu's Edit opens and never closes: it is not the pencil's toggle. */
+  function openEditor() {
+    if (!editing) toggleEditor();
+  }
 
   async function handleSave() {
     if (uploading) return;
@@ -207,7 +221,11 @@ function PlainCommentItem({
       // Anchor target for #comment-<id> permalinks; pending comments have
       // no server id yet, so they never claim an anchor.
       id={pending ? undefined : commentAnchor(comment.id)}
-      className={`rounded-lg border ${pending ? "opacity-60" : ""}`}
+      className={cn(
+        "rounded-lg border",
+        COMMENT_SURFACE,
+        pending && "opacity-60",
+      )}
       data-comment-id={comment.id}
     >
       <div
@@ -264,14 +282,7 @@ function PlainCommentItem({
             />
           )}
           {pending && (
-            <span
-              className={cn(
-                "text-xs text-muted-foreground",
-                COMMENT_HEADER_ACTION,
-              )}
-            >
-              sending…
-            </span>
+            <span className="text-xs text-muted-foreground">sending…</span>
           )}
         </CommentHeaderLine>
         {!pending && (
@@ -297,18 +308,15 @@ function PlainCommentItem({
                 <EyeOffIcon className="size-3.5" />
               </Button>
             )}
-            {canEditComment(viewer, comment.author.id) && (
+            {mayEdit && (
+              // Folded into the menu below the breakpoint, where it would
+              // cost the author's line the room the time needs (T-696).
               <Button
                 size="icon-sm"
                 variant="ghost"
                 aria-label="edit comment"
-                onClick={() => {
-                  // The editor mounts fresh off comment.body each time edit
-                  // mode opens, so an abandoned draft never survives into
-                  // the next one.
-                  staging.discard();
-                  setEditing(!editing);
-                }}
+                className="max-sm:hidden"
+                onClick={toggleEditor}
               >
                 <PencilIcon className="size-3.5" />
               </Button>
@@ -321,6 +329,11 @@ function PlainCommentItem({
               bodyRef={bodyRef}
               label="comment actions"
               triggerRef={menuTrigger}
+              edit={
+                mayEdit
+                  ? { open: openEditor, focus: () => editor.current?.focus() }
+                  : undefined
+              }
             >
               {mayHide || mayDelete ? (
                 <>

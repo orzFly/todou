@@ -111,27 +111,22 @@ describe("timeline anchor parsing", () => {
 });
 
 describe("comment permalinks in the timeline", () => {
-  it("gives comments an anchor id, an id permalink and a timestamp permalink", async () => {
+  it("gives comments an anchor id and one permalink holding id and time", async () => {
     const view = renderWithProviders(
       <CommentItem slug="p" issueNumber={7} comment={commentOf(5)} />,
     );
-    // Both halves of the header meta carry the same href now (T-435), so the
-    // timestamp is found by being the `<time>` and not by being the first
-    // anchor that points at the comment.
-    const links = await waitFor(() => {
+    // One link around the id and the time (T-696), where T-435 drew two.
+    const link = await waitFor(() => {
       const found = view.container.querySelectorAll<HTMLAnchorElement>(
         "a[href='/projects/p/issues/7#comment-5']",
       );
-      expect(found).toHaveLength(2);
-      return [...found];
+      expect(found).toHaveLength(1);
+      return found[0];
     });
-    const stamp = links.find((link) => link.querySelector("time"));
-    expect(stamp?.textContent).toContain("2026");
-    expect(stamp?.querySelector("time")?.getAttribute("datetime")).toBe(
-      "2026-08-12T00:00:00Z",
-    );
-    const id = links.find((link) => !link.querySelector("time"));
-    expect(id?.textContent).toBe("#comment-5");
+    const time = link.querySelector("time");
+    expect(time?.textContent).toContain("2026");
+    expect(time?.getAttribute("datetime")).toBe("2026-08-12T00:00:00Z");
+    expect(link.querySelector(".select-all")?.textContent).toBe("#comment-5");
     expect(view.container.querySelector("#comment-5")).not.toBeNull();
   });
 

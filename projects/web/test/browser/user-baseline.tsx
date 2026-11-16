@@ -135,12 +135,18 @@ function authorChipOf(row: Element | null) {
   );
 }
 
-/** The header meta's two links, told apart the way a reader does. */
+/**
+ * The header meta's id and time. One link holds both since T-696, so they
+ * are told apart inside it: the id is the selectable token, the stamp is the
+ * `<time>`. The token is marked even where it is `display: none` (below `sm`,
+ * on a comment the address does not name); the runner records such a role as
+ * hidden by design instead of measuring a box that is not there.
+ */
 function metaParts(row: Element | null) {
-  const links = [...(row?.querySelectorAll("a[href*='#comment-']") ?? [])];
+  const meta = row?.querySelector('[data-testid="comment-header-meta"]');
   return {
-    id: links.find((link) => !link.querySelector("time")) ?? null,
-    time: links.find((link) => link.querySelector("time")) ?? null,
+    id: meta?.querySelector(".select-all") ?? null,
+    time: meta?.querySelector("time") ?? null,
   };
 }
 
@@ -237,7 +243,7 @@ function markRows(commentId?: number, annotationId?: number) {
       body,
       "body-block",
       authorChipOf(body),
-      body.querySelector('[data-testid="comment-header-meta"] > span'),
+      body.querySelector('[data-testid="comment-header-meta"] > time'),
       {},
       true,
     );
@@ -659,6 +665,25 @@ function Fixture() {
             item.current_line_start !== null &&
             item.current_line_end !== null,
         );
+        const plain = timeline.items.find(
+          (item): item is TimelineComment =>
+            item.type === "comment" &&
+            item.component === null &&
+            item.agent_context == null,
+        );
+        // The address names the plain comment, the way a permalink does, so
+        // its id is laid out at every width (T-696): below `sm` that is the
+        // only state in which a header shows its id at all, and a baseline
+        // family that never saw one there would be grading nothing. The
+        // agent comments and the annotation stay unnamed, which keeps the
+        // hidden-by-design state in the same run.
+        if (live && plain) {
+          await router.navigate({
+            to: "/projects/$slug/issues/$number",
+            params: { slug, number: String(issueNumber) },
+            hash: `comment-${plain.id}`,
+          });
+        }
         if (live)
           setData({
             issue,
@@ -666,12 +691,7 @@ function Fixture() {
             events: timeline.items.filter(
               (item): item is TimelineEvent => item.type === "event",
             ),
-            comment: timeline.items.find(
-              (item): item is TimelineComment =>
-                item.type === "comment" &&
-                item.component === null &&
-                item.agent_context == null,
-            ),
+            comment: plain,
             agentSessionComment: timeline.items.find(
               (item): item is TimelineComment =>
                 item.type === "comment" &&
@@ -704,12 +724,13 @@ function Fixture() {
 }
 
 // A private router gives the exported real Link/UserChip components a routing
-// context. It is never registered with the product's production router.
-const rootRoute = createRootRoute();
+// context. It is never registered with the product's production router. The
+// fixture is the root's component rather than a leaf's, so moving to the
+// issue's own address (above) keeps every sample mounted.
+const rootRoute = createRootRoute({ component: Fixture });
 const fixtureRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: Fixture,
 });
 const projectRoute = createRoute({
   getParentRoute: () => rootRoute,

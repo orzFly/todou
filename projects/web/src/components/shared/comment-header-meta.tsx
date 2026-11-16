@@ -1,33 +1,45 @@
-import { Link } from "@tanstack/react-router";
-import type { CSSProperties, ReactNode } from "react";
+import { Link, useRouterState } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
-import { USER_CHIP_NAME_INDENT } from "@/components/shared/user-chip.tsx";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
+import { formatTimelineTime } from "@/lib/timeline-time.ts";
 import { cn } from "@/lib/utils";
 
-const TEXT = "shrink-0 text-xs whitespace-nowrap text-muted-foreground";
+const TEXT = "text-xs whitespace-nowrap text-muted-foreground";
+
+/**
+ * Whatever draws one whole comment — the timeline card, a preview, an
+ * annotation bubble. Pointing anywhere inside it, or moving the focus into
+ * it, is what brings the header's `#comment-N` out (T-696).
+ */
+export const COMMENT_SURFACE = "group/comment";
 
 /**
  * A comment header's narrow-screen shape, merged into the row of all seven
- * entry points: who wrote it and what the reader may do share the first line,
- * and the id and the time get the second to themselves (T-445).
+ * entry points: the text line takes the first column and whatever the reader
+ * may do takes the second, so the buttons hold the top-right corner however
+ * the text wraps.
  *
  * Every class below the breakpoint and none above it, here and in the two
  * names under it. That is what makes "the desktop row is untouched" a
  * property of the code rather than a comparison somebody remembered to run —
  * T-426 let a narrow-screen concession reach the desktop, and T-443 had to
- * take it back. The column gap is restated rather than inherited so the row
- * gap next to it cannot depend on which of the two Tailwind emits last.
+ * take it back.
  */
 export const COMMENT_HEADER_ROW =
-  "max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-2 max-sm:gap-y-0.5";
+  "max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-2";
 
 /**
- * Whatever a header's reader may do here: the timeline's action group,
- * `sending…`, `Resolve`, the `resolved` mark.
+ * Whatever a header's reader may do here: the timeline's action group, a
+ * spec annotation's `Resolve`.
+ *
+ * `self-start`, not centred: on one line the buttons are what make the row
+ * as tall as it is, so the two come out the same, and once the time has
+ * wrapped, centring would leave the buttons hanging between the author and
+ * the time instead of on the author's line.
  */
 export const COMMENT_HEADER_ACTION =
-  "max-sm:col-start-2 max-sm:row-start-1 max-sm:justify-self-end max-sm:self-center";
+  "max-sm:col-start-2 max-sm:row-start-1 max-sm:justify-self-end max-sm:self-start";
 
 /**
  * Everything that names the author — the chip, the agent badge, the edit
@@ -36,13 +48,15 @@ export const COMMENT_HEADER_ACTION =
  * `contents` is load-bearing rather than tidy: above the breakpoint this
  * element generates no box at all, so the desktop row keeps exactly the flex
  * items it had before the group existed, and nothing in it can be pushed by
- * a wrapper that is not there. Below the breakpoint the group becomes a flex
- * box of its own and has to carry a gap again, because the row's `gap-2` no
- * longer reaches children this element now owns — without one the name and
- * the anchor render as a single run (`alice-quartermainfile · v1`).
+ * a wrapper that is not there. Below the breakpoint the group is one flex
+ * item of the line, which is what lets the line ask a single question — do
+ * the author and the time fit side by side — and move only the time when
+ * they do not (T-696). It does not wrap inside: what runs out of room is the
+ * badge and the name, which truncate, so the author never takes two lines
+ * and pushes the time to a third.
  */
 export const COMMENT_HEADER_IDENTITY =
-  "contents max-sm:col-start-1 max-sm:row-start-1 max-sm:flex max-sm:min-w-0 max-sm:flex-wrap max-sm:items-baseline max-sm:gap-x-2 max-sm:gap-y-0.5";
+  "contents max-sm:flex max-sm:min-w-0 max-sm:items-baseline max-sm:gap-x-2";
 
 export function CommentHeaderIdentity({ children }: { children: ReactNode }) {
   return <span className={COMMENT_HEADER_IDENTITY}>{children}</span>;
@@ -68,13 +82,12 @@ export function CommentHeaderIdentity({ children }: { children: ReactNode }) {
  * different heights hold their baselines at different distances from their
  * own centres — and that baseline is what T-433 and T-435 are.
  *
- * `max-sm:contents` for the mirror of the reason `COMMENT_HEADER_IDENTITY` is
- * `contents` above the breakpoint: below it the row is a grid whose cells the
- * identity, the meta and the action claim for themselves, and a box around
- * two of the three would take one cell for both.
+ * Below the breakpoint the line is the grid's first cell. One line while the
+ * author and the time fit beside each other, and the time wraps under them
+ * only when they do not — the narrow gap is the one between those two lines.
  */
 export const COMMENT_HEADER_LINE =
-  "flex min-w-0 grow flex-wrap items-baseline gap-2 self-center max-sm:contents";
+  "flex min-w-0 grow flex-wrap items-baseline gap-2 self-center max-sm:col-start-1 max-sm:row-start-1 max-sm:gap-y-0.5";
 
 export function CommentHeaderLine({
   className,
@@ -86,24 +99,30 @@ export function CommentHeaderLine({
   return <span className={cn(COMMENT_HEADER_LINE, className)}>{children}</span>;
 }
 
-/** Absolute and localised, as every other timestamp in the app already is. */
+/** Localised, as every other timestamp in the app is; the ISO on hover. */
 function CreatedTime({ createdAt }: { createdAt: string }) {
   return (
     <time dateTime={createdAt} title={createdAt}>
-      {new Date(createdAt).toLocaleString()}
+      {formatTimelineTime(createdAt)}
     </time>
   );
 }
 
 /**
- * The `#comment-N` and the creation time a comment's own header carries
- * (T-435), narrow on purpose: the author chip, the edited marker and the
- * action group stay with the call site, which is the only thing that knows
- * what this reader may do here.
+ * The creation time a comment's own header carries, and behind it the
+ * comment's `#comment-N` (T-435), narrow on purpose: the author chip, the
+ * edited marker and the action group stay with the call site, which is the
+ * only thing that knows what this reader may do here.
  *
- * Both halves point at the comment in its own issue's timeline, never at the
- * spec document a spec comment is anchored to — the file/line links beside
- * them already go there, and one control cannot mean both.
+ * The id is out of sight until it is wanted (T-696): pointing at the comment,
+ * focus inside it, or this comment being the one the address names. It is
+ * never shortened to `#N` to save the room — in a body that spelling is an
+ * issue reference, so a reader who copied it would be pointing somewhere
+ * else entirely.
+ *
+ * One link around both, to the comment in its own issue's timeline, never to
+ * the spec document a spec comment is anchored to — the file/line links
+ * beside it already go there, and one control cannot mean both.
  *
  * Deliberately not an `IssueLink`: the short suffix is the whole text, so
  * resolving a title would cost a request per rendered header and open a
@@ -136,66 +155,86 @@ export function CommentHeaderMeta(
       }
   ),
 ) {
-  const returnState = useReturnLinkState();
-  // Wraps rather than shrinks: each half is `whitespace-nowrap`, so in a
+  // Wraps rather than squeezes: each half is `whitespace-nowrap`, so in a
   // container too narrow for both the time drops under the id instead of
-  // the pair being squeezed a character per line. Right-justified above the
-  // breakpoint, so the second line stays against the same edge as the first.
+  // the pair being squeezed a character per line. That takes a box free to
+  // shrink — no `shrink-0` here, or a five-digit id and the time hold one
+  // line and run past the header at 320px. Right-justified, so a
+  // second line stays against the same edge as the first. `max-sm:ml-auto`
+  // because the two spec rows push the meta right with a spacer of their
+  // own, which is gone below the breakpoint.
   const box = cn(
-    "flex flex-wrap items-baseline justify-end gap-x-2",
-    // The second line of the split header (T-445). `ml-0` is not tidiness:
-    // the call site's `ml-auto` would, in a grid, shrink this to a
-    // right-aligned box and carry the line's left edge with it. The base
-    // `justify-end` goes the same way — it survives until the id and the
-    // time need a line each, and then it sends the id 112px right of the
-    // name it is supposed to start under.
-    "max-sm:col-span-2 max-sm:row-start-2 max-sm:ml-0 max-sm:justify-start",
-    "max-sm:ps-(--user-chip-name-indent)",
-    // The time claims the leftover space rather than the row distributing
-    // it, so running out of room drops it to a line of its own still against
-    // the right edge. `justify-between` + `nowrap` draws the same shape and
-    // fails by leaving the header, which is the one thing this card forbids.
-    "max-sm:[&>*:last-child]:ml-auto",
+    "flex flex-wrap items-baseline justify-end gap-x-2 max-sm:ml-auto",
     props.className,
   );
-  // A custom property so the number stays beside the avatar it tracks
-  // instead of being copied into the seven headers that indent by it.
-  const indent = {
-    "--user-chip-name-indent": USER_CHIP_NAME_INDENT,
-  } as CSSProperties;
 
   if (props.unlinked) {
     return (
-      <span className={box} style={indent} data-testid="comment-header-meta">
-        <span className={TEXT}>
-          <CreatedTime createdAt={props.createdAt} />
-        </span>
+      <span className={cn(box, TEXT)} data-testid="comment-header-meta">
+        <CreatedTime createdAt={props.createdAt} />
       </span>
     );
   }
 
-  const { slug, issueNumber, commentId } = props;
-  const target = {
-    to: "/projects/$slug/issues/$number" as const,
-    params: { slug, number: String(issueNumber) },
-    hash: commentAnchor(commentId),
-    // The anchor is a destination, not a scroll: arriving at it is
-    // useTimelineAnchor's job, and it has collapsed runs to open first.
-    hashScrollIntoView: false as const,
-    state: returnState,
-    className: cn(TEXT, "hover:underline"),
-  };
+  return <LinkedMeta {...props} box={box} />;
+}
+
+function LinkedMeta({
+  slug,
+  issueNumber,
+  commentId,
+  createdAt,
+  box,
+}: {
+  slug: string;
+  issueNumber: number;
+  commentId: number;
+  createdAt: string;
+  box: string;
+}) {
+  const returnState = useReturnLinkState();
+  const anchor = commentAnchor(commentId);
+  // Read off the address rather than off the timeline's landing: CSS
+  // `:target` would do it for free, but the router moves between hashes
+  // with pushState, which `:target` never sees. The selector returns a
+  // boolean, so a header re-renders when its own answer flips and not on
+  // every navigation.
+  const named = useRouterState({
+    select: (s) =>
+      s.location.hash === anchor &&
+      s.location.pathname === `/projects/${slug}/issues/${issueNumber}`,
+  });
   return (
-    <span className={box} style={indent} data-testid="comment-header-meta">
-      <Link {...target}>
-        {/* The one span the reader can select on its own, so a drag across it
-            copies the suffix and nothing else — no author, no timestamp, and
-            no issue ref quietly appended (T-427). */}
-        <span className="select-all">{`#${commentAnchor(commentId)}`}</span>
-      </Link>
-      <Link {...target}>
-        <CreatedTime createdAt={props.createdAt} />
-      </Link>
-    </span>
+    <Link
+      to="/projects/$slug/issues/$number"
+      params={{ slug, number: String(issueNumber) }}
+      hash={anchor}
+      // The anchor is a destination, not a scroll: arriving at it is
+      // useTimelineAnchor's job, and it has collapsed runs to open first.
+      hashScrollIntoView={false}
+      state={returnState}
+      className={cn(box, TEXT, "group/meta")}
+      data-testid="comment-header-meta"
+    >
+      {/* The one span the reader can select on its own, so a drag across it
+          copies the suffix and nothing else — no author, no timestamp, and
+          no issue ref quietly appended (T-427).
+
+          Hidden with opacity and not removed, above the breakpoint: the
+          space stays held, so pointing at a comment never moves its time
+          or wraps its header. Below it, where there is no pointer to bring
+          it back and every pixel of the first line is spoken for, the id
+          takes no room until the address names this comment. */}
+      <span
+        className={cn(
+          "select-all",
+          !named &&
+            "opacity-0 transition-opacity duration-150 group-focus-within/comment:opacity-100 group-hover/comment:opacity-100 motion-reduce:transition-none max-sm:hidden",
+        )}
+      >{`#${anchor}`}</span>
+      <span className="group-hover/meta:underline">
+        <CreatedTime createdAt={createdAt} />
+      </span>
+    </Link>
   );
 }

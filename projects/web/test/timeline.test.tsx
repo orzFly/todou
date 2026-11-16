@@ -38,6 +38,7 @@ import {
   resolveStatus,
   resolveUser,
 } from "../src/components/timeline/use-event-entities.ts";
+import { formatTimelineTime } from "../src/lib/timeline-time.ts";
 import {
   renderWithProviders as renderWithRouter,
   testQueryClient,
@@ -500,7 +501,7 @@ describe("timeline rendering", () => {
     );
     expect(summary.textContent).toBe("logged an unknown event: future_event");
     const time = view.getByTitle(event.created_at);
-    expect(time.textContent).toBe(new Date(event.created_at).toLocaleString());
+    expect(time.textContent).toBe(formatTimelineTime(event.created_at));
     expect(
       summary.parentElement?.firstElementChild?.querySelector("svg"),
     ).toBeTruthy();

@@ -7,6 +7,7 @@ import { FileTextIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   COMMENT_HEADER_ROW,
+  COMMENT_SURFACE,
   CommentHeaderIdentity,
   CommentHeaderLine,
   CommentHeaderMeta,
@@ -54,7 +55,7 @@ export function SpecAnnotationHoverCard({
   return (
     <HoverCard openDelay={OPEN_DELAY_MS} closeDelay={CLOSE_DELAY_MS}>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent>
+      <HoverCardContent className={COMMENT_SURFACE}>
         <HoverDepth.Provider value={1}>
           <div
             className={cn(

@@ -43,6 +43,7 @@ import {
   useEventEntities,
 } from "@/components/timeline/use-event-entities.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
+import { formatTimelineTime } from "@/lib/timeline-time.ts";
 import { cn } from "@/lib/utils";
 
 type ListRow = {
@@ -394,7 +395,7 @@ function ListGroup({
           }
         >
           <time dateTime={first.created_at}>
-            {new Date(first.created_at).toLocaleString()}
+            {formatTimelineTime(first.created_at)}
           </time>
         </Link>
       </div>
@@ -848,7 +849,7 @@ function CollapsedGroup({
           title={`${first.created_at} – ${last.created_at}`}
         >
           <time dateTime={first.created_at}>
-            {new Date(first.created_at).toLocaleString()}
+            {formatTimelineTime(first.created_at)}
           </time>
         </Link>
       </div>

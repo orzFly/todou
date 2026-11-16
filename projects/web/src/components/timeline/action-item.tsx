@@ -31,6 +31,7 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { inlineActionSource } from "@/lib/action-text.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
+import { formatTimelineTime } from "@/lib/timeline-time.ts";
 import { cn } from "@/lib/utils";
 
 /** EventRow's time, so the two cannot drift apart in size or colour. */
@@ -83,7 +84,7 @@ export function ActionItem({
 
   const time = (
     <time dateTime={comment.created_at} title={comment.created_at}>
-      {new Date(comment.created_at).toLocaleString()}
+      {formatTimelineTime(comment.created_at)}
     </time>
   );
 

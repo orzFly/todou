@@ -63,6 +63,7 @@ import {
 import { type RefConfig, splitIssueRefs } from "@/lib/issue-refs.ts";
 import type { ReturnLinkState } from "@/lib/return-view-history.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
+import { formatTimelineTime } from "@/lib/timeline-time.ts";
 
 /** Entity emphasis inside an event sentence, one notch below the actor's. */
 export const IN_SENTENCE = "font-medium text-foreground/75";
@@ -921,7 +922,7 @@ export function EventRow({
           title={event.created_at}
         >
           <time dateTime={event.created_at}>
-            {new Date(event.created_at).toLocaleString()}
+            {formatTimelineTime(event.created_at)}
           </time>
         </Link>
       ) : (
@@ -930,7 +931,7 @@ export function EventRow({
           title={event.created_at}
         >
           <time dateTime={event.created_at}>
-            {new Date(event.created_at).toLocaleString()}
+            {formatTimelineTime(event.created_at)}
           </time>
         </span>
       )}

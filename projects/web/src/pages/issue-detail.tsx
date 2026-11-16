@@ -494,6 +494,18 @@ export function BodyBlock({
     onError: (error) => toast.error(error.message),
   });
 
+  function toggleEditor() {
+    // The editor mounts fresh off issue.body, so entering edit mode always
+    // starts from what is on screen.
+    staging.discard();
+    setEditing(!editing);
+  }
+
+  /** The menu's Edit opens and never closes: it is not the pencil's toggle. */
+  function openEditor() {
+    if (!editing) toggleEditor();
+  }
+
   async function handleSave() {
     if (uploading) return;
     // Read before the first `await`, for the same reason the composer does:
@@ -582,16 +594,14 @@ export function BodyBlock({
           )}
         >
           {!readOnly && (
+            // Folded into the menu below the breakpoint, as on every comment
+            // under it (T-696).
             <Button
               size="icon-sm"
               variant="ghost"
               aria-label="edit body"
-              onClick={() => {
-                // The editor mounts fresh off issue.body, so entering edit mode
-                // always starts from what is on screen.
-                staging.discard();
-                setEditing(!editing);
-              }}
+              className="max-sm:hidden"
+              onClick={toggleEditor}
             >
               <PencilIcon className="size-3.5" />
             </Button>
@@ -602,6 +612,11 @@ export function BodyBlock({
             body={issue.body}
             bodyRef={bodyRef}
             label="description actions"
+            edit={
+              readOnly
+                ? undefined
+                : { open: openEditor, focus: () => editor.current?.focus() }
+            }
           />
         </div>
       </div>

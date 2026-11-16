@@ -1,4 +1,13 @@
-import { fireEvent, waitFor } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { SpecCommentItem, TimelineComment } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { CommentHoverCard } from "../src/components/shared/comment-hover-card.tsx";
@@ -7,13 +16,14 @@ import {
   CommentItem,
   type Viewer,
 } from "../src/components/timeline/comment-item.tsx";
+import { formatTimelineTime } from "../src/lib/timeline-time.ts";
 import {
   expectHeaderMeta,
   expectSplitHeader,
   headerRowOf,
   metaLinks,
 } from "./header-meta.ts";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 /**
  * The `#comment-N` and creation time every comment's own header carries
@@ -85,7 +95,7 @@ describe("a timeline comment's own header (T-435)", () => {
         view.container.querySelectorAll(
           "a[href='/projects/p/issues/7#comment-12']",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
     });
     expectHeaderMeta(
       view.container,
@@ -111,11 +121,9 @@ describe("a timeline comment's own header (T-435)", () => {
       expect(found.stamp).toBeDefined();
       return found;
     });
-    expect(stamp?.textContent).toBe(new Date(CREATED).toLocaleString());
-    expect(stamp?.textContent).not.toBe(new Date(EDITED).toLocaleString());
-    expect(stamp?.querySelector("time")?.getAttribute("datetime")).toBe(
-      CREATED,
-    );
+    expect(stamp?.textContent).toBe(formatTimelineTime(CREATED));
+    expect(stamp?.textContent).not.toBe(formatTimelineTime(EDITED));
+    expect(stamp?.getAttribute("datetime")).toBe(CREATED);
     // The edited marker keeps its own place beside the meta.
     expect(view.container.textContent).toContain("edited");
   });
@@ -138,7 +146,7 @@ describe("a timeline comment's own header (T-435)", () => {
         view.container.querySelectorAll(
           "a[href='/projects/p/issues/7#comment-12']",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
     });
     expectHeaderMeta(
       view.container,
@@ -167,7 +175,7 @@ describe("a timeline comment's own header (T-435)", () => {
       expect(found.id).toBeDefined();
       return found;
     });
-    fireEvent.click(id as HTMLAnchorElement);
+    fireEvent.click(id as HTMLElement);
     await waitFor(() => {
       expect(view.router.state.location.pathname).toBe("/projects/p/issues/7");
     });
@@ -189,9 +197,75 @@ describe("a timeline comment's own header (T-435)", () => {
     const before = view.router.state.location.pathname;
     // ⌘/Ctrl-click opens a background tab; the router must not swallow it, or
     // the href would be decoration over a handler.
-    fireEvent.click(id as HTMLAnchorElement, { metaKey: true, button: 0 });
+    fireEvent.click(id as HTMLElement, { metaKey: true, button: 0 });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(view.router.state.location.pathname).toBe(before);
+  });
+
+  it("keeps the id out of sight until the comment is pointed at or focused (T-696)", async () => {
+    const view = renderWithProviders(
+      <CommentItem slug="p" issueNumber={7} comment={commentOf(12)} />,
+    );
+    const { id } = await waitFor(() => {
+      const found = metaLinks(
+        view.container,
+        "/projects/p/issues/7#comment-12",
+      );
+      expect(found.id).toBeDefined();
+      return found;
+    });
+    // Hidden by opacity, so it keeps its room and its text — selection and
+    // a screen reader still reach it — and brought back by the whole
+    // comment, not only the header.
+    const token = id as HTMLElement;
+    expect(token.classList).toContain("opacity-0");
+    expect(token.classList).toContain("group-hover/comment:opacity-100");
+    expect(token.classList).toContain("group-focus-within/comment:opacity-100");
+    expect(token.classList).toContain("max-sm:hidden");
+    expect(token.closest(".group\\/comment")).toBe(
+      view.container.querySelector("[data-comment-id='12']"),
+    );
+  });
+
+  it("shows the id outright on the comment the address names (T-696)", async () => {
+    // Mounted by the root rather than by a leaf, so the comments stay on the
+    // page at the issue's own address — the only place the id is named.
+    const rootRoute = createRootRoute({
+      component: () => (
+        <>
+          <CommentItem slug="p" issueNumber={7} comment={commentOf(12)} />
+          <CommentItem slug="p" issueNumber={7} comment={commentOf(13)} />
+          <Outlet />
+        </>
+      ),
+    });
+    const issueRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/projects/$slug/issues/$number",
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([issueRoute]),
+      history: createMemoryHistory({
+        initialEntries: ["/projects/p/issues/7#comment-12"],
+      }),
+    });
+    const view = render(
+      <QueryClientProvider client={testQueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    const token = (id: number) =>
+      metaLinks(view.container, `/projects/p/issues/7#comment-${id}`)
+        .id as HTMLElement;
+    await waitFor(() => expect(token(12)).toBeDefined());
+    expect(token(12).classList).not.toContain("opacity-0");
+    expect(token(12).classList).not.toContain("max-sm:hidden");
+    expect(token(13).classList).toContain("opacity-0");
+
+    // Followed to the other one, the first goes back to waiting.
+    await router.navigate({ to: ".", hash: "comment-13" });
+    await waitFor(() => expect(token(13).classList).not.toContain("opacity-0"));
+    expect(token(12).classList).toContain("opacity-0");
   });
 
   it("keeps the id and time on a hidden comment a reader revealed", async () => {
@@ -208,7 +282,7 @@ describe("a timeline comment's own header (T-435)", () => {
         view.container.querySelectorAll(
           "a[href='/projects/p/issues/7#comment-12']",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
     });
     expectHeaderMeta(
       view.container,
@@ -305,13 +379,13 @@ describe("a comment preview's header (T-435)", () => {
 });
 
 /**
- * The narrow-screen split (T-445) on the three entry points this suite
+ * The narrow-screen shape (T-445, T-696) on the three entry points this suite
  * reaches. What each class does is measured in a real browser by
  * scripts/user-baseline-smoke.mjs; what these grade is that all three ask
  * for it through the same vocabulary, which is the half a layout engine
  * cannot tell us.
  */
-describe("a comment header's narrow-screen shape (T-445)", () => {
+describe("a comment header's narrow-screen shape (T-445, T-696)", () => {
   it("puts the author, the badge and the edit marker on one line, actions opposite", async () => {
     const view = renderWithProviders(
       <CommentItem

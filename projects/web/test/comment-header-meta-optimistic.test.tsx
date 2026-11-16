@@ -14,13 +14,14 @@ import type {
 } from "@todou/shared";
 import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { formatTimelineTime } from "../src/lib/timeline-time.ts";
 import { IssueDetailPage } from "../src/pages/issue-detail.tsx";
 import { ProjectLayout } from "../src/pages/project-layout.tsx";
 import { cmCount, cmSetValue } from "./cm.ts";
 import {
   expectHeaderMeta,
+  expectOnTextLine,
   expectSplitHeader,
-  headerItems,
   headerRowOf,
 } from "./header-meta.ts";
 import { testQueryClient } from "./render.tsx";
@@ -259,11 +260,11 @@ describe("an optimistic comment's header (T-435)", () => {
 
     for (const row of pending) {
       expect(row.textContent).toContain("sending…");
-      // The creation time is there, absolute and machine-readable…
+      // The creation time is there, localised and machine-readable…
       const time = row.querySelector("time");
       expect(time?.getAttribute("datetime")).toBeTruthy();
       expect(time?.textContent).toBe(
-        new Date(time?.getAttribute("datetime") as string).toLocaleString(),
+        formatTimelineTime(time?.getAttribute("datetime") as string),
       );
       // …and nothing that would pretend the comment already has an address.
       expect(row.textContent).not.toContain("#comment-");
@@ -346,7 +347,7 @@ describe("an optimistic comment's header (T-435)", () => {
  * right-hand column is a word rather than a control.
  */
 describe("an optimistic comment's narrow-screen shape (T-445)", () => {
-  it("puts `sending…` where the actions would be", async () => {
+  it("keeps `sending…` on the text line, beside the time", async () => {
     const posts = stubPage();
     const view = renderPage();
 
@@ -359,11 +360,7 @@ describe("an optimistic comment's narrow-screen shape (T-445)", () => {
       return row as HTMLElement;
     });
     const row = headerRowOf(pending);
-    expectSplitHeader(row, {
-      identity: ["User"],
-      actions: [
-        headerItems(row).find((child) => child.textContent === "sending…"),
-      ],
-    });
+    expectSplitHeader(row, { identity: ["User"] });
+    expectOnTextLine(row, "sending…");
   });
 });

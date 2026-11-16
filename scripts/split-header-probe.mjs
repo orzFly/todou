@@ -1,6 +1,8 @@
 /*
- * Browser probes for T-445: what a comment header measures once it splits
- * into two lines below `sm`.
+ * Browser probes for a comment header's narrow shape below `sm` — T-445's,
+ * as T-696 reshaped it: the author and the time share one line while they
+ * fit, the time wraps under them only when they do not, and the actions hold
+ * the top-right corner either way.
  *
  * Like user-baseline-faults.mjs, this module has no process, fixture, React
  * or runner imports — `probeSplitHeader` is serialized with `fn.toString()`
@@ -220,8 +222,15 @@ export async function probeSplitHeader(options = {}) {
           child.childElementCount === 0 &&
           (child.textContent ?? "") === "",
       ) ?? null;
-    const actions = children.filter(
-      (child) => child !== meta && child !== identity && child !== spacer,
+    // What the row places beside the line, not in it: a `resolved` or
+    // `sending…` mark rides the text line since T-696 and is graded there,
+    // by criterion 4, rather than as a control holding the corner.
+    const actions = [...row.children].filter(
+      (child) =>
+        child !== line &&
+        child !== meta &&
+        child !== identity &&
+        child !== spacer,
     );
     headers.push({ id, row, line, meta, identity, spacer, actions });
   }
@@ -230,10 +239,23 @@ export async function probeSplitHeader(options = {}) {
     return { status: "error", reason: "no comment header on this page" };
   }
 
+  // Below `sm` only the header the address names draws its id (T-696) — the
+  // fixture names its plain comment — so that is the one header the stubbed
+  // width reaches there. The others keep the token `display: none`, where a
+  // longer text has no width to add; stubbing it anyway costs nothing and
+  // keeps the desktop runs, where every token is laid out, honest.
   if (stress) {
-    for (const { meta } of headers) {
+    for (const { meta, identity } of headers) {
       const token = meta.querySelector(".select-all");
       if (token) token.textContent = "#comment-99999";
+      // A model name as long as the ones harnesses report, so the author's
+      // group has more than it can fit and has to give something up — the
+      // pill truncating is criterion 8's whole point, and the seeded name
+      // fits beside the author at every width this runner measures.
+      const model = identity?.querySelector(
+        '[data-testid="agent-context-badge"] .truncate',
+      );
+      if (model) model.textContent = "openai-codex/gpt-6-astra-preview-2026-11";
     }
   }
 
@@ -294,19 +316,31 @@ export async function probeSplitHeader(options = {}) {
         }
         meta.style.marginLeft = "auto";
         break;
-      case "nowrap":
-        meta.style.flexWrap = "nowrap";
+      case "meta-full":
+        // A meta that claims the whole line goes under the author whether
+        // or not the two would have fitted side by side.
+        meta.style.flexBasis = "100%";
         break;
-      case "no-indent":
-        meta.style.paddingInlineStart = "0px";
+      case "meta-left":
+        // The right-hand edge comes from the meta's auto margin; without it
+        // the time trails the author and the line is ragged on the right.
+        meta.style.marginLeft = "0px";
         break;
-      case "no-time-auto":
-        if (meta.lastElementChild) {
-          meta.lastElementChild.style.marginLeft = "0px";
+      case "actions-center":
+        // T-445's centring, back on the controls: once the time wraps they
+        // drift down between the two lines instead of holding the corner.
+        for (const action of actions) action.style.alignSelf = "center";
+        break;
+      case "identity-wrap":
+        // The author's group allowed to break, with nothing in it willing
+        // to give way first — the pill and the name then take a line each.
+        if (identity) {
+          identity.style.flexWrap = "wrap";
+          for (const child of identity.children) {
+            child.style.flexShrink = "0";
+            child.style.minWidth = "max-content";
+          }
         }
-        break;
-      case "justify-end":
-        meta.style.justifyContent = "flex-end";
         break;
       case "identity-block":
         if (identity) identity.style.display = "block";
@@ -318,6 +352,9 @@ export async function probeSplitHeader(options = {}) {
 
   const round = (value) =>
     value === null ? null : Math.round(value * 100) / 100;
+  // Defined in here, not at module level: this function is serialized into
+  // the page and reaches nothing outside its own body.
+  const overlaps = (a, b) => a.bottom > b.top + 0.5 && b.bottom > a.top + 0.5;
 
   const rows = headers.map((header) => {
     const { id, row, line, meta, identity, spacer, actions } = header;
@@ -339,15 +376,48 @@ export async function probeSplitHeader(options = {}) {
             ...liveActions.map((el) => el.getBoundingClientRect().right),
           );
 
-    const metaBox = contentBox(meta);
-    const nameSpan =
-      identity?.querySelector("a[href^='/users/'] span[class~='ml-1.5']") ??
-      null;
-    const links = [...meta.querySelectorAll("a")];
-    const idLink = links.find((link) => link.querySelector("time") === null);
+    const rowContentTop =
+      rowRect.top +
+      parseFloat(getComputedStyle(row).borderTopWidth) +
+      parseFloat(getComputedStyle(row).paddingTop);
+    const actionTop =
+      liveActions.length === 0
+        ? null
+        : Math.min(...liveActions.map((el) => el.getBoundingClientRect().top));
+    // Below `sm` the line is the grid's first cell and a box of its own
+    // (T-696); above it the line is a box too, so its content edges are
+    // what the time is held against at every width.
+    const lineBox = contentBox(line);
+    const metaRect = meta.getBoundingClientRect();
+    // What the meta needs, not what it was given: a meta stretched across
+    // the line reports the line's width as its own, which would make any
+    // wrap look necessary.
+    const metaParts = [...meta.children]
+      .filter((el) => el.getClientRects().length > 0)
+      .map((el) => el.getBoundingClientRect());
+    const metaNeeds =
+      metaParts.length === 0
+        ? metaRect.width
+        : metaParts.reduce((sum, box) => sum + box.width, 0) +
+          8 * (metaParts.length - 1);
+    const token = meta.querySelector(".select-all");
     const time = meta.querySelector("time");
-    const idRect = idLink?.getBoundingClientRect() ?? null;
+    const idRect =
+      token && token.getClientRects().length > 0
+        ? token.getBoundingClientRect()
+        : null;
     const timeRect = time?.getBoundingClientRect() ?? null;
+    const identityRect =
+      identity && visible(identity) ? identity.getBoundingClientRect() : null;
+    // Whatever shares the time's line inside the line box — the meta itself,
+    // and a `resolved` or `sending…` mark after it — so "right-aligned" is
+    // read off the last of them rather than off the time alone.
+    const onTimeLine = timeRect
+      ? [...line.children]
+          .filter(visible)
+          .map((el) => el.getBoundingClientRect())
+          .filter((box) => overlaps(box, timeRect))
+      : [];
 
     const kids = identity ? [...identity.children].filter(visible) : [];
     const identityGaps = [];
@@ -385,19 +455,35 @@ export async function probeSplitHeader(options = {}) {
         spacer.getClientRects().length > 0,
       actions: liveActions.length,
       actionInset: round(actionInset),
+      actionDrop: actionTop === null ? null : round(actionTop - rowContentTop),
       overflowRight: round(overflowRight),
       rowScrolls: row.scrollWidth > row.clientWidth + 1,
-      metaLeft: round(metaBox.left),
-      metaRight: round(metaBox.right),
-      nameLeft: nameSpan ? round(nameSpan.getBoundingClientRect().left) : null,
-      idLeft: idRect ? round(idRect.left) : null,
-      idText: idLink?.textContent ?? null,
-      timeRight: timeRect ? round(timeRect.right) : null,
-      // Which of criterion 4's two halves this sample is evidence for.
-      idAndTimeSameLine:
-        idRect && timeRect
-          ? idRect.bottom > timeRect.top && timeRect.bottom > idRect.top
-          : null,
+      lineWidth: round(lineBox.right - lineBox.left),
+      lineRight: round(lineBox.right),
+      identityWidth: identityRect ? round(identityRect.width) : null,
+      metaWidth: round(metaNeeds),
+      idShown: idRect !== null,
+      idText: token?.textContent ?? null,
+      // Criterion 3's question: did the time leave the author's line?
+      wrapped:
+        identityRect && timeRect ? !overlaps(identityRect, timeRect) : null,
+      timeLineRight:
+        onTimeLine.length === 0
+          ? null
+          : round(Math.max(...onTimeLine.map((box) => box.right))),
+      // Criterion 8: every drawn member of the author's group on one line.
+      identityLines:
+        kids.length === 0
+          ? 0
+          : kids.some(
+                (kid) =>
+                  !overlaps(
+                    kid.getBoundingClientRect(),
+                    kids[0].getBoundingClientRect(),
+                  ),
+              )
+            ? 2
+            : 1,
       identityGaps,
       // Same-run diagnostic, relative to the row so one header's shift does
       // not report every header below it as moved too.
@@ -551,8 +637,11 @@ export function assessSplitHeaders(measured, width, baseline = null) {
       // CommentHeaderMeta's private `box` predates T-445 with these five
       // tokens. All current callers add only ml-auto (or no className):
       // comment-item, both hover cards, and spec-view's unplaced comments.
-      // Do not derive this allowlist from current product source: doing so
-      // would silently bless an unconditional regression such as w-full.
+      // T-696 made the box the link itself, so the text tokens the link
+      // always wore now sit on it, with `group/meta` (a hover scope, no
+      // style of its own). Do not derive this allowlist from current product
+      // source: doing so would silently bless an unconditional regression
+      // such as w-full.
       const metaBaseTokens = new Set([
         "flex",
         "flex-wrap",
@@ -560,6 +649,15 @@ export function assessSplitHeaders(measured, width, baseline = null) {
         "justify-end",
         "gap-x-2",
         "ml-auto",
+        "shrink-0",
+        "text-xs",
+        "whitespace-nowrap",
+        "text-muted-foreground",
+        "group/meta",
+        // TanStack Link's default `activeProps`: the router stamps it on a
+        // link to the page it is on, which the fixture now is, and nothing
+        // in the stylesheet targets it.
+        "active",
       ]);
       if (!Array.isArray(row.metaTokens) || row.metaTokens.length === 0) {
         note(5, row.id, "missing or empty DOM meta box class tokens");
@@ -620,42 +718,52 @@ export function assessSplitHeaders(measured, width, baseline = null) {
       continue;
     }
 
-    // 1. The controls end the first line, against the right edge.
+    // 1. The controls hold the top-right corner: against the right edge,
+    //    and on the author's line even when the time has wrapped under it.
     if (row.actions > 0 && row.actionInset > COLUMN_GAP + EPSILON) {
       note(1, row.id, `controls sit ${row.actionInset}px from the right edge`);
     }
+    if (row.actionDrop !== null && Math.abs(row.actionDrop) > EPSILON) {
+      note(
+        1,
+        row.id,
+        `controls sit ${row.actionDrop}px below the top of the header` +
+          (row.wrapped ? " (time wrapped)" : ""),
+      );
+    }
 
-    // 3. The second line starts under the name, not under the avatar.
-    if (row.nameLeft === null) {
-      note(3, row.id, "no name to align the second line to");
-    } else if (Math.abs(row.metaLeft - row.nameLeft) > EPSILON) {
+    // 3. The time leaves the author's line only when the two do not fit
+    //    side by side.
+    if (row.wrapped === null) {
+      note(3, row.id, "no identity or time to compare");
+    } else if (
+      // Strict by an epsilon: the engine wraps a pair that misses by a
+      // fraction of a pixel, and so must this.
+      row.wrapped &&
+      row.identityWidth + COLUMN_GAP + row.metaWidth <= row.lineWidth - EPSILON
+    ) {
       note(
         3,
         row.id,
-        `second line starts at ${row.metaLeft}, the name at ${row.nameLeft}`,
+        `time wrapped though ${row.identityWidth} + ${COLUMN_GAP} + ${row.metaWidth} fits ${row.lineWidth}`,
       );
     }
 
-    // 4. The id holds that edge and the time holds the other one, whether
-    //    the pair shares a line or has been split onto two.
-    if (row.idLeft !== null && Math.abs(row.idLeft - row.metaLeft) > EPSILON) {
+    // 4. Whichever line the time is on, that line ends at the right edge.
+    if (row.timeLineRight === null) {
+      note(4, row.id, "no time in this header");
+    } else if (Math.abs(row.timeLineRight - row.lineRight) > EPSILON) {
       note(
         4,
         row.id,
-        `id at ${row.idLeft}, the line it starts at ${row.metaLeft}` +
-          (row.idAndTimeSameLine ? "" : " (wrapped)"),
+        `time's line ends at ${row.timeLineRight}, the header line at ${row.lineRight}` +
+          (row.wrapped ? " (wrapped)" : ""),
       );
     }
-    if (
-      row.timeRight !== null &&
-      Math.abs(row.timeRight - row.metaRight) > EPSILON
-    ) {
-      note(
-        4,
-        row.id,
-        `time ends at ${row.timeRight}, the line at ${row.metaRight}` +
-          (row.idAndTimeSameLine ? "" : " (wrapped)"),
-      );
+
+    // 8. The author's group never breaks: what runs out of room truncates.
+    if (row.identityLines > 1) {
+      note(8, row.id, "the author's group takes more than one line");
     }
 
     // 7. The group still spaces what it now owns.
