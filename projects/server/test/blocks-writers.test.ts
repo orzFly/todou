@@ -35,6 +35,7 @@ const DECLARED: Record<string, string> = {
   "db/project-schema.ts": "the column definitions themselves",
   "routes/statuses.ts": "route wiring; the write is in services/statuses.ts",
   "services/inbox.ts": "reads the status for the keep-check",
+  "services/labels.ts": "reads each card's status to count a label's open uses",
   "services/search.ts": "reads the status for the facets",
   "services/user-issues.ts": "reads the status to render someone's card list",
   "services/insights.ts": "reads each card's status to seed the burn replay",
