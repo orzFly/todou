@@ -821,6 +821,12 @@ export async function hideCommentsInTx(
   // Settling counts one decline per entry it is handed, so a repeated id
   // would take other comments' open questions off the card with it (T-651).
   const ids = [...new Set(input.comment_ids)];
+  // The card before the comments, as answering and deleting take them.
+  await tx
+    .select({ id: issues.id })
+    .from(issues)
+    .where(eq(issues.id, args.issueId))
+    .for("no key update");
   const rows = await tx
     .select({
       id: comments.id,

@@ -143,6 +143,29 @@ describe.skipIf(!PG_URL)("question settlement races on PostgreSQL", () => {
     );
   }
 
+  function hide(number: number, commentId: number) {
+    return Promise.resolve(
+      t.app.request(`/api/projects/${slug}/issues/${number}/comments/hide`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ hidden: true, comment_ids: [commentId] }),
+      }),
+    );
+  }
+
+  function resolve(number: number, commentId: number) {
+    return Promise.resolve(
+      t.app.request(
+        `/api/projects/${slug}/issues/${number}/spec/comments/resolve`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ comment_ids: [commentId] }),
+        },
+      ),
+    );
+  }
+
   /** Requests queued behind the holder, directly or behind one another. */
   async function waitForLockWaiters(count: number) {
     await expect
@@ -272,7 +295,8 @@ describe.skipIf(!PG_URL)("question settlement races on PostgreSQL", () => {
     expect((await snapshot(issue.id)).issue.openQuestions).toBe(1);
   });
 
-  it("a resolve that commits first is not refunded again by a delete", async () => {
+  /** A card holding two unresolved annotations: `spec_unresolved_comments = 2`. */
+  async function annotateTwo() {
     const issue = await createIssue();
     const pushed = await t.app.request(
       `/api/projects/${slug}/issues/${issue.number}/spec/push`,
@@ -313,20 +337,14 @@ describe.skipIf(!PG_URL)("question settlement races on PostgreSQL", () => {
       (row) => row.component?.type === "spec_comment",
     );
     if (!x) throw new Error("missing annotation");
+    return { issue, x };
+  }
 
+  it("a resolve that commits first is not refunded again by a delete", async () => {
+    const { issue, x } = await annotateTwo();
     const [resolved, deleted] = await race(
       issueLock(issue.id),
-      () =>
-        Promise.resolve(
-          t.app.request(
-            `/api/projects/${slug}/issues/${issue.number}/spec/comments/resolve`,
-            {
-              method: "POST",
-              headers: headers(),
-              body: JSON.stringify({ comment_ids: [x.id] }),
-            },
-          ),
-        ),
+      () => resolve(issue.number, x.id),
       () => remove(issue.number, x.id),
     );
     expect(resolved?.status).toBe(200);
@@ -364,6 +382,35 @@ describe.skipIf(!PG_URL)("question settlement races on PostgreSQL", () => {
     const state = await snapshot(issue.id);
     expect(state.issue.openQuestions).toBe(1);
     expect(settlementsOf(state.events, a)).toEqual([]);
+  });
+
+  // Holding the comment row lets the second request take the card first, so
+  // a first request that locks its comment before the card deadlocks against
+  // it, and PostgreSQL breaks the deadlock by failing one of them with a 500.
+  it("a hide and an answer queued on one comment settle it once", async () => {
+    const { issue, a } = await askTwo();
+    const [hidden, answered] = await race(
+      { sql: "SELECT id FROM comments WHERE id = $1 FOR UPDATE", id: a },
+      () => hide(issue.number, a),
+      () => answerA(issue.number, a),
+    );
+    expect(hidden?.status).toBe(200);
+    expect(answered?.status).toBe(409);
+    const state = await snapshot(issue.id);
+    expect(settlementsOf(state.events, a)).toHaveLength(1);
+    expect(state.issue.openQuestions).toBe(1);
+  });
+
+  it("a resolve and a delete queued on one annotation refund it once", async () => {
+    const { issue, x } = await annotateTwo();
+    const [resolved, deleted] = await race(
+      { sql: "SELECT id FROM comments WHERE id = $1 FOR UPDATE", id: x.id },
+      () => resolve(issue.number, x.id),
+      () => remove(issue.number, x.id),
+    );
+    expect(resolved?.status).toBe(200);
+    expect(deleted?.status).toBe(204);
+    expect((await snapshot(issue.id)).issue.specUnresolvedComments).toBe(1);
   });
 
   it.each(["moving_since", "deleted_at", "moved_at"] as const)(
