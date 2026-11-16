@@ -120,7 +120,7 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Report",
-    label: "Withdraw your own questions",
+    label: "Withdraw questions",
     caps: ["question.withdraw"],
   },
   {

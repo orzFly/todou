@@ -77,6 +77,14 @@ describe("ownOnly", () => {
     }
   });
 
+  it("lifts the asker gate on withdrawing exactly where withdrawing anyone's begins", () => {
+    for (const role of MEMBER_ROLES) {
+      expect(ownOnly(role, "question.withdraw"), role).toBe(
+        can(role, "question.withdraw") && !can(role, "question.withdraw_any"),
+      );
+    }
+  });
+
   it("keeps everyone short of an admin to their own trash", () => {
     expect(ownOnly("reporter", "issue.trash")).toBe(true);
     expect(ownOnly("writer", "issue.trash")).toBe(true);
