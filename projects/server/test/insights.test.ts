@@ -162,6 +162,16 @@ describe.each(PLACEMENTS)("insights burn API (%s placement)", (placement) => {
         ).status,
       ).toBe(200);
     }
+    // Shipped is the seeded block clear line (T-711), which refuses deletion.
+    expect(
+      (
+        await t.app.request(`/api/projects/${projectSlug}`, {
+          method: "PATCH",
+          headers: { cookie, "content-type": "application/json" },
+          body: JSON.stringify({ block_clear_status_id: null }),
+        })
+      ).status,
+    ).toBe(200);
     expect(
       (
         await t.app.request(
