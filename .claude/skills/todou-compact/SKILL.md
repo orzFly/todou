@@ -1,187 +1,80 @@
 ---
 name: todou-compact
-description: Read a whole todou card, record what the discussion settled that no other artifact holds, then hide the comments that are covered. An argument sets what the summary focuses on. Use when a card's middle has become exploration that has since reached a conclusion.
+description: Read a whole todou issue, record what the discussion settled that no other artifact holds, then hide the comments that are covered. An argument sets what the summary focuses on. Use when an issue's middle has become exploration that has since reached a conclusion.
 disable-model-invocation: true
 ---
 
-# Compacting a card's discussion (todou edition)
+# Compacting an issue's discussion
 
-A long card's middle is exploration whose conclusion now lives elsewhere — a spec, a commit, another
-card. This skill records whatever the discussion settled that no other artifact holds, and hides the
-comments that are covered. Read `/todou-cli` first for the review gate, what a spec document may
-hold, and the discipline governing a card's body. `<proj>` comes from the host project's config.
+- Record what the discussion settled that no other artifact holds, then hide the comments covered.
+- One summary comment, one hide, no checkpoint.
 
 ## Steps
 
-1. Run `todou agent can-i-follow` and do what it says. **Do not take the card** — neither the status
-   nor the assignee. Compacting is not development, and the card may be sitting on Done or held by
-   an agent still working on it.
-2. Read the card with the one command below.
-3. Write a ledger: one line per unit of discussion, one verdict each.
-4. Post the summary comment, if the ledger found anything to write.
-5. Check the id list against the exemptions, then hide by id.
-6. Report in the terminal: the ledger, what the summary said, and which ids this run moved.
+1. Watch the issue now (`/todou-cli`). **Do not take it** — no status, no assignee: compacting is not
+   development, and the issue may be Done or held by someone still working on it.
+2. Read it once: `issue view <n> --include-hidden`. Body, every comment (hidden ones marked),
+   questions and answers, annotations with anchor and resolved state, events, spec header — one
+   consistent snapshot. Also `spec pull` for the documents, `attach list` for attachments.
+3. Ledger: one line per comment, question or annotation; one verdict each.
+4. Post the summary comment, if the ledger found gaps.
+5. Check, then hide by id.
+6. Report in the terminal: the ledger, the summary, the ids this run moved.
 
-The flow has no checkpoint. It writes one comment and performs one hide.
-
-## When not to run
-
-**No state of the spec refuses a card.** One still under review is compacted like any other, because
-the protection is per comment: an unanswered question and an unresolved annotation are `live` and
-held back by the check before writing, while the settled comments around them are not.
-
-Coverage is judged against the spec as it reads **now**, and a version still under review may drop
-the sentence you counted on. Judge on the text in front of you and let a later run reconcile it —
-that is what `--include-hidden` is for.
-
-Where a card has no spec and what its discussion needs is a design rather than a summary, report
-that and stop. Do not write a two-thousand-word comment in place of `/todou-brainstorm`.
-
-## Reading the card
-
-```bash
-todou issue view <n> -p <proj> --include-hidden
-```
-
-One command answers everything the ledger asks: the body; every comment in full, hidden ones marked
-`(hidden)`; question text, options and the answers; each inline annotation with its file, anchor,
-version and resolved state; renames, references and status changes; and the `spec: vN · <verdict>`
-header. `comment list`, `question list`, `spec comments` and `issue events` are narrower views of the
-same timeline and add nothing, and one read also buys a consistent snapshot — a write landing between
-four commands leaves the ledger describing a card that never existed.
-
-`--include-hidden` matters because comments an earlier run hid are reconciled again against the text
-as it stands now: a spec rewritten since may no longer cover what one of them concluded, and no
-other read would notice.
-
-Two other commands, neither a source of discussion: `todou spec pull <n> <dir>` fetches the
-documents the ledger reconciles against, `todou attach list <n>` is the authoritative set of
-attachments, wanted when the summary points at one.
+- No spec state refuses an issue; protection is per comment. Judge against the spec as it reads now.
+- No spec, and the discussion needs a design rather than a summary: report and stop (`/todou-brainstorm`).
 
 ## The ledger
 
-Working notes for the run, kept in no store. One line per unit — a comment, a question, an
-annotation — and exactly one verdict:
-
 | Verdict | Means | Consequence |
 |---|---|---|
-| `covered` | what it established is already written in another artifact | note where; hide it |
+| `covered` | what it established is written in another artifact | note where; hide it |
 | `gap` | it established something no artifact records | into the summary; hide it |
 | `live` | not settled | leave it alone |
 | `mechanics` | no content of its own: "pushed v3", "watch started" | hide it |
 
-An unanswered question and an unresolved annotation are structurally visible. The third shape of
-`live` is not: **a standing instruction** — a comment saying how to work rather than what to build —
-carries no structural mark, so the `hide` selectors cannot see it, and a spec describing the thing
-this card builds does not cover it. The test: **a comment about the way the work is done is `live`,
-unless the summary adopts it as a requirement.** One whose practice this card's own documents
-already carry is `covered` by them, even where the wider lesson it came wrapped in is recorded
-nowhere. What keeps one `live` is that complying would still mean reading the comment.
-
-With a spec present the ledger asks one question: *are this card's comments, questions and answers
-all written down in the spec?* An answered question counts as `covered` only where the spec or the
-summary states that answer **as a requirement** — not "the user picked the card face", but "the
-ledger is kept on the card face". An `answered` event cannot be hidden, so once the question comment
-is away a reader without `--include-hidden` is left with a bare `q1: 1) card face`: option labels,
-no question. With the requirement written down that line reads as provenance; without it, it is
-noise.
-
-**A gap in the spec is reported, never fixed.** This skill does not `spec push`. The missing
-conclusion goes into the summary comment, which sits where whoever edits the spec next will see it,
-and the terminal report names what the spec lacks.
+- `live` includes a **standing instruction** — a comment on how to work, not what to build. It has
+  no structural mark, so the hide selectors cannot see it. It stays `live` unless the summary adopts
+  it as a requirement or this issue's documents already carry the practice.
+- An answered question is `covered` only where the spec or summary states the answer as a
+  requirement ("the ledger is kept on the card face", not "the user picked card face"): the `answered`
+  event cannot be hidden, and without the question it reads as bare option labels.
+- A gap in the spec is reported, never fixed: this skill does not `spec push`.
 
 ## The summary comment
 
-It holds the ledger's `gap` lines and nothing besides. **If everything is recorded already, write no
-comment at all** — a normal outcome.
-
-1. **Do not repeat what another artifact already holds** — the card, a spec, a PRD, a plan, an ADR,
-   a commit, a diff. Point at it with a path or a URL.
-2. **Do not write what will not be done.**
-3. **Do not write what this run did.** How much was read, what was measured, how many comments went
-   away: the run's own account goes to the terminal.
-4. **No chronicle.** Who said what and when, the path the exploration took, an intermediate number a
-   later number overturned — all out.
-
-No word limit. It is complete when every `gap` on the ledger has a home in it, and concise when no
-sentence in it could be replaced by a URL.
+- Only the `gap` lines. Nothing to add → no comment, a normal outcome.
+- Point at another artifact (issue, spec, commit, diff) instead of repeating it.
+- Not what will not be done, not what this run did (that goes to the terminal), no chronicle.
+- Complete when every gap has a home; concise when no sentence could be replaced by a URL.
+- Not hidden by the run that wrote it.
 
 ## Hiding
 
 ```bash
-todou comment hide <n> -p <proj> --all --keep-last 0 --dry-run   # candidates and exemptions
+todou comment hide <n> -p <proj> --all --keep-last 0 --dry-run   # candidates, full skip list with reasons
 todou comment hide <n> -p <proj> <id> <id> …                     # the write
 ```
 
-`--keep-last 0` gives the **complete** exemption list rather than one truncated by the tail count;
-the `would skip` block, each line carrying its reason, is the authoritative one. The write then
-names ids — the candidates intersected with the ledger's `covered` and `mechanics` — because the
-selectors judge only whether a comment is **structurally** settled (question answered, annotation
-resolved, new enough) while covered is a judgement about meaning, and a standing instruction looks
-settled in every structural way.
+- Ids: the candidates that the ledger marks `covered` or `mechanics`. Selectors only see whether a
+  comment is structurally settled; covered is a judgement about meaning.
+- `within the tail kept back` may be overridden. `question unanswered` and `spec annotation
+  unresolved` never.
+- **Before the write, check the ids against every `question unanswered` and `spec annotation
+  unresolved` line.** Hiding by id has no guard rail, and these two are irreversible: it declines the
+  question in the user's name and resolves the annotation, anyone's — which can also flip a
+  `spec push --wait` outcome.
+- Report the ids actually moved (sent, not already `(hidden)`); they must match `hid N comment(s)`.
+- Never unhide: a hide leaves no event, so an earlier mistake cannot be told from a deliberate hide.
+  Name the suspected wrong hides and stop.
 
-The skip reasons get two different attitudes:
+## Arguments and reruns
 
-- `within the tail kept back` — **overridable**. A convenience count; a compacted card should read
-  as body plus summary.
-- `question unanswered`, `spec annotation unresolved` — **never overridden**, whatever surface
-  offers a spelling that would.
-
-### Check before writing
-
-**The id list must be disjoint from every `question unanswered` and `spec annotation unresolved`
-line in that skip block. Verify it, then write.** This is the last step before the write, and
-annotations are not sorted by author — a third party's opinion is as unsettled as your own.
-
-It has to be an explicit act, because writing by id has no guard rail: `todou comment hide <n> <id>
---dry-run` says only `would hide 1 comment(s)`, and only the `--all` path lists skips and reasons.
-Nothing upstream screens these two out either, since no card is refused on the state of its spec.
-
-What the check prevents is irreversible. Hiding auto-declines an unanswered question in the user's
-name and auto-resolves an unresolved annotation, **including one somebody else wrote**; a wrongly
-hidden ordinary comment `unhide` takes back, these two it does not. The damage also travels: a count
-of zero unresolved annotations then means either that somebody dealt with them or that a hide
-resolved them in passing, and `spec push --wait` routes its outcome on that count, so a bad hide can
-flip a revision round's verdict.
-
-Report as soon as the write returns, naming **the ids this run actually moved**: those sent that the
-read did not already show as `(hidden)`. The CLI gives that as a count, `hid N comment(s)`, which
-the list must match. That list is the argument for a precise reversal; `unhide --all` would also
-restore whatever a person hid by hand earlier.
-
-**This skill does not unhide.** Hiding records no timeline event and does not move `updated_at`, so
-an earlier run's mistake cannot be told from the deliberate hide-one-settled-comment-by-id that
-T-281 allows an operator. The report names the comments it believes were hidden wrongly and stops
-there.
-
-The summary comment is not hidden by the run that wrote it.
-
-## Arguments
-
-`/todou-compact <argument>` describes **what the summary should focus on**, and the summary carries
-only the `gap` lines bearing on it. A focused run therefore **hides less**: coverage is what
-licenses a hide, so a `gap` left out of the summary is not covered and its comments stay.
-
-## Running it twice
-
-A second run on the same card needs no record of the first; the ledger derives the answer from the
-same `--include-hidden` read, hidden comments reconciled afresh against the text as it stands. No
-new `gap` and no line that should have been hidden and was not means zero words written, zero
-comments hidden, and a report of nothing to do. An earlier run's summary comment may be hidden by a
-later one on one condition: **the later run's own summary has taken its content over.** Age alone is
-not a reason.
+- `/todou-compact <focus>`: the summary carries only gaps bearing on it, so the run hides less.
+- A rerun needs no record of the earlier one: same read, hidden comments reconciled afresh. Nothing
+  new → nothing written or hidden.
+- An earlier summary may be hidden only once the new summary has taken its content over.
 
 ## Boundaries
 
-- **The body and the title are not touched.** The body is the original report — the user's own words
-  and the evidence they handed over — and nothing covers it, so the summary goes to a comment rather
-  than into it. A title naming a symptom is not rewritten because the cause was later found.
-  `/todou-cli`'s "Filing a card" governs the moment a card is opened, this skill the discussion
-  after.
-- **The status and the assignee are not touched.**
-- **No spec is pushed and none is edited.** This skill reads specs. How a spec should be written
-  belongs to the skills that write them; the only question asked here is whether the discussion's
-  conclusions are recorded somewhere.
-- **No new exemptions.** The storage, the default read, the write endpoint and "nothing unsettled
-  gets hidden" are T-281's. This skill adds one semantic condition on top — settled is not enough,
-  it must also be covered by text somebody wrote down.
+- Body and title, status and assignee are untouched. No spec is pushed or edited.

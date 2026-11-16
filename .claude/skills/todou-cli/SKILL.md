@@ -23,17 +23,17 @@ description: todou CLI quick reference — issue/comment/attach/watch commands, 
 
 ## Refs
 
-- Writing a ref notifies that card: only when the link means something; "this card" for your own.
+- Writing a ref notifies that issue: only when the link means something; "this issue" for your own.
 - Commits and source use the project's form (`T-16`), never a bare `#16`.
 
-## Filing a card
+## Filing an issue
 
-- Create the card first; investigate on it afterwards.
+- Create the issue first; investigate on it afterwards.
 - Body: the user's words verbatim (no blockquote) plus what they handed over, ending `— <who>, in the terminal, <date>`.
 - Self-found: the observation and the command that measured it; unmeasured parts named.
-- Your reading (cause, fix, related cards) is a comment right after.
+- Your reading (cause, fix, related issues) is a comment right after.
 - Title names the symptom, never an inferred cause.
-- One unit of work per card; report which card got which part.
+- One unit of work per issue; report which issue got which part.
 
 ## Comments
 
@@ -44,7 +44,7 @@ description: todou CLI quick reference — issue/comment/attach/watch commands, 
 
 ## Waiting
 
-- `todou agent can-i-follow` — do what it prints; watch your card while you work.
+- **Working on an issue: watch it, always.** Run `todou agent how-to-watch` first and do what it prints.
 - `issue watch <n> --since <cursor> --forever` · `watch -p <proj> --since <cursor> --forever [--mine]`
 - Wait from the `cursor:` the write printed, not one taken afterwards.
 - A wait killed from outside: restart with the same cursor. Resume from the closing `cursor:`.
@@ -55,14 +55,14 @@ description: todou CLI quick reference — issue/comment/attach/watch commands, 
 - Backlog → Todo → Next → In Progress → Ready to Ship → Shipped → Done
 - Worker: Ready to Ship + summary comment. Orchestrator: Shipped. Only the user: Done.
 
-### Taking a card
+### Taking an issue
 
-- `issue edit <n> --status "In Progress" --add-assignee @me` — one write.
+- `issue edit <n> --status "In Progress" --add-assignee @me` — one write; then watch it (Waiting).
 - An assignee means held, never by whom (one machine account), and it is not a lock.
 
 ## Asking the user questions
 
-- On the card, never AskUserQuestion. Every field below renders markdown:
+- On the issue, never AskUserQuestion. Every field below renders markdown:
 
 ```bash
 todou comment add -p <proj> 16 --body-file <(cat <<'EOF'
@@ -88,7 +88,7 @@ EOF2
 - Exit 0 is not approval; only the latest version's approval allows implementing.
 - Reworking a pending version: `spec withdraw <n> --if-version v` first.
 - `spec comments <n> --unresolved` → revise → `spec resolve <n> <ids…>` → push again.
-- Documents state the design as it stands: no history, no review notes, no copied card text.
+- Documents state the design as it stands: no history, no review notes, no copied issue text.
 - `proposal.md`: the user's requirements that have no tracker trace, verbatim.
 - Reviewing: `spec review <n> --approve --version N | --request-changes | --comment`; the pusher may only `--comment`.
 - `--annotations -`: `[{"path","body","quote"}]` (or `line_start`/`line_end`), against a `spec pull` of that version.
@@ -96,7 +96,7 @@ EOF2
 ## Attachments
 
 - `attach` prints `#id name → url`; paste the url verbatim.
-- Demo pages and mockups go on the card, not local disk.
+- Demo pages and mockups go on the issue, not local disk.
 - No hand-written `curl` with a token from `config.toml`; use `attach download` or `todou api`.
 
 ## Markdown
@@ -109,7 +109,7 @@ EOF2
 - `![](…/download/shot.png)` → inline image · `![](…/download/page.html)` (any text file) → embedded document
 - `T-1144` → issue (the project's own spelling; `#1144` only where it has no prefix)
 - `#comment-1144` → comment 1144 of this project: comment ids are their own sequence, unrelated to issue T-1144
-- `T-12#comment-34` → that comment on that card
+- `T-12#comment-34` → that comment on that issue
 - `<slug>#N`, `<slug>/T-N` → another project's issue
 - `@login` → mentions a project member, notifies them
 - Refs resolve when saved; one naming nothing stays plain text, silently.

@@ -25,7 +25,7 @@ cap      <n>
 ```
 
 The block comes out before any dispatch. Ahead of it you may run only the reads that fill it in —
-`todou config show`, `todou agent can-i-follow`, the card, `herdr agent list`; `herdr tab create`,
+`todou config show`, `todou agent how-to-watch`, the card, `herdr agent list`; `herdr tab create`,
 `herdr agent start`, `herdr agent prompt`, the background `todou watch` and every write to the
 tracker wait until it is out. The user's chance to correct a wrong model or cap lasts until the first
 agent starts on it. A value that changes mid-session reprints the block, ahead of the first dispatch
@@ -48,7 +48,7 @@ Keep one running in the background:
 todou watch -p <proj> --since <cursor> --debounce 15 --forever
 ```
 
-Before you start it, run `todou agent can-i-follow` and do what it says. Run it without `--json`: the
+Before you start it, run `todou agent how-to-watch` and do what it says. Run it without `--json`: the
 line format carries each comment's opening, which is what you act on. A killed watch restarts from
 the same cursor (`/todou-cli`); after handling a batch, restart from the printed cursor.
 

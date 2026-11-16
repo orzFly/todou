@@ -1,94 +1,51 @@
 ---
 name: todou-brainstorm
-description: Interactively brainstorm a design with the user on a todou issue — turn ideas into fully formed designs through collaborative dialogue, with the whole exchange recorded on the tracker and the user answering from the web UI. Use before starting any design-heavy card.
+description: Interactively brainstorm a design with the user on a todou issue — turn ideas into fully formed designs through collaborative dialogue, with the whole exchange recorded on the tracker and the user answering from the web UI. Use before starting any design-heavy issue.
 disable-model-invocation: true
 ---
 
-# Brainstorming ideas into designs (todou edition)
+# Brainstorming on a todou issue
 
-Turn an idea into a fully formed design by talking with the user on the todou issue. Every question,
-answer and revision stays in the timeline, so whoever implements the design can replay the decisions.
-Questions follow the "Asking the user questions" section of `/todou-cli`; the review gate, and what a
-spec document may and may not contain, follow its "Spec documents" section.
+- The whole exchange stays on the issue, so whoever implements it can replay every decision.
+- Questions, the spec review loop and what a spec may hold: `/todou-cli`.
 
 <HARD-GATE>
-Write no code, scaffold nothing and invoke no implementation skill until the latest spec version
-is `approved` at the review gate. An older approval, `withdrawn`, or a wait exiting 0 does not pass
-this gate. This holds for cards that look too simple to need a design: unexamined assumptions cost
-the most there. The design may be a few sentences, and it is still pushed as a spec and approved.
+No code, no scaffolding, no implementation skill until the latest spec version is `approved`. This
+holds for issues that look too simple to need a design: the design may be a few sentences, and it is
+still pushed and approved.
 </HARD-GATE>
 
 ## Steps
 
-1. Take the card (`/todou-cli`, "Taking a card"), then run `todou agent can-i-follow` and do what it
-   says. Explore the project context: files, docs, recent commits, `todou issue view N` for the card
-   and its discussion.
-2. Ask clarifying questions on the issue: purpose, constraints, success criteria. Build a mockup or
-   demo when a question is easier to answer from a picture (see Visual material).
-3. Write the design into a scratch directory (`mktemp -d`). The approaches you weighed and your
-   recommendation go into the document, never into a comment.
-4. Self-review the documents, then push with `todou spec push <n> <dir> -p <proj> --message
-   "brainstorm v1" --wait` and act on the outcome.
-5. Follow the review loop below. Invoke `/todou-plan` only after `spec status` confirms that the
-   latest version is `approved`.
-
-## Review loop
-
-Read the wait outcome and current spec status; exit 0 alone is not approval. Read the discussion and
-unresolved annotations before deciding what to do next.
-
-- If you decide a pending (`unreviewed`) version needs investigation or rework, first run
-  `todou spec withdraw <n> -p <proj> --if-version <v> [--reason "..."]` for the version you inspected.
-  Then investigate and revise. A conflict requires reading the current state and reassessing.
-- On `withdrawn`, continue investigation/rework; the published files and discussion remain available.
-  If the current status is `changes_requested`, revise directly, since withdrawal cannot undo a verdict.
-- Resolve addressed annotations and push the ready replacement with
-  `todou spec push <n> <dir> -p <proj> --if-version <v> --message "brainstorm revision" --wait`.
-  Even unchanged content creates a new version when resubmitting a withdrawn spec; it needs fresh
-  approval. Repeat until the latest version is approved.
-- If feedback requires no rework and the current version remains ready for review, resume
-  `todou spec wait <n> -p <proj> --since <cursor>` using the returned cursor.
+1. Take the issue and watch it now (`/todou-cli`). Read the code, docs, recent commits and the issue.
+2. Ask clarifying questions on the issue: purpose, constraints, success criteria.
+3. Write the design into a scratch dir (`mktemp -d`).
+4. Self-review, then `spec push <n> <dir> --message "brainstorm v1" --wait`; revise until the latest
+   version is approved.
+5. Invoke `/todou-plan`.
 
 ## Working through the idea
 
-- Check the scope before refining details. A request that describes several independent subsystems
-  is decomposed first: each part gets its own card and its own design, plan and implementation. Then
-  brainstorm the first part.
-- Refine in rounds. Prefer multiple-choice questions whose options are already researched: read the
-  code, data and prior art first, and do not leave that homework to the user.
-- Needs that surface mid-discussion and fall outside this card go to `todou issue create` at once.
-- Weigh two or three approaches before settling. The comparison, the rejected options and the reasons
-  belong in the spec. Put a choice on the card only when it is the user's to make and fits a
-  multiple-choice question.
-- Follow the existing structure and patterns. Where existing code has problems that affect the work,
-  include targeted improvements in the design; where a refactor would help but is not required, ask
-  the user with a native question and let them decide.
-- Write the spec as soon as you understand what you are building. Do not summarize the design in a
-  comment first and ask whether to write it up: the user would read the same text twice, and a comment
-  has neither inline annotations nor a diff against the previous version.
-- User answers may overturn your premises. Reversals are normal; update the design.
+- Several independent subsystems: an issue each, then brainstorm the first.
+- Prefer multiple-choice questions with options you already researched; the homework is yours.
+- A need outside this issue: `issue create` at once.
+- Weigh two or three approaches. The comparison, rejected options and reasons go in the spec; ask on
+  the issue only when the choice is the user's to make.
+- Follow existing patterns. Fixes the work needs go in the design; an optional refactor is a question.
+- Write the spec as soon as you know what you are building — not a comment summary asking whether to.
+- Answers may overturn your premises; update the design.
 
 ## The documents
 
-- `proposal.md` holds the user's original requirements that have no tracker trace, kept current as
-  `/todou-cli` describes.
-- `brainstorm.md` is the design the user reviews: approaches weighed, option chosen, options rejected
-  and why. Scale each section to its complexity. Cover architecture, components, data flow, error
-  handling and testing.
-
-Self-review before pushing: remove placeholders and vague requirements, resolve contradictions
-between sections, confirm the scope fits one implementation plan, and rewrite any requirement that can
-be read two ways.
-
-## Hand-off
-
-Invoke `/todou-plan`. Whether the same agent continues past the plan is the orchestrator's decision,
-so leave everything you produced on the tracker: mockups attached, conclusions in the spec.
+- `proposal.md`: as `/todou-cli` describes.
+- `brainstorm.md`: approaches weighed, chosen, rejected and why; architecture, components, data flow,
+  error handling, testing — each scaled to its complexity.
+- Self-review: no placeholders, no contradictions, one plan's worth of scope, nothing readable two ways.
+- Leave everything on the tracker: mockups attached, conclusions in the spec.
 
 ## Visual material
 
-When a question is easier to answer from a picture (mockups, layout comparisons, architecture
-diagrams, variant matrices), build a self-contained demo page, attach the single HTML file to the
-issue with `todou attach`, and explain it in a comment. Attach screenshots only when the environment
-has a browser you know works. Decide per question: what the UI looks like calls for images;
-requirements, trade-offs and scope call for text.
+- When a picture answers faster (mockups, layout comparisons, diagrams), attach a self-contained HTML
+  page and explain it in a comment.
+- Screenshots only where a browser is known to work. Looks → images; requirements, trade-offs and
+  scope → text.
