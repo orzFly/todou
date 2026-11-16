@@ -21,7 +21,14 @@ import {
   type Watcher,
 } from "@todou/shared";
 import { TagIcon, UserPlusIcon } from "lucide-react";
-import { type PointerEvent, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  type PointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import {
   toggledById,
@@ -130,6 +137,9 @@ const everyColumnAnswered = (
   results: readonly { isPending: boolean }[],
 ): boolean => results.every((result) => !result.isPending);
 
+const NO_LABELS: Label[] = [];
+const NO_MEMBERS: Member[] = [];
+
 export function BoardPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   const statuses = useSuspenseQuery(statusesQuery(slug));
@@ -138,13 +148,18 @@ export function BoardPage() {
   const canTriage = useCanIfLoaded(slug, "issue.triage");
   const allLabels = useQuery(labelsQuery(slug)).data;
   const members = useQuery(membersQuery(slug)).data;
-  const edit: CardEdit = {
-    slug,
-    allLabels: allLabels ?? [],
-    members: members ?? [],
-    onCreateLabel: canCreateLabels ? createLabel : undefined,
-    canTriage,
-  };
+  // Stable across the page's own re-renders — a drag starting and ending is
+  // two of them — so the memoized columns and cards below can skip them.
+  const edit = useMemo<CardEdit>(
+    () => ({
+      slug,
+      allLabels: allLabels ?? NO_LABELS,
+      members: members ?? NO_MEMBERS,
+      onCreateLabel: canCreateLabels ? createLabel : undefined,
+      canTriage,
+    }),
+    [slug, allLabels, members, canCreateLabels, createLabel, canTriage],
+  );
   const canvas = useRef<HTMLDivElement>(null);
   useRegisterReturnArea({
     region: BOARD_CANVAS_REGION,
@@ -275,7 +290,13 @@ export function BoardPage() {
   );
 }
 
-function BoardColumn({
+/**
+ * Memoized, with `BoardCardContent`, so a drag does not re-render the board
+ * (T-691): picking a card up sets state on the page, and dnd-kit's context
+ * re-renders every column and card each time the pointer crosses into
+ * another column. Only the thin droppable and draggable shells take those.
+ */
+const BoardColumn = memo(function BoardColumn({
   slug,
   status,
   edit,
@@ -359,7 +380,7 @@ function BoardColumn({
       </div>
     </div>
   );
-}
+});
 
 function BoardCard({
   slug,
@@ -407,11 +428,11 @@ function BoardCard({
   );
 }
 
-export function BoardCardContent({
+export const BoardCardContent = memo(function BoardCardContent({
   slug,
   issue,
   edit,
-  watchers = [],
+  watchers = NO_WATCHERS,
 }: {
   slug: string;
   issue: IssueListItem;
@@ -537,7 +558,9 @@ export function BoardCardContent({
       )}
     </div>
   );
-}
+});
+
+const NO_WATCHERS: readonly Watcher[] = [];
 
 /**
  * The card's edit icons wait for the pointer (T-533), so a board of cards is

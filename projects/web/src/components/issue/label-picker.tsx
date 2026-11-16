@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { Label } from "@todou/shared";
 import { CheckIcon, XIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { api, useCan } from "@/api/queries.ts";
 import { LabelChip, LabelInline } from "@/components/issue/label-chip.tsx";
@@ -23,22 +23,29 @@ export function useCanCreateLabels(slug: string): boolean {
   return useCan(slug, "label.create");
 }
 
-/** The onCreate implementation shared by all picker call sites. */
+/**
+ * The onCreate implementation shared by all picker call sites. Stable per
+ * slug, so a memoized row or card that receives it can skip its parent's
+ * re-renders.
+ */
 export function useCreateLabel(slug: string): (name: string) => Promise<Label> {
   const queryClient = useQueryClient();
-  return async (name: string) => {
-    try {
-      const label = await api.createLabel(slug, {
-        name,
-        color: labelColorFor(name),
-      });
-      queryClient.invalidateQueries({ queryKey: ["labels", slug] });
-      return label;
-    } catch (error) {
-      toast.error(`Could not create label: ${(error as Error).message}`);
-      throw error;
-    }
-  };
+  return useCallback(
+    async (name: string) => {
+      try {
+        const label = await api.createLabel(slug, {
+          name,
+          color: labelColorFor(name),
+        });
+        queryClient.invalidateQueries({ queryKey: ["labels", slug] });
+        return label;
+      } catch (error) {
+        toast.error(`Could not create label: ${(error as Error).message}`);
+        throw error;
+      }
+    },
+    [queryClient, slug],
+  );
 }
 
 type PickerRow =

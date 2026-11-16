@@ -1140,19 +1140,6 @@ export function ProjectIssueRows({
     },
     [assigneesMutate, members, slug],
   );
-  // `useCreateLabel` builds a fresh closure every render, so it travels
-  // through a ref. Whether it exists at all is the viewer's permission and
-  // stays a prop, because that does change what the row renders.
-  const createLabel = useRef(onCreateLabel);
-  useEffect(() => {
-    createLabel.current = onCreateLabel;
-  });
-  const create = useCallback(
-    (name: string) =>
-      (createLabel.current as NonNullable<typeof onCreateLabel>)(name),
-    [],
-  );
-
   return items.map((issue) => (
     <ProjectIssueRow
       key={issue.id}
@@ -1164,7 +1151,7 @@ export function ProjectIssueRows({
       watchers={watchers?.[String(issue.number)]}
       onStatus={onStatus}
       onToggleLabel={onToggleLabel}
-      onCreateLabel={onCreateLabel === undefined ? undefined : create}
+      onCreateLabel={onCreateLabel}
       onToggleAssignee={canTriage ? onToggleAssignee : undefined}
     />
   ));
