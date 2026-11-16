@@ -232,6 +232,11 @@ export function UserPicker<U extends PickerUser>({
 
   return (
     <Popover open={open} onOpenChange={reset}>
+      {/* Radix's popover trigger toggles on click, never on pointerdown, so a
+          finger that lands here at the start of a scroll opens nothing: the
+          browser sends the click only once the touch ended as a tap (T-596).
+          The dropdown menus needed a wrapper for this; keep it a plain
+          trigger, so a second tap still closes it. */}
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       {/* Sized to the widest row, as the menus these replaced were, and held
           to the viewport by the available width radix measures. */}
