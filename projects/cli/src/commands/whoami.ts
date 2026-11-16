@@ -11,10 +11,13 @@ export class WhoamiCommand extends ApiCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const me = await client.me();
+    // Only profiles carry act_as, so only the profile lines take the suffix.
+    const acting =
+      this.ctx.actAs === undefined ? "" : `, acting as ${this.ctx.actAs}`;
     switch (this.ctx.tokenSource) {
       case "auto-harness":
         this.note(
-          `token: profile "${this.ctx.tokenProfile}" (auto-detected harness)`,
+          `token: profile "${this.ctx.tokenProfile}" (auto-detected harness)${acting}`,
         );
         break;
       case "auto-harness-shared":
@@ -22,12 +25,12 @@ export class WhoamiCommand extends ApiCommand {
         // thing left to say is why the shared profile won over one of
         // that harness' own.
         this.note(
-          `token: profile "${this.ctx.tokenProfile}" (auto-detected harness, no profile of its own)`,
+          `token: profile "${this.ctx.tokenProfile}" (auto-detected harness, no profile of its own)${acting}`,
         );
         break;
       case "flag-profile":
       case "env-profile":
-        this.note(`token: profile "${this.ctx.tokenProfile}"`);
+        this.note(`token: profile "${this.ctx.tokenProfile}"${acting}`);
         break;
       case "env-token":
         this.note("token: TODOU_TOKEN");

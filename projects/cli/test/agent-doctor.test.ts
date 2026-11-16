@@ -19,6 +19,8 @@ const SECRETS = {
   recordToken: "FAKE_REC_NnOoPpQqRrSsTtUu",
   storedDefault: "FAKE_DEF_VvWwXxYyZz0011223",
   storedProfile: "FAKE_ALT_3445566778899aAbB",
+  // An act-as profile's own token (T-693), kept inside a table.
+  storedActAs: "FAKE_ACT_9q8w7e6r5t4y3u2i1o",
   ancestorOnly: "todou_pat_NeverSeenByThisProcess",
 };
 
@@ -73,7 +75,10 @@ function ompService() {
       servers: {
         [SERVER]: {
           token: SECRETS.storedDefault,
-          tokens: { alt: SECRETS.storedProfile },
+          tokens: {
+            alt: SECRETS.storedProfile,
+            acting: { act_as: "bot-one", token: SECRETS.storedActAs },
+          },
           instead_of: [],
         },
       },
@@ -104,7 +109,7 @@ function ompService() {
       argv: [
         "sh",
         "-c",
-        `TODOU_TOKEN=${SECRETS.envToken} todou watch --token ${SECRETS.ancestorOnly}`,
+        `TODOU_TOKEN=${SECRETS.envToken} todou watch --token ${SECRETS.ancestorOnly} ${SECRETS.storedActAs}`,
       ],
     },
     {
@@ -180,7 +185,7 @@ describe("agent doctor", () => {
       /^account +https:\/\/todou\.example \(default_server\) · token: TODOU_TOKEN \(env\)$/m,
     );
     expect(out).toContain(
-      "stored for this server: default token · profiles alt\n",
+      "stored for this server: default token · profiles acting, alt\n",
     );
 
     // The push channel, the record behind it, and the extension's version.
@@ -225,7 +230,7 @@ describe("agent doctor", () => {
     }
     // The command lines were printed, with every token masked.
     expect(out).toContain(
-      "TODOU_TOKEN=<redacted> todou watch --token todou_pat_<redacted>",
+      "TODOU_TOKEN=<redacted> todou watch --token todou_pat_<redacted> <redacted>",
     );
     expect(out).toMatch(
       /zsh -c echo <redacted> <redacted> <redacted> p+ <redacted>/,

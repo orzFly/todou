@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ACT_AS_HEADER, AGENT_CONTEXT_HEADER } from "@todou/shared";
+import { afterAll, describe, expect, it } from "vitest";
+import { saveCliConfig } from "../src/config.ts";
 import {
   fakeFetch,
   loggedInEnv,
@@ -794,5 +799,54 @@ describe("question wait: listed as a live watcher (T-540)", () => {
 
   it("--invisible declares nothing", async () => {
     expect(await run(["--invisible"])).toEqual({ watch: null, kind: null });
+  });
+});
+
+describe("question wait under an act-as profile (T-693)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "todou-questions-act-as-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("carries x-todou-act-as on the change stream too", async () => {
+    const env = { XDG_CONFIG_HOME: dir };
+    saveCliConfig(
+      {
+        default_server: "http://stub.test",
+        servers: {
+          "http://stub.test": {
+            token: "todou_pat_default",
+            tokens: { harness: { act_as: "bot-one" } },
+            instead_of: [],
+          },
+        },
+        bindings: [],
+      },
+      env,
+    );
+    const sse = sseStub();
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/events", () => sse.reply()],
+      [
+        "GET",
+        TIMELINE_PATH,
+        { items: [], prev_cursor: null, next_cursor: null },
+      ],
+      ["GET", QUESTIONS_PATH, { items: [STORED_ITEM], open: 1 }],
+    ]);
+    const result = await runCli(
+      ["question", "wait", "19", "42", "--timeout", "4", "-p", "todou"],
+      {
+        fetchImpl,
+        env: { ...env, CLAUDECODE: "1", TODOU_PROFILE: "harness" },
+        clock: virtualClock(),
+      },
+    );
+    expect(result.exitCode).toBe(3);
+    const feed = calls.find(
+      (call) =>
+        new URL(call.url, "http://stub.test").pathname === "/api/events",
+    );
+    const headers = new Headers(feed?.init.headers);
+    expect(headers.get(ACT_AS_HEADER)).toBe("bot-one");
+    expect(headers.get(AGENT_CONTEXT_HEADER)).not.toBeNull();
   });
 });

@@ -375,7 +375,10 @@ function secretsOf(input: DoctorInput): string[] {
       loadCliConfigSet(input.env).config.servers,
     )) {
       if (entry.token) secrets.push(entry.token);
-      secrets.push(...Object.values(entry.tokens));
+      for (const profile of Object.values(entry.tokens)) {
+        if (typeof profile === "string") secrets.push(profile);
+        else if (profile.token) secrets.push(profile.token);
+      }
     }
   } catch {
     // A config that does not parse holds nothing the report reads either.

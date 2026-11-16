@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { patch } from "@decimalturn/toml-patch";
+import { Login } from "@todou/shared";
 import {
   ConfigError,
   deepMergeDocs,
@@ -29,6 +30,16 @@ export const Binding = z.looseObject({
 });
 export type Binding = z.infer<typeof Binding>;
 
+/**
+ * A profile that sends x-todou-act-as (T-693): it borrows `token`, or the
+ * server's default token when that is absent, and acts as the named agent.
+ */
+export const ActAsProfile = z.looseObject({
+  act_as: Login,
+  token: z.string().optional(),
+});
+export type ActAsProfile = z.infer<typeof ActAsProfile>;
+
 export const ServerEntry = z.looseObject({
   /**
    * A short input spelling for this origin (T-366). The charset excludes
@@ -42,7 +53,7 @@ export const ServerEntry = z.looseObject({
   /** Default identity; optional so a server may hold only named profiles. */
   token: z.string().optional(),
   /** Named token profiles, e.g. tokens."claude-code". */
-  tokens: z.record(z.string(), z.string()).default({}),
+  tokens: z.record(z.string(), z.union([z.string(), ActAsProfile])).default({}),
   /** Other base URLs this same deployment answers at (git's insteadOf). */
   instead_of: z.array(z.string()).default([]),
   /**
@@ -175,7 +186,7 @@ export function saveCliConfig(config: CliConfig, env: Env = process.env): void {
   const doc = withoutUndefined(config) as {
     servers?: Record<
       string,
-      { tokens?: Record<string, string>; instead_of?: string[] }
+      { tokens?: Record<string, unknown>; instead_of?: string[] }
     >;
     bindings?: unknown[];
   } & Record<string, unknown>;

@@ -1,4 +1,5 @@
 import {
+  ACT_AS_HEADER,
   AGENT_CONTEXT_HEADER,
   type AgentContext,
   type MovedTo,
@@ -123,6 +124,19 @@ export type CliContext = BaseContext & {
 };
 
 /** Base for every command that talks to a server: context, client, --json. */
+/** Headers every request of this run carries; undefined when there are none. */
+function requestHeaders(
+  agentContext: AgentContext | null | undefined,
+  actAs: string | undefined,
+): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+  if (agentContext) {
+    headers[AGENT_CONTEXT_HEADER] = JSON.stringify(agentContext);
+  }
+  if (actAs !== undefined) headers[ACT_AS_HEADER] = actAs;
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
 export abstract class ApiCommand extends Command<CliContext> {
   serverFlag = Option.String("--server", {
     description: "Server origin, e.g. https://todou.example",
@@ -272,9 +286,7 @@ export abstract class ApiCommand extends Command<CliContext> {
       this.client = new TodouClient({
         baseUrl: this.ctx.server,
         token: this.ctx.token,
-        headers: this.agentContext
-          ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(this.agentContext) }
-          : undefined,
+        headers: requestHeaders(this.agentContext, this.ctx.actAs),
         fetch:
           signal === undefined
             ? this.context.fetchImpl
