@@ -31,7 +31,7 @@ export function TokenReveal({ token }: { token: TokenCreated }) {
           </>
         )}
       </Button>
-      {token.act_as !== "off" && (
+      {token.scopes.includes("agents:act") && (
         <p className="text-xs text-muted-foreground">
           Send <code>{ACT_AS_HEADER}: &lt;agent login&gt;</code> to act as an
           agent.

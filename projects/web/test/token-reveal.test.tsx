@@ -9,7 +9,7 @@ const token = {
   prefix: "todou_pat_super",
   name: "ci",
   expires_at: null,
-  act_as: "off",
+  scopes: [],
 } satisfies TokenCreated;
 
 describe("TokenReveal (one-time plaintext display)", () => {
@@ -40,7 +40,7 @@ describe("TokenReveal (one-time plaintext display)", () => {
     expect(plain.queryByText(/x-todou-act-as/)).toBeNull();
     plain.unmount();
     const acting = render(
-      <TokenReveal token={{ ...token, act_as: "existing" }} />,
+      <TokenReveal token={{ ...token, scopes: ["agents:act"] }} />,
     );
     expect(acting.getByText("x-todou-act-as: <agent login>")).toBeTruthy();
   });

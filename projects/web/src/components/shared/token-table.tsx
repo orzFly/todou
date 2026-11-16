@@ -12,17 +12,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-function ActAsBadge({ actAs }: { actAs: TokenListItem["act_as"] }) {
-  switch (actAs) {
-    case "existing":
-      return <Badge variant="outline">acts as agents</Badge>;
-    case "create":
-      return <Badge variant="outline">acts as + creates agents</Badge>;
-    default:
-      return null;
-  }
-}
-
 const when = (iso: string | null) =>
   iso ? <time dateTime={iso}>{new Date(iso).toLocaleString()}</time> : "—";
 
@@ -30,10 +19,13 @@ const when = (iso: string | null) =>
 export function TokenTable({
   tokens,
   showHolder = false,
+  showScopes = false,
   onRevoke,
 }: {
   tokens: TokenListItem[];
   showHolder?: boolean;
+  /** Only where tokens can carry scopes; an agent's never do. */
+  showScopes?: boolean;
   onRevoke: (token: TokenListItem) => void;
 }) {
   if (tokens.length === 0) {
@@ -47,6 +39,7 @@ export function TokenTable({
         <TableRow>
           {showHolder && <TableHead>Holder</TableHead>}
           <TableHead>Name</TableHead>
+          {showScopes && <TableHead>Scopes</TableHead>}
           <TableHead>Prefix</TableHead>
           <TableHead>Created</TableHead>
           <TableHead>Last used</TableHead>
@@ -62,12 +55,24 @@ export function TokenTable({
                 <UserChip user={token.holder} />
               </TableCell>
             )}
-            <TableCell>
-              <span className="inline-flex items-center gap-2">
-                {token.name}
-                <ActAsBadge actAs={token.act_as} />
-              </span>
-            </TableCell>
+            <TableCell>{token.name}</TableCell>
+            {showScopes && (
+              <TableCell>
+                {/* Printed as sent, so a scope this build does not know
+                    yet still shows up rather than vanishing. */}
+                <span className="flex flex-wrap gap-1">
+                  {token.scopes.map((scope) => (
+                    <Badge
+                      key={scope}
+                      variant="outline"
+                      className="font-mono font-normal"
+                    >
+                      {scope}
+                    </Badge>
+                  ))}
+                </span>
+              </TableCell>
+            )}
             <TableCell className="font-mono text-xs">{token.prefix}…</TableCell>
             <TableCell className="text-xs text-muted-foreground">
               {when(token.created_at)}
