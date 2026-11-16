@@ -567,6 +567,7 @@ export class WatchCommand extends ProjectCommand {
           summaryChars,
           project,
           cardOf: cards.cardOf,
+          nameOf: cards.nameOf,
         });
       const renderHuman = (
         items: ActivityItem[],
@@ -731,6 +732,7 @@ export class WatchCommand extends ProjectCommand {
         summaryChars,
         project: item.project,
         cardOf: cards.cardOf,
+        nameOf: cards.nameOf,
       });
     const renderHuman = (
       items: CrossActivityItem[],

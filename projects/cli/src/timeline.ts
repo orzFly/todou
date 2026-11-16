@@ -20,6 +20,7 @@ import {
 } from "@todou/shared";
 import {
   type Painter,
+  personHandle,
   personName,
   plural,
   relativeTime,
@@ -115,10 +116,18 @@ export type CardOf = (
   number: number,
 ) => { title: string; body: string | null } | undefined;
 
+/**
+ * A member's display name by login, for the payloads that stored only the
+ * login (`assigned`, `unassigned`, `opened`'s assignees). Undefined for
+ * anyone the resolver could not name, and the line keeps the bare login.
+ */
+export type NameOf = (slug: string, login: string) => string | undefined;
+
 /** Where the item is being shown from, for refs and command hints. */
 export type TimelineRenderContext = ReferenceOrigin & {
   issueNumber: number;
   cardOf?: CardOf;
+  nameOf?: NameOf;
 };
 
 /**
@@ -239,14 +248,14 @@ function agentSuffix(context: AgentContext | null | undefined): string {
  * instead.
  */
 function personLabel(
-  user: { display_name?: string; login: string },
+  name: string,
   context: AgentContext | null | undefined,
   paint: Painter,
 ): string {
   const suffix = agentSuffix(context);
   // An empty suffix is kept out of `paint`, which would otherwise wrap it
   // in a pair of escape sequences around nothing.
-  return `${paint("cyan", personName(user))}${suffix === "" ? "" : paint("dim", suffix)}`;
+  return `${paint("cyan", name)}${suffix === "" ? "" : paint("dim", suffix)}`;
 }
 
 export function renderTimelineItem(
@@ -257,7 +266,7 @@ export function renderTimelineItem(
   const type = enumValue(item.type, "timeline item type");
   const when = relativeTime(item.created_at);
   const who = (user: { display_name?: string; login: string }): string =>
-    personLabel(user, item.agent_context, paint);
+    personLabel(personName(user), item.agent_context, paint);
   if (item.type === "comment") {
     const body = item.body
       .trimEnd()
@@ -375,7 +384,7 @@ export function renderActivityLine(
   const ref = paint("bold", ctx.refLabel);
   const when = relativeTime(item.created_at);
   const who = (user: { display_name?: string; login: string }): string =>
-    personLabel(user, item.agent_context, paint);
+    personLabel(personHandle(user), item.agent_context, paint);
   if (item.type === "comment") {
     const edited = item.edited_at ? " (edited)" : "";
     if (isAction(item)) {
@@ -440,7 +449,7 @@ export function renderActivityLine(
     const detail = eventDetail(item, ctx);
     const head = `${ref} ${paint(
       "dim",
-      `${personName(item.actor)}${agentSuffix(item.agent_context)} opened "${opened.title}"${detail ? ` (${detail})` : ""} ${when}`,
+      `${personHandle(item.actor)}${agentSuffix(item.agent_context)} opened "${opened.title}"${detail ? ` (${detail})` : ""} ${when}`,
     )}`;
     const body = opened.body === null ? "" : opened.body.trim();
     return body === "" ? head : `${head}: ${bodyBlock(body, ctx.summaryChars)}`;
@@ -448,7 +457,7 @@ export function renderActivityLine(
   const detail = eventDetail(item, ctx);
   return `${ref} ${paint(
     "dim",
-    `${personName(item.actor)}${agentSuffix(item.agent_context)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
+    `${personHandle(item.actor)}${agentSuffix(item.agent_context)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
   )}`;
 }
 
@@ -484,7 +493,7 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       return [
         status.name,
         labels.map((l) => l.name).join(", "),
-        assignees.map((a) => `@${a.login}`).join(", "),
+        assignees.map((a) => assigneeHandle(a.login, ctx)).join(", "),
       ]
         .filter((part) => part !== "")
         .join(" · ");
@@ -507,9 +516,9 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       return nested(payload.label, "name");
     case "assigned":
     case "unassigned":
-      // The payload only ever stored `{id, login}`, so historical events
-      // have no display name to show (T-149).
-      return `@${nested(payload.user, "login")}`;
+      // The payload only ever stored `{id, login}` (T-149); the name, where
+      // there is one, comes from the project's members as they are now.
+      return assigneeHandle(nested(payload.user, "login"), ctx);
     // One event type since T-266. A reference from this project is spelled
     // in its format; one from elsewhere is spelled self-containedly, so it
     // pastes straight back into any command that takes an issue.
@@ -650,6 +659,13 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
     default:
       return scalarDetail(payload);
   }
+}
+
+/** A login off an event payload, named the way `personHandle` names an actor. */
+function assigneeHandle(login: string, ctx: TimelineRenderContext): string {
+  const name =
+    ctx.project === undefined ? undefined : ctx.nameOf?.(ctx.project, login);
+  return personHandle({ login, display_name: name });
 }
 
 /** A null pair is redacted; a partial pair is malformed, not a direction. */

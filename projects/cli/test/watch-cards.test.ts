@@ -127,7 +127,7 @@ describe("watch: the cards an entry is about (T-286)", () => {
     expect(result.exitCode).toBe(0);
     const lines = result.stdout.split("\n");
     expect(lines[0]).toMatch(
-      new RegExp(`^T-146 User opened "${TITLE}" .+: 第一行$`),
+      new RegExp(`^T-146 @user \\(User\\) opened "${TITLE}" .+: 第一行$`),
     );
     expect(lines[1]).toBe("  第二行");
     expect(lines[2]).toContain(
@@ -195,9 +195,9 @@ describe("watch: the cards an entry is about (T-286)", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(`T-146 User opened "${TITLE}"`);
+    expect(result.stdout).toContain(`T-146 @user (User) opened "${TITLE}"`);
     expect(result.stdout).toContain(
-      `D-5 User referenced (by todou#281 "${REFERRER}")`,
+      `D-5 @user (User) referenced (by todou#281 "${REFERRER}")`,
     );
     expect(issueReads(calls)).toEqual([
       "/api/projects/todou/issues/146",
@@ -312,15 +312,17 @@ describe("single-project block watches", () => {
       };
 
       const human = await run(false);
-      expect(human).toContain("T-146 User block_added (blocked by acme/9)");
       expect(human).toContain(
-        "T-146 User block_removed (removed block on 7/10)",
+        "T-146 @user (User) block_added (blocked by acme/9)",
       );
       expect(human).toContain(
-        "T-146 User block_cleared (block by a card you cannot see cleared)",
+        "T-146 @user (User) block_removed (removed block on 7/10)",
       );
       expect(human).toContain(
-        "T-146 User block_reblocked (block by acme/11 active again)",
+        "T-146 @user (User) block_cleared (block by a card you cannot see cleared)",
+      );
+      expect(human).toContain(
+        "T-146 @user (User) block_reblocked (block by acme/11 active again)",
       );
       expect(human).not.toContain("D-9");
 
@@ -386,9 +388,9 @@ describe("withdrawal activity display", () => {
     });
     expect(human.exitCode).toBe(0);
     expect(human.stdout).toContain(
-      "T-146 User spec_withdrawn (v2 — reworking scope)",
+      "T-146 @user (User) spec_withdrawn (v2 — reworking scope)",
     );
-    expect(human.stdout).toContain("T-146 User spec_withdrawn (v3)");
+    expect(human.stdout).toContain("T-146 @user (User) spec_withdrawn (v3)");
     const json = await runCli(
       [...command, "--poll", "--since", "a0", "--json"],
       { fetchImpl, env: loggedInEnv("todou") },

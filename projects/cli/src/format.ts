@@ -60,6 +60,22 @@ export function personName(user: {
   return user.display_name?.trim() || user.login;
 }
 
+/**
+ * How a person is named where the reader may have to answer them: a watch
+ * line is what an agent writes its next `@`-mention from, and a display name
+ * alone left it guessing the login (T-697). The name is dropped when it says
+ * nothing the login does not.
+ */
+export function personHandle(user: {
+  display_name?: string;
+  login: string;
+}): string {
+  const name = user.display_name?.trim();
+  return name && name !== user.login
+    ? `@${user.login} (${name})`
+    : `@${user.login}`;
+}
+
 /** The noun a count takes: `plural(1, "comment")` is "comment". */
 export function plural(n: number, singular: string, many?: string): string {
   return n === 1 ? singular : (many ?? `${singular}s`);

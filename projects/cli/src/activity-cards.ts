@@ -1,6 +1,10 @@
-import type { TimelineItem, TodouClient } from "@todou/shared";
+import {
+  OpenedPayload,
+  type TimelineItem,
+  type TodouClient,
+} from "@todou/shared";
 import type { RefSpelling } from "./resolve.ts";
-import { type CardOf, referenceTarget } from "./timeline.ts";
+import { type CardOf, type NameOf, referenceTarget } from "./timeline.ts";
 
 /**
  * The titles and bodies a batch of activity entries needs before it can be
@@ -27,15 +31,25 @@ export type ActivityCardRef = RefSpelling & {
 /** The lookup a batch with nothing resolved (or nothing to resolve) gets. */
 export const NO_CARDS: CardOf = () => undefined;
 
+/** What a batch's lines read once its drain has resolved them. */
+export type ActivityLookups = { cardOf: CardOf; nameOf: NameOf };
+
+export const NO_LOOKUPS: ActivityLookups = {
+  cardOf: NO_CARDS,
+  nameOf: () => undefined,
+};
+
 /** `numbers=…` is capped by the list endpoint's `limit`, which maxes at 100. */
 const BATCH_LIMIT = 100;
 
 type Card = { title: string; body: string | null };
 
-/** The cards one delivered batch renders with. */
-export type ActivityCards = {
-  /** What the renderer reads; resolves nothing until `add` has run. */
-  cardOf: CardOf;
+/**
+ * The cards one delivered batch renders with, and the display names of the
+ * people its assignment payloads name only by login (T-697). Both resolve
+ * nothing until `add` has run.
+ */
+export type ActivityCards = ActivityLookups & {
   /**
    * Resolves what these entries mention, on top of what the batch already
    * knows. One batch takes several drains whenever `--debounce` is
@@ -53,11 +67,19 @@ export type ActivityCards = {
 
 export function activityCards(client: TodouClient): ActivityCards {
   let cards = new Map<string, Card>();
+  let names = new Map<string, Map<string, string>>();
   return {
     cardOf: (slug, number) => cards.get(key(slug, number)),
-    add: (entries) => collect(client, entries, cards),
+    nameOf: (slug, login) => names.get(slug)?.get(login),
+    add: async (entries) => {
+      await Promise.all([
+        collect(client, entries, cards),
+        collectNames(client, entries, names),
+      ]);
+    },
     reset: () => {
       cards = new Map();
+      names = new Map();
     },
   };
 }
@@ -66,10 +88,10 @@ export function activityCards(client: TodouClient): ActivityCards {
 export async function resolveActivityCards(
   client: TodouClient,
   entries: ActivityCardRef[],
-): Promise<CardOf> {
+): Promise<ActivityLookups> {
   const cards = activityCards(client);
   await cards.add(entries);
-  return cards.cardOf;
+  return { cardOf: cards.cardOf, nameOf: cards.nameOf };
 }
 
 /**
@@ -162,6 +184,44 @@ async function collect(
   // cursor sends more, but that drain has already sent one activity request
   // per page, serially, so this is not a new order of magnitude.
   await Promise.all(reads);
+}
+
+/**
+ * Display names for the logins an assignment payload carries: one members
+ * read per project that has such an entry. Someone who has since left the
+ * project, or a read that fails, keeps the bare login the line always had.
+ */
+async function collectNames(
+  client: TodouClient,
+  entries: ActivityCardRef[],
+  names: Map<string, Map<string, string>>,
+): Promise<void> {
+  const projects = new Set<string>();
+  for (const { item, project } of entries) {
+    if (item.type !== "event" || names.has(project)) continue;
+    const named =
+      item.event_type === "assigned" ||
+      item.event_type === "unassigned" ||
+      (item.event_type === "opened" &&
+        (OpenedPayload.safeParse(item.payload).data?.assignees.length ?? 0) >
+          0);
+    if (named) projects.add(project);
+  }
+  await Promise.all(
+    [...projects].map((project) =>
+      client
+        .listMembers(project)
+        .then((members) => {
+          const found = new Map<string, string>();
+          for (const { user } of members) {
+            const name = user.display_name?.trim();
+            if (name) found.set(user.login, name);
+          }
+          names.set(project, found);
+        })
+        .catch(() => {}),
+    ),
+  );
 }
 
 /**

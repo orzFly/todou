@@ -105,7 +105,9 @@ for (const cross of [false, true]) {
           const human = await watch(item, cross);
           // These assertions exercise renderActivityLine through WatchCommand:
           // removing its answer branch must fail, even though JSON still works.
-          expect(human.stdout).toContain("D-7 User answered #comment-17");
+          expect(human.stdout).toContain(
+            "D-7 @user (User) answered #comment-17",
+          );
           expect(human.stdout).toContain(text);
           expect(human.stdout).not.toContain("question_answered (");
           const json = parseNdjson<{ payload: unknown }>(

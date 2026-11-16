@@ -83,7 +83,7 @@ for (const [name, render] of [
     it("keeps known comment and event output", () => {
       const commentText = render(comment, paint, ctx);
       expect(commentText).toContain("#comment-2");
-      expect(commentText).toContain("User commented");
+      expect(commentText).toMatch(/User\)? commented/);
       expect(commentText).toContain("Known comment body");
       const eventText = render(event, paint, ctx);
       expect(eventText).toContain("User");

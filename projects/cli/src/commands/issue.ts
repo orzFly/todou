@@ -1323,6 +1323,7 @@ export class IssueWatchCommand extends ProjectCommand {
         summaryChars,
         project,
         cardOf: cards.cardOf,
+        nameOf: cards.nameOf,
       });
     const renderHuman = (
       items: TimelineItem[],

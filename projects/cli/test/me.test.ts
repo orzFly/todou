@@ -104,7 +104,7 @@ describe("rendering an action", () => {
 
   it("reads as one sentence on a watch line", () => {
     expect(renderActivityLine(action(), paint, ctx)).toMatch(
-      /^T-7 #comment-757 \* Claude is reviewing\. \S/,
+      /^T-7 #comment-757 \* @claude \(Claude\) is reviewing\. \S/,
     );
   });
 

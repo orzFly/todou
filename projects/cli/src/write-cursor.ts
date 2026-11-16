@@ -1,6 +1,10 @@
 import type { TimelineItem, TodouClient } from "@todou/shared";
 import { formatRef } from "@todou/shared";
-import { NO_CARDS, resolveActivityCards } from "./activity-cards.ts";
+import {
+  type ActivityLookups,
+  NO_LOOKUPS,
+  resolveActivityCards,
+} from "./activity-cards.ts";
 import type { Clock } from "./clock.ts";
 import { CliError } from "./errors.ts";
 import type { Painter } from "./format.ts";
@@ -9,7 +13,7 @@ import {
   NO_REF_SPELLING,
   type RefSpelling,
 } from "./resolve.ts";
-import { type CardOf, drainTimeline, renderActivityLine } from "./timeline.ts";
+import { drainTimeline, renderActivityLine } from "./timeline.ts";
 import {
   describeError,
   resolveSelfFilter,
@@ -78,10 +82,10 @@ export type WriteCursorOutcome = {
 };
 
 /** The render context the missed lines are printed with. */
-export type MissedSpelling = RefSpelling & {
-  project: string;
-  cardOf: CardOf;
-};
+export type MissedSpelling = RefSpelling &
+  ActivityLookups & {
+    project: string;
+  };
 
 export async function collectWriteCursor(args: {
   client: TodouClient;
@@ -102,7 +106,7 @@ export async function collectWriteCursor(args: {
   const unspelled: MissedSpelling = {
     ...NO_REF_SPELLING,
     project: args.project,
-    cardOf: NO_CARDS,
+    ...NO_LOOKUPS,
   };
   if (since === undefined) {
     return { cursor: args.served, missed: null, spelling: unspelled };
@@ -135,7 +139,7 @@ export async function collectWriteCursor(args: {
       spelling: {
         ...spelling,
         project: args.project,
-        cardOf: await resolveActivityCards(
+        ...(await resolveActivityCards(
           args.client,
           items.map((item) => ({
             ...spelling,
@@ -143,7 +147,7 @@ export async function collectWriteCursor(args: {
             project: args.project,
             number: args.number,
           })),
-        ),
+        )),
       },
     };
   } catch (error) {

@@ -297,13 +297,17 @@ describe("watch: multi-project mode over GET /activity", () => {
     };
 
     const human = await run(false);
-    expect(human).toContain("B-7 User block_added (blocked by current-acme/9)");
-    expect(human).toContain("F-3 User block_removed (removed block on 7/10)");
     expect(human).toContain(
-      "F-3 User block_cleared (block by a card you cannot see cleared)",
+      "B-7 @user (User) block_added (blocked by current-acme/9)",
     );
     expect(human).toContain(
-      "B-7 User block_reblocked (block by 7/11 active again)",
+      "F-3 @user (User) block_removed (removed block on 7/10)",
+    );
+    expect(human).toContain(
+      "F-3 @user (User) block_cleared (block by a card you cannot see cleared)",
+    );
+    expect(human).toContain(
+      "B-7 @user (User) block_reblocked (block by 7/11 active again)",
     );
     expect(human).not.toContain("stale-acme/9");
     expect(human).toContain(`cursor: ${ENV2}`);

@@ -6,19 +6,18 @@ import type {
   TodouClient,
 } from "@todou/shared";
 import { enumValue, formatRef } from "@todou/shared";
-import { NO_CARDS, resolveActivityCards } from "./activity-cards.ts";
+import {
+  type ActivityLookups,
+  NO_LOOKUPS,
+  resolveActivityCards,
+} from "./activity-cards.ts";
 import { cursorRecord } from "./api-command.ts";
 import { openChangeNudges } from "./change-nudges.ts";
 import type { Clock } from "./clock.ts";
 import { type Painter, plural } from "./format.ts";
 import { refFormat } from "./refs.ts";
 import { fetchRefSpelling } from "./resolve.ts";
-import {
-  type CardOf,
-  drainTimeline,
-  renderActivityLine,
-  tailCursor,
-} from "./timeline.ts";
+import { drainTimeline, renderActivityLine, tailCursor } from "./timeline.ts";
 import {
   quietNote,
   resolveSelfFilter,
@@ -237,7 +236,7 @@ export async function waitForSpecReview(args: {
     items: TimelineItem[],
     cursor: string | undefined,
     outcome: SpecOutcome,
-    cards: CardOf,
+    lookups: ActivityLookups,
   ): void =>
     args.emitBatch(
       [
@@ -257,7 +256,7 @@ export async function waitForSpecReview(args: {
               // requirement in a plain comment instead of a verdict.
               summaryChars: 0,
               project,
-              cardOf: cards,
+              ...lookups,
             }),
           ),
           ...(cursor === undefined
@@ -276,7 +275,7 @@ export async function waitForSpecReview(args: {
   }
   const settled = currentOutcome(info, expectedVersion);
   if (settled !== null) {
-    emit([], baseline, settled, NO_CARDS);
+    emit([], baseline, settled, NO_LOOKUPS);
     return 0;
   }
 

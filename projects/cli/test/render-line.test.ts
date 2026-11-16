@@ -181,7 +181,7 @@ describe("renderActivityLine", () => {
       ctx,
     );
     expect(line).toMatch(
-      /^T-146 #comment-757 User commented .+: 要在 acme 上开——先把 CLI 发布到镜像里$/,
+      /^T-146 #comment-757 @user \(User\) commented .+: 要在 acme 上开——先把 CLI 发布到镜像里$/,
     );
     expect(line.split("\n")).toHaveLength(1);
   });
@@ -299,7 +299,7 @@ describe("renderActivityLine", () => {
       ctx,
     );
     expect(line).toMatch(
-      /^T-146 User answered #comment-757 .+: storage=Reuse mechanism A; rollout=next week$/,
+      /^T-146 @user \(User\) answered #comment-757 .+: storage=Reuse mechanism A; rollout=next week$/,
     );
   });
 
@@ -316,7 +316,7 @@ describe("renderActivityLine", () => {
       ctx,
     );
     expect(line).toMatch(
-      /^T-146 User withdrew #comment-757 .+ ago: answered by the code\n {2}see #12$/,
+      /^T-146 @user \(User\) withdrew #comment-757 .+ ago: answered by the code\n {2}see #12$/,
     );
   });
 
@@ -331,7 +331,7 @@ describe("renderActivityLine", () => {
     );
     expect(line).not.toContain("\n");
     expect(line).toMatch(
-      /^T-146 User withdrew #comment-757 .+ ago: first line/,
+      /^T-146 @user \(User\) withdrew #comment-757 .+ ago: first line/,
     );
     expect(line.length).toBeLessThan(120);
   });
@@ -345,17 +345,19 @@ describe("renderActivityLine", () => {
       paint,
       ctx,
     );
-    expect(line).toMatch(/^T-146 User withdrew #comment-757 .+ ago$/);
+    expect(line).toMatch(/^T-146 @user \(User\) withdrew #comment-757 .+ ago$/);
   });
 
   /**
    * The two renderers share `eventDetail` precisely so a status change
    * cannot come out worded one way in a watch and another in `issue view`.
    */
+  // Only the name differs: a watch line is what an agent writes its next
+  // `@`-mention from, so it carries the login (T-697).
   it("words an event exactly as the full timeline renderer does", () => {
     const item = event();
     expect(renderActivityLine(item, paint, ctx)).toBe(
-      `T-146 ${renderTimelineItem(item, paint, ctx)}`,
+      `T-146 ${renderTimelineItem(item, paint, ctx).replace(/^User /, "@user (User) ")}`,
     );
   });
 
@@ -374,7 +376,7 @@ describe("renderActivityLine", () => {
   it("uses the ref label it is handed, whatever the stream spells", () => {
     expect(
       renderActivityLine(comment(), paint, { ...ctx, refLabel: "backend/7" }),
-    ).toMatch(/^backend\/7 #comment-757 User commented /);
+    ).toMatch(/^backend\/7 #comment-757 @user \(User\) commented /);
   });
 
   /**
@@ -565,7 +567,7 @@ describe("renderActivityLine", () => {
     it("gives an opened card its title on the header and its body below", () => {
       const lines = renderActivityLine(opened, paint, known).split("\n");
       expect(lines[0]).toMatch(
-        /^T-146 User opened "读不到项目时给一条无差别提示" .+: 第一行$/,
+        /^T-146 @user \(User\) opened "读不到项目时给一条无差别提示" .+: 第一行$/,
       );
       expect(lines[1]).toBe("  第二行");
     });
@@ -585,7 +587,7 @@ describe("renderActivityLine", () => {
     it("says what an opened card was born with, between title and time", () => {
       const lines = renderActivityLine(born, paint, known).split("\n");
       expect(lines[0]).toMatch(
-        /^T-146 User opened "读不到项目时给一条无差别提示" \(Next · area:cli, kind:bug · @alice\) .+: 第一行$/,
+        /^T-146 @user \(User\) opened "读不到项目时给一条无差别提示" \(Next · area:cli, kind:bug · @alice\) .+: 第一行$/,
       );
     });
 
@@ -595,13 +597,13 @@ describe("renderActivityLine", () => {
         payload: { status: { id: 1, name: "Todo" }, labels: [], assignees: [] },
       });
       expect(renderActivityLine(bare, paint, known).split("\n")[0]).toMatch(
-        /^T-146 User opened "读不到项目时给一条无差别提示" \(Todo\) .+: 第一行$/,
+        /^T-146 @user \(User\) opened "读不到项目时给一条无差别提示" \(Todo\) .+: 第一行$/,
       );
     });
 
     it("says it even when the card could not be resolved", () => {
       expect(renderActivityLine(born, paint, ctx)).toMatch(
-        /^T-146 User opened \(Next · area:cli, kind:bug · @alice\) .+ ago$/,
+        /^T-146 @user \(User\) opened \(Next · area:cli, kind:bug · @alice\) .+ ago$/,
       );
     });
 
@@ -610,7 +612,7 @@ describe("renderActivityLine", () => {
         ...known,
         cardOf: () => ({ title: "空正文", body: "" }),
       });
-      expect(line).toMatch(/^T-146 User opened "空正文" .+ ago$/);
+      expect(line).toMatch(/^T-146 @user \(User\) opened "空正文" .+ ago$/);
       expect(line).not.toContain(":");
     });
 
@@ -632,7 +634,7 @@ describe("renderActivityLine", () => {
           ...known,
           cardOf: () => undefined,
         }),
-      ).toMatch(/^T-146 User opened .+ ago$/);
+      ).toMatch(/^T-146 @user \(User\) opened .+ ago$/);
     });
 
     /**
@@ -641,7 +643,7 @@ describe("renderActivityLine", () => {
      */
     it("leaves today's line alone when nobody passes a resolver", () => {
       expect(renderActivityLine(opened, paint, ctx)).toMatch(
-        /^T-146 User opened .+ ago$/,
+        /^T-146 @user \(User\) opened .+ ago$/,
       );
       expect(
         renderActivityLine(
@@ -704,7 +706,7 @@ describe("renderActivityLine", () => {
       expect(
         renderActivityLine(comment({ agent_context: context }), paint, ctx),
       ).toContain(
-        "User (claude-code, 9de4032d-4325-4337-943f-f0f0c14cac9c) commented",
+        "@user (User) (claude-code, 9de4032d-4325-4337-943f-f0f0c14cac9c) commented",
       );
     });
 
@@ -712,14 +714,16 @@ describe("renderActivityLine", () => {
       expect(
         renderActivityLine(event({ agent_context: context }), paint, ctx),
       ).toContain(
-        "User (claude-code, 9de4032d-4325-4337-943f-f0f0c14cac9c) status_changed",
+        "@user (User) (claude-code, 9de4032d-4325-4337-943f-f0f0c14cac9c) status_changed",
       );
     });
 
     it("adds nothing at all for a write with no agent behind it", () => {
-      expect(renderActivityLine(comment(), paint, ctx)).not.toContain("(");
+      expect(renderActivityLine(comment(), paint, ctx)).toContain(
+        "@user (User) commented",
+      );
       expect(renderActivityLine(event(), paint, ctx)).toContain(
-        "User status_changed",
+        "@user (User) status_changed",
       );
     });
 
@@ -730,7 +734,59 @@ describe("renderActivityLine", () => {
           paint,
           ctx,
         ),
-      ).toContain("User (hermes-agent) commented");
+      ).toContain("@user (User) (hermes-agent) commented");
+    });
+  });
+
+  /** T-697: every person on a watch line carries the login to `@` them by. */
+  describe("people", () => {
+    const named = { ...ctx, project: "todou" };
+    const nameOf = (slug: string, login: string) =>
+      slug === "todou" && login === "alice" ? "Alice Liddell" : undefined;
+
+    it("drops a display name that only repeats the login", () => {
+      const bot = { ...author, login: "bot-one", display_name: "bot-one" };
+      expect(renderActivityLine(comment({ author: bot }), paint, ctx)).toMatch(
+        /^T-146 #comment-757 @bot-one commented /,
+      );
+    });
+
+    it("falls back to the login for a server that sends no display name", () => {
+      const { display_name: _, ...bare } = author;
+      expect(
+        renderActivityLine(event({ actor: bare as typeof author }), paint, ctx),
+      ).toMatch(/^T-146 @user status_changed /);
+    });
+
+    it("names an assignee from the members the batch resolved", () => {
+      const assigned = event({
+        event_type: "assigned",
+        payload: { user: { id: 7, login: "alice" } },
+      });
+      expect(renderActivityLine(assigned, paint, { ...named, nameOf })).toMatch(
+        /^T-146 @user \(User\) assigned \(@alice \(Alice Liddell\)\) /,
+      );
+      // Nobody resolved it — a former member, a failed read: the login stays.
+      expect(renderActivityLine(assigned, paint, named)).toMatch(
+        /^T-146 @user \(User\) assigned \(@alice\) /,
+      );
+    });
+
+    it("names an opened card's assignees the same way", () => {
+      const born = event({
+        event_type: "opened",
+        payload: {
+          status: { id: 4, name: "Next" },
+          labels: [],
+          assignees: [
+            { id: 7, login: "alice" },
+            { id: 8, login: "newcomer" },
+          ],
+        },
+      });
+      expect(renderActivityLine(born, paint, { ...named, nameOf })).toContain(
+        "(Next · @alice (Alice Liddell), @newcomer)",
+      );
     });
   });
 });

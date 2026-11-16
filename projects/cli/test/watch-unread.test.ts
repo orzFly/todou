@@ -309,7 +309,7 @@ describe("watch (project-level)", () => {
       ["watch", "-p", "todou", "--poll", "--since", "a0"],
       { fetchImpl, env: loggedInEnv() },
     );
-    expect(result.stdout).toContain("#3 #comment-9 User commented");
+    expect(result.stdout).toContain("#3 #comment-9 @user (User) commented");
     expect(result.stdout).toContain("web comment");
     expect(result.stdout).toContain("cursor: a1");
   });
@@ -356,13 +356,15 @@ describe("watch (project-level)", () => {
     const lines = result.stdout.trimEnd().split("\n");
     expect(lines).toHaveLength(5);
     expect(lines[0]).toMatch(
-      /^#3 #comment-9 User commented .+: 要在 acme 上开——先把 CLI 发布到镜像里$/,
+      /^#3 #comment-9 @user \(User\) commented .+: 要在 acme 上开——先把 CLI 发布到镜像里$/,
     );
     // A real newline, not a fold: the paragraph break survives and the
     // continuation carries the indent that keeps a `^\S` split honest.
     expect(lines[1]).toBe("");
     expect(lines[2]).toBe("  然后再回来说一声");
-    expect(lines[3]).toMatch(/^#4 User status_changed \(Todo → Next\) /);
+    expect(lines[3]).toMatch(
+      /^#4 @user \(User\) status_changed \(Todo → Next\) /,
+    );
     expect(lines[4]).toBe("cursor: a1");
   });
 
@@ -458,7 +460,9 @@ describe("watch (project-level)", () => {
     it("gives the whole body by default", async () => {
       const result = await run([], "第一段\n\n第二段");
       const lines = result.stdout.trimEnd().split("\n");
-      expect(lines[0]).toMatch(/^#3 #comment-9 User commented .+: 第一段$/);
+      expect(lines[0]).toMatch(
+        /^#3 #comment-9 @user \(User\) commented .+: 第一段$/,
+      );
       expect(lines[1]).toBe("");
       expect(lines[2]).toBe("  第二段");
     });

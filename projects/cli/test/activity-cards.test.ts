@@ -126,7 +126,7 @@ describe("resolveActivityCards", () => {
         { items: [card(281, "评论 collapse"), card(30, "另一张")] },
       ],
     ]);
-    const cardOf = await resolveActivityCards(client, [
+    const { cardOf } = await resolveActivityCards(client, [
       opened("todou", 146),
       referenced("todou", 30, { by_project_id: 2, by_issue: 281 }),
       referenced("todou", 30, { by_project_id: 2, by_issue: 30 }),
@@ -146,7 +146,7 @@ describe("resolveActivityCards", () => {
 
   it("sends nothing at all for a batch that mentions no other card", async () => {
     const { client, calls } = stub([]);
-    const cardOf = await resolveActivityCards(client, [
+    const { cardOf } = await resolveActivityCards(client, [
       commented("todou", 7),
       // A project id nobody can name: there is no slug to ask under, so the
       // line degrades to `by 99/7` and this costs no request.
@@ -169,7 +169,7 @@ describe("resolveActivityCards", () => {
         }),
       ],
     ]);
-    const cardOf = await resolveActivityCards(
+    const { cardOf } = await resolveActivityCards(
       client,
       numbers.map((n) =>
         referenced("todou", 7, { by_project_id: 2, by_issue: n }),
@@ -188,7 +188,7 @@ describe("resolveActivityCards", () => {
       ["GET", "/api/projects/todou/issues", { items: [card(281, "本项目")] }],
       ["GET", "/api/projects/acme/issues", { items: [card(31, "隔壁")] }],
     ]);
-    const cardOf = await resolveActivityCards(client, [
+    const { cardOf } = await resolveActivityCards(client, [
       referenced("todou", 30, { by_project_id: 2, by_issue: 281 }),
       referenced("todou", 30, { by_project_id: 7, by_issue: 31 }),
       // Pre-T-266 payloads name the project by slug; same group as above.
@@ -204,7 +204,7 @@ describe("resolveActivityCards", () => {
     const { client, calls } = stub([
       ["GET", "/api/projects/todou/issues/146", card(146, "自己", "正文")],
     ]);
-    const cardOf = await resolveActivityCards(client, [
+    const { cardOf } = await resolveActivityCards(client, [
       opened("todou", 146),
       referenced("todou", 30, { by_project_id: 2, by_issue: 146 }),
     ]);
@@ -231,7 +231,7 @@ describe("resolveActivityCards", () => {
       ],
       ["GET", "/api/projects/acme/issues", { items: [card(31, "隔壁")] }],
     ]);
-    const cardOf = await resolveActivityCards(client, [
+    const { cardOf } = await resolveActivityCards(client, [
       opened("todou", 146),
       referenced("todou", 30, { by_project_id: 2, by_issue: 281 }),
       referenced("todou", 30, { by_project_id: 7, by_issue: 31 }),
@@ -240,5 +240,89 @@ describe("resolveActivityCards", () => {
     expect(cardOf("todou", 281)).toBeUndefined();
     // The read that worked still counts — one failure is not the batch's.
     expect(cardOf("acme", 31)?.title).toBe("隔壁");
+  });
+});
+
+/** T-697: an assignment payload stores a login and nothing else. */
+describe("resolveActivityCards names", () => {
+  const assigned = (
+    project: string,
+    eventType: "assigned" | "opened",
+    payload: Record<string, unknown>,
+  ): ActivityCardRef => ({
+    ...spelling,
+    project,
+    number: 30,
+    item: {
+      type: "event",
+      id: 300,
+      event_type: eventType,
+      actor,
+      payload,
+      created_at: "2026-08-11T12:00:00.000Z",
+      agent_context: null,
+    },
+  });
+
+  const member = (login: string, display_name: string) => ({
+    user: { ...actor, login, display_name },
+    role: "writer",
+  });
+
+  const membersRead = (calls: Captured[]): string[] =>
+    calls
+      .map((c) => new URL(c.url, "http://stub.test").pathname)
+      .filter((p) => p.endsWith("/members"));
+
+  it("reads each project's members once for the logins its payloads carry", async () => {
+    const { client, calls } = stub([
+      [
+        "GET",
+        "/api/projects/todou/members",
+        [member("bot-one", "Bot One"), member("newcomer", " ")],
+      ],
+      ["GET", "/api/projects/acme/members", [member("alice", "Alice")]],
+    ]);
+    const { nameOf } = await resolveActivityCards(client, [
+      assigned("todou", "assigned", { user: { id: 3, login: "bot-one" } }),
+      assigned("todou", "assigned", { user: { id: 4, login: "newcomer" } }),
+      assigned("acme", "opened", {
+        status: { id: 1, name: "Todo" },
+        labels: [],
+        assignees: [{ id: 9, login: "alice" }],
+      }),
+    ]);
+    expect(nameOf("todou", "bot-one")).toBe("Bot One");
+    // A blank display name is no name: the line keeps the bare login.
+    expect(nameOf("todou", "newcomer")).toBeUndefined();
+    expect(nameOf("acme", "alice")).toBe("Alice");
+    expect(membersRead(calls).sort()).toEqual([
+      "/api/projects/acme/members",
+      "/api/projects/todou/members",
+    ]);
+  });
+
+  it("reads no members for a batch that names nobody by login", async () => {
+    const { client, calls } = stub([]);
+    const { nameOf } = await resolveActivityCards(client, [
+      commented("todou", 7),
+      assigned("todou", "opened", {
+        status: { id: 1, name: "Todo" },
+        labels: [],
+        assignees: [],
+      }),
+    ]);
+    expect(nameOf("todou", "user")).toBeUndefined();
+    expect(membersRead(calls)).toEqual([]);
+  });
+
+  it("survives a members read that fails", async () => {
+    const { client } = stub([
+      ["GET", "/api/projects/todou/members", { __status: 403 }],
+    ]);
+    const { nameOf } = await resolveActivityCards(client, [
+      assigned("todou", "assigned", { user: { id: 3, login: "bot-one" } }),
+    ]);
+    expect(nameOf("todou", "bot-one")).toBeUndefined();
   });
 });
