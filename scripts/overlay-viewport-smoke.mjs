@@ -479,10 +479,20 @@ function pageHelpers() {
 
     /**
      * Somewhere a finger can land to dismiss: covered by no open overlay, and
-     * over nothing that would act on the tap. A popover is non-modal, so an
-     * outside tap really does reach what is under it — dismissing on the
-     * navbar navigates, and a check that scored that would read a page load as
-     * a scroll of the whole document.
+     * with nothing that would act on the tap under it or near it. A popover is
+     * non-modal, so an outside tap really does reach what is under it —
+     * dismissing on the navbar navigates, and a check that scored that would
+     * read a page load as a scroll of the whole document.
+     *
+     * Near it, because Chromium's touch adjustment snaps a tap onto a nearby
+     * node that acts on taps, within an area at most 32 DIP across
+     * (`kMaxAdjustmentSizeDip` in
+     * https://chromium.googlesource.com/chromium/src/+/refs/heads/main/third_party/blink/renderer/core/page/touch_adjustment.cc),
+     * so the eight points 16px out from it, straight and diagonally, have to
+     * be clear as well. And `cursor: pointer` counts as acting on a tap: it
+     * is the only mark a non-semantic element with an `onClick` leaves, such
+     * as the floating title bar on a phone, which stays tappable under a
+     * modal menu and scrolls the page to its top.
      */
     outsidePoint() {
       const boxes = [...document.querySelectorAll(OVERLAYS)].map((element) =>
@@ -496,11 +506,44 @@ function pageHelpers() {
       const ACTS_ON_A_TAP =
         "a,button,input,textarea,select,summary,label,[role='button']," +
         "[role='link'],[role='menuitem'],[role='option'],[tabindex]";
+      // The comment box by its frame, not by points around the tap: a tap in
+      // the gap below the folded composer, past every 16px probe, was still
+      // snapped into its editor. The focus unfolded the composer, and the
+      // next tap's pointerdown refolded it — moving the sidebar 88px between
+      // that tap's pointerdown and its click, and a popover trigger opens on
+      // the click (T-677). Twice the probes' clearance, since the snap
+      // measured here reached past it.
+      const REACH = 32;
+      const editors = [
+        ...document.querySelectorAll("[data-slot='markdown-editor']"),
+      ].map((element) => element.getBoundingClientRect());
+      const nearAnEditor = (x, y) =>
+        editors.some(
+          (box) =>
+            x > box.left - REACH &&
+            x < box.right + REACH &&
+            y > box.top - REACH &&
+            y < box.bottom + REACH,
+        );
+      // Off the viewport `elementFromPoint` returns null: nothing there to act.
+      const actsOnATap = (x, y) => {
+        const hit = document.elementFromPoint(x, y);
+        return (
+          hit !== null &&
+          (hit.closest(ACTS_ON_A_TAP) !== null ||
+            getComputedStyle(hit).cursor === "pointer")
+        );
+      };
+      const CLEARANCE = 16;
+      const clear = (x, y) =>
+        [-CLEARANCE, 0, CLEARANCE].every((dx) =>
+          [-CLEARANCE, 0, CLEARANCE].every((dy) => !actsOnATap(x + dx, y + dy)),
+        );
       for (let y = 8; y < window.innerHeight; y += 24) {
         for (const x of [window.innerWidth / 2, 8, window.innerWidth - 8]) {
-          if (covered(x, y)) continue;
-          const hit = document.elementFromPoint(x, y);
-          if (hit === null || hit.closest(ACTS_ON_A_TAP) !== null) continue;
+          if (covered(x, y) || nearAnEditor(x, y)) continue;
+          if (document.elementFromPoint(x, y) === null || !clear(x, y))
+            continue;
           return { x, y };
         }
       }
@@ -511,8 +554,13 @@ function pageHelpers() {
 
     scrollY: () => window.scrollY,
     bottom: () => document.documentElement.scrollHeight - window.innerHeight,
-    scrollTo(y) {
+    // Two frames before answering: the phone header (T-585) slides in or out
+    // on the next scroll event, and a probe has to aim at the page it moved.
+    async scrollTo(y) {
       window.scrollTo(0, y);
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      );
       return window.scrollY;
     },
 
@@ -649,15 +697,72 @@ async function closeOverlay(page, how) {
   if (how === "outside") {
     const point = await evaluate(page, () => window.__smoke.outsidePoint());
     if (point !== null) return await tap(page, point);
+    // Counted, because the header still says "closing by a tap outside": on a
+    // narrow viewport the 16px clearance can leave no point at all, and every
+    // close that lands here grades Escape's restore instead.
+    escapeFallbacks++;
   }
   return await pressEscape(page);
 }
+
+let escapeFallbacks = 0;
 
 async function pressEscape(page) {
   for (const type of ["rawKeyDown", "keyUp"]) {
     await page.cdp.send(
       "Input.dispatchKeyEvent",
       { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
+      page.sessionId,
+    );
+  }
+}
+
+/**
+ * Wait for the issue page to stop growing, then let go of its landing hold.
+ *
+ * An issue page lands at the foot of the document and holds it there
+ * (`landAtBottom`, T-527): every time the body resizes it scrolls back to the
+ * bottom, until the reader's first wheel, touch, pointer or key input. The
+ * scan positions itself with `scrollTo`, which is not input, so the hold keeps
+ * pulling the page down under it. And the timeline (T-602) renders its newest
+ * entries first and fills the rest in from idle callbacks, so the document is
+ * still growing after `ready()`: the scan positions computed from `bottom`
+ * then drift over the sidebar, and a probe taken mid-fill is dragged away
+ * between aiming and tapping.
+ *
+ * Settled means no unfilled placeholder left and a height unchanged for a
+ * second — longer than the fill's idle-callback `timeout: 500`, so the gap
+ * between two batches is not mistaken for the end. One Shift press then
+ * releases the hold: a real key event, as everything else here is, and a key
+ * no shortcut on the page acts on alone.
+ */
+async function settle(page, budgetMs = 15000, quietMs = 1000) {
+  const deadline = Date.now() + budgetMs;
+  let last = null;
+  let since = Date.now();
+  for (;;) {
+    const now = await evaluate(page, () => ({
+      height: document.documentElement.scrollHeight,
+      unfilled: document.querySelectorAll("[data-unfilled]").length,
+    }));
+    if (
+      last === null ||
+      now.height !== last.height ||
+      now.unfilled !== last.unfilled
+    ) {
+      since = Date.now();
+    }
+    last = now;
+    if (now.unfilled === 0 && Date.now() - since >= quietMs) break;
+    if (Date.now() > deadline) {
+      throw new Error(`the issue page never settled: ${JSON.stringify(last)}`);
+    }
+    await sleep(50);
+  }
+  for (const type of ["rawKeyDown", "keyUp"]) {
+    await page.cdp.send(
+      "Input.dispatchKeyEvent",
+      { type, key: "Shift", code: "ShiftLeft", windowsVirtualKeyCode: 16 },
       page.sessionId,
     );
   }
@@ -703,13 +808,27 @@ async function settleOverlays(page, want, budgetMs = 1000) {
   }
 }
 
-/** Wait out the close animation, then read the scroll position it settled on. */
+/**
+ * Wait out the close animation, then read the scroll position it settled on.
+ *
+ * Two frames after the overlay leaves the DOM, not at once: the metadata
+ * dialog hands focus back a frame later (`onCloseAutoFocus` in
+ * `metadata-dialog.tsx`, T-430), so a read the moment it unmounts comes before
+ * the restore it is meant to grade.
+ */
 async function scrollYAfterClose(page, budgetMs = 3000) {
   const deadline = Date.now() + budgetMs;
   while (!(await evaluate(page, () => window.__smoke.settled()))) {
     if (Date.now() > deadline) break;
     await sleep(25);
   }
+  await evaluate(
+    page,
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
   return await evaluate(page, () => window.__smoke.scrollY());
 }
 
@@ -951,6 +1070,9 @@ async function probeMetadataClose(page, target, viewport, how) {
       return { inert: "the metadata card never rendered", where };
     await sleep(200);
   }
+  // This card lands at its foot and is held there too, and the search below
+  // positions itself with `scrollTo` just as the scan does.
+  await settle(page);
   const bottom = await evaluate(page, () => window.__smoke.bottom());
   let point = null;
   for (let offset = 0; offset <= 1200; offset += 100) {
@@ -1022,6 +1144,7 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
       }
     }
   };
+  const fallbacksBefore = escapeFallbacks;
   /** Fault passes stop at the failure they were seeded to cause, not at any. */
   const done = () => stopWhen !== null && tally.failures.some(stopWhen);
 
@@ -1074,6 +1197,7 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
       }
       await sleep(200);
     }
+    await settle(page);
 
     const bottom = await evaluate(page, () => window.__smoke.bottom());
     const positions = [];
@@ -1119,6 +1243,7 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
     if (done()) return tally;
   }
 
+  tally.escapeFallbacks = escapeFallbacks - fallbacksBefore;
   return tally;
 }
 
@@ -1170,6 +1295,10 @@ function report(label, tally) {
   for (const known of tally.known)
     console.log(`  known ${known.key}: ${known.detail} — ${known.why}`);
   for (const inert of tally.inert) console.log(`  ? ${inert}`);
+  if (tally.escapeFallbacks > 0)
+    console.log(
+      `  ${tally.escapeFallbacks} closes found no clear point outside and pressed Escape`,
+    );
   return tally;
 }
 
