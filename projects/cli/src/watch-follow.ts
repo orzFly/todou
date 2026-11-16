@@ -5,21 +5,25 @@ import { CliError } from "./errors.ts";
 import type { makePainter } from "./format.ts";
 import { detectPermissionMode } from "./harness/claude-code.ts";
 import type { HarnessMessaging } from "./harness/messaging.ts";
+import { parseSeconds } from "./parse.ts";
 import { openPeerPush, type PeerPush } from "./peer-push.ts";
 import { describeError } from "./watch-loop.ts";
+import { DEFER_SEC } from "./watch-tiers.ts";
 
 /** Which channel a standing watch delivers each batch over. */
 export type Transport = "stdout" | "uds" | "codex";
 
 /**
- * The batching window a standing watch defaults to. The receiving side
- * appends ~140 tokens of boilerplate to every peer message with no way to
- * turn it off, so ten notifications pay for it ten times while one merged
- * notification pays once: message *count* costs far more than message
- * length, which makes waiting a minute to merge almost always the better
- * trade. `--debounce 0` opts back into immediate delivery.
+ * The batching window a standing watch defaults to for urgent entries. The
+ * receiving side appends ~140 tokens of boilerplate to every peer message
+ * with no way to turn it off, so ten notifications pay for it ten times
+ * while one merged notification pays once: message *count* costs far more
+ * than message length, which makes a short wait to merge almost always the
+ * better trade. The commonest scraps — references, attachments — already
+ * wait in the minor tier, so this window need not stretch to catch them.
+ * `--debounce 0` opts back into immediate delivery.
  */
-export const FOLLOW_DEBOUNCE_SEC = 60;
+export const FOLLOW_DEBOUNCE_SEC = 15;
 
 /**
  * `--debounce` when none was given. The per-message cost above is a
@@ -29,9 +33,51 @@ export const FOLLOW_DEBOUNCE_SEC = 60;
 export function defaultDebounceSec(
   transport: Transport | null,
   json: boolean,
-): number | undefined {
-  if (transport === null) return undefined;
+): number {
+  if (transport === null) return 0;
   return transport === "stdout" && json ? 0 : FOLLOW_DEBOUNCE_SEC;
+}
+
+/**
+ * `--defer` when none was given. Unlike `--debounce` it holds without
+ * `--follow` too: a one-shot watch woken by a reference was woken for
+ * nothing all the same. The `--json` script is spared for the reason above.
+ */
+export function defaultDeferSec(
+  transport: Transport | null,
+  json: boolean,
+): number {
+  return transport === "stdout" && json ? 0 : DEFER_SEC;
+}
+
+export function deferOption(): string | undefined {
+  return Option.String("--defer", {
+    description:
+      "Hold minor entries — references, attachments, resolved spec comments, a blocker's edge changes — up to this many seconds unless something urgent comes first (default 300; 0 with --follow --json; --type does not change this, --defer 0 delivers them at once)",
+  });
+}
+
+/**
+ * Both batching windows of `issue watch` and `watch`, flags over defaults.
+ * `zero` is accepted for both because 0 is how a watch asks for immediate
+ * delivery back.
+ */
+export function batchingWindows(opts: {
+  debounce: string | undefined;
+  defer: string | undefined;
+  transport: Transport | null;
+  json: boolean;
+}): { debounceSec: number; deferSec: number } {
+  return {
+    debounceSec:
+      opts.debounce !== undefined
+        ? parseSeconds(opts.debounce, "--debounce", { zero: true })
+        : defaultDebounceSec(opts.transport, opts.json),
+    deferSec:
+      opts.defer !== undefined
+        ? parseSeconds(opts.defer, "--defer", { zero: true })
+        : defaultDeferSec(opts.transport, opts.json),
+  };
 }
 
 /**

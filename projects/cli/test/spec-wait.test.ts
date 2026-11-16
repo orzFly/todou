@@ -250,50 +250,119 @@ describe("spec wait: blocking", () => {
    * A reference is the entry whose whole point is the card it came from, and
    * this wait is read by an agent that cannot go and look it up (T-286).
    */
-  it("names the card a reference came from", async () => {
+  /** A reference from card 9, which is held rather than waking the wait. */
+  const reference = {
+    type: "event",
+    id: 71,
+    event_type: "referenced",
+    actor: AUTHOR,
+    payload: { by_project_id: 4, by_issue: 9, by_comment: 88 },
+    created_at: "2026-08-11T12:00:00.000Z",
+  };
+  const referenceRoutes = (
+    timeline: (drain: number) => unknown,
+    info: (drain: number) => unknown = () => specInfo(),
+  ): { routes: Route[]; drains: () => number } => {
     let drains = 0;
-    const { fetchImpl } = fakeFetch([
-      ["GET", "/api/me", ME],
-      ["GET", SPEC_PATH, () => specInfo()],
-      ["GET", "/api/projects", [{ id: 4, slug: "proj" }]],
-      ["GET", "/api/projects/proj/references/config", { format: {} }],
-      [
-        "GET",
-        "/api/projects/proj/issues",
-        { items: [{ number: 9, title: "把游标语义写进 usage" }] },
+    return {
+      drains: () => drains,
+      routes: [
+        ["GET", "/api/me", ME],
+        ["GET", SPEC_PATH, () => info(drains)],
+        ["GET", "/api/projects", [{ id: 4, slug: "proj" }]],
+        ["GET", "/api/projects/proj/references/config", { format: {} }],
+        [
+          "GET",
+          "/api/projects/proj/issues",
+          { items: [{ number: 9, title: "把游标语义写进 usage" }] },
+        ],
+        [
+          "GET",
+          TIMELINE_PATH,
+          (_init: RequestInit, url: URL) => {
+            if (url.searchParams.get("last") === "1") return page([], "tail");
+            drains += 1;
+            if (drains > 40) throw new Error("the wait never ended");
+            return timeline(drains);
+          },
+        ],
       ],
-      [
-        "GET",
-        TIMELINE_PATH,
-        (_init: RequestInit, url: URL) => {
-          if (url.searchParams.get("last") === "1") return page([], "tail");
-          drains += 1;
-          return drains >= 2
-            ? page(
-                [
-                  {
-                    type: "event",
-                    id: 71,
-                    event_type: "referenced",
-                    actor: AUTHOR,
-                    payload: { by_project_id: 4, by_issue: 9, by_comment: 88 },
-                    created_at: "2026-08-11T12:00:00.000Z",
-                  },
-                ],
-                "c71",
-              )
-            : page([], null);
-        },
-      ],
-    ]);
+    };
+  };
+
+  it("names the card a reference came from", async () => {
+    const { routes, drains } = referenceRoutes((drain) =>
+      drain === 2
+        ? page([reference], "c71")
+        : drain === 6
+          ? page([comment(72, "顺便看一下", "2026-08-11T12:02:00.000Z")], "c72")
+          : page([], null),
+    );
+    const { fetchImpl } = fakeFetch(routes);
     const run = await runCli(
       ["spec", "wait", "23", "--debounce", "0", "--interval", "2"],
       { fetchImpl, env: loggedInEnv("proj"), clock: virtualClock() },
     );
     expect(run.exitCode).toBe(0);
-    expect(run.stdout).toContain(
+    // The reference alone did not end the wait; the comment did, and took
+    // the reference with it, in the order they arrived (T-694).
+    expect(drains()).toBe(6);
+    const referenced = run.stdout.indexOf(
       'referenced (by #9 "把游标语义写进 usage" #comment-88)',
     );
+    expect(referenced).toBeGreaterThanOrEqual(0);
+    expect(run.stdout.indexOf("顺便看一下")).toBeGreaterThan(referenced);
+    expect(outcomeOf(run.stdout)).toBe("feedback · no verdict on spec v2 yet");
+  });
+
+  it("hands a held reference over with the verdict that ends the wait", async () => {
+    const review = {
+      type: "event",
+      id: 73,
+      event_type: "spec_review",
+      actor: AUTHOR,
+      payload: { version: 2, verdict: "approve" },
+      created_at: "2026-08-11T12:03:00.000Z",
+    };
+    const { routes } = referenceRoutes(
+      (drain) =>
+        drain === 2
+          ? page([reference], "c71")
+          : drain === 4
+            ? page([review], "c73")
+            : page([], null),
+      (drain) =>
+        specInfo({ review_status: drain >= 4 ? "approved" : "unreviewed" }),
+    );
+    const { fetchImpl } = fakeFetch(routes);
+    const run = await runCli(
+      ["spec", "wait", "23", "--debounce", "0", "--interval", "2"],
+      { fetchImpl, env: loggedInEnv("proj"), clock: virtualClock() },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("referenced (by #9");
+    expect(run.stdout).toContain("cursor: c73");
+    expect(outcomeOf(run.stdout)).toBe("approved · spec v2");
+  });
+
+  it("ends on a state-only withdrawal while a reference is held", async () => {
+    // This session's own withdrawal is filtered out of the timeline and
+    // shows up only as state. A held minor entry must not count as a batch
+    // in progress there: it never falls due, so the wait would hang.
+    const { routes } = referenceRoutes(
+      (drain) => (drain === 2 ? page([reference], "c71") : page([], null)),
+      (drain) =>
+        specInfo({ review_status: drain >= 4 ? "withdrawn" : "unreviewed" }),
+    );
+    const { fetchImpl } = fakeFetch(routes);
+    const run = await runCli(
+      ["spec", "wait", "23", "--debounce", "0", "--interval", "2"],
+      { fetchImpl, env: loggedInEnv("proj"), clock: virtualClock() },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("referenced (by #9");
+    expect(run.stdout).toContain("cursor: c71");
+    expect(outcomeOf(run.stdout)).toBe("withdrawn · spec v2 · reworking");
   });
 
   it("starts where the current version was pushed, not at now", async () => {

@@ -45,7 +45,7 @@ picked it.
 Keep one running in the background:
 
 ```bash
-todou watch -p <proj> --since <cursor> --debounce 60 --forever
+todou watch -p <proj> --since <cursor> --debounce 15 --forever
 ```
 
 Before you start it, run `todou agent can-i-follow` and do what it says. Run it without `--json`: the
@@ -230,4 +230,4 @@ arrives outside a live card, merging, deploying, Shipped and retiring stay yours
 - Send one-off work (merges, patches, investigations) to subagents.
 - To see whether an agent finished, read the card's status before its transcript.
 - Read the tail of an agent's output (`references/herdr.md`), never whole screens.
-- `--debounce 60` on the watch turns a burst of user actions into one wake-up.
+- `--debounce 15` on the watch turns a burst of user actions into one wake-up; references and other minor events already wait up to 5 minutes on their own.

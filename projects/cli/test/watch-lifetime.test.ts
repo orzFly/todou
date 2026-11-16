@@ -137,7 +137,7 @@ describe("native raw watch lifetime", () => {
           forever: true,
           timeoutSec: 3_600,
           intervalSec: 3_600,
-          debounceSec: 3_600,
+          batching: { debounceSec: 3_600, deferSec: 0, isMinor: () => false },
           baseline: "c0",
           drain,
           onItems: () => {},

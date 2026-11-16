@@ -210,7 +210,9 @@ waiting for that turn to end. omp makes room for it by backgrounding the
 foreground bash command early — it reports
 `Backgrounded early to handle an incoming message` when it does — and that
 command goes on running. How often this happens is set by the batching
-window, `--debounce`, which is 60 seconds by default here.
+window, `--debounce`, which is 15 seconds by default here; references,
+attachments and other minor events wait up to 5 minutes (`--defer`) for
+something else to ride along with.
 
 Delivery guarantees, the degradation when a push cannot be confirmed, and
 `todou agent opt-out-uds` are as [docs/claude-code.md](claude-code.md)

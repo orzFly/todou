@@ -55,7 +55,7 @@ export const WATCH_PARAMETERS = {
     debounce: {
       type: "string",
       description:
-        "batching window in seconds; 60 by default, 0 delivers each entry as it lands",
+        "batching window in seconds; 15 by default, 0 delivers each entry as it lands. References, attachments and similar minor events are held up to 5 minutes unless something else comes first",
     },
     id: {
       type: "string",

@@ -26,6 +26,7 @@ import {
   type SessionSource,
   watchRetryOptions,
 } from "./watch-loop.ts";
+import { isMinor } from "./watch-tiers.ts";
 
 /**
  * The review gate, as one call (T-208). `write-cursor.ts` is the other half
@@ -316,7 +317,15 @@ export async function waitForSpecReview(args: {
       forever: true,
       timeoutSec,
       intervalSec: args.intervalSec,
-      debounceSec: args.debounceSec,
+      // Minor entries never wake a wait on their own: whatever wakes it
+      // ends it with `feedback`, which is the very noise the tier exists to
+      // spare a reviewing agent (T-694). They leave with the next urgent
+      // entry, a verdict, or the stop flush.
+      batching: {
+        debounceSec: args.debounceSec,
+        deferSec: Number.POSITIVE_INFINITY,
+        isMinor,
+      },
       baseline,
       retry,
       clock: args.clock,
@@ -328,9 +337,9 @@ export async function waitForSpecReview(args: {
         stateOutcome !== null && !batching
           ? Promise.resolve()
           : nudges.wait(maxMs),
-      onQuiet: (_cursor, totalMs) =>
+      onQuiet: (_cursor, totalMs, held) =>
         args.note(
-          quietNote("still waiting for a verdict", timeoutSec, totalMs),
+          quietNote("still waiting for a verdict", timeoutSec, totalMs, held),
         ),
       // No `types` filter: a plain comment — an amended requirement, a
       // question back — has to wake the waiter as surely as a verdict does.
@@ -346,7 +355,11 @@ export async function waitForSpecReview(args: {
         stateConfirmed = stateOutcome !== null;
         stateOutcome = currentOutcome(nextInfo, expectedVersion);
         cursor = page.cursor ?? cursor;
-        batching ||= page.items.length > 0;
+        // Urgent entries only. Held minor ones never fall due here, so
+        // letting them suppress a state-only stop — a withdrawal from this
+        // very session, which the self-filter hides from the timeline —
+        // would leave the wait hanging; the stop flush hands them over.
+        batching ||= page.items.some((item) => !isMinor(item));
         return page;
       },
       onItems: (items, next) => {

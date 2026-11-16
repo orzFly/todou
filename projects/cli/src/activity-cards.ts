@@ -59,7 +59,7 @@ export type ActivityCards = ActivityLookups & {
   /**
    * Forgotten as soon as a batch has gone out, which is why a standing watch
    * resolving the same card twice is not a bug to fix with a cache: two
-   * batches are a debounce window apart (60s by default), a title gets
+   * batches are a debounce window apart (15s by default), a title gets
    * renamed, and the web gives a resolved ref no more staleness than that.
    */
   reset: () => void;

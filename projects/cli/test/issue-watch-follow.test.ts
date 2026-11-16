@@ -191,8 +191,8 @@ describe("issue watch --follow=uds (T-254)", () => {
     // the same news is the failure that matters.
     const clock = virtualClock();
     const push = fakePeerPush();
-    // The default 60s debounce, then a quiet phase the change feed idles
-    // out at its 90s stall bound, puts 150s of virtual time between the
+    // The default 15s debounce, then a quiet phase the change feed idles
+    // out at its 90s stall bound, puts 105s of virtual time between the
     // push and the fatal drain — well past the 30s receipt window.
     const { fetchImpl } = timelineRoutes([
       ...batch([comment(9, clock.iso())], "c1"),
@@ -221,7 +221,7 @@ describe("issue watch --follow=uds (T-254)", () => {
     // asserted rather than assumed — a script that put the fatal drain
     // inside the 30s window would print the batch and pass for the wrong
     // reason, which is exactly what this case exists to catch.
-    expect(clock.elapsed()).toBe(150_000);
+    expect(clock.elapsed()).toBe(105_000);
     expect(result.stdout).toBe("cursor: c1\n");
     expect(result.exitCode).toBe(1);
     expect(push.pushes).toHaveLength(1);
@@ -330,7 +330,7 @@ describe("issue watch --follow=uds (T-254)", () => {
     // Stopped without waiting the quiet phase out and without reaching the
     // drain that would have turned fatal: the refusal landed while the loop
     // was idling, and the wait it races was cut short.
-    expect(clock.elapsed()).toBe(60_000);
+    expect(clock.elapsed()).toBe(15_000);
     // The batch page, its terminator, the debounce tail and one empty
     // round — and then nothing, though the script had a fatal reply left.
     expect(drains()).toBe(4);
@@ -552,5 +552,50 @@ describe("issue watch: listed as a live watcher (T-540)", () => {
 
   it("--invisible declares nothing", async () => {
     expect(await run(["--invisible"])).toEqual({ watch: null, kind: null });
+  });
+});
+
+describe("issue watch: minor entries (T-694)", () => {
+  const attachment = (createdAt: string) => ({
+    type: "event",
+    id: 12,
+    event_type: "attachment_added",
+    actor: author,
+    payload: { attachment_id: 40, filename: "shot.png" },
+    created_at: createdAt,
+    agent_context: null,
+  });
+  const oneShot = async (...flags: string[]) => {
+    const clock = virtualClock();
+    const { fetchImpl } = timelineRoutes([
+      ...batch([attachment(clock.iso())], "c1"),
+      ...Array.from({ length: 100 }, () => quiet),
+    ]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--since", "c0", "--timeout", "60", ...flags],
+      { fetchImpl, env: loggedInEnv("todou"), clock },
+    );
+    return { result, elapsed: clock.elapsed() };
+  };
+
+  it("holds an attachment until the deadline, then returns it with exit 0", async () => {
+    const { result, elapsed } = await oneShot();
+    expect(result.exitCode).toBe(0);
+    expect(elapsed).toBe(60_000);
+    expect(result.stdout).toContain("shot.png");
+    expect(result.stdout).toContain("cursor: c1");
+  });
+
+  it("returns it at once with --defer 0", async () => {
+    const { result, elapsed } = await oneShot("--defer", "0");
+    expect(result.exitCode).toBe(0);
+    expect(elapsed).toBe(0);
+    expect(result.stdout).toContain("shot.png");
+  });
+
+  it("refuses a malformed --defer", async () => {
+    const { result } = await oneShot("--defer", "soon");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("--defer");
   });
 });

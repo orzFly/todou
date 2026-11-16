@@ -165,6 +165,16 @@ const comment = (id: number, issue: number, createdAt: string) => ({
   edited_at: null,
   issue_number: issue,
 });
+const attachment = (id: number, issue: number, createdAt: string) => ({
+  type: "event",
+  id,
+  event_type: "attachment_added",
+  actor: author,
+  payload: { attachment_id: 40, filename: "shot.png" },
+  created_at: createdAt,
+  agent_context: null,
+  issue_number: issue,
+});
 const page = (items: unknown[], cursor: string | null) => ({
   items,
   next_cursor: cursor,
@@ -264,28 +274,55 @@ describe("watch --follow=stdout (T-252)", () => {
    * so it is printed at once exactly when the window has already closed —
    * and dies with the watch while the window is still open.
    */
-  const printedAtOnce = async (ageSec: number, ...flags: string[]) => {
+  const printedAtOnce = async (ageSec: number, ...flags: string[]) =>
+    deliveredAtOnce(
+      (clock) => comment(9, 3, clock.iso(-ageSec * 1000)),
+      "comment 9",
+      ...flags,
+    );
+  const deliveredAtOnce = async (
+    make: (clock: ReturnType<typeof virtualClock>) => unknown,
+    marker: string,
+    ...flags: string[]
+  ) => {
     const clock = virtualClock();
-    const { fetchImpl } = activityRoutes([
-      ...batch([comment(9, 3, clock.iso(-ageSec * 1000))], "a1"),
-    ]);
+    const { fetchImpl } = activityRoutes([...batch([make(clock)], "a1")]);
     const result = await runCli(
       ["watch", "-p", "todou", "--since", "a0", "--follow=stdout", ...flags],
       { fetchImpl, env: loggedInEnv(), clock },
     );
     expect(result.exitCode).toBe(1);
-    return result.stdout.includes("comment 9");
+    return result.stdout.includes(marker);
   };
+  /** A minor entry (T-694) that happened `ageSec` ago. */
+  const attachedAtOnce = (ageSec: number, ...flags: string[]) =>
+    deliveredAtOnce(
+      (clock) => attachment(9, 3, clock.iso(-ageSec * 1000)),
+      "shot.png",
+      ...flags,
+    );
 
   it("delivers under --json without a debounce window (T-667)", async () => {
     expect(await printedAtOnce(0, "--json")).toBe(true);
   });
 
-  it("still batches for 60s without --json, and an explicit --debounce wins (T-667)", async () => {
-    expect(await printedAtOnce(59)).toBe(false);
-    expect(await printedAtOnce(61)).toBe(true);
+  it("still batches for 15s without --json, and an explicit --debounce wins (T-667)", async () => {
+    expect(await printedAtOnce(14)).toBe(false);
+    expect(await printedAtOnce(16)).toBe(true);
     expect(await printedAtOnce(29, "--json", "--debounce", "30")).toBe(false);
     expect(await printedAtOnce(31, "--json", "--debounce", "30")).toBe(true);
+  });
+
+  it("holds a minor entry for 300s, not the urgent window (T-694)", async () => {
+    expect(await attachedAtOnce(16)).toBe(false);
+    expect(await attachedAtOnce(299)).toBe(false);
+    expect(await attachedAtOnce(301)).toBe(true);
+    expect(await attachedAtOnce(0, "--defer", "0")).toBe(true);
+    expect(await attachedAtOnce(59, "--defer", "60")).toBe(false);
+    expect(await attachedAtOnce(61, "--defer", "60")).toBe(true);
+    // A script on stdout pays nothing per line, so neither tier waits.
+    expect(await attachedAtOnce(0, "--json")).toBe(true);
+    expect(await attachedAtOnce(0, "--json", "--defer", "30")).toBe(false);
   });
 
   it("keeps stdout parseable while quiet under --json (T-667)", async () => {
@@ -330,8 +367,8 @@ describe("watch --follow=uds (T-252)", () => {
     // the same news is the failure that matters.
     const clock = virtualClock();
     const push = fakePeerPush();
-    // The default 60s debounce, then a quiet phase the change feed idles
-    // out at its 90s stall bound, puts 150s of virtual time between the
+    // The default 15s debounce, then a quiet phase the change feed idles
+    // out at its 90s stall bound, puts 105s of virtual time between the
     // push and the fatal drain — well past the 30s receipt window.
     const { fetchImpl } = activityRoutes([
       ...batch([comment(9, 3, clock.iso())], "a1"),
@@ -477,7 +514,7 @@ describe("watch --follow=uds (T-252)", () => {
     // Stopped without waiting the quiet phase out and without reaching the
     // drain that would have turned fatal: the refusal landed while the loop
     // was idling, and the wait it races was cut short.
-    expect(clock.elapsed()).toBe(60_000);
+    expect(clock.elapsed()).toBe(15_000);
     // The batch page, its terminator, the debounce tail and one empty
     // round — and then nothing, though the script had a fatal reply left.
     expect(drains()).toBe(4);
@@ -530,7 +567,7 @@ describe("watch --follow=uds (T-252)", () => {
         code: "EADDRINUSE",
       }),
     });
-    // A one-shot delivery, but the flag's 60s debounce still applies, so
+    // A one-shot delivery, but the flag's 15s debounce still applies, so
     // the window has a tail drain of its own.
     const { fetchImpl } = activityRoutes([
       ...batch([comment(9, 3, clock.iso())], "a1"),

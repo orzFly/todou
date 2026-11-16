@@ -242,8 +242,11 @@ export function quietNote(
   subject: string,
   timeoutSec: number,
   totalMs: number,
+  held = 0,
 ): string {
-  return `${subject} — nothing new in ${timeoutSec}s (${formatDuration(totalMs)} total)`;
+  const holding =
+    held > 0 ? `; ${held} minor ${held === 1 ? "entry" : "entries"} held` : "";
+  return `${subject} — nothing new in ${timeoutSec}s (${formatDuration(totalMs)} total${holding})`;
 }
 
 /** Query parameters that spell "not mine" for the watch endpoints. */
@@ -329,12 +332,26 @@ export async function resolveSelfFilter(
  * (loop-friendly "no news"). Under `forever` there is no 3: the timeout
  * becomes a heartbeat interval and the quiet phase re-arms instead.
  *
- * `timeoutSec` bounds the quiet phase only; once the first entries arrive,
- * `debounceSec` (when set) takes over and keeps batching until the window
- * closes, so the process may outlive the timeout by up to the debounce
- * duration. The window is measured from when the newest entry of the first
- * batch *happened* (`created_at`), not from when this watcher saw it, so a
- * resume that back-fills old history returns immediately.
+ * Every held entry gets its own due time — when it *happened*
+ * (`created_at`, or when this watcher saw it if that is earlier) plus the
+ * window of its tier — and the whole batch goes out at the earliest one
+ * (T-694). An arrival can only bring that moment forward, never push it
+ * back, so a stream of entries cannot keep the batch waiting; and a resume
+ * that back-fills old history is already overdue and returns immediately.
+ * A held reference therefore leaves with the next comment, or alone once
+ * its own longer window runs out.
+ *
+ * `timeoutSec` bounds the quiet phase, and held minor entries do not end
+ * it: they are not worth waking anyone for. A one-shot watch that reaches
+ * its deadline holding only those returns them with exit 0 — the cursor may
+ * not pass entries nobody printed, so exiting 3 without them would lose
+ * them. Once an urgent entry is held the deadline stops counting and the
+ * process may outlive it by up to that entry's window.
+ *
+ * The heartbeat's cursor stops short of held entries (`heldFrom`): a
+ * standing watch hands it out as the `--since` to resume from, and a fatal
+ * error exits without flushing what is held, so a cursor past them would
+ * skip them on restart.
  */
 export async function runWatchLoop<T extends { created_at: string }>(opts: {
   poll: boolean;
@@ -342,8 +359,16 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
   forever?: boolean;
   timeoutSec: number;
   intervalSec: number;
-  /** Batch window after the first batch's newest `created_at`; undefined = emit immediately. */
-  debounceSec?: number;
+  /**
+   * The two windows entries wait in before delivery; `deferSec` may be
+   * infinite, holding minor entries until something else carries them.
+   * Unset delivers every entry as soon as it is drained.
+   */
+  batching?: {
+    debounceSec: number;
+    deferSec: number;
+    isMinor: (item: T) => boolean;
+  };
   baseline: string | undefined;
   drain: (
     after: string | undefined,
@@ -373,18 +398,22 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
   /** Flush collected entries directly, without pushing into a retired session. */
   onStop?: (items: T[], cursor: string | undefined) => void;
   onEmpty: (cursor: string | undefined) => void;
-  /** `forever` only: one heartbeat per elapsed quiet phase, for stderr. */
-  onQuiet?: (cursor: string | undefined, totalMs: number) => void;
+  /**
+   * `forever` only: one heartbeat per elapsed quiet phase, for stderr.
+   * `held` counts the minor entries waiting, and the cursor stops short of
+   * them.
+   */
+  onQuiet?: (cursor: string | undefined, totalMs: number, held: number) => void;
   /** Overrides the poll-derived transient-failure budget. */
   retry?: RetryOptions;
   /**
    * Every deadline below is read from here, so a test can hand in a virtual
-   * clock and settle the timeout and debounce windows by arithmetic (T-127).
+   * clock and settle the timeout and batching windows by arithmetic (T-127).
    */
   clock?: Clock;
   /**
    * How the loop idles between drains, given the longest wait still useful
-   * (the time left on the deadline, or on the debounce window). The default
+   * (the time left on the deadline, or until the batch is due). The default
    * is the poll interval; a push transport hands in a wait that also
    * returns early when the server says there is something to pull (T-123).
    * Either way the loop's arithmetic is unchanged — a wait that ends sooner
@@ -394,6 +423,9 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
 }): Promise<number> {
   let cursor = opts.baseline;
   let pending: T[] = [];
+  let flushAt = Number.POSITIVE_INFINITY;
+  let urgentHeld = false;
+  let heldFrom = cursor;
   const clock = opts.clock ?? systemClock;
   const start = clock.now();
   let deadline = start + opts.timeoutSec * 1000;
@@ -419,6 +451,18 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
     cursor = page.cursor ?? cursor;
     return page.items;
   };
+  const hold = (items: T[]) => {
+    for (const item of items) {
+      const minor = opts.batching?.isMinor(item) ?? false;
+      const windowSec = minor
+        ? (opts.batching?.deferSec ?? 0)
+        : (opts.batching?.debounceSec ?? 0);
+      const at = Math.min(clock.now(), Date.parse(item.created_at) || 0);
+      flushAt = Math.min(flushAt, at + windowSec * 1000);
+      if (!minor) urgentHeld = true;
+      pending.push(item);
+    }
+  };
   const flushStop = () => {
     if (opts.onStop !== undefined) opts.onStop(pending, cursor);
     else if (pending.length > 0) opts.onItems(pending, cursor);
@@ -429,52 +473,51 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
   try {
     for (;;) {
       if (stopped()) return flushStop();
-      pending = await drainOnce();
-      if (pending.length > 0) {
-        if (opts.debounceSec !== undefined && !opts.poll) {
-          // Anchor on the first batch's newest entry, never extend the
-          // window when another batch lands.
-          const newest = Math.max(
-            ...pending.map((item) => Date.parse(item.created_at) || 0),
-          );
-          const windowEnd =
-            Math.min(clock.now(), newest) + opts.debounceSec * 1000;
-          for (;;) {
-            if (stopped()) return flushStop();
-            const remaining = windowEnd - clock.now();
-            if (remaining <= 0) break;
-            await wait(remaining);
-            if (stopped()) return flushStop();
-            pending.push(...(await drainOnce()));
-          }
-        }
-        if (stopped()) return flushStop();
+      if (pending.length === 0) heldFrom = cursor;
+      hold(await drainOnce());
+      if (stopped()) return flushStop();
+      const now = clock.now();
+      if (
+        pending.length > 0 &&
+        (opts.poll ||
+          now >= flushAt ||
+          (!opts.forever && !urgentHeld && now >= deadline))
+      ) {
         const items = pending;
         opts.onItems(items, cursor);
         // Ownership passes to stdout or afterItems. Follow's finish owns
         // unconfirmed pushes, so these must not also enter the stop flush.
         pending = [];
+        flushAt = Number.POSITIVE_INFINITY;
+        urgentHeld = false;
         if (opts.afterItems === undefined) return 0;
         if ((await opts.afterItems(items, cursor)) === "stop") return 0;
         deadline = clock.now() + opts.timeoutSec * 1000;
         continue;
       }
-      if (stopped()) return flushStop();
       if (opts.poll) {
         opts.onEmpty(cursor);
         return 0;
       }
-      const remaining = deadline - clock.now();
-      if (remaining <= 0) {
+      if (!urgentHeld && now >= deadline) {
         if (opts.forever) {
-          opts.onQuiet?.(cursor, clock.now() - start);
-          deadline = clock.now() + opts.timeoutSec * 1000;
+          opts.onQuiet?.(
+            pending.length > 0 ? heldFrom : cursor,
+            now - start,
+            pending.length,
+          );
+          deadline = now + opts.timeoutSec * 1000;
           continue;
         }
+        // Not reached holding entries: a one-shot watch past its deadline
+        // with nothing urgent held delivered them above.
         opts.onEmpty(cursor);
         return 3;
       }
-      await wait(remaining);
+      await wait(
+        Math.min(flushAt, urgentHeld ? Number.POSITIVE_INFINITY : deadline) -
+          clock.now(),
+      );
     }
   } catch (error) {
     if (opts.signal?.aborted) return flushStop();

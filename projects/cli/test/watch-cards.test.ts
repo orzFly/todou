@@ -507,6 +507,10 @@ describe("--follow=uds carries the cards too (T-286)", () => {
         "--since",
         "c0",
         "--follow=uds",
+        // A reference alone would wait out the minor tier (T-694); this case
+        // is about what the push says, not when it goes.
+        "--defer",
+        "0",
         "--interval",
         "2",
         "--timeout",

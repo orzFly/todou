@@ -157,7 +157,7 @@ export class SpecPushCommand extends ProjectCommand {
 
       \`\`\`
       cursor=$(todou spec push 23 ./spec -p <proj> --message "v2" --print-cursor)
-      todou issue watch 23 -p <proj> --since "$cursor" --debounce 60 --forever
+      todou issue watch 23 -p <proj> --since "$cursor" --debounce 15 --forever
       \`\`\`
 
       Waiting on a cursor taken *after* the push is the race this removes:
@@ -204,7 +204,7 @@ export class SpecPushCommand extends ProjectCommand {
       ],
       [
         "The same gate as two commands, for a caller that wants the cursor",
-        'cursor=$($0 spec push 23 ./spec --print-cursor) && $0 issue watch 23 --since "$cursor" --debounce 60 --forever',
+        'cursor=$($0 spec push 23 ./spec --print-cursor) && $0 issue watch 23 --since "$cursor" --debounce 15 --forever',
       ],
     ],
   });
@@ -230,7 +230,7 @@ export class SpecPushCommand extends ProjectCommand {
   });
   debounce = Option.String("--debounce", {
     description:
-      "With --wait: batch a burst for this many seconds (default 60)",
+      "With --wait: batch a burst for this many seconds (default 15)",
   });
   timeout = Option.String("--timeout", {
     description: "With --wait: seconds between heartbeats (default 600)",
@@ -416,7 +416,7 @@ function specWaitFlags(
     // tends to write just before or after the verdict.
     debounceSec:
       flags.debounce === undefined
-        ? 60
+        ? 15
         : parseSeconds(flags.debounce, "--debounce", { zero: true }),
     timeoutSec: watchTimeoutSec(flags.timeout, { poll: false, forever: true }),
     intervalSec:
@@ -913,7 +913,9 @@ export class SpecWaitCommand extends ProjectCommand {
       feed where there is one, so a verdict does not sit unnoticed for a
       poll interval. \`--timeout\` is therefore the heartbeat interval
       (default 600s), written to stderr; \`--debounce\` batches a burst
-      (default 60s, \`0\` returns on the first entry).
+      (default 15s, \`0\` returns on the first entry). References,
+      attachments and other minor entries never end the wait on their own:
+      they are printed with the verdict or comment that does.
 
       **Where it starts matters.** Without \`--since\` the wait starts where
       the current version was pushed, not at "now": a re-entry from "now"
@@ -946,7 +948,7 @@ export class SpecWaitCommand extends ProjectCommand {
       "Resume from this cursor (default: where the version was pushed)",
   });
   debounce = Option.String("--debounce", {
-    description: "Batch a burst for this many seconds (default 60, 0 = off)",
+    description: "Batch a burst for this many seconds (default 15, 0 = off)",
   });
   timeout = Option.String("--timeout", {
     description: "Seconds between heartbeats (default 600)",

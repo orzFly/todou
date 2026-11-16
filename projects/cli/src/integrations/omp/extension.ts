@@ -1194,7 +1194,7 @@ export default function todou(
       "",
       '`since` resumes from a cursor an earlier command printed, and is how a watch started after a `spec push` or a `comment add` catches the answer to it. Without it the watch starts at "now" and anything already on the card is skipped.',
       "",
-      "`debounce` is the batching window in seconds. It defaults to 60, and `0` delivers each entry as it lands.",
+      "`debounce` is the batching window in seconds. It defaults to 15, and `0` delivers each entry as it lands. References, attachments and similar minor events are held up to 5 minutes unless something else comes first.",
       "",
       "The same arguments twice do not start a second watch: the second call returns the first one's id. But two calls that differ only in whether `project` was spelled out count as two watches even when they resolve to the same project — this tool does not resolve them, the todou CLI does, inside the child process, and nothing here can see that the two agreed.",
       "",
@@ -1239,7 +1239,7 @@ export default function todou(
         "debounce?": described(
           arktype,
           "string",
-          "batching window in seconds; 60 by default, 0 delivers each entry as it lands",
+          "batching window in seconds; 15 by default, 0 delivers each entry as it lands. References, attachments and similar minor events are held up to 5 minutes unless something else comes first",
         ),
         "id?": described(
           arktype,

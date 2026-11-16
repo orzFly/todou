@@ -63,7 +63,7 @@ describe("Codex watch delivery", () => {
         forever: true,
         timeoutSec: 300,
         intervalSec: 2,
-        debounceSec: 60,
+        batching: { debounceSec: 60, deferSec: 0, isMinor: () => false },
         baseline: "c0",
         clock,
         signal: follow.signal,

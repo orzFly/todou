@@ -24,8 +24,9 @@ import {
 } from "../resolve.ts";
 import { BARE_SUMMARY_CHARS, renderActivityLine } from "../timeline.ts";
 import {
+  batchingWindows,
   cursorLines,
-  defaultDebounceSec,
+  deferOption,
   followOption,
   followTransport,
   openFollow,
@@ -49,6 +50,7 @@ import {
   watchRetryOptions,
   watchTimeoutSec,
 } from "../watch-loop.ts";
+import { isMinor } from "../watch-tiers.ts";
 
 export class WatchCommand extends ProjectCommand {
   static paths = [["watch"]];
@@ -217,23 +219,32 @@ export class WatchCommand extends ProjectCommand {
       down. Nothing else moves: same cursors, same filters, same exit
       codes. \`--poll\` drains once and never subscribes.
 
-      \`--debounce N\` batches a burst into one wake-up: keep collecting
-      until N seconds after the newest entry of the first batch *happened*
-      (its \`created_at\`, never extended), then return everything at once.
-      Live entries get the full window; a resume whose \`--since\` back-fills
-      old history is already past it and returns immediately. \`--timeout\`
-      only bounds the quiet phase, so a watch that catches news right before
-      the deadline still gets its full window; \`--poll\` ignores
-      \`--debounce\`. Off by default — first news returns immediately, and
-      \`--debounce 0\` says the same thing explicitly.
+      Entries come in two tiers. Minor ones — references, attachments
+      added or deleted, resolved spec comments, and a block edge seen from
+      the blocker's end — are held up to \`--defer\` seconds (default 300)
+      and leave with the next batch of anything else; everything else is
+      urgent. \`--debounce N\` batches a burst of urgent entries into one
+      wake-up: an urgent entry is due N seconds after it *happened* (its
+      \`created_at\`), a minor one \`--defer\` seconds after, and everything
+      held goes out together when the earliest is due — a later arrival
+      never pushes that back. A resume whose \`--since\` back-fills old
+      history is already past due and returns immediately. \`--timeout\`
+      only bounds the quiet phase, which held minor entries do not end: a
+      watch that catches urgent news right before the deadline still gets
+      its full window, and one that reaches it holding only minor entries
+      returns them with exit 0. \`--type\` does not change a tier, so ask
+      for \`--defer 0\` alongside \`--type referenced\`. \`--poll\` ignores
+      both windows. \`--debounce\` is off by default — the first urgent
+      entry returns immediately, and \`--debounce 0\` says the same
+      explicitly.
 
       \`--follow\` stops the watch from exiting with its first batch: it
       stays resident and delivers every batch as it arrives, which spares an
       agent a tool call per batch — and spares it forgetting to re-open the
       watch at all. It implies \`--forever\` and defaults \`--debounce\` to
-      60 seconds — 0 under \`--json\` on stdout, where a script reading lines
-      pays nothing per batch; conflicts with \`--poll\` and
-      \`--print-cursor\`.
+      15 seconds. Under \`--json\` on stdout both windows default to 0, as a
+      script reading lines pays nothing per batch; conflicts with
+      \`--poll\` and \`--print-cursor\`.
 
       The transport is explicit, never guessed. \`--follow\` and
       \`--follow=stdout\` write each batch to stdout in the format above,
@@ -304,7 +315,7 @@ export class WatchCommand extends ProjectCommand {
       ],
       [
         "Sentinel that only ever returns with news",
-        'todou watch -p todou --since "$CURSOR" --debounce 60 --forever',
+        'todou watch -p todou --since "$CURSOR" --debounce 15 --forever',
       ],
       [
         "Only this account's cards and its @-mentions, across every project",
@@ -351,8 +362,9 @@ export class WatchCommand extends ProjectCommand {
   });
   debounce = Option.String("--debounce", {
     description:
-      "Batch entries until this many seconds after the newest one happened (default: return immediately)",
+      "Batch urgent entries until this many seconds after the first one happened (default: return immediately; 15 with --follow)",
   });
+  defer = deferOption();
   types = Option.String("--type", {
     description: `Comma-separated filter: ${TimelineFilterType.options.join(", ")}`,
   });
@@ -421,12 +433,12 @@ export class WatchCommand extends ProjectCommand {
       this.interval === undefined
         ? 2
         : parseSeconds(this.interval, "--interval");
-    const debounceSec =
-      this.debounce !== undefined
-        ? // `zero` because a standing watch needs a way back to immediate
-          // delivery, and 0 already names it: "return on the first entry".
-          parseSeconds(this.debounce, "--debounce", { zero: true })
-        : defaultDebounceSec(transport, this.json);
+    const { debounceSec, deferSec } = batchingWindows({
+      debounce: this.debounce,
+      defer: this.defer,
+      transport,
+      json: this.json,
+    });
     const summaryChars =
       this.summary === undefined || this.summary === false
         ? 0
@@ -465,6 +477,7 @@ export class WatchCommand extends ProjectCommand {
         timeoutSec,
         intervalSec,
         debounceSec,
+        deferSec,
         summaryChars,
         self,
         paint,
@@ -490,7 +503,8 @@ export class WatchCommand extends ProjectCommand {
       types: string | undefined;
       timeoutSec: number;
       intervalSec: number;
-      debounceSec: number | undefined;
+      debounceSec: number;
+      deferSec: number;
       summaryChars: number;
       self: SelfFilterSource;
       paint: ReturnType<typeof makePainter>;
@@ -507,14 +521,18 @@ export class WatchCommand extends ProjectCommand {
       timeoutSec,
       intervalSec,
       debounceSec,
+      deferSec,
       summaryChars,
       self,
       paint,
     } = opts;
     const scope = this.mine ? MINE_SCOPE : undefined;
     const scopeApplied = scopeEchoCheck(scope, (line) => this.note(line));
-    const onQuiet = (_cursor: string | undefined, totalMs: number) =>
-      this.note(quietNote("still watching", timeoutSec, totalMs));
+    const onQuiet = (
+      _cursor: string | undefined,
+      totalMs: number,
+      held: number,
+    ) => this.note(quietNote("still watching", timeoutSec, totalMs, held));
     // A batch nobody will read as prose pays for no card titles. `--json`
     // item lines carry no title — putting fields on what a script parses is
     // its own decision, the line T-283 drew — unless `--rendered` asks for
@@ -621,7 +639,7 @@ export class WatchCommand extends ProjectCommand {
           ...mode,
           timeoutSec,
           intervalSec,
-          debounceSec,
+          batching: { debounceSec, deferSec, isMinor },
           baseline,
           retry,
           clock: this.clock,
@@ -630,9 +648,9 @@ export class WatchCommand extends ProjectCommand {
           shouldStop: follow.shouldStop,
           signal: follow.signal,
           onStop: follow.stopped,
-          onQuiet: (cursor, totalMs) => {
+          onQuiet: (cursor, totalMs, held) => {
             follow.seen(cursor);
-            onQuiet(cursor, totalMs);
+            onQuiet(cursor, totalMs, held);
           },
           drain: async (after) => {
             const page = await drainActivity(client, project, {
@@ -789,7 +807,7 @@ export class WatchCommand extends ProjectCommand {
         ...mode,
         timeoutSec,
         intervalSec,
-        debounceSec,
+        batching: { debounceSec, deferSec, isMinor },
         baseline,
         retry,
         clock: this.clock,
@@ -798,9 +816,9 @@ export class WatchCommand extends ProjectCommand {
         shouldStop: follow.shouldStop,
         signal: follow.signal,
         onStop: follow.stopped,
-        onQuiet: (cursor, totalMs) => {
+        onQuiet: (cursor, totalMs, held) => {
           follow.seen(cursor);
-          onQuiet(cursor, totalMs);
+          onQuiet(cursor, totalMs, held);
         },
         drain: async (after) => {
           const page = await drainCrossActivity(client, projects, {
