@@ -40,6 +40,7 @@ import { parseInsightsSearch } from "@/lib/insights-search.ts";
 import { INBOX_TABS, type InboxTab } from "@/lib/return-view.ts";
 import { parseSpecSearch } from "@/lib/spec-search.ts";
 import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
+import { AgentSettingsPage } from "@/pages/agent-settings.tsx";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
 import { BoardPage } from "@/pages/board.tsx";
 import { CliAuthPage } from "@/pages/cli-auth.tsx";
@@ -565,6 +566,12 @@ const agentsSettingsRoute = createRoute({
     search.state === "deactivated" ? { state: "deactivated" } : {},
 });
 
+const agentSettingsRoute = createRoute({
+  getParentRoute: () => userSettingsRoute,
+  path: "agents/$login",
+  component: AgentSettingsPage,
+});
+
 const tokensSettingsRoute = createRoute({
   getParentRoute: () => userSettingsRoute,
   path: "tokens",
@@ -620,6 +627,7 @@ const routeTree = rootRoute.addChildren([
       appearanceSettingsRoute,
       inboxSettingsRoute,
       agentsSettingsRoute,
+      agentSettingsRoute,
       tokensSettingsRoute,
     ]),
     cliAuthRoute,

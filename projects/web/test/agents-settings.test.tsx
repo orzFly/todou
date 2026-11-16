@@ -8,11 +8,12 @@ import {
 import type { Agent, TokenListItem } from "@todou/shared";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentsQuery, api } from "../src/api/queries.ts";
+import { agentMembershipsQuery, agentsQuery, api } from "../src/api/queries.ts";
 import {
-  AgentsSettingsPage,
-  AgentTokensDialog,
-} from "../src/pages/agents-settings.tsx";
+  AgentSettings,
+  AgentTokensSection,
+} from "../src/pages/agent-settings.tsx";
+import { AgentsSettingsPage } from "../src/pages/agents-settings.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 import { expectVisible } from "./visibility.ts";
 
@@ -67,6 +68,19 @@ function renderAgents(agents: Agent[], initialEntry = "/") {
   return within(container);
 }
 
+/** One agent's page, with its memberships and tokens settled and empty. */
+function renderAgent(agents: Agent[], login: string) {
+  const client = testQueryClient();
+  client.setQueryData(agentsQuery.queryKey, agents);
+  client.setQueryData(agentMembershipsQuery.queryKey, {
+    memberships: [],
+    manageable_projects: [],
+  });
+  vi.spyOn(api, "listAgentTokens").mockResolvedValue([]);
+  const rendered = renderWithProviders(<AgentSettings login={login} />, client);
+  return { view: within(rendered.container), router: rendered.router };
+}
+
 describe("agents settings page (T-205)", () => {
   it("shows only active agents by default, with both segment counts", async () => {
     const view = renderAgents([PROBE, HELPER, RETIRED]);
@@ -78,13 +92,13 @@ describe("agents settings page (T-205)", () => {
     expect(view.queryByText("@retired-bot")).toBeNull();
   });
 
-  it("puts the display name first and the login in a Handle column", async () => {
+  it("puts the display name first and the login beside it", async () => {
     const view = renderAgents([PROBE, RETIRED]);
 
-    expect(await view.findByText("Handle")).toBeTruthy();
-    // Both halves of the identity are on the row, each in its own column.
-    expect(view.getByText("Probe Bot 探针")).toBeTruthy();
-    expect(view.getByText("@probe-bot")).toBeTruthy();
+    const name = await view.findByText("Probe Bot 探针");
+    // Both halves of the identity share the first cell, as on Members.
+    expect(name.closest("td")).toBe(view.getByText("@probe-bot").closest("td"));
+    expect(view.queryByText("Handle")).toBeNull();
     // The duplicated display-name column and the State column are gone.
     expect(view.queryByText("Display name")).toBeNull();
     expect(view.queryByText("State")).toBeNull();
@@ -99,10 +113,6 @@ describe("agents settings page (T-205)", () => {
 
     await waitFor(() => expect(view.queryByText("@probe-bot")).toBeNull());
     expect(view.getByText("@retired-bot")).toBeTruthy();
-    // A deactivated row offers Enable instead of Tokens/Disable.
-    expect(view.getByText("Enable")).toBeTruthy();
-    expect(view.queryByText("Disable")).toBeNull();
-    expect(view.getByText("Edit")).toBeTruthy();
   });
 
   it("lands on the segment named by the URL", async () => {
@@ -129,34 +139,116 @@ describe("agents settings page (T-205)", () => {
     expect(view.queryByText(/^Deactivated /)).toBeNull();
   });
 
-  // Owning an agent is enough to read its page (T-410), which is what let
-  // this row be linked at all. Each row is searched on its own and the two
-  // agents carry different logins, so one row's anchor cannot stand in for
-  // the other's; dropping the link leaves an empty list here.
-  it("links each agent's chip to that agent's own page (T-391)", async () => {
+  // Each row is searched on its own and the two agents carry different
+  // logins, so one row's anchor cannot stand in for the other's.
+  it("links each row to that agent's settings page (T-704)", async () => {
     const view = renderAgents([PROBE, HELPER]);
-    await view.findByText("Handle");
+    await view.findByText("@probe-bot");
 
-    const userLinksIn = (login: string) =>
-      [
-        ...(
-          view.getByText(`@${login}`).closest("tr") as HTMLElement
-        ).querySelectorAll('a[href^="/users/"]'),
-      ].map((a) => a.getAttribute("href"));
+    const linksIn = (login: string) =>
+      new Set(
+        [
+          ...(
+            view.getByText(`@${login}`).closest("tr") as HTMLElement
+          ).querySelectorAll("a"),
+        ].map((a) => a.getAttribute("href")),
+      );
 
-    expect(userLinksIn("probe-bot")).toEqual(["/users/probe-bot"]);
-    expect(userLinksIn("helper-bot")).toEqual(["/users/helper-bot"]);
+    expect(linksIn("probe-bot")).toEqual(
+      new Set(["/settings/agents/probe-bot"]),
+    );
+    expect(linksIn("helper-bot")).toEqual(
+      new Set(["/settings/agents/helper-bot"]),
+    );
   });
 });
 
-describe("agent dialog forms with a legal 64-character login", () => {
+describe("one agent's page (T-704)", () => {
+  // Owning an agent is enough to read its public page (T-410); the row on
+  // the list now leads here, so this heading is what keeps that link (T-391).
+  it("links the agent's name to its public page", async () => {
+    const { view } = renderAgent([PROBE, HELPER], "helper-bot");
+
+    const heading = await view.findByRole("heading", { level: 1 });
+    expect(heading.querySelector("a")?.getAttribute("href")).toBe(
+      "/users/helper-bot",
+    );
+    expect(view.getByText("@helper-bot")).toBeTruthy();
+  });
+
+  it("lays out projects, tokens and Disable for an active agent", async () => {
+    const disable = vi.spyOn(api, "disableAgent").mockResolvedValue(undefined);
+    const { view } = renderAgent([PROBE], "probe-bot");
+
+    expect(
+      await view.findByRole("region", { name: "Projects for probe-bot" }),
+    ).toBeTruthy();
+    expect(
+      view.getByRole("region", { name: "Tokens for probe-bot" }),
+    ).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Enable" })).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Disable" }));
+    await waitFor(() =>
+      expect(disable).toHaveBeenCalledExactlyOnceWith(PROBE.id),
+    );
+  });
+
+  it("offers Enable instead of tokens and Disable for a disabled agent", async () => {
+    const enable = vi.spyOn(api, "enableAgent").mockResolvedValue(RETIRED);
+    const { view } = renderAgent([PROBE, RETIRED], "retired-bot");
+
+    fireEvent.click(await view.findByRole("button", { name: "Enable" }));
+    await waitFor(() =>
+      expect(enable).toHaveBeenCalledExactlyOnceWith(RETIRED.id),
+    );
+    expect(
+      view.getByRole("region", { name: "Projects for retired-bot" }),
+    ).toBeTruthy();
+    expect(view.queryByRole("region", { name: /^Tokens/ })).toBeNull();
+    expect(view.queryByRole("button", { name: "Disable" })).toBeNull();
+    // Back goes to the segment this agent is listed under.
+    expect(
+      view.getByRole("link", { name: "Agents" }).getAttribute("href"),
+    ).toBe("/settings/agents?state=deactivated");
+  });
+
+  it("says so when the login names none of my agents", async () => {
+    const { view } = renderAgent([PROBE], "someone-else");
+
+    expect(
+      await view.findByText("You have no agent called @someone-else."),
+    ).toBeTruthy();
+  });
+
+  it("follows a rename to the new address", async () => {
+    vi.spyOn(api, "updateAgent").mockResolvedValue({
+      ...PROBE,
+      login: "probe-two",
+    });
+    const { view, router } = renderAgent([PROBE], "probe-bot");
+
+    fireEvent.click(await view.findByRole("button", { name: "Edit" }));
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Edit probe-bot" }),
+    );
+    fireEvent.change(dialog.getByRole("textbox", { name: "Login" }), {
+      target: { value: "probe-two" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/settings/agents/probe-two"),
+    );
+  });
+});
+
+describe("agent forms with a legal 64-character login", () => {
   const longAgent = makeAgent("a".repeat(64), "Long Login Bot");
 
   it("keeps the complete edit title and saves only the changed field", async () => {
     const update = vi
       .spyOn(api, "updateAgent")
       .mockResolvedValue({ ...longAgent, display_name: "Renamed Bot" });
-    const view = renderAgents([longAgent]);
+    const { view } = renderAgent([longAgent], longAgent.login);
     fireEvent.click(await view.findByRole("button", { name: "Edit" }));
     const dialog = within(
       await screen.findByRole("dialog", { name: `Edit ${longAgent.login}` }),
@@ -195,12 +287,11 @@ describe("agent dialog forms with a legal 64-character login", () => {
       scopes: [],
     });
     renderWithProviders(
-      <AgentTokensDialog agent={longAgent} />,
+      <AgentTokensSection agent={longAgent} />,
       testQueryClient(),
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
     const dialog = within(
-      await screen.findByRole("dialog", {
+      await screen.findByRole("region", {
         name: `Tokens for ${longAgent.login}`,
       }),
     );
@@ -222,7 +313,7 @@ describe("agent dialog forms with a legal 64-character login", () => {
   });
 });
 
-describe("agent tokens dialog · load failure (T-376)", () => {
+describe("agent tokens section · load failure (T-376)", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("offers Retry and shows the empty state after a cold failure", async () => {
@@ -231,9 +322,8 @@ describe("agent tokens dialog · load failure (T-376)", () => {
       .mockRejectedValueOnce(new Error("token store unreachable"))
       .mockResolvedValueOnce([]);
     const client = testQueryClient();
-    renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
-    const dialog = await screen.findByRole("dialog", {
+    renderWithProviders(<AgentTokensSection agent={PROBE} />, client);
+    const dialog = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     const failure = await within(dialog).findByRole("status");
@@ -246,18 +336,17 @@ describe("agent tokens dialog · load failure (T-376)", () => {
   });
 });
 
-describe("agent tokens dialog · refresh failure", () => {
-  it("keeps a warm token list visible and offers a dialog-local retry", async () => {
+describe("agent tokens section · refresh failure", () => {
+  it("keeps a warm token list visible and offers a section-local retry", async () => {
     const token = AUTOMATION;
     const queryKey = ["agent-tokens", PROBE.id] as const;
     const list = vi
       .spyOn(api, "listAgentTokens")
       .mockResolvedValueOnce([token]);
     const client = testQueryClient();
-    renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);
+    renderWithProviders(<AgentTokensSection agent={PROBE} />, client);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Tokens/ }));
-    const dialog = await screen.findByRole("dialog", {
+    const dialog = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     expect(
@@ -302,9 +391,8 @@ describe("agent tokens dialog · refresh failure", () => {
       );
     const client = testQueryClient();
     const queryKey = ["agent-tokens", PROBE.id] as const;
-    renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
-    const dialog = await screen.findByRole("dialog", {
+    renderWithProviders(<AgentTokensSection agent={PROBE} />, client);
+    const dialog = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     expect(await within(dialog).findByText("No active tokens.")).toBeTruthy();
@@ -329,9 +417,8 @@ describe("agent tokens dialog · refresh failure", () => {
       );
     const client = testQueryClient();
     const queryKey = ["agent-tokens", PROBE.id] as const;
-    renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
-    const dialog = await screen.findByRole("dialog", {
+    renderWithProviders(<AgentTokensSection agent={PROBE} />, client);
+    const dialog = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     expect(
@@ -363,9 +450,8 @@ describe("agent tokens dialog · refresh failure", () => {
       );
     const client = testQueryClient();
     const queryKey = ["agent-tokens", PROBE.id] as const;
-    renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
-    const dialog = await screen.findByRole("dialog", {
+    renderWithProviders(<AgentTokensSection agent={PROBE} />, client);
+    const dialog = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     expect(
@@ -406,9 +492,8 @@ describe("agent tokens dialog · refresh failure", () => {
       .mockImplementationOnce(() => pendingRetry);
     const client = testQueryClient();
     const queryKey = ["agent-tokens", PROBE.id] as const;
-    renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
-    const dialog = await screen.findByRole("dialog", {
+    renderWithProviders(<AgentTokensSection agent={PROBE} />, client);
+    const dialog = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     expect(
@@ -451,7 +536,7 @@ describe("agent tokens dialog · refresh failure", () => {
   });
 });
 
-describe("agent tokens dialog · identity and one-time secret", () => {
+describe("agent tokens section · identity and one-time secret", () => {
   it("does not carry a token or latched refresh failure to a different agent id", async () => {
     const helperToken = {
       ...AUTOMATION,
@@ -471,6 +556,13 @@ describe("agent tokens dialog · identity and one-time secret", () => {
       )
       .mockImplementationOnce(() => pendingHelper);
     const client = testQueryClient();
+    client.setQueryData(agentsQuery.queryKey, [PROBE, HELPER]);
+    client.setQueryData(agentMembershipsQuery.queryKey, {
+      memberships: [],
+      manageable_projects: [],
+    });
+    // The page itself, so the key that separates two agents' sections is
+    // the page's own and not one this test supplies.
     function SwitchableDialog() {
       const [agent, setAgent] = useState(PROBE);
       return (
@@ -478,13 +570,12 @@ describe("agent tokens dialog · identity and one-time secret", () => {
           <button type="button" onClick={() => setAgent(HELPER)}>
             Switch agent
           </button>
-          <AgentTokensDialog agent={agent} />
+          <AgentSettings login={agent.login} />
         </>
       );
     }
     renderWithProviders(<SwitchableDialog />, client);
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
-    const probeDialog = await screen.findByRole("dialog", {
+    const probeDialog = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     expect(
@@ -503,8 +594,7 @@ describe("agent tokens dialog · identity and one-time secret", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Switch agent", hidden: true }),
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
-    const helperDialog = await screen.findByRole("dialog", {
+    const helperDialog = await screen.findByRole("region", {
       name: `Tokens for ${HELPER.login}`,
     });
     expect(
@@ -542,7 +632,57 @@ describe("agent tokens dialog · identity and one-time secret", () => {
     expect(list.mock.calls).toEqual([[PROBE.id], [PROBE.id], [HELPER.id]]);
   });
 
-  it("forgets an issued token's plaintext on close while keeping the listed prefix", async () => {
+  it("does not carry one agent's new plaintext onto another agent's page", async () => {
+    vi.spyOn(api, "listAgentTokens").mockResolvedValue([]);
+    vi.spyOn(api, "issueAgentToken").mockResolvedValueOnce({
+      id: 74,
+      name: "cli",
+      token: "todou_at_probe_only_secret",
+      prefix: "td_probe_only",
+      expires_at: null,
+      scopes: [],
+    });
+    const client = testQueryClient();
+    client.setQueryData(agentsQuery.queryKey, [PROBE, HELPER]);
+    client.setQueryData(agentMembershipsQuery.queryKey, {
+      memberships: [],
+      manageable_projects: [],
+    });
+    function Switchable() {
+      const [login, setLogin] = useState(PROBE.login);
+      return (
+        <>
+          <button type="button" onClick={() => setLogin(HELPER.login)}>
+            Switch agent
+          </button>
+          <AgentSettings login={login} />
+        </>
+      );
+    }
+    renderWithProviders(<Switchable />, client);
+    const probe = within(
+      await screen.findByRole("region", { name: `Tokens for ${PROBE.login}` }),
+    );
+    fireEvent.change(probe.getByRole("textbox", { name: "Token name" }), {
+      target: { value: "cli" },
+    });
+    fireEvent.click(probe.getByRole("button", { name: "Issue" }));
+    expect((await probe.findByTestId("token-plaintext")).textContent).toBe(
+      "todou_at_probe_only_secret",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent" }));
+    const helper = within(
+      await screen.findByRole("region", { name: `Tokens for ${HELPER.login}` }),
+    );
+    expect(helper.queryByTestId("token-plaintext")).toBeNull();
+    expect(helper.getByRole("textbox", { name: "Token name" })).toHaveProperty(
+      "value",
+      "",
+    );
+  });
+
+  it("forgets an issued token's plaintext on leaving while keeping the listed prefix", async () => {
     const listed = {
       ...AUTOMATION,
       id: 73,
@@ -561,9 +701,19 @@ describe("agent tokens dialog · identity and one-time secret", () => {
       scopes: [],
     });
     const client = testQueryClient();
-    renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);
-    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
-    const dialog = await screen.findByRole("dialog", {
+    function LeaveAndReturn() {
+      const [here, setHere] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setHere((h) => !h)}>
+            {here ? "Leave" : "Return"}
+          </button>
+          {here && <AgentTokensSection agent={PROBE} />}
+        </>
+      );
+    }
+    renderWithProviders(<LeaveAndReturn />, client);
+    const dialog = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     expect(await within(dialog).findByText("No active tokens.")).toBeTruthy();
@@ -579,10 +729,10 @@ describe("agent tokens dialog · identity and one-time secret", () => {
       await within(dialog).findByRole("cell", { name: "cli" }),
     ).toBeTruthy();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "Tokens" }));
-    const reopened = await screen.findByRole("dialog", {
+    fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+    await waitFor(() => expect(screen.queryByRole("region")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Return" }));
+    const reopened = await screen.findByRole("region", {
       name: `Tokens for ${PROBE.login}`,
     });
     expect(within(reopened).queryByTestId("token-plaintext")).toBeNull();

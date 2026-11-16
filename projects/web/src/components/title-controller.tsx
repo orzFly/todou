@@ -17,6 +17,7 @@ function titleFor(
     issueTitle?: string;
     refPrefix: string | null;
     refLeads: boolean;
+    login?: string;
   },
 ): string {
   const ref = formatRef(ctx.refPrefix, ctx.issueNumber ?? 0);
@@ -62,6 +63,8 @@ function titleFor(
       return "Inbox settings · todou";
     case "/authed/settings/agents":
       return "Agents · todou";
+    case "/authed/settings/agents/$login":
+      return `${ctx.login ?? ""} · Agents · todou`;
     case "/authed/settings/tokens":
       return "Personal tokens · todou";
     case "/authed/cli-auth":
@@ -83,9 +86,14 @@ export function TitleController() {
   const match = useRouterState({
     select: (s) => s.matches[s.matches.length - 1],
   });
-  const { slug, number: numberParam } = (match?.params ?? {}) as {
+  const {
+    slug,
+    number: numberParam,
+    login,
+  } = (match?.params ?? {}) as {
     slug?: string;
     number?: string;
+    login?: string;
   };
   const issueNumber = numberParam ? Number(numberParam) : undefined;
 
@@ -107,6 +115,7 @@ export function TitleController() {
     issueTitle: issue.data?.title,
     refPrefix,
     refLeads,
+    login,
   });
 
   useEffect(() => {

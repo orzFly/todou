@@ -1,42 +1,28 @@
 import {
   useMutation,
-  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { useNavigate, useSearch } from "@tanstack/react-router";
-import type { Agent, AgentUpdateInput, TokenCreated } from "@todou/shared";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import type { Agent } from "@todou/shared";
 import {
-  KeyIcon,
-  PencilIcon,
+  ChevronRightIcon,
   PlusIcon,
   PowerIcon,
   PowerOffIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { agentsQuery, api, myTokensQuery } from "@/api/queries.ts";
+import { agentsQuery, api } from "@/api/queries.ts";
 import {
-  AgentProjectsCell,
   AgentProjectsNotice,
-} from "@/components/shared/agent-projects-dialog.tsx";
-import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
-import {
-  LoadFailure,
-  RefreshFailure,
-} from "@/components/shared/load-failure.tsx";
-import {
-  expiresAtFrom,
-  TokenExpirySelect,
-} from "@/components/shared/token-expiry-select.tsx";
-import { TokenReveal } from "@/components/shared/token-reveal.tsx";
-import { TokenTable } from "@/components/shared/token-table.tsx";
+  AgentProjectsSummary,
+} from "@/components/shared/agent-projects.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -52,7 +38,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
 type AgentSegment = "active" | "deactivated";
@@ -110,10 +95,9 @@ export function AgentsSettingsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Agent</TableHead>
-                      <TableHead>Handle</TableHead>
+                      <TableHead className="w-[45%]">Agent</TableHead>
                       <TableHead>Projects</TableHead>
-                      <TableHead className="w-56" />
+                      <TableHead className="w-10" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -169,181 +153,46 @@ function AgentStateSegment({
   );
 }
 
+/**
+ * The whole row goes to the agent's page. Only the first cell's link is in
+ * the tab order and the accessibility tree; the other two are the same
+ * destination, there so that a click or a middle-click anywhere on the row
+ * behaves like one on a link.
+ */
 function AgentRow({ agent }: { agent: Agent }) {
-  const queryClient = useQueryClient();
-  const disable = useMutation({
-    mutationFn: () => api.disableAgent(agent.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-      toast.success(`${agent.login} disabled; its tokens were revoked.`);
-    },
-    onError: (error) => toast.error(error.message),
-  });
-  const enable = useMutation({
-    mutationFn: () => api.enableAgent(agent.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-      toast.success(
-        `${agent.login} re-enabled. Old tokens stay revoked — issue a new one.`,
-      );
-    },
-    onError: (error) => toast.error(error.message),
-  });
-
-  const disabled = agent.disabled_at !== null;
+  const to = "/settings/agents/$login";
+  const params = { login: agent.login };
+  const cellLink = "flex min-h-12 items-center px-2 py-2";
   return (
     <TableRow>
-      <TableCell>
-        <UserChip user={agent} />
+      <TableCell className="p-0">
+        <Link to={to} params={params} className={cellLink}>
+          <UserChip user={agent} showLogin link={false} />
+        </Link>
       </TableCell>
-      <TableCell>
-        <span className="text-sm text-muted-foreground">@{agent.login}</span>
+      <TableCell className="max-w-0 p-0">
+        <Link
+          to={to}
+          params={params}
+          className={cellLink}
+          tabIndex={-1}
+          aria-hidden
+        >
+          <AgentProjectsSummary agent={agent} />
+        </Link>
       </TableCell>
-      <TableCell>
-        <AgentProjectsCell agent={agent} />
-      </TableCell>
-      <TableCell>
-        <div className="flex justify-end gap-2">
-          <EditAgentDialog agent={agent} />
-          {disabled ? (
-            <Button variant="outline" size="sm" onClick={() => enable.mutate()}>
-              <PowerIcon className="size-3.5" /> Enable
-            </Button>
-          ) : (
-            <>
-              <AgentTokensDialog agent={agent} />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => disable.mutate()}
-              >
-                <PowerOffIcon className="size-3.5" /> Disable
-              </Button>
-            </>
-          )}
-        </div>
+      <TableCell className="p-0">
+        <Link
+          to={to}
+          params={params}
+          className={cn(cellLink, "justify-end text-muted-foreground")}
+          tabIndex={-1}
+          aria-hidden
+        >
+          <ChevronRightIcon className="size-4" />
+        </Link>
       </TableCell>
     </TableRow>
-  );
-}
-
-function EditAgentDialog({ agent }: { agent: Agent }) {
-  const [open, setOpen] = useState(false);
-  const [login, setLogin] = useState(agent.login);
-  const [displayName, setDisplayName] = useState(agent.display_name);
-  const queryClient = useQueryClient();
-
-  // The agent's identity is denormalized into issue/timeline payloads
-  // everywhere — drop the whole cache instead of chasing keys.
-  const applyUpdate = () => queryClient.invalidateQueries();
-
-  const save = useMutation({
-    mutationFn: () => {
-      const patch: AgentUpdateInput = {};
-      if (login !== agent.login) patch.login = login;
-      if (displayName !== agent.display_name) {
-        patch.display_name = displayName;
-      }
-      return api.updateAgent(agent.id, patch);
-    },
-    onSuccess: () => {
-      applyUpdate();
-      setOpen(false);
-      toast.success("Agent profile updated.");
-    },
-    onError: (error) => toast.error(error.message),
-  });
-  const upload = useMutation({
-    mutationFn: (file: File) => api.uploadAgentAvatar(agent.id, file),
-    onSuccess: () => {
-      applyUpdate();
-      toast.success("Avatar updated.");
-    },
-    onError: (error) => toast.error(error.message),
-  });
-  const removeAvatar = useMutation({
-    mutationFn: () => api.deleteAgentAvatar(agent.id),
-    onSuccess: () => {
-      applyUpdate();
-      toast.success("Avatar removed.");
-    },
-    onError: (error) => toast.error(error.message),
-  });
-
-  const dirty = login !== agent.login || displayName !== agent.display_name;
-
-  function reset(next: boolean) {
-    setOpen(next);
-    if (next) {
-      setLogin(agent.login);
-      setDisplayName(agent.display_name);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={reset}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <PencilIcon className="size-3.5" /> Edit
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto">
-        <DialogHeader className="min-w-0 pr-7">
-          <DialogTitle className="min-w-0 leading-normal [overflow-wrap:anywhere]">
-            Edit {agent.login}
-          </DialogTitle>
-          <DialogDescription>
-            Renames apply everywhere immediately; scripts using the old login by
-            hand (e.g. --assignee) need updating.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="min-w-0 space-y-4">
-          <AvatarEditor
-            subject={{
-              name: agent.display_name,
-              imageUrl: agent.avatar_url,
-            }}
-            onUpload={(file) => upload.mutate(file)}
-            onRemove={() => removeAvatar.mutate()}
-            pending={upload.isPending || removeAvatar.isPending}
-          />
-          <form
-            className="min-w-0 space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (dirty) save.mutate();
-            }}
-          >
-            <div className="space-y-2">
-              <Label htmlFor="agent-edit-login">Login</Label>
-              <Input
-                id="agent-edit-login"
-                value={login}
-                onChange={(e) => setLogin(e.target.value)}
-                pattern="[a-z0-9][a-z0-9-]*"
-                maxLength={64}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="agent-edit-display">Display name</Label>
-              <Input
-                id="agent-edit-display"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                maxLength={200}
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={!dirty || save.isPending}>
-                Save changes
-              </Button>
-            </DialogFooter>
-          </form>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -408,148 +257,6 @@ function CreateAgentDialog() {
               Create agent
             </Button>
           </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export function AgentTokensDialog({ agent }: { agent: Agent }) {
-  return <AgentTokensDialogState key={agent.id} agent={agent} />;
-}
-
-function AgentTokensDialogState({ agent }: { agent: Agent }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [expiry, setExpiry] = useState("never");
-  const [created, setCreated] = useState<TokenCreated | null>(null);
-  const queryClient = useQueryClient();
-  const tokenQueryKey = ["agent-tokens", agent.id] as const;
-
-  const tokens = useQuery({
-    queryKey: tokenQueryKey,
-    queryFn: () => api.listAgentTokens(agent.id),
-    enabled: open,
-  });
-  const { replace, notice } = useReadFailure(
-    [tokens.isError ? tokens.error : null],
-    tokens.data !== undefined,
-    tokenQueryKey,
-  );
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: tokenQueryKey });
-    // Personal tokens lists this agent's tokens as well (T-560).
-    queryClient.invalidateQueries({ queryKey: myTokensQuery.queryKey });
-  };
-
-  const issue = useMutation({
-    mutationFn: () =>
-      api.issueAgentToken(agent.id, {
-        name,
-        expires_at: expiresAtFrom(expiry),
-      }),
-    onSuccess: (token) => {
-      setCreated(token);
-      setName("");
-      setExpiry("never");
-      invalidate();
-    },
-    onError: (error) => toast.error(error.message),
-  });
-  const revoke = useMutation({
-    mutationFn: (tokenId: number) => api.revokeAgentToken(agent.id, tokenId),
-    onSuccess: invalidate,
-    onError: (error) => toast.error(error.message),
-  });
-
-  function reset(next: boolean) {
-    setOpen(next);
-    if (!next) {
-      // The plaintext exists only inside this dialog — closing forgets it.
-      setCreated(null);
-      setName("");
-      setExpiry("never");
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={reset}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <KeyIcon className="size-3.5" /> Tokens
-        </Button>
-      </DialogTrigger>
-      <DialogContent
-        className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[min(42rem,calc(100%-2rem))]"
-        aria-describedby={undefined}
-      >
-        <DialogHeader className="min-w-0 pr-7">
-          <DialogTitle className="min-w-0 leading-normal [overflow-wrap:anywhere]">
-            Tokens for {agent.login}
-          </DialogTitle>
-        </DialogHeader>
-
-        {replace !== null ? (
-          <div className="py-3">
-            <LoadFailure
-              message={replace}
-              detail={replace}
-              onRetry={() => tokens.refetch()}
-              retrying={tokens.isFetching}
-            />
-          </div>
-        ) : tokens.data === undefined ? (
-          <p className="py-3 text-sm text-muted-foreground">loading…</p>
-        ) : (
-          <>
-            {notice !== null && (
-              <RefreshFailure
-                what={`tokens for ${agent.login}`}
-                detail={notice}
-                onRetry={() => tokens.refetch()}
-                retrying={tokens.isFetching}
-              />
-            )}
-            <TokenTable
-              tokens={tokens.data}
-              onRevoke={(token) => revoke.mutate(token.id)}
-            />
-          </>
-        )}
-
-        {created && <TokenReveal token={created} />}
-
-        <form
-          className="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (name.trim()) issue.mutate();
-          }}
-        >
-          <Label htmlFor="token-name" className="sr-only">
-            Token name
-          </Label>
-          <Input
-            id="token-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="New token name (e.g. ci)"
-            className="w-full sm:w-56"
-            required
-          />
-          <TokenExpirySelect
-            value={expiry}
-            onChange={setExpiry}
-            className="w-full sm:w-36"
-          />
-          <Button
-            type="submit"
-            size="sm"
-            className="w-full sm:w-auto"
-            disabled={issue.isPending}
-          >
-            <PlusIcon className="size-3.5" /> Issue
-          </Button>
         </form>
       </DialogContent>
     </Dialog>

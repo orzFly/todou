@@ -462,7 +462,7 @@
       "guarded": false
     },
     {
-      "id": "projects/web/src/components/shared/agent-projects-dialog.tsx :: read ROLE_RANK[option] #1",
+      "id": "projects/web/src/components/shared/agent-projects.tsx :: read ROLE_RANK[option] #1",
       "guarded": false
     },
     {
@@ -630,10 +630,6 @@
       "guarded": false
     },
     {
-      "id": "projects/web/src/lib/roles.ts :: mapping ROLE_DOT #1",
-      "guarded": true
-    },
-    {
       "id": "projects/web/src/lib/slash-commands.ts :: mapping CROSSED_SUMMARY #1",
       "guarded": true
     },
@@ -765,7 +761,7 @@
     "projects/web/src/components/search/highlight.tsx :: read VALUE_CLASS[verdictOf(part.key, value.value, known)] #1",
     "projects/web/src/components/search/suggestions.ts :: read KEY_HINT[key] #1",
     "projects/web/src/components/search/suggestions.ts :: read SEARCH_QUALIFIERS[key] #1",
-    "projects/web/src/components/shared/agent-projects-dialog.tsx :: read ROLE_RANK[option] #1",
+    "projects/web/src/components/shared/agent-projects.tsx :: read ROLE_RANK[option] #1",
     "projects/web/src/components/shared/return-link.tsx :: switch view.target.kind #1",
     "projects/web/src/components/shared/role-permissions-table.tsx :: read ROLE_RANK[highest] #1",
     "projects/web/src/components/shared/role-permissions-table.tsx :: read ROLE_RANK[min] #1",

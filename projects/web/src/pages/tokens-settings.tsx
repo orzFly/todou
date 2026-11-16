@@ -126,7 +126,7 @@ export function TokensSettingsPage() {
   const queryClient = useQueryClient();
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: myTokensQuery.queryKey });
-    // The Agents page's per-agent Tokens dialog caches under this prefix.
+    // Each agent's page lists its tokens under this prefix.
     queryClient.invalidateQueries({ queryKey: ["agent-tokens"] });
   };
 

@@ -13,8 +13,8 @@ import {
   membersQuery,
   meQuery,
 } from "../src/api/queries.ts";
-import { AgentProjectsCell } from "../src/components/shared/agent-projects-dialog.tsx";
-import { cappedRole, ROLE_DOT, roleDotOf } from "../src/lib/roles.ts";
+import { AgentProjectsSection } from "../src/components/shared/agent-projects.tsx";
+import { cappedRole } from "../src/lib/roles.ts";
 import { MembersSection } from "../src/pages/project-settings.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -36,9 +36,8 @@ const bot: Agent = {
 
 // Casts model wire data that this client's compile-time union cannot describe.
 describe("role values from newer servers", () => {
-  it("preserves every known role cap and dot", () => {
+  it("preserves every known role cap", () => {
     for (const want of MEMBER_ROLES) {
-      expect(roleDotOf(want)).toBe(ROLE_DOT[want]);
       for (const ceiling of MEMBER_ROLES) {
         expect(cappedRole(want, ceiling)).toBe(
           ROLE_RANK[want] <= ROLE_RANK[ceiling] ? want : ceiling,
@@ -51,7 +50,6 @@ describe("role values from newer servers", () => {
 
   it("never returns an unknown desired role or ceiling for submission", () => {
     for (const unknown of [future, "constructor", "__proto__", "toString"]) {
-      expect(roleDotOf(unknown)).toBe("bg-muted-foreground");
       for (const role of MEMBER_ROLES) {
         expect(cappedRole(unknown as MemberRole, role)).toBeNull();
         expect(cappedRole(role, unknown as MemberRole)).toBeNull();
@@ -64,7 +62,6 @@ describe("role values from newer servers", () => {
 
   it("rejects missing required data even beside an unknown or absent ceiling", () => {
     for (const invalid of [undefined, null, "", 0]) {
-      expect(() => roleDotOf(invalid as string)).toThrow(TypeError);
       for (const ceiling of ["admin", future, null, undefined] as const) {
         expect(() => cappedRole(invalid as MemberRole, ceiling)).toThrow(
           TypeError,
@@ -95,13 +92,10 @@ describe("role values from newer servers", () => {
           { id: 1, slug: "alpha", name: "Alpha", my_role: ceiling },
         ],
       });
-      renderWithProviders(<AgentProjectsCell agent={bot} />, client);
-      fireEvent.click(
-        await screen.findByRole("button", {
-          name: "Manage probe-bot's projects",
-        }),
+      renderWithProviders(<AgentProjectsSection agent={bot} />, client);
+      const dialog = within(
+        await screen.findByRole("region", { name: "Projects for probe-bot" }),
       );
-      const dialog = within(await screen.findByRole("dialog"));
       const select = dialog.getByRole("combobox", {
         name: "role in Alpha",
       }) as HTMLButtonElement;
@@ -122,13 +116,10 @@ describe("role values from newer servers", () => {
         { id: 1, slug: "alpha", name: "Alpha", my_role: future },
       ],
     });
-    renderWithProviders(<AgentProjectsCell agent={bot} />, client);
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Manage probe-bot's projects",
-      }),
+    renderWithProviders(<AgentProjectsSection agent={bot} />, client);
+    const dialog = within(
+      await screen.findByRole("region", { name: "Projects for probe-bot" }),
     );
-    const dialog = within(await screen.findByRole("dialog"));
     fireEvent.keyDown(
       dialog.getByRole("combobox", { name: "Project to add" }),
       { key: "ArrowDown" },

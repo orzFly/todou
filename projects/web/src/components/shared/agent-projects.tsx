@@ -7,7 +7,7 @@ import {
   ROLE_RANK,
   roleRankOf,
 } from "@todou/shared";
-import { PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentMembershipsQuery, api } from "@/api/queries.ts";
@@ -19,13 +19,6 @@ import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -33,71 +26,86 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cappedRole, roleDotOf } from "@/lib/roles.ts";
+import { cappedRole } from "@/lib/roles.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
-import { cn } from "@/lib/utils";
 
-const MAX_BADGES = 3;
+/** As many icons as the list cell draws before the count speaks for the rest. */
+const MAX_ICONS = 4;
 
 /**
- * The `Projects` column of the agents table, and the dialog behind it. Reads
- * the shared memberships query itself rather than taking rows as props, so
- * every row on the page answers from one cache entry and the page keeps a
- * three-line diff.
+ * The `Projects` cell of the agents list. Reads the shared memberships query
+ * itself rather than taking rows as props, so every row on the page answers
+ * from one cache entry.
  *
  * `useQuery`, not `useSuspenseQuery`: this is one supplementary column, and
  * a failing endpoint should not drop the whole page into an error boundary.
+ *
+ * Nothing here may be interactive: the cell sits inside the row's link, so
+ * each icon's project and role ride its native `title`.
  */
-export function AgentProjectsCell({ agent }: { agent: Agent }) {
+export function AgentProjectsSummary({ agent }: { agent: Agent }) {
   const memberships = useQuery(agentMembershipsQuery);
   const { replace } = useReadFailure(
     [memberships.isError ? memberships.error : null],
     memberships.data !== undefined,
     agentMembershipsQuery.queryKey,
   );
-  const mine = (memberships.data?.memberships ?? []).filter(
-    (m) => m.agent_id === agent.id,
+  const mine = useMemo(
+    () =>
+      (memberships.data?.memberships ?? []).filter(
+        (m) => m.agent_id === agent.id,
+      ),
+    [memberships.data, agent.id],
   );
+  // `useProjectRefs` memoizes on the array's identity.
+  const projects = useMemo(() => mine.map((m) => m.project), [mine]);
+  const refs = useProjectRefs(projects);
 
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <button
-          type="button"
-          aria-label={`Manage ${agent.login}'s projects`}
-          className="flex w-full cursor-pointer flex-wrap items-center gap-1 rounded-md px-1.5 py-1 text-left hover:bg-muted"
-        >
-          {replace !== null ? (
-            <span
-              className="text-sm text-muted-foreground"
-              title={`Could not load projects: ${replace}`}
-            >
-              —
-            </span>
-          ) : memberships.data === undefined ? (
-            <Skeleton className="h-5 w-28" />
-          ) : mine.length === 0 ? (
-            <span className="text-sm text-muted-foreground">No projects</span>
-          ) : (
-            <ProjectBadges memberships={mine} />
-          )}
-        </button>
-      </DialogTrigger>
-      <DialogContent
-        className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto"
-        aria-describedby={undefined}
+  if (replace !== null) {
+    return (
+      <span
+        className="text-sm text-muted-foreground"
+        title={`Could not load projects: ${replace}`}
       >
-        <DialogHeader className="min-w-0 pr-7">
-          <DialogTitle className="min-w-0 leading-normal [overflow-wrap:anywhere]">
-            Projects for {agent.login}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="min-w-0">
-          <AgentProjectsBody key={agent.id} agent={agent} />
-        </div>
-      </DialogContent>
-    </Dialog>
+        —
+      </span>
+    );
+  }
+  if (memberships.data === undefined) return <Skeleton className="h-5 w-28" />;
+  if (mine.length === 0) {
+    return (
+      <span className="truncate text-sm text-muted-foreground">
+        Not in any project
+      </span>
+    );
+  }
+  return (
+    <span className="flex min-w-0 items-center gap-2.5">
+      <span className="flex shrink-0 items-center gap-1">
+        {mine.slice(0, MAX_ICONS).map((m, i) => (
+          <ProjectIcon
+            key={m.project.id}
+            aria-hidden="true"
+            title={`${m.project.name} · ${m.role}`}
+            project={{
+              slug: m.project.slug,
+              name: m.project.name,
+              prefix: refs.get(m.project.slug)?.prefix ?? null,
+              icon_url: m.project.icon_url,
+            }}
+            // A phone-width column holds one icon and the count; the rest
+            // would push the count under the chevron.
+            className={i > 0 ? "@max-lg:hidden" : undefined}
+          />
+        ))}
+      </span>
+      {mine.length === 1 ? (
+        <span className="truncate text-sm">{mine[0].project.name}</span>
+      ) : (
+        <span className="shrink-0 text-sm">{mine.length} projects</span>
+      )}
+    </span>
   );
 }
 
@@ -121,51 +129,13 @@ export function AgentProjectsNotice() {
   );
 }
 
-/**
- * Nothing here may be interactive: the whole cell is already a button, and a
- * nested button is invalid HTML. That rules out a Radix `Tooltip`, whose
- * trigger is a button — so the role rides native `title`/`aria-label`.
- */
-function ProjectBadges({ memberships }: { memberships: AgentMembership[] }) {
-  const shown = memberships.slice(0, MAX_BADGES);
-  const rest = memberships.length - shown.length;
+/** The agent page's Projects section: every membership, editable in place. */
+export function AgentProjectsSection({ agent }: { agent: Agent }) {
   return (
-    <>
-      {shown.map((m) => (
-        <Badge
-          key={m.project.id}
-          variant="outline"
-          title={`${m.project.name} · ${m.role}`}
-          aria-label={`${m.project.name} · ${m.role}`}
-        >
-          <span
-            className={cn("size-1.5 rounded-full", roleDotOf(m.role))}
-            aria-hidden="true"
-          />
-          {/* Only a real image: two fallback letters at 14px are a smudge,
-              and this chip already carries the slug beside it. */}
-          {m.project.icon_url && (
-            <ProjectIcon
-              aria-hidden="true"
-              project={{
-                slug: m.project.slug,
-                name: m.project.name,
-                icon_url: m.project.icon_url,
-              }}
-              className="size-3.5"
-            />
-          )}
-          {m.project.slug}
-        </Badge>
-      ))}
-      {rest > 0 && (
-        <span className="text-xs text-muted-foreground">+{rest}</span>
-      )}
-      <SettingsIcon
-        className="size-3.5 shrink-0 text-muted-foreground"
-        aria-hidden="true"
-      />
-    </>
+    <section aria-label={`Projects for ${agent.login}`} className="space-y-3">
+      <h2 className="text-base font-semibold">Projects</h2>
+      <AgentProjectsBody key={agent.id} agent={agent} />
+    </section>
   );
 }
 
@@ -256,7 +226,7 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
           Not a member of any project yet.
         </p>
       ) : (
-        <div className="space-y-2">
+        <div className="divide-y rounded-lg border">
           {mine.map((m) => (
             <MembershipRow
               key={m.project.id}
@@ -272,7 +242,7 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
       )}
 
       {manageable.length > 0 && (
-        <div className="space-y-1 border-t pt-3">
+        <div className="space-y-1">
           {candidates.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No more projects to add.
@@ -357,7 +327,7 @@ function MembershipRow({
       ROLE_RANK[option] > ceilingRank &&
       option !== role);
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-h-12 items-center gap-2.5 py-2 pr-2 pl-3">
       <ProjectIcon
         aria-hidden="true"
         project={{
@@ -366,13 +336,10 @@ function MembershipRow({
           prefix,
           icon_url: project.icon_url,
         }}
-        className="size-6 shrink-0"
+        className="size-7 shrink-0"
       />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm">{project.name}</div>
-        <div className="truncate text-xs text-muted-foreground">
-          {project.slug}
-        </div>
+      <div className="min-w-0 flex-1 truncate text-sm font-medium">
+        {project.name}
       </div>
       {manageable ? (
         <>

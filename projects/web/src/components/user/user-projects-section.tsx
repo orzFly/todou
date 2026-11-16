@@ -7,12 +7,9 @@ import {
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { roleDotOf } from "@/lib/roles.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
-import { cn } from "@/lib/utils";
 
 /** Rows to occupy the list while the seats load, at the height one holds. */
 const SKELETONS = [0, 1, 2];
@@ -97,16 +94,12 @@ export function UserProjectsSection({ login }: { login: string }) {
                 <span className="min-w-0 flex-1 truncate font-medium">
                   {item.project.name}
                 </span>
-                <Badge variant="outline" className="shrink-0">
-                  <span
-                    className={cn(
-                      "size-1.5 rounded-full",
-                      roleDotOf(item.role),
-                    )}
-                    aria-hidden="true"
-                  />
+                <span
+                  data-slot="role"
+                  className="shrink-0 text-sm text-muted-foreground"
+                >
                   {item.role}
-                </Badge>
+                </span>
               </Link>
             </li>
           ))}

@@ -14,8 +14,10 @@ import type {
   MemberRole,
   ProjectBrief,
 } from "@todou/shared";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentMembershipsQuery, agentsQuery, api } from "../src/api/queries.ts";
+import { AgentProjectsSection } from "../src/components/shared/agent-projects.tsx";
 import { AgentsSettingsPage } from "../src/pages/agents-settings.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 import { expectVisible } from "./visibility.ts";
@@ -87,15 +89,37 @@ function renderPage(
   } else {
     client.setQueryData(agentMembershipsQuery.queryKey, data);
   }
-  renderWithProviders(<AgentsSettingsPage />, client);
+  renderWithProviders(<ListAndAgentPage agents={agents} />, client);
   return client;
 }
 
-async function openDialog() {
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Manage probe-bot's projects" }),
+/**
+ * The list beside one agent's Projects section, both live at once, the way
+ * the two pages share one cache entry across a navigation. A row's link
+ * would unmount the list, so the section is opened from a test-only button.
+ */
+function ListAndAgentPage({ agents }: { agents: Agent[] }) {
+  const [open, setOpen] = useState<Agent | null>(null);
+  return (
+    <>
+      <AgentsSettingsPage />
+      {agents.map((agent) => (
+        <button key={agent.id} type="button" onClick={() => setOpen(agent)}>
+          Open {agent.login}'s page
+        </button>
+      ))}
+      {open !== null && <AgentProjectsSection agent={open} />}
+    </>
   );
-  return within(await screen.findByRole("dialog"));
+}
+
+async function openAgentPage(login = "probe-bot") {
+  fireEvent.click(
+    await screen.findByRole("button", { name: `Open ${login}'s page` }),
+  );
+  return within(
+    await screen.findByRole("region", { name: `Projects for ${login}` }),
+  );
 }
 
 const invalidatedKeys = (spy: { mock: { calls: unknown[][] } }): string[] =>
@@ -154,16 +178,7 @@ describe("agent projects column (T-227)", () => {
       },
       [longAgent],
     );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: `Manage ${longAgent.login}'s projects`,
-      }),
-    );
-    const dialog = within(
-      await screen.findByRole("dialog", {
-        name: `Projects for ${longAgent.login}`,
-      }),
-    );
+    const dialog = await openAgentPage(longAgent.login);
     expect(dialog.getByText("read-only")).toBeTruthy();
     expect(
       dialog.queryByRole("combobox", { name: "role in Bobland" }),
@@ -184,13 +199,15 @@ describe("agent projects column (T-227)", () => {
     );
   });
 
-  it("badges each project with its role and counts the overflow", async () => {
+  it("draws an icon per project with its role, and counts past four", async () => {
+    const DELTA: ProjectBrief = { id: 4, slug: "delta", name: "Delta" };
     renderPage({
       memberships: [
         membership(ALPHA, "admin"),
         membership(BETA, "writer"),
         membership(GAMMA, "reader"),
         membership(OUTSIDE, "writer"),
+        membership(DELTA, "reporter"),
       ],
       manageable_projects: [ALPHA, BETA, GAMMA].map((p) => manageable(p)),
     });
@@ -198,15 +215,62 @@ describe("agent projects column (T-227)", () => {
     expect(await screen.findByTitle("Alpha · admin")).toBeTruthy();
     expect(screen.getByTitle("Beta · writer")).toBeTruthy();
     expect(screen.getByTitle("Gamma · reader")).toBeTruthy();
-    // The fourth is behind the counter, not dropped.
-    expect(screen.getByText("+1")).toBeTruthy();
-    expect(screen.queryByTitle("Bobland · writer")).toBeNull();
+    expect(screen.getByTitle("Bobland · writer")).toBeTruthy();
+    // The fifth is in the count, not drawn.
+    expect(screen.queryByTitle("Delta · reporter")).toBeNull();
+    expect(agentRow("probe-bot").getByText("5 projects")).toBeTruthy();
+  });
+
+  it("names the project when there is only one", async () => {
+    renderPage({
+      memberships: [membership(ALPHA, "writer")],
+      manageable_projects: [manageable(ALPHA)],
+    });
+
+    expect(await screen.findByTitle("Alpha · writer")).toBeTruthy();
+    expect(agentRow("probe-bot").getByText("Alpha")).toBeTruthy();
   });
 
   it("says so when the agent is in no project", async () => {
     renderPage({ memberships: [], manageable_projects: [] });
 
-    expect(await screen.findByText("No projects")).toBeTruthy();
+    expect(await screen.findByText("Not in any project")).toBeTruthy();
+  });
+
+  // T-704: the empty row was plain grey text the user could not tell was
+  // clickable. Every row — the empty one included — is a link to the
+  // agent's page, so the gesture and the browser's link affordances agree.
+  it("links every row to the agent's page, the empty one included", async () => {
+    renderPage(
+      {
+        memberships: [membership(OTHER_BOT, ALPHA, "writer")],
+        manageable_projects: [manageable(ALPHA)],
+      },
+      [BOT, OTHER_BOT],
+    );
+    await screen.findByText("Not in any project");
+
+    const hrefsIn = (login: string) =>
+      [
+        ...(
+          screen.getByText(`@${login}`).closest("tr") as HTMLElement
+        ).querySelectorAll("a"),
+      ].map((a) => a.getAttribute("href"));
+
+    expect(hrefsIn("probe-bot")).toEqual(
+      Array(3).fill("/settings/agents/probe-bot"),
+    );
+    expect(hrefsIn("other-bot")).toEqual(
+      Array(3).fill("/settings/agents/other-bot"),
+    );
+    // One stop per row for keyboard and screen-reader users.
+    const focusable = (login: string) =>
+      [
+        ...(
+          screen.getByText(`@${login}`).closest("tr") as HTMLElement
+        ).querySelectorAll("a"),
+      ].filter((a) => a.tabIndex >= 0 || !a.hasAttribute("aria-hidden"));
+    expect(focusable("probe-bot")).toHaveLength(1);
   });
 
   it("degrades to a dash when the endpoint fails, without taking the page down", async () => {
@@ -276,7 +340,7 @@ describe("agent projects column (T-227)", () => {
     );
   });
 
-  it("keeps the open dialog's own project and role after a warm-cache transient refetch failure", async () => {
+  it("keeps the agent page's own project and role after a warm-cache transient refetch failure", async () => {
     const client = renderPage(
       {
         memberships: [
@@ -287,7 +351,7 @@ describe("agent projects column (T-227)", () => {
       },
       [BOT, OTHER_BOT],
     );
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
     expect(dialog.getByText("Alpha")).toBeTruthy();
     expect(
       dialog.getByRole("combobox", { name: "role in Alpha" }).textContent,
@@ -327,7 +391,7 @@ describe("agent projects column (T-227)", () => {
     expect(dialog.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
-  it("retries the shared query from the dialog once and updates both rows and the open dialog", async () => {
+  it("retries the shared query from the agent page once and updates both rows and the page", async () => {
     const client = renderPage(
       {
         memberships: [
@@ -339,7 +403,7 @@ describe("agent projects column (T-227)", () => {
       [BOT, OTHER_BOT],
     );
     const table = await tableSurface();
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
     const probeRow = agentRow("probe-bot");
     const otherRow = agentRow("other-bot");
     expect(probeRow.getByTitle("Alpha · writer")).toBeTruthy();
@@ -394,7 +458,7 @@ describe("agent projects column (T-227)", () => {
       [BOT, OTHER_BOT],
     );
     const table = await tableSurface();
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
     const probeRow = agentRow("probe-bot");
     const otherRow = agentRow("other-bot");
     const memberships = await failWarmMemberships(
@@ -464,7 +528,7 @@ describe("agent projects column (T-227)", () => {
         [BOT, OTHER_BOT],
       );
       const table = await tableSurface();
-      const dialog = await openDialog();
+      const dialog = await openAgentPage();
       const probeRow = agentRow("probe-bot");
       const otherRow = agentRow("other-bot");
       expect(probeRow.getByTitle("Alpha · writer")).toBeTruthy();
@@ -496,7 +560,7 @@ describe("agent projects column (T-227)", () => {
     },
   );
 
-  it("keeps No projects and a single table notice after an empty success followed by a 500", async () => {
+  it("keeps Not in any project and a single table notice after an empty success followed by a 500", async () => {
     const client = renderPage({ memberships: [], manageable_projects: [] }, [
       BOT,
       OTHER_BOT,
@@ -504,16 +568,16 @@ describe("agent projects column (T-227)", () => {
     const table = await tableSurface();
     const probeRow = agentRow("probe-bot");
     const otherRow = agentRow("other-bot");
-    expect(probeRow.getByText("No projects")).toBeTruthy();
-    expect(otherRow.getByText("No projects")).toBeTruthy();
+    expect(probeRow.getByText("Not in any project")).toBeTruthy();
+    expect(otherRow.getByText("Not in any project")).toBeTruthy();
 
     await failWarmMemberships(
       client,
       500,
       "empty catalog temporarily unavailable",
     );
-    expect(probeRow.getByText("No projects")).toBeTruthy();
-    expect(otherRow.getByText("No projects")).toBeTruthy();
+    expect(probeRow.getByText("Not in any project")).toBeTruthy();
+    expect(otherRow.getByText("Not in any project")).toBeTruthy();
     const notice = await table.findByRole("status");
     expect(notice.textContent).toContain(
       "empty catalog temporarily unavailable",
@@ -542,23 +606,18 @@ describe("agent projects column (T-227)", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
-  it("collects the dialog's retry into the unified control (T-376)", async () => {
+  it("collects the section's retry into the unified control (T-376)", async () => {
     // The column's dash stays as it is (its message lives on the title);
-    // Column mount and the dialog body's error-retryOnMount both read this;
+    // Column mount and the section body's error-retryOnMount both read this;
     // every call rejects until Retry, so the failure line is stable.
     const memberships = vi
       .spyOn(api, "listAgentMemberships")
       .mockRejectedValue(new Error("upstream is down"));
     const client = testQueryClient();
     client.setQueryData(agentsQuery.queryKey, [BOT]);
-    renderWithProviders(<AgentsSettingsPage />, client);
+    renderWithProviders(<ListAndAgentPage agents={[BOT]} />, client);
 
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Manage probe-bot's projects",
-      }),
-    );
-    const dialog = within(await screen.findByRole("dialog"));
+    const dialog = await openAgentPage();
     expect(await dialog.findByText("upstream is down")).toBeTruthy();
     memberships.mockResolvedValueOnce({
       memberships: [],
@@ -578,7 +637,7 @@ describe("agent projects column (T-227)", () => {
       memberships: [membership(ALPHA, "writer"), membership(OUTSIDE, "reader")],
       manageable_projects: [ALPHA, BETA].map((p) => manageable(p)),
     });
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
 
     expect(
       dialog.getByRole("combobox", { name: "role in Alpha" }),
@@ -596,7 +655,7 @@ describe("agent projects column (T-227)", () => {
       memberships: [membership(ALPHA, "writer")],
       manageable_projects: [ALPHA, BETA, GAMMA].map((p) => manageable(p)),
     });
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
 
     fireEvent.keyDown(
       dialog.getByRole("combobox", { name: "Project to add" }),
@@ -617,7 +676,7 @@ describe("agent projects column (T-227)", () => {
       memberships: [membership(ALPHA, "writer")],
       manageable_projects: [ALPHA, BETA].map((p) => manageable(p)),
     });
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
 
     fireEvent.keyDown(
       dialog.getByRole("combobox", { name: "Project to add" }),
@@ -641,7 +700,7 @@ describe("agent projects column (T-227)", () => {
       manageable_projects: [manageable(ALPHA)],
     });
     const invalidate = vi.spyOn(client, "invalidateQueries");
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
 
     // Typeahead lands on the first role starting with the letter, which is
     // reporter now that it sits above reader in the list.
@@ -665,7 +724,7 @@ describe("agent projects column (T-227)", () => {
       memberships: [],
       manageable_projects: [manageable(BETA, "reporter")],
     });
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
 
     fireEvent.keyDown(
       dialog.getByRole("combobox", { name: "Project to add" }),
@@ -686,7 +745,7 @@ describe("agent projects column (T-227)", () => {
       memberships: [membership(ALPHA, "reader")],
       manageable_projects: [manageable(ALPHA, "reader")],
     });
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
 
     // The clamp has to reach the joined row too: widening the manageable set
     // is what first shows a reader their own agent's row, and unclamped it
@@ -716,7 +775,7 @@ describe("agent projects column (T-227)", () => {
       // ceiling from undefined.
       manageable_projects: [ALPHA, BETA] as never,
     });
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
 
     expect(
       (
@@ -746,7 +805,7 @@ describe("agent projects column (T-227)", () => {
       manageable_projects: [manageable(ALPHA)],
     });
     const invalidate = vi.spyOn(client, "invalidateQueries");
-    const dialog = await openDialog();
+    const dialog = await openAgentPage();
 
     fireEvent.click(dialog.getByRole("button", { name: "remove Alpha" }));
 
@@ -759,49 +818,40 @@ describe("agent projects column (T-227)", () => {
   });
 });
 
-describe("project icons in the agents table", () => {
-  /** The chip for a project in the collapsed cell. */
-  const chipFor = (name: string) =>
-    screen.getAllByLabelText(new RegExp(`^${name} ·`)).at(0) as HTMLElement;
-
-  it("draws no icon node on a 14px chip for a project with no icon", async () => {
-    // Two fallback letters are a smudge at this size, and the chip already
-    // carries the slug — so with no real image there is nothing to draw.
-    renderPage({
-      memberships: [membership(ALPHA, "writer")],
-      manageable_projects: [manageable(ALPHA)],
-    });
-    await screen.findByRole("button", { name: "Manage probe-bot's projects" });
-    expect(chipFor("Alpha").querySelector('[data-slot="avatar"]')).toBeNull();
-  });
-
-  it("draws one on a chip for a project that has an icon", async () => {
+describe("project icons on the agents list and the agent's page", () => {
+  it("draws a square icon for every project in the list, uploaded or not", async () => {
+    // The fallback is what the project switcher and every other project list
+    // draw, so a project without an upload is still recognisably itself.
     renderPage({
       memberships: [
         membership(
           { ...ALPHA, icon_url: "/api/projects/1/icon?v=a" },
           "writer",
         ),
+        membership(BETA, "reader"),
       ],
-      manageable_projects: [manageable(ALPHA)],
+      manageable_projects: [manageable(ALPHA), manageable(BETA)],
     });
-    await screen.findByRole("button", { name: "Manage probe-bot's projects" });
-    const icon = chipFor("Alpha").querySelector('[data-slot="avatar"]');
-    expect(icon).not.toBeNull();
-    // Square, so it never reads as one of the people elsewhere on this page.
-    expect(icon?.getAttribute("data-shape")).toBe("square");
+    for (const title of ["Alpha · writer", "Beta · reader"]) {
+      const icon = await screen.findByTitle(title);
+      expect(icon.getAttribute("data-slot")).toBe("avatar");
+      // Square, so it never reads as one of the people elsewhere on this page.
+      expect(icon.getAttribute("data-shape")).toBe("square");
+    }
+    expect(screen.getByTitle("Beta · reader").textContent).not.toBe("");
   });
 
-  it("draws an icon on every dialog row, icon or not", async () => {
-    // The 24px row has space for a fallback, so it is unconditional.
+  it("draws an icon on every row of the agent's Projects section", async () => {
     renderPage({
       memberships: [membership(ALPHA, "writer"), membership(BETA, "reader")],
       manageable_projects: [manageable(ALPHA), manageable(BETA)],
     });
-    await openDialog();
-    const dialog = screen.getByRole("dialog");
+    await openAgentPage();
+    const section = screen.getByRole("region", {
+      name: "Projects for probe-bot",
+    });
     expect(
-      dialog.querySelectorAll('[data-slot="avatar"][data-shape="square"]'),
+      section.querySelectorAll('[data-slot="avatar"][data-shape="square"]'),
     ).toHaveLength(2);
   });
 });

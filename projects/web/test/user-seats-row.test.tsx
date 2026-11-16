@@ -159,7 +159,7 @@ describe("the user page's seats (T-374)", () => {
     // control would satisfy a click assertion and silently drop both.
     expect(row.getAttribute("href")).toBe("/projects/homelab");
     expect(row.textContent).toContain("Homelab");
-    expect(textOf(row, "badge")).toBe("admin");
+    expect(textOf(row, "role")).toBe("admin");
     // Not interactive: the row is already one anchor, and a nested control
     // would both be invalid HTML and split it into two focusable things.
     expect(row.querySelector("button, a, input")).toBeNull();

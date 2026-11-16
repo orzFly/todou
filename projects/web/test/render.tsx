@@ -72,6 +72,15 @@ export function renderWithProviders(
     getParentRoute: () => rootRoute,
     path: "/inbox/muted",
   });
+  const agentsSettingsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/settings/agents",
+    validateSearch: (search: Record<string, unknown>) => search,
+  });
+  const agentSettingsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/settings/agents/$login",
+  });
   const issueRoute = createRoute({
     getParentRoute: () => projectRoute,
     path: "issues/$number",
@@ -96,6 +105,8 @@ export function renderWithProviders(
       userRoute,
       inboxRoute,
       mutedRoute,
+      agentsSettingsRoute,
+      agentSettingsRoute,
       projectRoute.addChildren([
         issueRoute,
         specRoute,

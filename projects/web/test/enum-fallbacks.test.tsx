@@ -8,7 +8,6 @@ import {
   specStatusStyle,
 } from "../src/components/issue/spec-entry.tsx";
 import { specReviewVerdictLabel } from "../src/components/spec/use-review-completion.ts";
-import { roleDotOf } from "../src/lib/roles.ts";
 
 describe("server enum fallbacks", () => {
   it("distinguishes no mute row from a row missing its required mode", () => {
@@ -55,14 +54,13 @@ describe("server enum fallbacks", () => {
     },
   );
 
-  it("keeps unknown review results, mute modes, and role dots readable", () => {
+  it("keeps unknown review results and mute modes readable", () => {
     expect(specReviewVerdictLabel("future_verdict")).toBe(
       'Reviewed ("future_verdict")',
     );
     expect(muteLabelOf("future_mute_mode")).toBe(
       'unknown mute mode ("future_mute_mode")',
     );
-    expect(roleDotOf("future_role")).toBe("bg-muted-foreground");
     expect(muteLabelOf("forever")).toBe("Muted");
     expect(muteLabelOf("until_activity")).toBe("Snoozed");
     expect(specReviewVerdictLabel("approve")).toBe("Approved");
@@ -82,7 +80,6 @@ describe("server enum fallbacks", () => {
         specStatusStyle,
         specReviewVerdictLabel,
         muteLabelOf,
-        roleDotOf,
       ]) {
         expect(() => display(value)).toThrow(TypeError);
       }

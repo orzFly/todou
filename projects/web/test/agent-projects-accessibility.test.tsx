@@ -1,5 +1,4 @@
 import {
-  fireEvent,
   isInaccessible,
   screen,
   waitFor,
@@ -13,7 +12,10 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentMembershipsQuery } from "../src/api/queries.ts";
 import { referenceDirectoryQuery } from "../src/api/references.ts";
-import { AgentProjectsCell } from "../src/components/shared/agent-projects-dialog.tsx";
+import {
+  AgentProjectsSection,
+  AgentProjectsSummary,
+} from "../src/components/shared/agent-projects.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 import { expectVisible } from "./visibility.ts";
 
@@ -37,7 +39,10 @@ const directory: ReferenceDirectory = {
   contested: [],
 };
 
-function renderCell(iconUrl: string | null = null) {
+function renderWith(
+  ui: React.ReactElement,
+  iconUrl: string | null = null,
+): void {
   const client = testQueryClient();
   const data: AgentMemberships = {
     memberships: [
@@ -52,7 +57,7 @@ function renderCell(iconUrl: string | null = null) {
   };
   client.setQueryData(agentMembershipsQuery.queryKey, data);
   client.setQueryData(referenceDirectoryQuery.queryKey, directory);
-  return renderWithProviders(<AgentProjectsCell agent={agent} />, client);
+  renderWithProviders(ui, client);
 }
 
 function loadImages(naturalWidth: number) {
@@ -66,23 +71,18 @@ function loadImages(naturalWidth: number) {
   vi.stubGlobal("Image", SettledImage);
 }
 
-async function trigger() {
-  return screen.findByRole("button", { name: "Manage bot-one's projects" });
-}
-
-async function openDialog() {
-  fireEvent.click(await trigger());
+async function section() {
   return within(
-    await screen.findByRole("dialog", { name: "Projects for bot-one" }),
+    await screen.findByRole("region", { name: "Projects for bot-one" }),
   );
 }
 
 function expectControls() {
-  const dialog = within(
-    screen.getByRole("dialog", { name: "Projects for bot-one" }),
+  const view = within(
+    screen.getByRole("region", { name: "Projects for bot-one" }),
   );
-  const role = dialog.getByRole("combobox", { name: "role in Atlas Lab" });
-  const remove = dialog.getByRole("button", { name: "remove Atlas Lab" });
+  const role = view.getByRole("combobox", { name: "role in Atlas Lab" });
+  const remove = view.getByRole("button", { name: "remove Atlas Lab" });
   expectVisible(role);
   expectVisible(remove);
   expect(isInaccessible(role)).toBe(false);
@@ -93,54 +93,52 @@ function expectControls() {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("agent project badge decoration", () => {
-  it("omits the icon when there is no upload and keeps the exact trigger name", async () => {
-    renderCell();
-    const button = await trigger();
-    expectVisible(within(button).getByText("atlas", { exact: true }));
-    expect(button.querySelector("img")).toBeNull();
-    expect(within(button).queryByText("AL", { exact: true })).toBeNull();
-    expect(isInaccessible(button)).toBe(false);
-  });
-
-  it("shows a failed upload's fallback but excludes it from accessibility", async () => {
-    loadImages(0);
-    renderCell("/api/projects/1/icon?v=failed-badge");
-    const button = await trigger();
-    // Badges pass no REF prefix, so an unavailable image falls back to initials.
-    const fallback = await within(button).findByText("AL", { exact: true });
+describe("agents list project icon", () => {
+  it("draws the REF fallback beside the name, hidden from accessibility", async () => {
+    renderWith(<AgentProjectsSummary agent={agent} />);
+    const fallback = await screen.findByText("XYZ", { exact: true });
     expectVisible(fallback);
     expect(isInaccessible(fallback)).toBe(true);
-    expect(isInaccessible(button)).toBe(false);
-    expect(await trigger()).toBe(button);
-    // The explicit trigger label survives even if the icon hide is removed.
+    const name = screen.getByText("Atlas Lab", { exact: true });
+    expectVisible(name);
+    expect(isInaccessible(name)).toBe(false);
   });
 
-  it("draws the uploaded badge image while excluding that visible node", async () => {
+  it("falls back to the REF when the upload fails", async () => {
+    loadImages(0);
+    renderWith(
+      <AgentProjectsSummary agent={agent} />,
+      "/api/projects/1/icon?v=failed-badge",
+    );
+    const fallback = await screen.findByText("XYZ", { exact: true });
+    expectVisible(fallback);
+    expect(isInaccessible(fallback)).toBe(true);
+  });
+
+  it("draws the uploaded image while excluding that visible node", async () => {
     loadImages(20);
     const iconUrl = "/api/projects/1/icon?v=badge";
-    renderCell(iconUrl);
-    const button = await trigger();
+    renderWith(<AgentProjectsSummary agent={agent} />, iconUrl);
+    const name = await screen.findByText("Atlas Lab", { exact: true });
+    const cell = name.parentElement as HTMLElement;
     await waitFor(() => {
-      const image = button.querySelector("img");
+      const image = cell.querySelector("img");
       expect(image?.getAttribute("src")).toBe(iconUrl);
       expectVisible(image as HTMLImageElement);
       expect(isInaccessible(image as HTMLImageElement)).toBe(true);
     });
-    expect(within(button).queryByText("AL", { exact: true })).toBeNull();
-    expect(isInaccessible(button)).toBe(false);
-    expect(await trigger()).toBe(button);
+    expect(within(cell).queryByText("XYZ", { exact: true })).toBeNull();
   });
 });
 
-describe("agent project membership-row decoration", () => {
+describe("agent page membership-row decoration", () => {
   it("shows the fallback prefix but excludes it while exposing named controls", async () => {
-    renderCell();
-    const dialog = await openDialog();
-    const fallback = dialog.getByText("XYZ", { exact: true });
+    renderWith(<AgentProjectsSection agent={agent} />);
+    const view = await section();
+    const fallback = view.getByText("XYZ", { exact: true });
     expectVisible(fallback);
     expect(isInaccessible(fallback)).toBe(true);
-    const name = dialog.getByText("Atlas Lab", { exact: true });
+    const name = view.getByText("Atlas Lab", { exact: true });
     expectVisible(name);
     expect(isInaccessible(name)).toBe(false);
     expectControls();
@@ -149,18 +147,18 @@ describe("agent project membership-row decoration", () => {
   it("draws an excluded uploaded image beside the exact role and remove controls", async () => {
     loadImages(20);
     const iconUrl = "/api/projects/1/icon?v=membership";
-    renderCell(iconUrl);
-    const dialog = await openDialog();
-    const dialogElement = screen.getByRole("dialog", {
+    renderWith(<AgentProjectsSection agent={agent} />, iconUrl);
+    const view = await section();
+    const element = screen.getByRole("region", {
       name: "Projects for bot-one",
     });
     await waitFor(() => {
-      const image = dialogElement.querySelector("img");
+      const image = element.querySelector("img");
       expect(image?.getAttribute("src")).toBe(iconUrl);
       expectVisible(image as HTMLImageElement);
       expect(isInaccessible(image as HTMLImageElement)).toBe(true);
     });
-    expect(dialog.queryByText("XYZ", { exact: true })).toBeNull();
+    expect(view.queryByText("XYZ", { exact: true })).toBeNull();
     expectControls();
   });
 });
