@@ -67,12 +67,18 @@ export type SourceSegment = {
   line: number;
   endLine: number;
   /**
-   * The source span reads character-for-character like `text`, so an
-   * offset inside one maps to the other by addition. False for inline
-   * code (its backticks are in the span but not the value), escapes and
-   * entities — those segments are indivisible and get located whole.
+   * The source reads character-for-character like `text` from `start + lead`
+   * on, so an offset inside one maps to the other by addition. False for
+   * escapes and entities — those segments are indivisible and get located
+   * whole.
    */
   exact: boolean;
+  /**
+   * Source characters in front of `text[0]`: an inline code span's opening
+   * backticks and the space padding stripped after them (T-695), zero for
+   * plain text.
+   */
+  lead: number;
   /** Which leaf block this flows in; a different one means a break. */
   group: number;
 };
@@ -312,6 +318,16 @@ export function buildSegmentIndex(source: string): SegmentIndex {
       if (start === undefined || end === undefined) return;
       if (node.value === "") return;
       if (lastGroup !== null && lastGroup !== group) text += "\n";
+      // A code span's padding is stripped symmetrically and its two backtick
+      // runs are equal, so the content sits dead centre of the span — unless
+      // it wraps inside a blockquote, whose `>` is source but not value; the
+      // comparison catches that.
+      const pad = (end - start - node.value.length) / 2;
+      const exact =
+        node.type === "inlineCode"
+          ? source.slice(start + pad, end - pad) === node.value
+          : end - start === node.value.length;
+      const lead = exact && node.type === "inlineCode" ? pad : 0;
       segments.push({
         text: node.value,
         at: text.length,
@@ -319,7 +335,8 @@ export function buildSegmentIndex(source: string): SegmentIndex {
         end,
         line: node.position?.start.line ?? 1,
         endLine: node.position?.end.line ?? 1,
-        exact: end - start === node.value.length,
+        exact,
+        lead,
         group,
       });
       text += node.value;
@@ -394,7 +411,10 @@ export function sourceRangesOfText(
     const localTo = Math.min(to, segEnd) - segment.at;
     if (localTo <= localFrom) continue;
     const range = segment.exact
-      ? { start: segment.start + localFrom, end: segment.start + localTo }
+      ? {
+          start: segment.start + segment.lead + localFrom,
+          end: segment.start + segment.lead + localTo,
+        }
       : { start: segment.start, end: segment.end };
     const last = ranges.at(-1);
     if (last !== undefined && last.end >= range.start) {
@@ -673,7 +693,7 @@ export function sourceOffsetOfText(
     const segEnd = segment.at + segment.text.length;
     if (pos < segment.at || pos > segEnd) continue;
     if (!segment.exact) return pos === segEnd ? segment.end : segment.start;
-    return segment.start + (pos - segment.at);
+    return segment.start + segment.lead + (pos - segment.at);
   }
   return null;
 }
@@ -705,7 +725,7 @@ export function sourceOffsetOfRendered(
       (offset === next && (edge === "end" || i === segments.length - 1));
     if (owns) {
       if (!segment.exact) return edge === "start" ? segment.start : segment.end;
-      return segment.start + (offset - seen);
+      return segment.start + segment.lead + (offset - seen);
     }
     seen = next;
   }

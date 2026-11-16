@@ -2344,3 +2344,48 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
     expect(decorations.blocks).toEqual([]);
   });
 });
+
+describe("an edit inside an inline code span (T-695)", () => {
+  it("strikes the removed part through inside the span, where it stood", async () => {
+    const { container } = await renderDiff(
+      "以逗号分隔写入响应头 `X-Router-Unsupported-Fields`。没有时不写。\n",
+      "以逗号分隔写入响应头 `X-Unsupported-Fields`。没有时不写。\n",
+    );
+    expect(texts(container, "del.spec-del")).toEqual(["Router-"]);
+    const code = container.querySelector("p code");
+    expect(code?.textContent).toBe("X-Router-Unsupported-Fields");
+    expect(
+      code?.querySelector("del.spec-del")?.previousSibling?.textContent,
+    ).toBe("X-");
+  });
+
+  it("marks only the inserted part of the span", async () => {
+    const { container } = await renderDiff(
+      "写入 `X-Unsupported-Fields` 头。\n",
+      "写入 `X-Router-Unsupported-Fields` 头。\n",
+    );
+    expect(texts(container, "p code ins.spec-ins")).toEqual(["Router-"]);
+    expect(container.querySelector("del.spec-del")).toBeNull();
+  });
+
+  it("finds the content behind double backticks and their padding", async () => {
+    const { container } = await renderDiff(
+      "写入 `` a`b-old `` 头。\n",
+      "写入 `` a`b-new `` 头。\n",
+    );
+    expect(texts(container, "p code ins.spec-ins")).toEqual(["new"]);
+    expect(texts(container, "p code del.spec-del")).toEqual(["old"]);
+    expect(container.querySelector("p code")?.textContent).toBe("a`b-oldnew");
+  });
+
+  it("still marks a span it cannot enter, as a whole", async () => {
+    // Wrapped inside a blockquote, the span's source holds a `>` its content
+    // does not, so no offset inside it can be trusted.
+    const { container } = await renderDiff(
+      "> 写入 `co-old\n> de` 头。\n",
+      "> 写入 `co-new\n> de` 头。\n",
+    );
+    expect(texts(container, "p code ins.spec-ins")).toEqual(["co-new de"]);
+    expect(texts(container, "del.spec-del")).toEqual(["old"]);
+  });
+});

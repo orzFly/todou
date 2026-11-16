@@ -1001,6 +1001,7 @@ function decorateText(
   spans: SpanDecoration[],
   deletions: DeletionDecoration[],
   placed: Set<DeletionDecoration>,
+  inCode: boolean,
 ): ElementContent[] | null {
   const from = node.position?.start.offset;
   const to = node.position?.end.offset;
@@ -1012,9 +1013,17 @@ function decorateText(
   );
   if (hits.length === 0 && cuts.length === 0) return null;
 
+  // An inline code span's text carries the span's position, backticks and
+  // all. `SourceSegment.lead` puts its content dead centre, and offsets are
+  // measured from there (T-695); a decoration that stopped on a backtick is
+  // clamped onto the content's edge.
+  const length = node.value.length;
+  const pad = inCode ? (to - from - length) / 2 : 0;
+  const base = from + pad;
+
   // Entities and escapes make the source span longer than the value, so
   // offsets inside the node mean nothing. Decorate it whole or not at all.
-  if (to - from !== node.value.length) {
+  if (inCode ? !Number.isInteger(pad) : to - from !== length) {
     if (hits.length === 0) return null;
     return wrap(
       [{ type: "text", value: node.value }],
@@ -1023,12 +1032,14 @@ function decorateText(
     );
   }
 
-  const points = new Set<number>([0, node.value.length]);
+  const local = (offset: number) =>
+    Math.min(length, Math.max(0, offset - base));
+  const points = new Set<number>([0, length]);
   for (const span of hits) {
-    points.add(Math.max(0, span.start - from));
-    points.add(Math.min(node.value.length, span.end - from));
+    points.add(local(span.start));
+    points.add(local(span.end));
   }
-  for (const cut of cuts) points.add(cut.at - from);
+  for (const cut of cuts) points.add(local(cut.at));
   const ordered = [...points].sort((a, b) => a - b);
 
   const out: ElementContent[] = [];
@@ -1036,14 +1047,14 @@ function decorateText(
     const at = ordered[i];
     if (at === undefined) continue;
     for (const cut of cuts) {
-      if (cut.at - from !== at || placed.has(cut)) continue;
+      if (local(cut.at) !== at || placed.has(cut)) continue;
       placed.add(cut);
       out.push(inlineDeletion(cut));
     }
     const next = ordered[i + 1];
     if (next === undefined || next <= at) continue;
     const covering = hits.filter(
-      (h) => h.start - from <= at && h.end - from >= next,
+      (h) => local(h.start) <= at && local(h.end) >= next,
     );
     const kinds = kindsOf(covering);
     const piece: Text = { type: "text", value: node.value.slice(at, next) };
@@ -1225,7 +1236,13 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
           next.push(child);
           continue;
         }
-        const pieces = decorateText(child, spans, inline, placed);
+        const pieces = decorateText(
+          child,
+          spans,
+          inline,
+          placed,
+          parent.type === "element" && parent.tagName === "code",
+        );
         if (pieces === null) next.push(child);
         else {
           next.push(...pieces);

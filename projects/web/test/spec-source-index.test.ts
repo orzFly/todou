@@ -132,9 +132,11 @@ describe("buildSegmentIndex", () => {
     ]);
   });
 
-  it("marks inline code and escapes inexact", () => {
+  it("marks escapes inexact, and inline code exact past its backticks", () => {
     const inexact = index.segments.filter((s) => !s.exact).map((s) => s.text);
-    expect(inexact).toEqual(["code", " 与 *转义* 文本。"]);
+    expect(inexact).toEqual([" 与 *转义* 文本。"]);
+    const code = index.segments.find((s) => s.text === "code");
+    expect(code?.lead).toBe(1);
   });
 
   it("leaves fenced code out entirely", () => {
@@ -144,7 +146,10 @@ describe("buildSegmentIndex", () => {
   it("round-trips exact segments through the source", () => {
     for (const segment of index.segments) {
       if (!segment.exact) continue;
-      expect(source.slice(segment.start, segment.end)).toBe(segment.text);
+      const start = segment.start + segment.lead;
+      expect(source.slice(start, start + segment.text.length)).toBe(
+        segment.text,
+      );
     }
   });
 
@@ -158,11 +163,29 @@ describe("buildSegmentIndex", () => {
     );
   });
 
-  it("locates a whole inexact segment rather than guessing inside it", () => {
+  it("maps a range inside inline code onto its content (T-695)", () => {
     const at = index.text.indexOf("code");
     const ranges = sourceRangesOfText(index, at + 1, at + 2);
-    expect(source.slice(ranges[0]?.start ?? 0, ranges[0]?.end ?? 0)).toBe(
-      "`code`",
+    expect(source.slice(ranges[0]?.start ?? 0, ranges[0]?.end ?? 0)).toBe("o");
+  });
+
+  it("finds the content behind double backticks and their padding", () => {
+    const padded = "写入 `` a`b `` 头。\n";
+    const own = buildSegmentIndex(padded);
+    const at = own.text.indexOf("`b");
+    const ranges = sourceRangesOfText(own, at, at + 2);
+    expect(ranges.map((r) => padded.slice(r.start, r.end))).toEqual(["`b"]);
+  });
+
+  it("locates a whole inexact segment rather than guessing inside it", () => {
+    // The quote marker of the second line sits inside the span's source and
+    // outside its value, so the content no longer reads like the source.
+    const wrapped = "> 写入 `co\n> de` 头。\n";
+    const own = buildSegmentIndex(wrapped);
+    const at = own.text.indexOf("co\nde");
+    const ranges = sourceRangesOfText(own, at + 1, at + 2);
+    expect(wrapped.slice(ranges[0]?.start ?? 0, ranges[0]?.end ?? 0)).toBe(
+      "`co\n> de`",
     );
   });
 
@@ -257,7 +280,10 @@ describe("list structure metadata", () => {
       ].join("\n"),
     );
     for (const segment of index.segments) {
-      expect(source.slice(segment.start, segment.end)).toBe(segment.text);
+      const start = segment.start + segment.lead;
+      expect(source.slice(start, start + segment.text.length)).toBe(
+        segment.text,
+      );
     }
   });
 });
