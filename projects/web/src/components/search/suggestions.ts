@@ -1,5 +1,6 @@
 import type { SearchPart, SearchQualifier } from "@todou/shared";
 import { SEARCH_QUALIFIERS } from "@todou/shared";
+import type { PickerUser } from "@/components/shared/user-picker.tsx";
 import type { ProjectRefOption } from "@/lib/project-spellings.ts";
 
 export type SuggestionContext = {
@@ -21,6 +22,8 @@ export type CompletionRow = {
   /** A few words at most, on the same line. */
   hint?: string;
   icon: "qualifier" | "value" | "project";
+  /** The person a value names: the row draws them in place of the icon. */
+  user?: PickerUser;
   /** The whole query after accepting this, and where the caret lands. */
   apply: { value: string; caret: number };
 };
@@ -192,7 +195,7 @@ export const qualifierKeySource: SuggestionSource = (ctx) => {
 };
 
 /** One offerable value of a key, and the short note that goes beside it. */
-export type ValueOption = { value: string; hint?: string };
+export type ValueOption = { value: string; hint?: string; user?: PickerUser };
 export type ValuePools = Partial<Record<SearchQualifier, ValueOption[]>>;
 
 /** A value needs quoting exactly when it would not survive being read back. */
@@ -240,6 +243,7 @@ export function qualifierValueSource(pools: ValuePools): SuggestionSource {
           key: `value:${part.key}:${o.value}`,
           text: quoteValue(o.value),
           ...(o.hint === undefined ? {} : { hint: o.hint }),
+          ...(o.user === undefined ? {} : { user: o.user }),
           icon: "value" as const,
           apply: spliceThenSpace(ctx.query, start, end, quoteValue(o.value)),
         }));

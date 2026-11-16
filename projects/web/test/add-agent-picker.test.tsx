@@ -161,11 +161,13 @@ describe("AddAgentPicker keyboard", () => {
     expect(onAdd).toHaveBeenCalledWith(PROBE);
   });
 
-  it("clears the query after a pick and stays open", () => {
+  it("keeps the query after a pick and stays open", () => {
+    // As the Labels picker does: the reader filtered to a group and may well
+    // want the next one from it.
     open({ onAdd: vi.fn() });
     fireEvent.change(input(), { target: { value: "zulu" } });
     fireEvent.click(list().getByText("Zulu Probe"));
-    expect((input() as HTMLInputElement).value).toBe("");
+    expect((input() as HTMLInputElement).value).toBe("zulu");
     expect(screen.getByRole("listbox")).toBeTruthy();
   });
 });
@@ -181,7 +183,7 @@ describe("AddAgentPicker empty states", () => {
   it("says so when the query matches nothing", () => {
     open();
     fireEvent.change(input(), { target: { value: "nobody" } });
-    expect(list().getByText("No matching agent.")).toBeTruthy();
+    expect(list().getByText("No matching agents.")).toBeTruthy();
   });
 
   it("renders nothing at all when the viewer owns no agents", () => {

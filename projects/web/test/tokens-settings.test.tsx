@@ -234,13 +234,8 @@ describe("personal tokens by holder (T-560)", () => {
     const createMine = vi.spyOn(api, "createMyToken");
     const view = await page();
 
-    fireEvent.keyDown(
-      await view.findByRole("combobox", { name: "Issue for" }),
-      {
-        key: "ArrowDown",
-      },
-    );
-    fireEvent.click(await screen.findByRole("option", { name: "@bot-two" }));
+    fireEvent.click(await view.findByRole("button", { name: /^Issue for/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /@bot-two/ }));
     fireEvent.change(view.getByPlaceholderText("Token name (e.g. cli, ci)"), {
       target: { value: "deploy" },
     });
@@ -263,16 +258,12 @@ describe("personal tokens by holder (T-560)", () => {
   it("offers only active agents to issue for", async () => {
     mountAt("/settings/tokens", [BOT, agent(9, "retired-bot", true)]);
     const view = await page();
-    fireEvent.keyDown(
-      await view.findByRole("combobox", { name: "Issue for" }),
-      {
-        key: "ArrowDown",
-      },
-    );
+    fireEvent.click(await view.findByRole("button", { name: /^Issue for/ }));
+    // The login is the row's third child, after the avatar and the name.
     const options = (await screen.findAllByRole("option")).map(
-      (o) => o.textContent,
+      (o) => o.children[2]?.textContent,
     );
-    expect(options).toEqual(["You (@user)", "@bot-one"]);
+    expect(options).toEqual(["@user", "@bot-one"]);
   });
 
   it("without agents there is nothing to filter or issue for", async () => {
@@ -280,6 +271,6 @@ describe("personal tokens by holder (T-560)", () => {
     const view = await page();
     await waitFor(() => expect(rowNames(view)).toHaveLength(1));
     expect(view.queryByRole("link", { name: /^User/ })).toBeNull();
-    expect(view.queryByRole("combobox", { name: "Issue for" })).toBeNull();
+    expect(view.queryByRole("button", { name: /^Issue for/ })).toBeNull();
   });
 });

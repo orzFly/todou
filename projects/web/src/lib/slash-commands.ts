@@ -77,6 +77,8 @@ export type CommandRegistry = {
   statusNames: string[];
   labelNames: string[];
   memberLogins: string[];
+  /** Who each of `memberLogins` is, so the panel can draw them. */
+  memberUsers: Member["user"][];
 };
 
 /**
@@ -279,6 +281,7 @@ export function buildCommandRegistry({
       ...(me === undefined ? [] : ["me"]),
       ...members.map((m) => m.user.login),
     ],
+    memberUsers: members.map((m) => m.user),
   };
 }
 

@@ -15,6 +15,11 @@ import {
 } from "@/components/shared/token-expiry-select.tsx";
 import { TokenReveal } from "@/components/shared/token-reveal.tsx";
 import { TokenTable } from "@/components/shared/token-table.tsx";
+import { displayNameOf } from "@/components/shared/user-chip.tsx";
+import {
+  UserPicker,
+  UserSelectTrigger,
+} from "@/components/shared/user-picker.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,13 +28,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 type HolderFilter = "user" | "agents" | "all";
@@ -76,6 +74,7 @@ export function TokensSettingsPage() {
 
   const [issueFor, setIssueFor] = useState(String(me.id));
   const [name, setName] = useState("");
+  const holderPicked = [me, ...agents].find((u) => String(u.id) === issueFor);
   const [expiry, setExpiry] = useState("never");
   const [created, setCreated] = useState<{
     token: TokenCreated;
@@ -141,19 +140,21 @@ export function TokensSettingsPage() {
         }}
       >
         {agents.length > 0 && (
-          <Select value={issueFor} onValueChange={setIssueFor}>
-            <SelectTrigger className="w-44" aria-label="Issue for">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={String(me.id)}>You (@{me.login})</SelectItem>
-              {agents.map((agent) => (
-                <SelectItem key={agent.id} value={String(agent.id)}>
-                  @{agent.login}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <UserPicker
+            users={[me, ...agents]}
+            selectedIds={[Number(issueFor)]}
+            onPick={(user) => {
+              if (user !== null) setIssueFor(String(user.id));
+            }}
+            trigger={
+              <UserSelectTrigger
+                user={holderPicked}
+                placeholder="Issue for"
+                className="w-44"
+                aria-label={`Issue for ${displayNameOf(holderPicked ?? me)}`}
+              />
+            }
+          />
         )}
         <Input
           value={name}

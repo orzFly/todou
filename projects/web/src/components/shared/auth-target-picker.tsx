@@ -2,7 +2,8 @@ import type { Agent, Me } from "@todou/shared";
 import { Login } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
-import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
+import { displayNameOf } from "@/components/shared/user-chip.tsx";
+import { UserOption } from "@/components/shared/user-picker.tsx";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -126,7 +127,9 @@ export function AuthTargetFieldset({
 }) {
   const { candidates, selection, setSelection, newLogin, setNewLogin } = picker;
   return (
-    <fieldset>
+    // min-w-0: a fieldset's min-inline-size defaults to min-content, so a
+    // long name would widen the list past its card instead of truncating.
+    <fieldset className="min-w-0">
       <legend className="mb-2 text-sm font-medium">{legend}</legend>
       <div className="divide-y overflow-hidden rounded-lg border">
         {candidates.map((agent) => (
@@ -139,11 +142,10 @@ export function AuthTargetFieldset({
               checked={selection?.kind === "agent" && selection.id === agent.id}
               onChange={() => setSelection({ kind: "agent", id: agent.id })}
             />
-            <UserChip user={agent} link={false} />
-            {/* Which account a token ends up belonging to is the whole
-                question on this page, so the login is never optional. */}
-            <span className="truncate text-sm text-muted-foreground">
-              @{agent.login}
+            <span className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+              {/* The badge only earns its place once `me` is in the list:
+                  otherwise every row is an agent (T-236). */}
+              <UserOption user={agent} badge={me !== undefined} />
             </span>
           </label>
         ))}
@@ -185,8 +187,11 @@ export function AuthTargetFieldset({
               checked={selection?.kind === "me"}
               onChange={() => setSelection({ kind: "me" })}
             />
-            <UserChip user={me} link={false} />
-            <span className="text-sm text-muted-foreground">yourself</span>
+            <span className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+              <UserOption user={me}>
+                <span className="ml-auto text-muted-foreground">yourself</span>
+              </UserOption>
+            </span>
           </label>
         )}
       </div>

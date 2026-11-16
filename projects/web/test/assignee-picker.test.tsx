@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import type { Member, UserKind } from "@todou/shared";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -49,8 +49,8 @@ function open(props: Partial<Parameters<typeof AssigneePicker>[0]> = {}) {
 }
 
 /** Every candidate row, in menu order. */
-const rows = () => screen.getAllByRole("menuitem");
-const rowFor = (name: RegExp) => screen.getByRole("menuitem", { name });
+const rows = () => screen.getAllByRole("option");
+const rowFor = (name: RegExp) => screen.getByRole("option", { name });
 
 describe("AssigneePicker rows (T-353)", () => {
   it("draws an avatar on every row", () => {
@@ -124,17 +124,27 @@ describe("AssigneePicker selection (T-353)", () => {
   });
 });
 
-describe("AssigneePicker typeahead (T-353)", () => {
-  it("jumps by display name, not by the initials fallback", async () => {
+describe("AssigneePicker filter (T-677)", () => {
+  it("narrows by display name or login, not by the initials fallback", () => {
     open();
-    const menu = screen.getByRole("menu");
-    fireEvent.keyDown(menu, { key: "a" });
-    fireEvent.keyDown(menu, { key: "k" });
-    // Radix moves the focus from a setTimeout, so reading it synchronously
-    // would find the menu itself and pass whatever the rows say.
-    await waitFor(() =>
-      expect(document.activeElement).toBe(rowFor(/Akira Sato/)),
-    );
+    // Alice Kim's fallback reads AK, so a filter matching drawn text would
+    // keep her row too.
+    fireEvent.change(screen.getByLabelText("filter people"), {
+      target: { value: "ak" },
+    });
+    expect(rows().map((row) => row.children[1]?.textContent)).toEqual([
+      "Akira Sato",
+    ]);
+  });
+
+  it("toggles the highlighted row on Enter and stays open", () => {
+    const onToggle = vi.fn();
+    open({ onToggle });
+    const input = screen.getByLabelText("filter people");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onToggle).toHaveBeenCalledWith(2);
+    expect(screen.getByRole("listbox")).toBeTruthy();
   });
 });
 
@@ -179,9 +189,7 @@ function StatefulPicker({
 }
 
 function openFromTrigger() {
-  fireEvent.keyDown(screen.getByRole("button", { name: "Edit assignees" }), {
-    key: "Enter",
-  });
+  fireEvent.click(screen.getByRole("button", { name: "Edit assignees" }));
 }
 
 function expectPickerRows(
@@ -217,12 +225,14 @@ function toggleWhileOpen() {
 describe("AssigneePicker ordering (T-479)", () => {
   it("opens selected-first in source order, keeps toggled rows still, and resamples on reopening", () => {
     render(<StatefulPicker />);
-    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.queryByRole("listbox")).toBeNull();
     openFromTrigger();
     toggleWhileOpen();
 
-    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
-    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.keyDown(screen.getByLabelText("filter people"), {
+      key: "Escape",
+    });
+    expect(screen.queryByRole("listbox")).toBeNull();
     expect(
       screen
         .getByRole("button", { name: "Edit assignees" })
@@ -327,7 +337,7 @@ describe("AssigneePicker ordering (T-479)", () => {
       [2, 1],
       reduced,
     );
-    expect(screen.queryByRole("menuitem", { name: /Bravo/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Bravo/ })).toBeNull();
 
     fireEvent.click(rowFor(/Alpha/));
     expectPickerRows(
@@ -367,6 +377,6 @@ describe("AssigneePicker ordering (T-479)", () => {
       [2, 4],
       replaced,
     );
-    expect(screen.queryByRole("menuitem", { name: /Charlie/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Charlie/ })).toBeNull();
   });
 });

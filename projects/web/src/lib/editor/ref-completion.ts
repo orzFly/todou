@@ -34,6 +34,10 @@ import {
   tagCompletionSource,
 } from "@/lib/editor/tag-completion.ts";
 import {
+  userAvatarOption,
+  userOptionClass,
+} from "@/lib/editor/user-completion.tsx";
+import {
   type ProjectRefOption,
   projectSpellings,
 } from "@/lib/project-spellings.ts";
@@ -220,13 +224,22 @@ export function refCompletionSource(
  * Tag templates need no inputs, so every caller gets the source here.
  * The snippet facet lives beside the Tab binding whose priority it arbitrates.
  */
-export function completionWith(sources: CompletionSource[]): Extension {
+export function completionWith(
+  sources: CompletionSource[],
+  /** Draws avatars on rows that name a person; without it they go bare. */
+  queryClient?: QueryClient,
+): Extension {
   return [
     Prec.high(keymap.of([{ key: "Tab", run: acceptCompletion }])),
     snippetFieldKeys,
     // With filter:false CodeMirror ignores boost and preserves source order.
     // Put tags first so <det selects the template while retaining project rows.
-    autocompletion({ override: [tagCompletionSource, ...sources] }),
+    autocompletion({
+      override: [tagCompletionSource, ...sources],
+      optionClass: userOptionClass,
+      addToOptions:
+        queryClient === undefined ? [] : [userAvatarOption(queryClient)],
+    }),
     spaceAfterAccept,
     completionTheme,
   ];
@@ -241,10 +254,13 @@ export function useRefCompletion(slug: string): Extension {
   const queryClient = useQueryClient();
   return useMemo(
     () =>
-      completionWith([
-        refCompletionSource(slug, queryClient),
-        mentionCompletionSource(slug, queryClient),
-      ]),
+      completionWith(
+        [
+          refCompletionSource(slug, queryClient),
+          mentionCompletionSource(slug, queryClient),
+        ],
+        queryClient,
+      ),
     [slug, queryClient],
   );
 }
@@ -289,6 +305,18 @@ export const completionTheme = EditorView.theme({
     whiteSpace: "nowrap",
   },
   ".cm-completionMatchedText": { textDecoration: "none", fontWeight: "600" },
+  // A person's row is drawn like every user picker's (T-677): the avatar
+  // takes the icon's place, and the login is set like a name, not like code.
+  // Named in full: CodeMirror's base theme sets the list in monospace through
+  // `.cm-tooltip.cm-tooltip-autocomplete > ul`, which outranks a shorter one.
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li.cm-completion-user": {
+    alignItems: "center",
+    gap: "0.5rem",
+    fontFamily: "var(--font-sans)",
+  },
+  ".cm-completion-user .cm-completionIcon": { display: "none" },
+  ".cm-completion-user .cm-completionLabel": { fontFamily: "inherit" },
+  ".cm-completionAvatar": { display: "inline-flex", flex: "none" },
   ".cm-completionIcon": { width: "1em", paddingRight: "0", opacity: "1" },
   ".cm-completionIcon-issue-open::after": {
     content: "'○'",
@@ -302,10 +330,6 @@ export const completionTheme = EditorView.theme({
     content: "'?'",
     color: "var(--muted-foreground)",
   },
-  ".cm-completionIcon-mention-unknown::after": {
-    content: "'?'",
-    color: "var(--muted-foreground)",
-  },
   ".cm-completionIcon-command::after": {
     content: "'/'",
     color: "var(--primary)",
@@ -316,14 +340,6 @@ export const completionTheme = EditorView.theme({
   },
   ".cm-completionIcon-project-ref::after": {
     content: "'◇'",
-    color: "var(--muted-foreground)",
-  },
-  ".cm-completionIcon-mention-user::after": {
-    content: "'@'",
-    color: "var(--primary)",
-  },
-  ".cm-completionIcon-mention-agent::after": {
-    content: "'◉'",
     color: "var(--muted-foreground)",
   },
 });

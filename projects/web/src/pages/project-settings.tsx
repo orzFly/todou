@@ -1,6 +1,7 @@
 import {
   type UseMutationResult,
   useMutation,
+  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
@@ -9,6 +10,7 @@ import {
   type AccessDenial,
   enumValue,
   formatRef,
+  Login,
   MEMBER_ROLES,
   type Member,
   type MemberRole,
@@ -35,7 +37,7 @@ import {
   UsersIcon,
   XIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   accessDenialsQuery,
@@ -49,8 +51,10 @@ import {
   useCan,
 } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
+import { userQuery } from "@/api/users.ts";
 import { InsightsSettings } from "@/components/insights/insights-settings.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import {
   SettingsLayout,
@@ -62,6 +66,7 @@ import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import { projectIconFallback } from "@/components/shared/project-icon.tsx";
 import { RolePermissionsDialog } from "@/components/shared/role-permissions-table.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
+import { UserOption } from "@/components/shared/user-picker.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1063,6 +1068,23 @@ function AddPersonForm({
 }) {
   const [login, setLogin] = useState("");
   const [role, setRole] = useState<MemberRole>("reporter");
+  // Who the login names, shown before Add (T-677): this is the one user
+  // picker whose result is otherwise invisible until it has been written.
+  const [settled, setSettled] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(login), 250);
+    return () => clearTimeout(timer);
+  }, [login]);
+  // An all-digit ref reads as a user id, never a login (T-637).
+  const lookable = Login.safeParse(settled).success && !/^\d+$/.test(settled);
+  const found = useQuery({
+    ...userQuery(settled),
+    enabled: lookable,
+    retry: false,
+  });
+  const current = lookable && settled === login;
+  const missing =
+    current && (found.error as { status?: number } | null)?.status === 404;
 
   return (
     <form
@@ -1101,6 +1123,19 @@ function AddPersonForm({
           Cancel
         </Button>
       </div>
+      {current && found.data !== undefined && (
+        <div
+          aria-live="polite"
+          className={`flex w-fit max-w-full items-center ${PICKER_ROW}`}
+        >
+          <UserOption user={found.data} />
+        </div>
+      )}
+      {missing && (
+        <p aria-live="polite" className="px-2 text-sm text-muted-foreground">
+          No account with this login.
+        </p>
+      )}
     </form>
   );
 }

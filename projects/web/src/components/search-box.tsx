@@ -51,6 +51,7 @@ import {
 } from "@/components/search/suggestions.ts";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { projectSpellings } from "@/lib/project-spellings.ts";
 import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
@@ -207,7 +208,11 @@ export function SearchBox({
     () => ({
       label: labels.data?.map((l) => ({ value: l.name })),
       status: statuses.data?.map((s) => ({ value: s.name })),
-      assignee: members.data?.map((m) => ({ value: m.user.login })),
+      assignee: members.data?.map((m) => ({
+        value: m.user.login,
+        hint: displayNameOf(m.user),
+        user: m.user,
+      })),
       harness: facets.data?.harnesses
         .filter((h) => h.agent !== null)
         .map((h) => ({ value: h.agent as string, hint: String(h.count) })),
@@ -660,11 +665,22 @@ export function SearchBox({
                     onMouseMove={() => setHighlight(idx)}
                     onClick={() => accept(row.row.apply)}
                   >
-                    <Icon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
-                    <span className="truncate font-mono text-xs">
+                    {/* A person is drawn as in every user picker (T-677),
+                        login first: it is the value being completed. */}
+                    {row.row.user === undefined ? (
+                      <Icon
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                    ) : (
+                      <UserAvatar user={row.row.user} badge aria-hidden />
+                    )}
+                    <span
+                      className={cn(
+                        "truncate",
+                        row.row.user === undefined && "font-mono text-xs",
+                      )}
+                    >
                       {row.row.text}
                     </span>
                     {row.row.hint !== undefined && (

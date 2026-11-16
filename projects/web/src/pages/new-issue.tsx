@@ -213,21 +213,27 @@ function NewIssueForm({
     () =>
       canTriage
         ? [
-            completionWith([
-              refCompletionSource(slug, queryClient),
-              mentionCompletionSource(slug, queryClient),
-              commandCompletionSource(() => registryRef.current),
-            ]),
+            completionWith(
+              [
+                refCompletionSource(slug, queryClient),
+                mentionCompletionSource(slug, queryClient),
+                commandCompletionSource(() => registryRef.current),
+              ],
+              queryClient,
+            ),
             commandDecoration(() => registryRef.current),
           ]
         : // Every command this page offers writes one of the three triage
           // fields, so without the capability none of them is installed and
           // a `/label` line stays the prose it looks like.
           [
-            completionWith([
-              refCompletionSource(slug, queryClient),
-              mentionCompletionSource(slug, queryClient),
-            ]),
+            completionWith(
+              [
+                refCompletionSource(slug, queryClient),
+                mentionCompletionSource(slug, queryClient),
+              ],
+              queryClient,
+            ),
           ],
     [slug, queryClient, canTriage],
   );

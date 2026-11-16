@@ -13,12 +13,14 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
+import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import {
   type CommandDef,
   type CommandRegistry,
   commandLinesOf,
 } from "@/lib/slash-commands.ts";
 import { inCodeContext } from "./code-context.ts";
+import { withUser } from "./user-completion.tsx";
 
 /**
  * The editor half of slash commands (T-161): a panel to type them with, and
@@ -109,10 +111,15 @@ export function commandCompletionSource(
             ? ["force"]
             : registry.statusNames;
     if (names.length === 0) return null;
-    const options: Completion[] = names.map((name) => ({
-      label: name,
-      type: "command",
-    }));
+    const options: Completion[] = names.map((name) => {
+      const user =
+        command.argument === "member"
+          ? registry.memberUsers.find((u) => u.login === name)
+          : undefined;
+      return user === undefined
+        ? { label: name, type: "command" }
+        : withUser({ label: name, detail: displayNameOf(user) }, user);
+    });
     /**
      * A command that also stands alone gets a first row that ends it, so
      * Enter lands on "I am done" rather than on whatever candidate happens to
