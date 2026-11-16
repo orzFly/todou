@@ -1424,14 +1424,14 @@ function ClearLinePicker({
           set.mutate({ slug, id: v === "none" ? null : Number(v) })
         }
       >
-        <SelectTrigger className="w-48" size="sm" aria-label="blocks clear at">
+        <SelectTrigger className="w-56" size="sm" aria-label="blocks clear at">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="none">any closed status</SelectItem>
           {statuses.map((status) => (
             <SelectItem key={status.id} value={String(status.id)}>
-              {status.name} or later
+              <StatusPill status={status} /> or later
             </SelectItem>
           ))}
         </SelectContent>

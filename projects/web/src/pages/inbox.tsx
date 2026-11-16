@@ -13,10 +13,10 @@ import {
 import {
   AssigneesAndWatchers,
   IssueRow,
-  StatusMenu,
   useIssueListGrid,
 } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
+import { StatusMenu } from "@/components/issue/status-menu.tsx";
 import {
   LoadFailure,
   RefreshFailure,

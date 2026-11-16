@@ -276,10 +276,9 @@ export function SearchResults({
                     <span className="truncate font-medium">
                       {group.issue.title}
                     </span>
-                    <StatusPill
-                      status={group.issue.status}
-                      className="ml-auto shrink-0"
-                    />
+                    <span className="ml-auto flex">
+                      <StatusPill status={group.issue.status} />
+                    </span>
                   </Link>
                   <ul>
                     {group.hits.map((hit) => {
@@ -522,9 +521,7 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
               text={row.item.title}
               textClassName="font-medium"
               author={row.commentBy}
-              trailing={
-                <StatusPill status={row.item.status} className="shrink-0" />
-              }
+              trailing={<StatusPill status={row.item.status} />}
             />
           </Link>
         );

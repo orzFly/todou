@@ -61,6 +61,7 @@ import {
 } from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
+import { StatusHeading } from "@/components/issue/status-pill.tsx";
 import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
 import { ProjectWatchersChip } from "@/components/shared/project-watchers.tsx";
 import {
@@ -333,18 +334,8 @@ const BoardColumn = memo(function BoardColumn({
       // is still the column the canvas has to find again (T-407).
       data-return-id={String(status.id)}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
-        {/* The name is the only part that may give ground: without shrink-0 on
-            the other three, a long status name squeezes the count badge into an
-            ellipsis instead of truncating itself (T-303). */}
-        <span
-          className="size-2.5 shrink-0 rounded-full"
-          style={{ backgroundColor: status.color }}
-          aria-hidden
-        />
-        <span className="min-w-0 truncate text-sm font-medium">
-          {status.name}
-        </span>
+      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm">
+        <StatusHeading status={status} />
         <Badge variant="secondary" className="ml-auto shrink-0">
           {column.data?.items.length ?? "…"}
         </Badge>

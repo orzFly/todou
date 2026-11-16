@@ -1,4 +1,4 @@
-import type { SearchPart, SearchQualifier } from "@todou/shared";
+import type { Label, SearchPart, SearchQualifier, Status } from "@todou/shared";
 import { SEARCH_QUALIFIERS } from "@todou/shared";
 import type { PickerUser } from "@/components/shared/user-picker.tsx";
 import type { ProjectRefOption } from "@/lib/project-spellings.ts";
@@ -24,6 +24,9 @@ export type CompletionRow = {
   icon: "qualifier" | "value" | "project";
   /** The person a value names: the row draws them in place of the icon. */
   user?: PickerUser;
+  /** The label or status a value names, drawn as it is everywhere (T-715). */
+  label?: Label;
+  status?: Pick<Status, "name" | "color">;
   /** The whole query after accepting this, and where the caret lands. */
   apply: { value: string; caret: number };
 };
@@ -195,8 +198,24 @@ export const qualifierKeySource: SuggestionSource = (ctx) => {
 };
 
 /** One offerable value of a key, and the short note that goes beside it. */
-export type ValueOption = { value: string; hint?: string; user?: PickerUser };
-export type ValuePools = Partial<Record<SearchQualifier, ValueOption[]>>;
+export type ValueOption = {
+  value: string;
+  hint?: string;
+  user?: PickerUser;
+  label?: Label;
+  status?: Pick<Status, "name" | "color">;
+};
+/**
+ * A label or status value has to bring the thing it names: a bare string
+ * leaves the row nothing to draw but text, which is how these completions
+ * once came to look unlike every other label and status (T-715).
+ */
+export type ValuePools = Partial<
+  Record<Exclude<SearchQualifier, "label" | "status">, ValueOption[]>
+> & {
+  label?: Array<ValueOption & { label: Label }>;
+  status?: Array<ValueOption & { status: Pick<Status, "name" | "color"> }>;
+};
 
 /** A value needs quoting exactly when it would not survive being read back. */
 export function quoteValue(value: string): string {
@@ -238,7 +257,7 @@ export function qualifierValueSource(pools: ValuePools): SuggestionSource {
 
       // A pool may restate a builtin to say more about it (`@me` with who
       // that is), and then its entry stands in the builtin's place.
-      const pool = pools[part.key] ?? [];
+      const pool: ValueOption[] = pools[part.key] ?? [];
       const offered = [
         ...builtinValues(part.key).map(
           (b) => pool.find((o) => o.value === b.value) ?? b,
@@ -254,6 +273,8 @@ export function qualifierValueSource(pools: ValuePools): SuggestionSource {
           text: quoteValue(o.value),
           ...(o.hint === undefined ? {} : { hint: o.hint }),
           ...(o.user === undefined ? {} : { user: o.user }),
+          ...(o.label === undefined ? {} : { label: o.label }),
+          ...(o.status === undefined ? {} : { status: o.status }),
           icon: "value" as const,
           apply: spliceThenSpace(ctx.query, start, end, quoteValue(o.value)),
         }));

@@ -18,57 +18,38 @@ const chipOf = (view: ReturnType<typeof renderWithProviders>, label: Label) =>
 
 /* Truncation is CSS, and happy-dom has neither a layout engine nor Tailwind,
    so these assert the structure the ellipsis needs; the real-browser pass
-   covers whether one appears. */
-describe("LabelChips truncate (T-305)", () => {
-  it("renders chips unchanged when truncate is not passed", async () => {
+   covers whether one appears. Since T-715 it is not opt-in: a chip that can
+   give ground everywhere is one less way to draw a label. */
+describe("LabelChips truncation (T-305)", () => {
+  it("gives every chip and its group a shrinkable box and a clipped text child", async () => {
     const view = renderWithProviders(<LabelChips labels={labels} />);
     await view.findByTitle("area:web");
 
     for (const label of labels) {
       const chip = chipOf(view, label);
-      expect(chip.className).not.toContain("min-w-0");
-      expect(chip.querySelector(".truncate")).toBeNull();
-    }
-    const group = view.container.querySelector(
-      "span.inline-flex.items-center.gap-1",
-    );
-    expect(group).not.toBeNull();
-    expect(group?.className).not.toContain("min-w-0");
-  });
-
-  it("gives every chip and its group a shrinkable box and a block text child", async () => {
-    const view = renderWithProviders(<LabelChips labels={labels} truncate />);
-    await view.findByTitle("area:web");
-
-    for (const label of labels) {
-      const chip = chipOf(view, label);
       expect(chip.className).toContain("min-w-0");
-      expect(chip.querySelector(".truncate")).not.toBeNull();
+      const text = chip.firstElementChild as HTMLElement;
+      // clip, not hidden: hidden moves the baseline in running text
+      expect(text.className).toContain("overflow-clip");
+      expect(text.className).toContain("text-ellipsis");
     }
 
-    const group = view.container.querySelector(
-      "span.inline-flex.items-center.gap-1",
-    );
-    expect(group).not.toBeNull();
+    const group = chipOf(view, labels[0] as Label).parentElement;
     expect(group?.className).toContain("min-w-0");
-    // labels[2] is unprefixed, so it takes the other render path — the one a
-    // truncate prop is easy to forget.
-    expect(group?.contains(chipOf(view, labels[2]))).toBe(false);
+    // labels[2] is unprefixed, so it takes the other path through LabelChips.
+    const plain = chipOf(view, labels[2] as Label).parentElement;
+    expect(plain).not.toBe(group);
+    expect(plain?.className).toContain("min-w-0");
   });
 
-  it("keeps the full name reachable in both modes", async () => {
-    for (const truncate of [false, true]) {
-      const view = renderWithProviders(
-        <LabelChips labels={labels} truncate={truncate} />,
+  it("keeps the full name reachable", async () => {
+    const view = renderWithProviders(<LabelChips labels={labels} />);
+    await view.findByTitle("area:web");
+    for (const label of labels) {
+      expect(chipOf(view, label).textContent).toBe(
+        label.name.split(":").at(-1),
       );
-      await view.findByTitle("area:web");
-      for (const label of labels) {
-        expect(chipOf(view, label).textContent).toContain(
-          label.name.split(":").at(-1),
-        );
-      }
-      expect(view.container.textContent).toContain("area:");
-      view.unmount();
     }
+    expect(view.container.textContent).toContain("area:");
   });
 });

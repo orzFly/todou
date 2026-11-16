@@ -226,7 +226,7 @@ export function RefPicker({
               {row.ref}
             </span>
             <span className="min-w-0 flex-1 truncate">{row.item.title}</span>
-            <StatusPill status={row.item.status} className="shrink-0" />
+            <StatusPill status={row.item.status} />
           </>
         ) : (
           <>

@@ -7,7 +7,7 @@ import {
   type Status,
   type Watcher,
 } from "@todou/shared";
-import { CheckIcon, EyeIcon, TagIcon, UserPlusIcon } from "lucide-react";
+import { EyeIcon, TagIcon, UserPlusIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
@@ -21,17 +21,12 @@ import {
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { LabelPicker } from "@/components/issue/label-picker.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
+import { StatusMenu } from "@/components/issue/status-menu.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { groupWatchers } from "@/components/shared/watcher-stack.tsx";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 /**
@@ -312,7 +307,7 @@ export function IssueRowProjectTrailing({
 }) {
   return (
     <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-      <StatusPill status={status} className="shrink-0" />
+      <StatusPill status={status} />
       <span className="flex max-w-40 items-center gap-2 max-sm:hidden">
         <ProjectIcon
           project={project}
@@ -372,7 +367,7 @@ export function IssueRowMeta({
       {/* The one thing on this line that can give ground: the status pill's
           width comes from the project's status list, the tag icon is 14px,
           and the title sits on the line above with its own truncate. */}
-      <LabelChips labels={issue.labels} truncate />
+      <LabelChips labels={issue.labels} />
       <LabelPicker
         allLabels={allLabels}
         selected={issue.labels}
@@ -407,43 +402,6 @@ export function IssueRowMeta({
         <AssigneesAndWatchers issue={issue} watchers={watchers} />
       </span>
     </>
-  );
-}
-
-/**
- * A row's status pill that opens the project's statuses. Without `onStatus`
- * it stays the bare pill: below `issue.triage` there is nothing to open that
- * the server would not refuse.
- */
-export function StatusMenu({
-  status,
-  statuses,
-  onStatus,
-}: {
-  status: Status;
-  statuses: readonly Status[];
-  onStatus?: (status: Status) => void;
-}) {
-  if (!onStatus) return <StatusPill status={status} />;
-  return (
-    <DropdownMenu>
-      {/* flex collapses the button's line box to the pill; the default
-          block box is 24px tall and seats the pill on its text baseline,
-          ~1.6px below the neighbouring label chips (T-98). */}
-      <DropdownMenuTrigger className="flex cursor-pointer">
-        <StatusPill status={status} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent>
-        {statuses.map((s) => (
-          <DropdownMenuItem key={s.id} onSelect={() => onStatus(s)}>
-            <span className="w-4">
-              {s.id === status.id && <CheckIcon className="size-4" />}
-            </span>
-            <StatusPill status={s} className="border-0 px-0" />
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 

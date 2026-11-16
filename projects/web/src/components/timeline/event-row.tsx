@@ -294,7 +294,7 @@ export function renderEvent(
         node: (
           <>
             {`${verb} this `}
-            <StatusPill status={status} className="align-middle" />
+            <StatusPill status={status} />
           </>
         ),
         // Parentheses are the plain-text stand-in for the pill's outline.
@@ -308,9 +308,9 @@ export function renderEvent(
         node: (
           <>
             {"moved "}
-            <StatusPill status={from} className="align-middle" />
+            <StatusPill status={from} />
             {" → "}
-            <StatusPill status={to} className="align-middle" />
+            <StatusPill status={to} />
           </>
         ),
         text: `moved ${from.name} → ${to.name}`,
@@ -341,7 +341,7 @@ export function renderEvent(
         node: (
           <>
             {`${verb} label `}
-            <LabelChip label={label} className="align-middle" />
+            <LabelChip label={label} />
           </>
         ),
         text: `${verb} label ${label.name}`,
