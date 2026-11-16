@@ -360,6 +360,7 @@ function patchOptions(theme: SyntaxTheme): CodeViewProps["options"] {
     unsafeCSS: COMMIT_MESSAGE_CSS,
     layout: { paddingTop: 0, paddingBottom: 0, gap: 8 },
     itemMetrics: { diffHeaderHeight: PATCH_HEADER_HEIGHT },
+    stickyHeaders: true,
   } as const;
   PATCH_OPTIONS.set(theme, options);
   return options;
