@@ -115,7 +115,8 @@ function CreatedTime({ createdAt }: { createdAt: string }) {
  * only thing that knows what this reader may do here.
  *
  * The id is out of sight until it is wanted (T-696): pointing at the comment,
- * focus inside it, or this comment being the one the address names. It is
+ * focus inside it, or this comment being the one the address names — and on
+ * a narrow screen it is never shown at all. It is
  * never shortened to `#N` to save the room — in a body that spelling is an
  * issue reference, so a reader who copied it would be pointing somewhere
  * else entirely.
@@ -222,14 +223,15 @@ function LinkedMeta({
 
           Hidden with opacity and not removed, above the breakpoint: the
           space stays held, so pointing at a comment never moves its time
-          or wraps its header. Below it, where there is no pointer to bring
-          it back and every pixel of the first line is spoken for, the id
-          takes no room until the address names this comment. */}
+          or wraps its header. Below it the id is never drawn, not even on
+          the comment the address names: there is no pointer to bring it
+          back, every pixel of the first line is spoken for, and the menu's
+          Copy reference is how a phone reaches it. */}
       <span
         className={cn(
-          "select-all",
+          "select-all max-sm:hidden",
           !named &&
-            "opacity-0 transition-opacity duration-150 group-focus-within/comment:opacity-100 group-hover/comment:opacity-100 motion-reduce:transition-none max-sm:hidden",
+            "opacity-0 transition-opacity duration-150 group-focus-within/comment:opacity-100 group-hover/comment:opacity-100 motion-reduce:transition-none",
         )}
       >{`#${anchor}`}</span>
       <span className="group-hover/meta:underline">

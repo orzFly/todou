@@ -239,11 +239,10 @@ export async function probeSplitHeader(options = {}) {
     return { status: "error", reason: "no comment header on this page" };
   }
 
-  // Below `sm` only the header the address names draws its id (T-696) — the
-  // fixture names its plain comment — so that is the one header the stubbed
-  // width reaches there. The others keep the token `display: none`, where a
-  // longer text has no width to add; stubbing it anyway costs nothing and
-  // keeps the desktop runs, where every token is laid out, honest.
+  // Below `sm` no header draws its id (T-696), so the stubbed id has no
+  // width to add there; the runner stresses at 640 instead, the narrowest
+  // width that lays every id out. The long pill below is what the narrow
+  // stress runs are for.
   if (stress) {
     for (const { meta, identity } of headers) {
       const token = meta.querySelector(".select-all");
@@ -315,6 +314,14 @@ export async function probeSplitHeader(options = {}) {
           action.style.justifySelf = "auto";
         }
         meta.style.marginLeft = "auto";
+        break;
+      case "id-shown":
+        // The rule the user set for phones: no id there, not even on the
+        // comment the address names. Undo it on that one header.
+        for (const { meta: each } of headers) {
+          const token = each.querySelector(".select-all");
+          if (token) token.style.display = "inline";
+        }
         break;
       case "meta-full":
         // A meta that claims the whole line goes under the author whether
@@ -535,7 +542,12 @@ export async function probeHeaderCopy(options = {}) {
   if (options.strip === true) {
     for (const element of document.querySelectorAll("[class]")) {
       for (const name of [...element.classList]) {
-        if (name.startsWith("max-sm:")) element.classList.remove(name);
+        // `max-sm:hidden` stays: the id is not on a phone's screen, so it is
+        // not in what a phone copies either (T-696). Criterion 6 is about
+        // the narrow *layout* leaving the bytes alone, and every other
+        // narrow token is layout.
+        if (name.startsWith("max-sm:") && name !== "max-sm:hidden")
+          element.classList.remove(name);
       }
     }
   }
@@ -759,6 +771,11 @@ export function assessSplitHeaders(measured, width, baseline = null) {
         `time's line ends at ${row.timeLineRight}, the header line at ${row.lineRight}` +
           (row.wrapped ? " (wrapped)" : ""),
       );
+    }
+
+    // 9. Below `sm` no header draws its id, named or not (T-696).
+    if (row.idShown) {
+      note(9, row.id, `id ${JSON.stringify(row.idText)} drawn below sm`);
     }
 
     // 8. The author's group never breaks: what runs out of room truncates.

@@ -63,7 +63,12 @@ import {
 import { type RefConfig, splitIssueRefs } from "@/lib/issue-refs.ts";
 import type { ReturnLinkState } from "@/lib/return-view-history.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
-import { formatTimelineTime } from "@/lib/timeline-time.ts";
+import {
+  formatTimelineTime,
+  TIMELINE_ROW_NARROW,
+  TIMELINE_TIME_NARROW,
+} from "@/lib/timeline-time.ts";
+import { cn } from "@/lib/utils";
 
 /** Entity emphasis inside an event sentence, one notch below the actor's. */
 export const IN_SENTENCE = "font-medium text-foreground/75";
@@ -883,7 +888,10 @@ export function EventRow({
   return (
     <div
       id={eventAnchor(event.id)}
-      className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2"
+      className={cn(
+        "py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2",
+        TIMELINE_ROW_NARROW,
+      )}
     >
       {/* Text aligns on its baseline; icons and controls center independently. */}
       <span className="inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center">
@@ -918,7 +926,10 @@ export function EventRow({
           hash={eventAnchor(event.id)}
           hashScrollIntoView={false}
           state={ctx.returnState}
-          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
+          className={cn(
+            "shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline",
+            TIMELINE_TIME_NARROW,
+          )}
           title={event.created_at}
         >
           <time dateTime={event.created_at}>
@@ -927,7 +938,10 @@ export function EventRow({
         </Link>
       ) : (
         <span
-          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70"
+          className={cn(
+            "shrink-0 text-xs whitespace-nowrap text-muted-foreground/70",
+            TIMELINE_TIME_NARROW,
+          )}
           title={event.created_at}
         >
           <time dateTime={event.created_at}>

@@ -20,6 +20,10 @@ import {
   parseIssuePermalink,
   parseTimelineAnchor,
 } from "../src/lib/timeline-anchors.ts";
+import {
+  TIMELINE_ROW_NARROW,
+  TIMELINE_TIME_NARROW,
+} from "../src/lib/timeline-time.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const author = {
@@ -149,6 +153,17 @@ describe("comment permalinks in the timeline", () => {
       ).not.toBeNull();
     });
     expect(view.container.querySelector("#event-9")).not.toBeNull();
+    // Below sm the time floats to the right edge, as a comment header's does
+    // when it wraps (T-696), and the row contains the float.
+    const time = view.container.querySelector(
+      "a[href='/projects/p/issues/7#event-9']",
+    );
+    for (const token of TIMELINE_TIME_NARROW.split(" ")) {
+      expect(time?.classList).toContain(token);
+    }
+    expect(view.container.querySelector("#event-9")?.classList).toContain(
+      TIMELINE_ROW_NARROW,
+    );
   });
 
   it("deep-links referenced events to the referencing comment", async () => {

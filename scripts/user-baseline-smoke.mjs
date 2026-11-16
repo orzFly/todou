@@ -84,9 +84,10 @@ const SPLIT_SURFACES = [
 ];
 // Stable names also work individually with --self-test-case=<name>.
 const SPLIT_FAULTS = [
-  // At 320 the named comment's id and time no longer fit beside its author,
-  // so the stripped and the right-aligned rows both drop the controls to a
-  // line of their own.
+  // At 320 the stripped row draws the named comment's id again, and with it
+  // the id and time no longer fit beside the author, so the controls drop to
+  // a line of their own; the right-aligned row drops them for the agent
+  // comment, whose pill and time do not fit either.
   [1, "strip", 320, "timeline", false, "the header as it stood before"],
   [1, "meta-auto", 320, "timeline", false, "right-alignment on the meta"],
   [
@@ -98,6 +99,7 @@ const SPLIT_FAULTS = [
     "controls centred once the time wraps",
   ],
   [3, "meta-full", 430, "timeline", false, "a meta that always wraps"],
+  [9, "id-shown", 390, "timeline", false, "an id drawn below sm"],
   [4, "meta-left", 430, "timeline", false, "no auto margin on the meta"],
   // The stub lengthens the agent pill past what fits beside the author.
   [
@@ -161,7 +163,7 @@ const SPLIT_FAULTS = [
 
 /**
  * Where the scope faults recreate a header that cannot wrap. 390 was narrow
- * enough while every header carried its id; since T-696 an unnamed header
+ * enough while every header carried its id; since T-696 a header below `sm`
  * shows only the time, which fits on one line there, so a fault that forbids
  * wrapping has nothing left to break. At 320 the same content still does not
  * fit, which is the condition those faults need to prove anything.
@@ -353,9 +355,10 @@ const SOURCE_ONLY_GUARDS = [
   {
     id: "comment-header-meta-token",
     file: "projects/web/src/components/shared/comment-header-meta.tsx",
-    // The token alone in its span, and hidden only while the address does
-    // not name its comment (T-696).
-    pattern: /"select-all",\s*!named &&[\s\S]*?>\{`#\$\{anchor\}`\}<\/span>/,
+    // The token alone in its span: never drawn below `sm`, and transparent
+    // above it while the address does not name its comment (T-696).
+    pattern:
+      /"select-all max-sm:hidden",\s*!named &&[\s\S]*?>\{`#\$\{anchor\}`\}<\/span>/,
   },
   {
     id: "optimistic-split",
@@ -897,21 +900,27 @@ async function measure(page, fault = null, cases = CASES) {
         const styles = [];
         let invalid = null;
         let perturbed = false;
-        // Below `sm` a header's id is `display: none` unless the address
-        // names its comment (T-696). That role has no box and no baseline,
+        // Below `sm` a header never draws its id, not even on the comment
+        // the address names (T-696). That role has no box and no baseline,
         // so it is set aside by name rather than measured — a marker in a
         // box that is not there reports y=0, which reads as a wrap and would
-        // pass silently. Anywhere else a participant without a box is a
-        // broken sample.
+        // pass silently. An id that *is* drawn there is a broken rule, and
+        // anywhere else a participant without a box is a broken sample.
         const hidden = [];
         const measuredRoles = [];
+        const narrowPage = window.innerWidth < 640;
         for (const [index, element] of participants.entries()) {
-          if (element.getClientRects().length > 0) {
-            measuredRoles.push(roles[index]);
+          const drawn = element.getClientRects().length > 0;
+          if (roles[index] === "id" && narrowPage) {
+            if (drawn) {
+              invalid = "id drawn below sm";
+              break;
+            }
+            hidden.push(roles[index]);
             continue;
           }
-          if (roles[index] === "id" && window.innerWidth < 640) {
-            hidden.push(roles[index]);
+          if (drawn) {
+            measuredRoles.push(roles[index]);
             continue;
           }
           invalid = `${roles[index]} participant has no layout box`;
@@ -1876,9 +1885,9 @@ async function scopeRun(
           "comment-item-agent-plain": ["comment actions"],
         };
         // The fixture's address names the plain comment, which both of the
-        // first two samples draw (T-696). Its id is shown outright; every
-        // other id waits for a pointer — transparent but laid out from `sm`
-        // up, and taking no room at all below it.
+        // first two samples draw (T-696). From `sm` up its id is shown
+        // outright and every other id waits for a pointer, transparent but
+        // laid out; below `sm` no id is drawn at all, named or not.
         const named = new Set(["comment-item", "comment-item-author"]);
         for (const id of Object.keys(expected)) {
           const row = document
@@ -2257,7 +2266,7 @@ try {
     // Desktop keeps every action it had, narrow folds the pencil into the
     // menu; every width keeps the time and a page that does not scroll
     // sideways. The id is laid out from `sm` up and drawn only on the
-    // comment the address names; below `sm` only that one takes any room.
+    // comment the address names; below `sm` no id takes any room.
     const scopeBad = [];
     if (scope.documentOverflows)
       scopeBad.push(
@@ -2265,7 +2274,7 @@ try {
       );
     for (const entry of scope.rows ?? []) {
       if (entry.status === "missing") scopeBad.push(`${entry.id} missing`);
-      else if (entry.idVisible !== (viewport.width >= 640 || entry.idNamed))
+      else if (entry.idVisible !== viewport.width >= 640)
         scopeBad.push(
           `${entry.id} id ${entry.idVisible ? "takes room" : "has no box"} at ${viewport.width}px`,
         );
@@ -2347,12 +2356,19 @@ try {
       // Same-run strip geometry is diagnostic only. Criterion 5 checks the
       // DOM-side exported constants: unconditional tokens survive stripping
       // on both pages and must still fail.
-      const baseline = desktop
-        ? await splitHeaderRun(browser, base, seeded, viewport, surface, {
-            fault: "strip",
-          })
-        : null;
-      for (const stress of desktop ? [false] : [false, true]) {
+      // Narrow widths stress the agent pill; 640 stresses the id, the
+      // narrowest width that draws one (T-696).
+      for (const stress of desktop && viewport.width !== 640
+        ? [false]
+        : [false, true]) {
+        // Stripped under the same stub, so the diagnostic compares layouts
+        // rather than reporting the stub's own width as movement.
+        const baseline = desktop
+          ? await splitHeaderRun(browser, base, seeded, viewport, surface, {
+              fault: "strip",
+              stress,
+            })
+          : null;
         const measured = await splitHeaderRun(
           browser,
           base,
@@ -2367,7 +2383,7 @@ try {
           baseline,
         );
         const rows = measured.rows ?? [];
-        const label = `${viewport.width}/${surface.id}${stress ? " [stubbed #comment-99999]" : ""}`;
+        const label = `${viewport.width}/${surface.id}${stress ? " [stubbed id + pill]" : ""}`;
         console.log(
           `  ${label}: ${rows.length} header(s) ` +
             (desktop
@@ -2753,7 +2769,7 @@ try {
           restoredVerdict.failures.length === 0 &&
           !restored.fixtureErrors?.length;
         console.log(
-          `  ${kind} @${width}/${surfaceId}${stress ? " [stubbed id]" : ""} → criterion ${criterion}: ` +
+          `  ${kind} @${width}/${surfaceId}${stress ? " [stubbed id + pill]" : ""} → criterion ${criterion}: ` +
             `${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} (${why}; ` +
             `${hit[0]?.detail ?? "no failure on that criterion"}; ` +
             `restore ${restoredVerdict.failures.map((f) => `${f.criterion}:${f.row}`).join(",") || "clean"})`,

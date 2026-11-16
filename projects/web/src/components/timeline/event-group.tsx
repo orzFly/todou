@@ -43,7 +43,11 @@ import {
   useEventEntities,
 } from "@/components/timeline/use-event-entities.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
-import { formatTimelineTime } from "@/lib/timeline-time.ts";
+import {
+  formatTimelineTime,
+  TIMELINE_ROW_NARROW,
+  TIMELINE_TIME_NARROW,
+} from "@/lib/timeline-time.ts";
 import { cn } from "@/lib/utils";
 
 type ListRow = {
@@ -362,7 +366,12 @@ function ListGroup({
 
   return (
     <div data-testid="event-group">
-      <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2">
+      <div
+        className={cn(
+          "py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2",
+          TIMELINE_ROW_NARROW,
+        )}
+      >
         <span
           className={cn(
             "inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center",
@@ -387,7 +396,10 @@ function ListGroup({
           hash={eventAnchor(first.id)}
           hashScrollIntoView={false}
           state={returnState}
-          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
+          className={cn(
+            "shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline",
+            TIMELINE_TIME_NARROW,
+          )}
           title={
             first === last
               ? first.created_at
@@ -797,7 +809,12 @@ function CollapsedGroup({
 
   return (
     <div data-testid="event-group">
-      <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2">
+      <div
+        className={cn(
+          "py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2",
+          TIMELINE_ROW_NARROW,
+        )}
+      >
         <span
           className={cn(
             "inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center",
@@ -845,7 +862,10 @@ function CollapsedGroup({
           hash={eventAnchor(first.id)}
           hashScrollIntoView={false}
           state={returnState}
-          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
+          className={cn(
+            "shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline",
+            TIMELINE_TIME_NARROW,
+          )}
           title={`${first.created_at} – ${last.created_at}`}
         >
           <time dateTime={first.created_at}>

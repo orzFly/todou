@@ -259,7 +259,8 @@ describe("a timeline comment's own header (T-435)", () => {
         .id as HTMLElement;
     await waitFor(() => expect(token(12)).toBeDefined());
     expect(token(12).classList).not.toContain("opacity-0");
-    expect(token(12).classList).not.toContain("max-sm:hidden");
+    // Never on a narrow screen, named or not.
+    expect(token(12).classList).toContain("max-sm:hidden");
     expect(token(13).classList).toContain("opacity-0");
 
     // Followed to the other one, the first goes back to waiting.
