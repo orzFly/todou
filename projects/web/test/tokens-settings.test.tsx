@@ -276,3 +276,116 @@ describe("personal tokens by holder (T-560)", () => {
     expect(view.queryByRole("button", { name: /^Issue for/ })).toBeNull();
   });
 });
+
+describe("tokens that act as agents (T-693)", () => {
+  const actAsPicker = (view: Awaited<ReturnType<typeof page>>) =>
+    view.queryByRole("combobox", { name: "Act as agents" });
+
+  it("issues my token with the chosen act_as, Only me by default", async () => {
+    mountAt("/settings/tokens");
+    const createMine = vi.spyOn(api, "createMyToken").mockResolvedValue({
+      id: 98,
+      token: "todou_pat_fallback",
+      prefix: "td_98",
+      name: "proxy",
+      expires_at: null,
+      act_as: "create",
+    });
+    const view = await page();
+    const picker = await waitFor(() => {
+      const found = actAsPicker(view);
+      expect(found?.textContent).toBe("Only me");
+      return found as HTMLElement;
+    });
+
+    fireEvent.keyDown(picker, { key: "ArrowDown" });
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: "Can act as and create my agents",
+      }),
+    );
+    fireEvent.change(view.getByPlaceholderText("Token name (e.g. cli, ci)"), {
+      target: { value: "proxy" },
+    });
+    fireEvent.click(view.getByRole("button", { name: "Issue token" }));
+
+    await waitFor(() =>
+      expect(createMine).toHaveBeenCalledWith({
+        name: "proxy",
+        expires_at: null,
+        act_as: "create",
+      }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Token created" }),
+    );
+    expect(dialog.getByText("x-todou-act-as: <agent login>")).toBeTruthy();
+  });
+
+  it("hides the choice while issuing for an agent, and forgets it", async () => {
+    mountAt("/settings/tokens");
+    const issueAgent = vi.spyOn(api, "issueAgentToken").mockResolvedValue({
+      id: 99,
+      token: "todou_pat_fallback",
+      prefix: "td_99",
+      name: "deploy",
+      expires_at: null,
+      act_as: "off",
+    });
+    const createMine = vi.spyOn(api, "createMyToken").mockResolvedValue({
+      id: 100,
+      token: "todou_pat_fallback",
+      prefix: "td_100",
+      name: "mine",
+      expires_at: null,
+      act_as: "off",
+    });
+    const view = await page();
+    const picker = await waitFor(() => actAsPicker(view) as HTMLElement);
+    fireEvent.keyDown(picker, { key: "ArrowDown" });
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Can act as my agents" }),
+    );
+
+    fireEvent.click(view.getByRole("button", { name: /^Issue for/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /@bot-two/ }));
+    await waitFor(() => expect(actAsPicker(view)).toBeNull());
+    fireEvent.change(view.getByPlaceholderText("Token name (e.g. cli, ci)"), {
+      target: { value: "deploy" },
+    });
+    fireEvent.click(view.getByRole("button", { name: "Issue token" }));
+    await waitFor(() =>
+      expect(issueAgent).toHaveBeenCalledWith(8, {
+        name: "deploy",
+        expires_at: null,
+      }),
+    );
+
+    // Back on myself, the earlier choice did not survive the detour.
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    fireEvent.click(view.getByRole("button", { name: /^Issue for/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /@user/ }));
+    await waitFor(() => expect(actAsPicker(view)?.textContent).toBe("Only me"));
+    expect(createMine).not.toHaveBeenCalled();
+  });
+
+  it("badges only the tokens that act as agents", async () => {
+    mountAt(
+      "/settings/tokens?holder=all",
+      [BOT, HELPER],
+      [
+        { ...MINE, act_as: "existing" },
+        { ...token(14, "proxy", me), act_as: "create" },
+        BOTS,
+      ],
+    );
+    const view = await page();
+    await waitFor(() => expect(rowNames(view)).toHaveLength(3));
+    const rows = rowNames(view);
+    expect(rows[0]).toContain("acts as agents");
+    expect(rows[1]).toContain("acts as + creates agents");
+    expect(rows[2]).not.toContain("acts as");
+  });
+});

@@ -4,7 +4,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
-import type { TokenCreated, TokenListItem } from "@todou/shared";
+import type { TokenActAs, TokenCreated, TokenListItem } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -28,9 +28,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 type HolderFilter = "user" | "agents" | "all";
+
+const ACT_AS_CHOICES: [TokenActAs, string][] = [
+  ["off", "Only me"],
+  ["existing", "Can act as my agents"],
+  ["create", "Can act as and create my agents"],
+];
 
 const SEGMENTS: [HolderFilter, string][] = [
   ["user", "User"],
@@ -76,6 +89,8 @@ export function TokensSettingsPage() {
   const [name, setName] = useState("");
   const holderPicked = [me, ...agents].find((u) => String(u.id) === issueFor);
   const [expiry, setExpiry] = useState("never");
+  const [actAs, setActAs] = useState<TokenActAs>("off");
+  const issuingForMe = issueFor === String(me.id);
   const [created, setCreated] = useState<{
     token: TokenCreated;
     holder: string | null;
@@ -94,7 +109,7 @@ export function TokensSettingsPage() {
       return {
         token: agent
           ? await api.issueAgentToken(agent.id, input)
-          : await api.createMyToken(input),
+          : await api.createMyToken({ ...input, act_as: actAs }),
         holder: agent ? agent.login : null,
       };
     },
@@ -102,6 +117,7 @@ export function TokensSettingsPage() {
       setCreated(result);
       setName("");
       setExpiry("never");
+      setActAs("off");
       invalidate();
     },
     onError: (error) => toast.error(error.message),
@@ -144,7 +160,10 @@ export function TokensSettingsPage() {
             users={[me, ...agents]}
             selectedIds={[Number(issueFor)]}
             onPick={(user) => {
-              if (user !== null) setIssueFor(String(user.id));
+              if (user === null) return;
+              setIssueFor(String(user.id));
+              // An agent's token can never act as agents.
+              if (user.id !== me.id) setActAs("off");
             }}
             trigger={
               <UserSelectTrigger
@@ -164,6 +183,23 @@ export function TokensSettingsPage() {
           required
         />
         <TokenExpirySelect value={expiry} onChange={setExpiry} />
+        {issuingForMe && (
+          <Select
+            value={actAs}
+            onValueChange={(value) => setActAs(value as TokenActAs)}
+          >
+            <SelectTrigger aria-label="Act as agents" className="w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ACT_AS_CHOICES.map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Button type="submit" size="sm" disabled={issue.isPending}>
           <PlusIcon className="size-3.5" /> Issue token
         </Button>

@@ -1,4 +1,4 @@
-import type { TokenCreated } from "@todou/shared";
+import { ACT_AS_HEADER, type TokenCreated } from "@todou/shared";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,12 @@ export function TokenReveal({ token }: { token: TokenCreated }) {
           </>
         )}
       </Button>
+      {token.act_as !== "off" && (
+        <p className="text-xs text-muted-foreground">
+          Send <code>{ACT_AS_HEADER}: &lt;agent login&gt;</code> to act as an
+          agent.
+        </p>
+      )}
       <p className="text-xs text-muted-foreground">
         Store it somewhere safe — only the prefix “{token.prefix}…” will be
         shown from now on.

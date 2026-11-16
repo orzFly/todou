@@ -1,6 +1,7 @@
 import type { TokenListItem } from "@todou/shared";
 import { Trash2Icon } from "lucide-react";
 import { UserChip } from "@/components/shared/user-chip.tsx";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -10,6 +11,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+function ActAsBadge({ actAs }: { actAs: TokenListItem["act_as"] }) {
+  switch (actAs) {
+    case "existing":
+      return <Badge variant="outline">acts as agents</Badge>;
+    case "create":
+      return <Badge variant="outline">acts as + creates agents</Badge>;
+    default:
+      return null;
+  }
+}
 
 const when = (iso: string | null) =>
   iso ? <time dateTime={iso}>{new Date(iso).toLocaleString()}</time> : "—";
@@ -50,7 +62,12 @@ export function TokenTable({
                 <UserChip user={token.holder} />
               </TableCell>
             )}
-            <TableCell>{token.name}</TableCell>
+            <TableCell>
+              <span className="inline-flex items-center gap-2">
+                {token.name}
+                <ActAsBadge actAs={token.act_as} />
+              </span>
+            </TableCell>
             <TableCell className="font-mono text-xs">{token.prefix}…</TableCell>
             <TableCell className="text-xs text-muted-foreground">
               {when(token.created_at)}

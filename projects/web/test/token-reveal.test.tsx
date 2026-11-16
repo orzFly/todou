@@ -34,4 +34,14 @@ describe("TokenReveal (one-time plaintext display)", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("names the act-as header only for a token that can act as agents", () => {
+    const plain = render(<TokenReveal token={token} />);
+    expect(plain.queryByText(/x-todou-act-as/)).toBeNull();
+    plain.unmount();
+    const acting = render(
+      <TokenReveal token={{ ...token, act_as: "existing" }} />,
+    );
+    expect(acting.getByText("x-todou-act-as: <agent login>")).toBeTruthy();
+  });
 });
