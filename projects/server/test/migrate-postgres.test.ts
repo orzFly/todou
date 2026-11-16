@@ -47,44 +47,47 @@ async function journalRows(router: DbRouter, tier: DbTier): Promise<number> {
 }
 
 describe.skipIf(!PG_URL)("concurrent migrations of a new database", () => {
-  it("let every open return a fully migrated database", async () => {
+  it("let every open return a fully migrated database", async ({
+    onTestFinished,
+  }) => {
     if (!PG_URL) throw new Error("TODOU_TEST_POSTGRES_URL is unset");
     const database = await createTestDatabase(PG_URL, "migrate_race");
     const routers: DbRouter[] = [];
-    try {
-      const results = await Promise.allSettled(
-        Array.from({ length: OPENERS }, async () => {
-          // A pool of its own per router, as separate processes would have.
-          // Idle connections are never reaped, so a lock left behind on one
-          // keeps every later open waiting until the test times out, instead
-          // of only until the pool happens to close that connection.
-          const { router } = await makeRouter("shared", {
-            systemUrl: database.url,
-            extraToml: "[database.pool]\nidle_timeout_ms = 0",
-          });
-          routers.push(router);
-          // Read as soon as this open returns, not once all have: an open
-          // that returned before the migration finished would only show it
-          // here.
-          return {
-            system: await journalRows(router, "system"),
-            project: await journalRows(router, "project"),
-          };
-        }),
-      );
-      const counts = results.map((result) => {
-        if (result.status === "rejected") throw result.reason;
-        return result.value;
-      });
-      const expected = {
-        system: journalEntries("system"),
-        project: journalEntries("project"),
-      };
-      expect(counts).toEqual(counts.map(() => expected));
-    } finally {
+    // Not a finally: a timeout never reaches one, and the database would
+    // outlive the run.
+    onTestFinished(async () => {
       await Promise.all(routers.map((router) => router.close()));
       await database.drop();
-    }
+    });
+    const results = await Promise.allSettled(
+      Array.from({ length: OPENERS }, async () => {
+        // A pool of its own per router, as separate processes would have.
+        // Idle connections are never reaped, so a lock left behind on one
+        // keeps every later open waiting until the test times out, instead
+        // of only until the pool happens to close that connection.
+        const { router } = await makeRouter("shared", {
+          systemUrl: database.url,
+          extraToml: "[database.pool]\nidle_timeout_ms = 0",
+        });
+        routers.push(router);
+        // Read as soon as this open returns, not once all have: an open
+        // that returned before the migration finished would only show it
+        // here.
+        return {
+          system: await journalRows(router, "system"),
+          project: await journalRows(router, "project"),
+        };
+      }),
+    );
+    const counts = results.map((result) => {
+      if (result.status === "rejected") throw result.reason;
+      return result.value;
+    });
+    const expected = {
+      system: journalEntries("system"),
+      project: journalEntries("project"),
+    };
+    expect(counts).toEqual(counts.map(() => expected));
   });
 
   // A process frozen (or cut off) while it waits must not end up holding the
@@ -99,58 +102,54 @@ describe.skipIf(!PG_URL)("concurrent migrations of a new database", () => {
     const holder = new pg.Client({ connectionString: database.url });
     const routers: DbRouter[] = [];
     let waiter: ChildProcessByStdio<null, Readable, null> | undefined;
-    // Also runs after a timeout, which never reaches the finally below; a
-    // stopped child would outlive the run.
-    onTestFinished(() => {
+    // Not a finally: a timeout never reaches one, and a stopped child and
+    // the database would outlive the run. The child dies first so that the
+    // drop does not wait out its session.
+    onTestFinished(async () => {
       waiter?.kill("SIGKILL");
-    });
-    try {
-      await holder.connect();
-      await holder.query("SELECT pg_advisory_lock($1::bigint)", [
-        MIGRATION_LOCK_KEY,
-      ]);
-      const dir = testTmpDir("todou-migrate-");
-      const configPath = join(dir, "config.toml");
-      writeFileSync(
-        configPath,
-        `[database]\nsystem = "${database.url}"\n[storage]\npath = '${dir}'\n`,
-      );
-      const child = spawn(
-        process.execPath,
-        ["src/index.ts", "migrate", "--config", configPath],
-        { cwd: SERVER_DIR, stdio: ["ignore", "pipe", "inherit"] },
-      );
-      waiter = child;
-      const exited = new Promise<number | null>((resolve) => {
-        child.on("exit", (code) => resolve(code));
-      });
-      await new Promise<void>((resolve, reject) => {
-        let output = "";
-        child.stdout.on("data", (chunk: Buffer) => {
-          output += chunk.toString();
-          if (output.includes("waiting for another migration")) resolve();
-        });
-        child.on("exit", () =>
-          reject(new Error(`migrate exited before queueing:\n${output}`)),
-        );
-      });
-      child.kill("SIGSTOP");
-      await holder.end();
-
-      const { router } = await makeRouter("shared", {
-        systemUrl: database.url,
-      });
-      routers.push(router);
-      expect(await journalRows(router, "system")).toBe(
-        journalEntries("system"),
-      );
-
-      child.kill("SIGCONT");
-      expect(await exited).toBe(0);
-    } finally {
       await holder.end();
       await Promise.all(routers.map((router) => router.close()));
       await database.drop();
-    }
+    });
+    await holder.connect();
+    await holder.query("SELECT pg_advisory_lock($1::bigint)", [
+      MIGRATION_LOCK_KEY,
+    ]);
+    const dir = testTmpDir("todou-migrate-");
+    const configPath = join(dir, "config.toml");
+    writeFileSync(
+      configPath,
+      `[database]\nsystem = "${database.url}"\n[storage]\npath = '${dir}'\n`,
+    );
+    const child = spawn(
+      process.execPath,
+      ["src/index.ts", "migrate", "--config", configPath],
+      { cwd: SERVER_DIR, stdio: ["ignore", "pipe", "inherit"] },
+    );
+    waiter = child;
+    const exited = new Promise<number | null>((resolve) => {
+      child.on("exit", (code) => resolve(code));
+    });
+    await new Promise<void>((resolve, reject) => {
+      let output = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+        if (output.includes("waiting for another migration")) resolve();
+      });
+      child.on("exit", () =>
+        reject(new Error(`migrate exited before queueing:\n${output}`)),
+      );
+    });
+    child.kill("SIGSTOP");
+    await holder.end();
+
+    const { router } = await makeRouter("shared", {
+      systemUrl: database.url,
+    });
+    routers.push(router);
+    expect(await journalRows(router, "system")).toBe(journalEntries("system"));
+
+    child.kill("SIGCONT");
+    expect(await exited).toBe(0);
   });
 });
