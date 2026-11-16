@@ -13,6 +13,8 @@ export interface Selection<K> {
   toggle: (key: K, options?: { extend?: boolean }) => void;
   /** The header checkbox: anything short of all selects all. */
   toggleAll: () => void;
+  /** `toggleAll` over part of the list, such as one column of a board. */
+  toggleGroup: (group: readonly K[]) => void;
   clear: () => void;
   state: SelectionState;
 }
@@ -73,7 +75,38 @@ export function useSelection<K>(keys: readonly K[]): Selection<K> {
     setPicked(state === "all" ? new Set() : new Set(keys));
   }, [keys, state]);
 
+  const toggleGroup = useCallback(
+    (group: readonly K[]) => {
+      anchor.current = null;
+      const next = new Set(live);
+      const on = groupState(live, group) !== "all";
+      for (const key of group) {
+        if (on) next.add(key);
+        else next.delete(key);
+      }
+      setPicked(next);
+    },
+    [live],
+  );
+
   const isSelected = useCallback((key: K) => live.has(key), [live]);
 
-  return { selected, isSelected, toggle, toggleAll, clear, state };
+  return {
+    selected,
+    isSelected,
+    toggle,
+    toggleAll,
+    toggleGroup,
+    clear,
+    state,
+  };
+}
+
+/** `state` over part of the list, such as one column of a board. */
+export function groupState<K>(
+  picked: ReadonlySet<K>,
+  group: readonly K[],
+): SelectionState {
+  const count = group.filter((key) => picked.has(key)).length;
+  return count === 0 ? "none" : count === group.length ? "all" : "some";
 }

@@ -232,7 +232,9 @@ describe("a column initializes only once its cards are there", () => {
       items: [card(7, "first"), card(8, "second")],
       next_cursor: null,
     });
-    await screen.findByText("first");
+    // Every column is answered with the same page, so "first" is on the board
+    // twice; whether both land in one commit is React's business.
+    await waitFor(() => expect(viewport.textContent).toContain("first"));
 
     // Same element throughout: React reuses the div, so this is the instance
     // arriving late rather than a different container being measured.

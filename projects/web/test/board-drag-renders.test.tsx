@@ -7,7 +7,13 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
-import type { IssueListItem, ReferenceConfig, Status } from "@todou/shared";
+import type {
+  IssueListItem,
+  MemberRole,
+  Project,
+  ReferenceConfig,
+  Status,
+} from "@todou/shared";
 import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boardColumnQuery } from "../src/api/board.ts";
@@ -75,7 +81,7 @@ const card = (number: number, s: Status): IssueListItem => ({
   moves: [],
 });
 
-function renderBoard() {
+function renderBoard({ role }: { role?: MemberRole } = {}) {
   const todo = status(1, "Todo");
   const done = status(2, "Done");
   const client = testQueryClient();
@@ -84,6 +90,18 @@ function renderBoard() {
     mutations: { retry: false },
   });
   client.setQueryData(statusesQuery("p").queryKey, [todo, done]);
+  if (role) {
+    client.setQueryData(["project", "p"], {
+      id: 1,
+      slug: "p",
+      name: "P",
+      description: "",
+      created_at: "2026-01-01T00:00:00Z",
+      viewer_role: role,
+    } satisfies Project);
+    client.setQueryData(["labels", "p"], []);
+    client.setQueryData(["members", "p"], []);
+  }
   client.setQueryData(boardColumnQuery("p", todo.id).queryKey, {
     items: [1, 2, 3, 4].map((n) => card(n, todo)),
     next_cursor: null,
@@ -179,5 +197,36 @@ describe("board drag re-renders (T-691)", () => {
       expect(view.getAllByRole("link", { name: /issue 1$/ })).toHaveLength(1);
     });
     expect(prefixCalls.count).toBe(0);
+  });
+
+  it("carries a selection without re-drawing the cards it carries (T-708)", async () => {
+    const view = renderBoard({ role: "writer" });
+    const title = await view.findByRole("link", { name: /issue 1$/ });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    fireEvent.click(view.getByLabelText("select P-1"));
+    fireEvent.click(view.getByLabelText("select P-6"));
+
+    prefixCalls.count = 0;
+    fireEvent.pointerDown(title, pointer);
+    fireEvent.pointerMove(document, { ...pointer, clientX: 30 });
+    await waitFor(() => {
+      expect(view.getByTestId("drag-count").textContent).toBe("2");
+    });
+    // The overlay's copy, and nothing else: the carried card fades in its
+    // draggable shell, which dnd-kit re-renders anyway.
+    expect(prefixCalls.count).toBeLessThanOrEqual(2);
+    expect(
+      view
+        .getByLabelText("select P-6")
+        .closest("[data-return-id]")
+        ?.className.includes("opacity-30"),
+    ).toBe(true);
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    await waitFor(() => {
+      expect(view.queryByTestId("drag-count")).toBeNull();
+    });
   });
 });

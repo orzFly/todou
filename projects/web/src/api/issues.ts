@@ -21,6 +21,7 @@ import { inboxQuery } from "@/api/inbox.ts";
 import { issuesEntry } from "@/api/issues-cache.ts";
 import { api } from "@/api/queries.ts";
 import { invalidateSearchRefQueries } from "@/api/search-refs.ts";
+import { applyInvalidation } from "@/api/useUserEvents.ts";
 
 export const ID_CSV = /^\d+(,\d+)*$/;
 
@@ -507,8 +508,26 @@ export function useBulkIssueStatusMutation() {
       }
       toast.error(error.message);
     },
-    onSettled: (_data, _error, vars) =>
-      invalidateAfterStatusMove(queryClient, vars.slug, vars.issueNumbers),
+    onSettled: (_data, error, vars) => {
+      // The board drops several cards through here, and a whole-project
+      // refetch would re-read every one of its columns for it (T-708).
+      queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey });
+      invalidateAfterRowMoves(
+        queryClient,
+        vars.slug,
+        error
+          ? undefined
+          : vars.issueNumbers.map((number) => ({
+              number,
+              statusId: vars.status.id,
+            })),
+      );
+      for (const issueNumber of vars.issueNumbers) {
+        queryClient.invalidateQueries({
+          queryKey: ["issue", vars.slug, issueNumber],
+        });
+      }
+    },
   });
 }
 
@@ -607,6 +626,47 @@ function invalidateAfterStatusMove(
   for (const issueNumber of issueNumbers) {
     queryClient.invalidateQueries({ queryKey: ["issue", slug, issueNumber] });
   }
+}
+
+/**
+ * What settled moves ask of the project's lists (T-691). A broad refetch here
+ * re-read every column of the board, one request each, to learn that two of
+ * them changed. A move names only the status, so each row's verdict is the
+ * same one the change feed would give it (T-279): the column holding the card
+ * refetches, a column it left whose optimistic copy already dropped it does
+ * not. Pages that are not on screen are marked stale for their next mount,
+ * because the verdict judges a counts entry against the optimistic copy,
+ * which already carries the new status.
+ *
+ * A failed move (`rows` absent) has no row to judge with, and the rollback
+ * may have restored a page that the server moved anyway, so it keeps the
+ * broad refetch.
+ */
+export function invalidateAfterRowMoves(
+  queryClient: QueryClient,
+  slug: string,
+  rows: readonly { number: number; statusId: number }[] | undefined,
+): void {
+  const key = ["issues", slug];
+  if (rows === undefined) {
+    queryClient.invalidateQueries({ queryKey: key });
+    return;
+  }
+  queryClient.invalidateQueries({
+    queryKey: key,
+    type: "inactive",
+    refetchType: "none",
+  });
+  applyInvalidation(queryClient, {
+    key,
+    scope: {
+      issueRows: rows.map((row) => ({
+        verdict: "fields",
+        number: row.number,
+        row: { kind: "fields", status_id: row.statusId },
+      })),
+    },
+  });
 }
 
 /**
