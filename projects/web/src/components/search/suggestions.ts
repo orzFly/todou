@@ -236,7 +236,17 @@ export function qualifierValueSource(pools: ValuePools): SuggestionSource {
       const end = on?.end ?? ctx.caret;
       const typed = (on === undefined ? "" : on.value).toLowerCase();
 
-      const offered = [...builtinValues(part.key), ...(pools[part.key] ?? [])];
+      // A pool may restate a builtin to say more about it (`@me` with who
+      // that is), and then its entry stands in the builtin's place.
+      const pool = pools[part.key] ?? [];
+      const offered = [
+        ...builtinValues(part.key).map(
+          (b) => pool.find((o) => o.value === b.value) ?? b,
+        ),
+        ...pool.filter(
+          (o) => !builtinValues(part.key).some((b) => b.value === o.value),
+        ),
+      ];
       const rows = offered
         .filter((o) => o.value.toLowerCase().startsWith(typed))
         .map((o) => ({

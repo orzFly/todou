@@ -114,7 +114,7 @@ export function commandCompletionSource(
     const options: Completion[] = names.map((name) => {
       const user =
         command.argument === "member"
-          ? registry.memberUsers.find((u) => u.login === name)
+          ? registry.memberUsers.get(name)
           : undefined;
       return user === undefined
         ? { label: name, type: "command" }

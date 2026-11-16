@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentsQuery, membersQuery, meQuery } from "../src/api/queries.ts";
 import { FilterBar } from "../src/components/issue/filter-bar.tsx";
 import { qualifierValueSource } from "../src/components/search/suggestions.ts";
+import { AVATAR_SLOT } from "../src/components/shared/user-picker.tsx";
 import { commandCompletionSource } from "../src/lib/editor/slash-commands.ts";
 import {
   userAvatarOption,
@@ -85,6 +86,20 @@ describe("the list filter's assignee picker (T-677)", () => {
     expect(first?.getAttribute("aria-selected")).toBe("false");
     fireEvent.click(first as HTMLElement);
     expect(onChange).toHaveBeenCalledWith({ assignee: undefined });
+  });
+
+  it("starts every row's text in one column, Any assignee included", () => {
+    // happy-dom lays nothing out, so the column is checked as the class that
+    // makes it: every row leads with the same slot, avatar or not.
+    renderBar(undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Any assignee" }));
+    const tokens = AVATAR_SLOT.split(" ");
+    expect(tokens.length).toBeGreaterThan(0);
+    for (const row of screen.getAllByRole("option")) {
+      expect(
+        (row.firstElementChild as HTMLElement).className.split(" "),
+      ).toEqual(expect.arrayContaining(tokens));
+    }
   });
 
   it("drops the Any assignee row while filtering", () => {
@@ -181,7 +196,7 @@ describe("person rows in text completion (T-677)", () => {
     expect(userOptionClass(plain)).toBe("");
   });
 
-  it("attaches the member to each /assign candidate, not to @me", () => {
+  it("attaches the member to each /assign candidate, `me` included", () => {
     const registry = buildCommandRegistry({
       statuses: [],
       labels: [],
@@ -195,7 +210,7 @@ describe("person rows in text completion (T-677)", () => {
     );
     const rows = result?.options ?? [];
     expect(rows.map((o) => [o.label, userOf(o)?.id, o.detail])).toEqual([
-      ["me", undefined, undefined],
+      ["me", 1, "User"],
       ["user", 1, "User"],
       ["alice", 2, "Alice Example"],
       ["bot-one", 3, "Bot One"],

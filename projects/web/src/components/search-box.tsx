@@ -15,6 +15,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   labelsQuery,
   membersQuery,
+  meQuery,
   projectQuery,
   projectsQuery,
   statusesQuery,
@@ -52,6 +53,7 @@ import {
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
+import { AVATAR_SLOT } from "@/components/shared/user-picker.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { projectSpellings } from "@/lib/project-spellings.ts";
 import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
@@ -198,6 +200,8 @@ export function SearchBox({
   const labels = useQuery({ ...labelsQuery(slug), enabled: asked });
   const statuses = useQuery({ ...statusesQuery(slug), enabled: asked });
   const members = useQuery({ ...membersQuery(slug), enabled: asked });
+  // Cached by the shell before this box can be typed in: no request of its own.
+  const me = useQuery(meQuery);
   const facets = useQuery(searchFacetsQuery(slug, asked));
   // The same two the jump offer reads, so completing a project name costs
   // nothing beyond what resolving one already did.
@@ -208,11 +212,13 @@ export function SearchBox({
     () => ({
       label: labels.data?.map((l) => ({ value: l.name })),
       status: statuses.data?.map((s) => ({ value: s.name })),
-      assignee: members.data?.map((m) => ({
-        value: m.user.login,
-        hint: displayNameOf(m.user),
-        user: m.user,
-      })),
+      // `@me` drawn as the viewer, so its row lines up with the people below.
+      assignee: members.data?.flatMap((m) => [
+        ...(m.user.id === me.data?.id
+          ? [{ value: "@me", hint: displayNameOf(m.user), user: m.user }]
+          : []),
+        { value: m.user.login, hint: displayNameOf(m.user), user: m.user },
+      ]),
       harness: facets.data?.harnesses
         .filter((h) => h.agent !== null)
         .map((h) => ({ value: h.agent as string, hint: String(h.count) })),
@@ -221,7 +227,7 @@ export function SearchBox({
         ...(s.agent === null ? {} : { hint: s.agent }),
       })),
     }),
-    [labels.data, statuses.data, members.data, facets.data],
+    [labels.data, statuses.data, members.data, facets.data, me.data],
   );
   const known: KnownValues = useMemo(
     () => ({
@@ -665,26 +671,36 @@ export function SearchBox({
                     onMouseMove={() => setHighlight(idx)}
                     onClick={() => accept(row.row.apply)}
                   >
+                    <Icon
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
                     {/* A person is drawn as in every user picker (T-677),
-                        login first: it is the value being completed. */}
-                    {row.row.user === undefined ? (
-                      <Icon
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
-                    ) : (
-                      <UserAvatar user={row.row.user} badge aria-hidden />
+                        login first: it is the value being completed. The
+                        avatar follows the panel's 14px glyph column rather
+                        than replacing it, as a project row's icon does, so
+                        the glyphs stay in one column down the panel. */}
+                    {row.row.user !== undefined && (
+                      <span className={AVATAR_SLOT}>
+                        <UserAvatar user={row.row.user} badge aria-hidden />
+                      </span>
                     )}
                     <span
                       className={cn(
-                        "truncate",
-                        row.row.user === undefined && "font-mono text-xs",
+                        row.row.user === undefined
+                          ? "truncate font-mono text-xs"
+                          : "shrink-0",
                       )}
                     >
                       {row.row.text}
                     </span>
                     {row.row.hint !== undefined && (
-                      <span className="truncate text-muted-foreground text-xs">
+                      <span
+                        className={cn(
+                          "truncate text-muted-foreground",
+                          row.row.user === undefined && "text-xs",
+                        )}
+                      >
                         {row.row.hint}
                       </span>
                     )}

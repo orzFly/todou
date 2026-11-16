@@ -20,6 +20,16 @@ export type PickerUser = {
 };
 
 /**
+ * The avatar's column in a user row: the 20px avatar plus the 6px the bot
+ * badge hangs past its right edge (UserAvatar), which is out of flow and would
+ * otherwise sit in the gap, flush against the name. Every row takes the full
+ * column whether or not it has a badge, so names start at one x down a list
+ * that mixes people and agents, and a row with no avatar at all (Any assignee)
+ * leaves the column empty to line up with them.
+ */
+export const AVATAR_SLOT = "inline-flex w-6.5 shrink-0";
+
+/**
  * The one way a person is drawn wherever the reader is choosing one (T-677):
  * avatar, display name, `@login`. `lead="login"` swaps the two texts for the
  * completion panels, where the login is what gets typed and inserted, so it is
@@ -48,7 +58,9 @@ export function UserOption({
       {/* Decorative: the initials fallback would otherwise be read out glued
           to the name this row already carries. The badge keeps its own
           label, since it is the only thing telling a human from an agent. */}
-      <UserAvatar user={user} badge={badge} aria-hidden />
+      <span className={AVATAR_SLOT}>
+        <UserAvatar user={user} badge={badge} aria-hidden />
+      </span>
       {/* Short of room, the name gives way and the login never does: the
           login is what tells two people of one name apart. */}
       {lead === "login" ? (
@@ -79,8 +91,7 @@ export function matchesUser(user: PickerUser, query: string): boolean {
 
 /**
  * A trigger for a single-choice picker that reads like the Select it
- * replaced, showing who is picked. The avatar rides along, since the trigger
- * is often too narrow for the `@login` the rows disambiguate with.
+ * replaced, showing who is picked.
  */
 export function UserSelectTrigger({
   user,
@@ -104,15 +115,11 @@ export function UserSelectTrigger({
       )}
       {...props}
     >
-      <span className="flex min-w-0 items-center gap-1.5">
-        {user === undefined ? (
-          <span className="truncate">{placeholder}</span>
-        ) : (
-          <>
-            <UserAvatar user={user} badge aria-hidden />
-            <span className="truncate">{displayNameOf(user)}</span>
-          </>
-        )}
+      {/* The name alone, as the Select it replaced showed. An avatar does not
+          fit: the bot badge hangs 4px below it, and in a 28px or 32px trigger
+          that lands on the bottom border. */}
+      <span className="min-w-0 truncate">
+        {user === undefined ? placeholder : displayNameOf(user)}
       </span>
       <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
     </button>
@@ -279,7 +286,7 @@ export function UserPicker<U extends PickerUser>({
           id={`${idPrefix}-list`}
           role="listbox"
           aria-label={noun}
-          aria-multiselectable={multiple || undefined}
+          aria-multiselectable={(multiple && check) || undefined}
           className="max-h-64 overflow-y-auto p-1"
         >
           {rows.map((row, idx) => (
@@ -304,7 +311,10 @@ export function UserPicker<U extends PickerUser>({
               onClick={() => pick(row)}
             >
               {row.kind === "anyone" ? (
-                <span className="min-w-0 truncate">{anyone}</span>
+                <>
+                  <span className={AVATAR_SLOT} aria-hidden />
+                  <span className="min-w-0 truncate">{anyone}</span>
+                </>
               ) : (
                 <UserOption user={row.user} badge={badge} />
               )}

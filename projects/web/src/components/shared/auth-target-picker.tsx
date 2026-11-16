@@ -3,7 +3,7 @@ import { Login } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
-import { UserOption } from "@/components/shared/user-picker.tsx";
+import { AVATAR_SLOT, UserOption } from "@/components/shared/user-picker.tsx";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -159,8 +159,17 @@ export function AuthTargetFieldset({
               checked={selection?.kind === "new"}
               onChange={() => setSelection({ kind: "new" })}
             />
-            <span className="inline-flex items-center gap-1.5 text-sm whitespace-nowrap">
-              <PlusIcon className="size-4 text-muted-foreground" aria-hidden />
+            {/* The plus centred where the rows above have an avatar, and the
+                label where they have a name, so the list reads in columns. */}
+            <span className="flex items-center gap-2 text-sm whitespace-nowrap">
+              <span className={AVATAR_SLOT}>
+                <span className="flex w-5 justify-center">
+                  <PlusIcon
+                    className="size-4 text-muted-foreground"
+                    aria-hidden
+                  />
+                </span>
+              </span>
               New agent
             </span>
             <Input

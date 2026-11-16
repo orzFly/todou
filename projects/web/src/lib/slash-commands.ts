@@ -77,8 +77,11 @@ export type CommandRegistry = {
   statusNames: string[];
   labelNames: string[];
   memberLogins: string[];
-  /** Who each of `memberLogins` is, so the panel can draw them. */
-  memberUsers: Member["user"][];
+  /**
+   * Who each of `memberLogins` names, `me` included, so the panel can draw
+   * them; a `me` who is not a member has no entry.
+   */
+  memberUsers: Map<string, Member["user"]>;
 };
 
 /**
@@ -281,7 +284,12 @@ export function buildCommandRegistry({
       ...(me === undefined ? [] : ["me"]),
       ...members.map((m) => m.user.login),
     ],
-    memberUsers: members.map((m) => m.user),
+    memberUsers: new Map([
+      ...members.map((m) => [m.user.login, m.user] as const),
+      ...members
+        .filter((m) => m.user.id === me?.id)
+        .map((m) => ["me", m.user] as const),
+    ]),
   };
 }
 

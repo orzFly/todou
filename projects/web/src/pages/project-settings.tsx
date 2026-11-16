@@ -54,7 +54,6 @@ import { referenceConfigQuery } from "@/api/references.ts";
 import { userQuery } from "@/api/users.ts";
 import { InsightsSettings } from "@/components/insights/insights-settings.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
-import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import {
   SettingsLayout,
@@ -1126,13 +1125,15 @@ function AddPersonForm({
       {current && found.data !== undefined && (
         <div
           aria-live="polite"
-          className={`flex w-fit max-w-full items-center ${PICKER_ROW}`}
+          // A picker row's height without its inset: the avatar starts on the
+          // form's own left edge, under the `@`, not 8px in from it.
+          className="flex min-h-8.5 w-fit max-w-full items-center gap-2 py-1.5 text-sm"
         >
           <UserOption user={found.data} />
         </div>
       )}
       {missing && (
-        <p aria-live="polite" className="px-2 text-sm text-muted-foreground">
+        <p aria-live="polite" className="text-sm text-muted-foreground">
           No account with this login.
         </p>
       )}

@@ -285,6 +285,9 @@ export const completionTheme = EditorView.theme({
     maxHeight: "16rem",
     fontFamily: "inherit",
   },
+  // The 16rem above loses to the base theme's `10em` on the longer selector,
+  // which at 14px is 140px: four 34px person rows and the top of a fifth.
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": { maxHeight: "16rem" },
   ".cm-tooltip-autocomplete > ul > li": {
     display: "flex",
     alignItems: "baseline",
@@ -307,16 +310,27 @@ export const completionTheme = EditorView.theme({
   ".cm-completionMatchedText": { textDecoration: "none", fontWeight: "600" },
   // A person's row is drawn like every user picker's (T-677): the avatar
   // takes the icon's place, and the login is set like a name, not like code.
-  // Named in full: CodeMirror's base theme sets the list in monospace through
-  // `.cm-tooltip.cm-tooltip-autocomplete > ul`, which outranks a shorter one.
+  // Named in full: CodeMirror's base theme sets the list's font and its rows'
+  // 1px padding through `.cm-tooltip.cm-tooltip-autocomplete > ul`, which
+  // outranks a shorter selector. The row is held to PICKER_ROW's 34px and
+  // padding: at the panel's own 22px, the 20px avatar touched both edges and
+  // its badge hung into the next row.
   ".cm-tooltip.cm-tooltip-autocomplete > ul > li.cm-completion-user": {
     alignItems: "center",
     gap: "0.5rem",
+    minHeight: "2.125rem",
+    padding: "0.375rem 0.5rem",
     fontFamily: "var(--font-sans)",
+    fontSize: "0.875rem",
   },
   ".cm-completion-user .cm-completionIcon": { display: "none" },
   ".cm-completion-user .cm-completionLabel": { fontFamily: "inherit" },
-  ".cm-completionAvatar": { display: "inline-flex", flex: "none" },
+  // AVATAR_SLOT's width, room for the badge's overhang.
+  ".cm-completionAvatar": {
+    display: "inline-flex",
+    flex: "none",
+    width: "1.625rem",
+  },
   ".cm-completionIcon": { width: "1em", paddingRight: "0", opacity: "1" },
   ".cm-completionIcon-issue-open::after": {
     content: "'○'",

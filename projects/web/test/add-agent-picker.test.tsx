@@ -65,7 +65,7 @@ const options = () => list().getAllByRole("option");
 // the name; skipping it keeps these assertions about the text the row spells.
 const rowText = (option: HTMLElement): string =>
   Array.from(option.children)
-    .filter((child) => child.getAttribute("data-slot") !== "avatar")
+    .filter((child) => child.querySelector("[data-slot=avatar]") === null)
     .map((child) => child.textContent)
     .join("");
 
