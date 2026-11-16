@@ -235,6 +235,11 @@ function FilesMenu({
           undefined
         }
         align="end"
+        // The padding matches the width cap's 1rem a side. At the default 8px
+        // a phone-wide list was pushed against the left edge, 8px from it and
+        // 24px from the right, and out past the edge of the dialog it opened
+        // from, whose own margin is that same 1rem.
+        collisionPadding={16}
         className="max-h-[55vh] w-96 max-w-[calc(100vw-2rem)] overflow-y-auto p-0"
       >
         <FileList
