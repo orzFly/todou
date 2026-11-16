@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { TokenActAs } from "@todou/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { tokens, users } from "../db/system-schema.ts";
@@ -27,14 +28,14 @@ export function generatePat(): { token: string; hash: string; prefix: string } {
 export type UserRow = typeof users.$inferSelect;
 
 /**
- * Resolve a bearer token to its user. Returns null for unknown, revoked, or
- * expired tokens — callers must reject with 401 and never fall back to
- * another identity.
+ * Resolve a bearer token to its holder and what it may act as. Returns null
+ * for unknown, revoked, or expired tokens — callers must reject with 401 and
+ * never fall back to another identity.
  */
 export async function verifyPat(
   db: Db,
   token: string,
-): Promise<UserRow | null> {
+): Promise<{ user: UserRow; actAs: TokenActAs } | null> {
   if (!token.startsWith(PAT_PREFIX)) return null;
   const now = new Date();
   const rows = await db
@@ -56,5 +57,5 @@ export async function verifyPat(
       .set({ lastUsedAt: now })
       .where(eq(tokens.id, row.token.id));
   }
-  return row.user;
+  return { user: row.user, actAs: row.token.actAs };
 }

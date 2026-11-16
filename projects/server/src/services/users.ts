@@ -39,6 +39,26 @@ export function toMe(row: UserRow, owner: OwnerRef): Me {
   };
 }
 
+/**
+ * The row every new agent starts as — whether an owner creates it or an
+ * act-as request creates it on first use (T-693). Lets a unique-violation on
+ * the login propagate: each caller decides what a lost race means.
+ */
+export async function insertAgent(
+  db: Db,
+  ownerId: number,
+  login: string,
+  displayName: string,
+): Promise<UserRow> {
+  const inserted = await db
+    .insert(users)
+    .values({ kind: "machine", login, displayName, ownerId })
+    .returning();
+  const row = inserted[0];
+  if (!row) throw new Error("agent insert returned no row");
+  return row;
+}
+
 export async function ownerRefOf(db: Db, row: UserRow): Promise<OwnerRef> {
   if (row.ownerId === null) return null;
   const rows = await db

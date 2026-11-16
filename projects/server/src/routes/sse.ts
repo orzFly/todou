@@ -396,10 +396,21 @@ function streamChanges(
     // next frame goes out, so nothing is written past a revocation the
     // stream has already heard about.
     let recheckDue = false;
-    const unsubscribeCredentials = ctx.bus.subscribeCredentials(user.id, () => {
+    const onCredentials = () => {
       recheckDue = true;
       wake?.();
-    });
+    };
+    const unsubscribeCredentials = ctx.bus.subscribeCredentials(
+      user.id,
+      onCredentials,
+    );
+    // Acting as an agent (T-693), the token is the holder's: revoking it, or
+    // disabling the holder, signals the holder's id rather than the agent's.
+    const holder = c.get("bearer");
+    const unsubscribeHolderCredentials =
+      holder === null
+        ? null
+        : ctx.bus.subscribeCredentials(holder.id, onCredentials);
     // Process shutdown must end the stream from the server side: SSE
     // responses never finish on their own, and every one of them would
     // otherwise hold `server.close()` open until it is severed (T-56).
@@ -735,6 +746,7 @@ function streamChanges(
       unsubscribe();
       unsubscribeMe?.();
       unsubscribeCredentials();
+      unsubscribeHolderCredentials?.();
       shutdown.removeEventListener("abort", onShutdown);
     }
   });

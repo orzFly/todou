@@ -1,0 +1,1 @@
+ALTER TABLE "tokens" ADD COLUMN "act_as" text DEFAULT 'off' NOT NULL;

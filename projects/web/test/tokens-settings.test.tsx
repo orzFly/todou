@@ -72,6 +72,7 @@ function token(id: number, name: string, holder: Me | Agent): TokenListItem {
     prefix: `td_${id}`,
     created_at: "2026-09-01T12:00:00Z",
     expires_at: null,
+    act_as: "off",
     revoked_at: null,
     last_used_at: null,
     holder,
@@ -230,6 +231,7 @@ describe("personal tokens by holder (T-560)", () => {
       prefix: "td_99",
       name: "deploy",
       expires_at: null,
+      act_as: "off",
     });
     const createMine = vi.spyOn(api, "createMyToken");
     const view = await page();

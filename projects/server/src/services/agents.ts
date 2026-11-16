@@ -11,6 +11,7 @@ import type {
 } from "@todou/shared";
 import { ROLE_RANK } from "@todou/shared";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { canActAs } from "../auth/act-as.ts";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import {
@@ -20,11 +21,16 @@ import {
   tokens,
   users,
 } from "../db/system-schema.ts";
-import { ConflictError, ForbiddenError, NotFoundError } from "../errors.ts";
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationFailedError,
+} from "../errors.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "./profile.ts";
 import { toProjectBrief } from "./projects.ts";
 import { issueToken, listTokens, revokeToken } from "./tokens.ts";
-import { ownerRefOf, toMe } from "./users.ts";
+import { insertAgent, ownerRefOf, toMe } from "./users.ts";
 
 async function toAgent(ctx: AppContext, row: UserRow): Promise<Agent> {
   return {
@@ -49,17 +55,12 @@ export async function createAgent(
   if (clash.length > 0) {
     throw new ConflictError(`login "${input.login}" is already taken`);
   }
-  const inserted = await system
-    .insert(users)
-    .values({
-      kind: "machine",
-      login: input.login,
-      displayName: input.display_name,
-      ownerId: actor.id,
-    })
-    .returning();
-  const row = inserted[0];
-  if (!row) throw new Error("agent insert returned no row");
+  const row = await insertAgent(
+    system,
+    actor.id,
+    input.login,
+    input.display_name,
+  );
   return toAgent(ctx, row);
 }
 
@@ -100,7 +101,7 @@ async function loadManagedAgent(
     .where(and(eq(users.id, agentId), eq(users.kind, "machine")));
   const row = rows[0];
   if (!row) throw new NotFoundError("agent not found");
-  if (row.ownerId !== actor.id && !actor.isInstanceAdmin) {
+  if (!canActAs(actor, row)) {
     throw new ForbiddenError("only the owner or an instance admin");
   }
   return row;
@@ -214,6 +215,9 @@ export async function issueAgentToken(
   agentId: number,
   input: TokenCreateInput,
 ): Promise<TokenCreated> {
+  if (input.act_as !== undefined && input.act_as !== "off") {
+    throw new ValidationFailedError("an agent's token cannot act as agents");
+  }
   const agent = await loadAgentForToken(ctx, actor, agentId);
   return issueToken(ctx.router.system(), agent.id, input);
 }

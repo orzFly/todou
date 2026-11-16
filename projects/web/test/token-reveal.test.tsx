@@ -1,4 +1,5 @@
 import { fireEvent, render, waitFor } from "@testing-library/react";
+import type { TokenCreated } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import { TokenReveal } from "../src/components/shared/token-reveal.tsx";
 
@@ -8,7 +9,8 @@ const token = {
   prefix: "todou_pat_super",
   name: "ci",
   expires_at: null,
-};
+  act_as: "off",
+} satisfies TokenCreated;
 
 describe("TokenReveal (one-time plaintext display)", () => {
   it("shows the plaintext exactly once with the prefix warning", () => {

@@ -77,6 +77,9 @@ export const tokens = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    actAs: text("act_as", { enum: ["off", "existing", "create"] })
+      .notNull()
+      .default("off"),
   },
   (t) => [
     uniqueIndex("tokens_token_hash_idx").on(t.tokenHash),

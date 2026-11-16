@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { ACT_AS_HEADER } from "@todou/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sessions, tokens, users } from "../src/db/system-schema.ts";
@@ -226,6 +227,94 @@ describe("SSE streams follow their credential (T-624)", () => {
       .set({ isInstanceAdmin: false })
       .where(eq(users.id, root.user.id));
     expect(await endsWithin(feed, 2000)).toBe("ended");
+  });
+
+  describe("acting as an agent (T-693)", () => {
+    /** A human with an act-as token, and an agent of theirs; both readers. */
+    const holderWithAgent = async (login: string) => {
+      const holder = await addUserWithToken(t.ctx, login, {
+        actAs: "existing",
+      });
+      const agent = await addUserWithToken(t.ctx, `${login}-bot`, {
+        kind: "machine",
+        ownerId: holder.user.id,
+      });
+      await addMember(holder.user.id);
+      await addMember(agent.user.id);
+      const [token] = await t.ctx.router
+        .system()
+        .select()
+        .from(tokens)
+        .where(eq(tokens.name, `${login}-token`));
+      return {
+        holder,
+        agent,
+        tokenId: token?.id,
+        headers: { ...holder.headers, [ACT_AS_HEADER]: agent.user.login },
+      };
+    };
+
+    it("keeps the stream open across heartbeats", async () => {
+      const h = await holderWithAgent("hana");
+      const feed = await open("/api/events", h.headers);
+      for (let i = 0; i < 3; i++) {
+        expect((await feed.next([]))?.event).toBe("ping");
+      }
+      await comment("still acting");
+      expect((await feed.next())?.event).toBe("change");
+      feed.close();
+    });
+
+    it("closes when the agent is disabled, not the holder's own stream", async () => {
+      const h = await holderWithAgent("ivy");
+      const acting = await open("/api/events", h.headers);
+      const own = await open("/api/events", h.holder.headers);
+      const res = await t.app.request(`/api/agents/${h.agent.user.id}`, {
+        method: "DELETE",
+        headers: h.holder.headers,
+      });
+      expect(res.status).toBe(204);
+      await comment("SECRET-AFTER-AGENT-DISABLE");
+
+      expect(await acting.next()).toBeNull();
+      expect((await own.next())?.event).toBe("change");
+      own.close();
+    });
+
+    it("closes when the holder revokes the token", async () => {
+      const h = await holderWithAgent("jun");
+      const feed = await open("/api/events", h.headers);
+      const res = await t.app.request(`/api/me/tokens/${h.tokenId}`, {
+        method: "DELETE",
+        headers: h.holder.headers,
+      });
+      expect(res.status).toBe(204);
+      await comment("SECRET-AFTER-HOLDER-REVOKE");
+
+      expect(await feed.next()).toBeNull();
+    });
+
+    it("closes on the next heartbeat after an admin acting as another's agent is demoted", async () => {
+      const root = await addUserWithToken(t.ctx, "root-two", {
+        instanceAdmin: true,
+        actAs: "existing",
+      });
+      const bot = await addUserWithToken(t.ctx, "admin-bot", {
+        kind: "machine",
+        ownerId: adminId,
+      });
+      await addMember(bot.user.id);
+      const feed = await open("/api/events", {
+        ...root.headers,
+        [ACT_AS_HEADER]: "admin-bot",
+      });
+      await t.ctx.router
+        .system()
+        .update(users)
+        .set({ isInstanceAdmin: false })
+        .where(eq(users.id, root.user.id));
+      expect(await endsWithin(feed, 2000)).toBe("ended");
+    });
   });
 
   it("keeps a valid stream open across heartbeats", async () => {

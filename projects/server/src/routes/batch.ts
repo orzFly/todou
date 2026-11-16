@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  ACT_AS_HEADER,
   BatchInput,
   type BatchItemResult,
   type BatchRequestItem,
@@ -110,7 +111,7 @@ export function batchItemKey(url: string): string {
 /** Only these travel to sub-requests. No accept-encoding: forwarding it
  *  would let the compression middleware encode bodies the gateway then
  *  has to decode to re-envelope. */
-const FORWARDED_HEADERS = ["cookie", "authorization"] as const;
+const FORWARDED_HEADERS = ["cookie", "authorization", ACT_AS_HEADER] as const;
 
 /**
  * Forward mode carries the identity in proxy-set headers rather than in a
