@@ -97,6 +97,15 @@ export async function updateLabel(
 ): Promise<Label> {
   const { project } = await requireCapability(ctx, actor, slug, "label.update");
   const db = await ctx.router.forProject(routeInfoOf(project));
+  const where = and(eq(labels.id, labelId), eq(labels.projectId, project.id));
+
+  // An UPDATE with no assignments is a driver error, not a no-op (T-730).
+  if (input.name === undefined && input.color === undefined) {
+    const rows = await db.select().from(labels).where(where);
+    const row = rows[0];
+    if (!row) throw new NotFoundError("label not found");
+    return toLabel(row);
+  }
 
   if (input.name !== undefined) {
     const clash = await db
@@ -115,7 +124,7 @@ export async function updateLabel(
       ...(input.name === undefined ? {} : { name: input.name }),
       ...(input.color === undefined ? {} : { color: input.color }),
     })
-    .where(and(eq(labels.id, labelId), eq(labels.projectId, project.id)))
+    .where(where)
     .returning();
   const row = updated[0];
   if (!row) throw new NotFoundError("label not found");

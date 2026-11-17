@@ -24,6 +24,11 @@ export async function updateProfile(
   target: UserRow,
   patch: ProfilePatch,
 ): Promise<UserRow> {
+  // An UPDATE with no assignments is a driver error, not a no-op (T-730),
+  // and the schema lets unknown keys through, so `{}` is reachable.
+  if (patch.display_name === undefined && patch.login === undefined) {
+    return target;
+  }
   const db = ctx.router.system();
   if (patch.login !== undefined && patch.login !== target.login) {
     const clash = await db

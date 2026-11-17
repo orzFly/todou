@@ -31,6 +31,13 @@ export class DomainError extends Error {
   }
 }
 
+/** A body that does not parse at all, as opposed to one failing its schema. */
+export class BadRequestError extends DomainError {
+  constructor(message = "bad request") {
+    super(400, "bad_request", message);
+  }
+}
+
 export class UnauthorizedError extends DomainError {
   constructor(message = "authentication required") {
     super(401, "unauthorized", message);

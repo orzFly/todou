@@ -1,9 +1,11 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { PROJECT_NOT_FOUND } from "@todou/shared";
 import type { Context, Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "./auth/middleware.ts";
 import {
   AttachmentMovedError,
+  BadRequestError,
   CommentMovedError,
   DomainError,
   IssueMovedError,
@@ -63,6 +65,11 @@ export function registerErrorHandler(app: Hono<any> | OpenAPIHono<any>): void {
       } catch (error) {
         failure = error;
       }
+    }
+    // hono's validators throw this for a body that does not parse at all —
+    // `{` sent as JSON, a truncated multipart — before any schema runs.
+    if (failure instanceof HTTPException && failure.status === 400) {
+      failure = new BadRequestError(failure.message);
     }
     if (failure instanceof DomainError) {
       const error = await publicReadError(failure, c);

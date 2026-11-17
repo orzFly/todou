@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { PREFIX_PATTERN, SLUG_PATTERN } from "../ref-shapes.ts";
-import { Id, Timestamp } from "./common.ts";
+import { Id, Int4, Timestamp } from "./common.ts";
 import { Login, UserRef } from "./user.ts";
 
 /**
@@ -198,7 +198,7 @@ export const StatusCreateInput = z.object({
   name: z.string().min(1).max(60),
   category: StatusCategory,
   color: ColorHex.default("#6b7280"),
-  position: z.number().int().optional(),
+  position: Int4.optional(),
 });
 export type StatusCreateInput = z.infer<typeof StatusCreateInput>;
 
@@ -206,7 +206,7 @@ export const StatusUpdateInput = z.object({
   name: z.string().min(1).max(60).optional(),
   category: StatusCategory.optional(),
   color: ColorHex.optional(),
-  position: z.number().int().optional(),
+  position: Int4.optional(),
   is_default: z.boolean().optional(),
 });
 export type StatusUpdateInput = z.infer<typeof StatusUpdateInput>;

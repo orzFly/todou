@@ -11,6 +11,7 @@ import {
   ProjectUpdateInput,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
+import { ValidationFailedError } from "../errors.ts";
 import { requireCapability } from "../services/access.ts";
 import {
   listDenials,
@@ -326,6 +327,9 @@ export function projectRoutes() {
       "project.update",
     );
     const { file } = c.req.valid("form");
+    if (!(file instanceof File)) {
+      throw new ValidationFailedError("file part is required");
+    }
     return c.json(
       toProject(await setProjectIcon(ctx, project, file), role),
       200,

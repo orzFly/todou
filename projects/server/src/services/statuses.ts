@@ -1,10 +1,11 @@
-import type {
-  Status,
-  StatusCreateInput,
-  StatusOrder,
-  StatusOrderInput,
-  StatusUpdateInput,
-  StatusUsage,
+import {
+  INT4_MAX,
+  type Status,
+  type StatusCreateInput,
+  type StatusOrder,
+  type StatusOrderInput,
+  type StatusUpdateInput,
+  type StatusUsage,
 } from "@todou/shared";
 import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
@@ -208,6 +209,19 @@ export async function updateStatus(
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
+  // An UPDATE with no assignments is a driver error, not a no-op (T-730).
+  if (Object.values(input).every((v) => v === undefined)) {
+    const rows = await db
+      .select()
+      .from(statuses)
+      .where(
+        and(eq(statuses.id, statusId), eq(statuses.projectId, project.id)),
+      );
+    const row = rows[0];
+    if (!row) throw new NotFoundError("status not found");
+    return toStatus(row);
+  }
+
   if (input.name !== undefined) {
     await ensureNameFree(db, project.id, input.name, statusId);
   }
@@ -325,5 +339,11 @@ async function nextPosition(db: Db, projectId: number): Promise<number> {
     .select({ position: statuses.position })
     .from(statuses)
     .where(eq(statuses.projectId, projectId));
-  return rows.reduce((max, r) => Math.max(max, r.position + 1), 0);
+  const next = rows.reduce((max, r) => Math.max(max, r.position + 1), 0);
+  if (next > INT4_MAX) {
+    throw new ConflictError(
+      "a status already holds the highest position; pass position explicitly",
+    );
+  }
+  return next;
 }

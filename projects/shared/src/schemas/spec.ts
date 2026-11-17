@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Cursor, Id, Timestamp } from "./common.ts";
+import { Cursor, Id, INT4_MAX, Timestamp } from "./common.ts";
 import { UserRef } from "./user.ts";
 
 // Spec documents (T-23): a set of markdown files attached to an issue, where
@@ -176,7 +176,7 @@ export const SpecFiles = z.object({
 export type SpecFiles = z.infer<typeof SpecFiles>;
 
 export const SpecFilesQuery = z.object({
-  version: z.coerce.number().int().positive().optional(),
+  version: z.coerce.number().int().positive().max(INT4_MAX).optional(),
 });
 export type SpecFilesQuery = z.infer<typeof SpecFilesQuery>;
 
@@ -236,7 +236,7 @@ export const SpecCommentAnchorInput = z
   .strictObject({
     path: SpecFilePath,
     /** The version the reviewer was looking at when anchoring. */
-    version: z.number().int().positive(),
+    version: z.number().int().positive().max(INT4_MAX),
     line_start: z.number().int().positive().optional(),
     line_end: z.number().int().positive().optional(),
     col_start: z.number().int().positive().optional(),
