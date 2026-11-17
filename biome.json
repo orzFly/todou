@@ -7,7 +7,12 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!**/flake.lock", "!projects/web/src/styles.css"]
+    "includes": [
+      "**",
+      "!**/flake.lock",
+      "!projects/web/src/styles.css",
+      "!projects/web/test/fixtures/mermaid"
+    ]
   },
   "formatter": {
     "enabled": true,

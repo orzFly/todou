@@ -1215,7 +1215,8 @@ html[data-header-settling] [data-header-follow] {
      width — past that its labels stop being readable, so it scrolls instead
      (T-523). Never enlarged. `!important` beats the width attribute and the
      inline max-width mermaid writes onto its own <svg>. */
-  .mermaid-diagram > svg {
+  .mermaid-diagram > svg,
+  .mermaid-diagram > .media-compare-open > svg {
     display: block;
     width: min(
       var(--diagram-width),
@@ -1231,6 +1232,10 @@ html[data-header-settling] [data-header-follow] {
     width: 100% !important;
     max-width: none !important;
     height: auto;
+  }
+  /* A span, to sit in the button that opens the viewer (T-773). */
+  .mermaid-compare-diagram {
+    display: block;
   }
 
   /* A code block's toolbar (T-706) shows on hover or once focus is inside,
@@ -1557,21 +1562,12 @@ html[data-header-settling] [data-header-follow] {
     gap: 0.75rem;
     align-items: start;
   }
-  /* A block with a smallest scale lays out by it instead (T-724): two panes
-     while both fit at that scale, then one, then the stage scrolls. */
+  /* Diagrams too (T-773): a wide one is small in half a column, and the
+     viewer is where it is read. */
   @container (max-width: 30rem) {
-    .media-compare-2up:not([data-min-pane]) {
+    .media-compare-2up {
       grid-template-columns: 1fr;
     }
-  }
-  .media-compare-2up[data-min-pane] {
-    grid-template-columns: repeat(auto-fit, minmax(var(--min-pane), 1fr));
-  }
-  /* The container lets a pane centre in what the stage shows (`100cqw`)
-     rather than in a column wider than it. */
-  .media-compare-stage:has(> .media-compare-2up[data-min-pane]) {
-    overflow-x: auto;
-    container-type: inline-size;
   }
   .media-compare-pane {
     display: grid;
@@ -1589,11 +1585,26 @@ html[data-header-settling] [data-header-follow] {
     position: relative;
     max-width: 100%;
   }
+  .media-compare-open {
+    display: block;
+    width: 100%;
+    cursor: zoom-in;
+    border: 0;
+    padding: 0;
+    background: none;
+    text-align: inherit;
+    border-radius: var(--radius-sm);
+  }
   .media-compare-2up .media-compare-box[data-sized] {
     overflow: clip;
     border-radius: var(--radius-sm);
     outline: 1px solid var(--border);
     outline-offset: -1px;
+  }
+  .media-compare-open:focus-visible,
+  .media-compare-2up .media-compare-open[data-sized]:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
   .media-compare-2up .media-compare-box[data-sized]::before {
     content: "";
@@ -1948,6 +1959,23 @@ html[data-header-settling] [data-header-follow] {
     .compare-viewer-bar .media-compare-short {
       display: inline;
     }
+  }
+  /* A diagram has no modes between its tags (T-773). */
+  .compare-viewer-bar[data-kind="diagram"] {
+    grid-template-columns: 1fr 1fr;
+  }
+  @container (max-width: 40rem) {
+    .compare-viewer-bar[data-kind="diagram"] > .media-compare-label {
+      grid-row: 1;
+    }
+  }
+  /* Drawn at its natural size and scaled by the transform, so the inline
+     width and max-width mermaid writes onto its <svg> have to give way. */
+  .compare-diagram > svg {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
   }
   .compare-viewer-download[data-side="before"] .media-compare-tick {
     background: var(--diff-deletion);

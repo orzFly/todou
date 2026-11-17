@@ -60,7 +60,7 @@ export function MediaCompare({
   actions,
   replacement,
   modes = ALL_MODES,
-  minScale,
+  onOpen,
   className,
 }: {
   before: CompareSide;
@@ -80,11 +80,10 @@ export function MediaCompare({
   /** The modes this block offers, all four by default. With one there is no mode control. */
   modes?: readonly CompareMode[];
   /**
-   * The smallest scale side by side may draw at, relative to the wider side's
-   * natural width. Given, side by side lays out by it: the panes stack when
-   * two will not fit, and the stage scrolls sideways when one will not.
+   * Given, each side's picture is a button opening both in the viewer, and
+   * its content has to be phrasing content to sit in one.
    */
-  minScale?: number;
+  onOpen?: () => void;
   className?: string;
 }) {
   const stored = useCompareMode();
@@ -127,7 +126,7 @@ export function MediaCompare({
               before={before}
               after={after}
               align={align}
-              minScale={minScale}
+              onOpen={onOpen}
             />
           ) : (
             <Overlay
@@ -189,12 +188,12 @@ function SideBySide({
   before,
   after,
   align,
-  minScale,
+  onOpen,
 }: {
   before: CompareSide;
   after: CompareSide;
   align: "start" | "center";
-  minScale?: number;
+  onOpen?: () => void;
 }) {
   // A side that failed never reports a size, so the other is the widest there
   // is; waiting on it would squeeze a wide picture into half the stage.
@@ -206,54 +205,47 @@ function SideBySide({
         : after.size !== null && before.failed
           ? after.size.width
           : null;
-  const minPane =
-    minScale === undefined || widest === null ? null : widest * minScale;
-  const pane = (side: CompareSide, which: "before" | "after") => (
-    <div className="media-compare-pane" data-side={which}>
-      <CompareLabel
-        which={which}
-        side={side}
-        other={which === "before" ? after : before}
-      />
-      <div
-        className="media-compare-box"
-        data-sized={side.size === null ? undefined : ""}
-        style={
-          // Unsized until both are known: a box guessed at now would jump
-          // when the other side's size arrives.
-          widest === null || side.size === null
-            ? undefined
-            : {
-                width: `${(side.size.width / widest) * 100}%`,
-                maxWidth: `${side.size.width}px`,
-                ...(align !== "center"
-                  ? {}
-                  : minPane === null
-                    ? { marginInline: "auto" }
-                    : {
-                        // Centred in what the stage shows, not in the whole
-                        // column: once the column outgrows the stage, centring
-                        // in it would open the scroller on blank space.
-                        marginLeft: `max(0px, (min(100%, 100cqw) - min(${(side.size.width / widest) * 100}%, ${side.size.width}px)) / 2)`,
-                      }),
-              }
-        }
-      >
-        {side.content}
+  const pane = (side: CompareSide, which: "before" | "after") => {
+    const box = {
+      className: "media-compare-box",
+      "data-sized": side.size === null ? undefined : "",
+      // Unsized until both are known: a box guessed at now would jump when
+      // the other side's size arrives.
+      style:
+        widest === null || side.size === null
+          ? undefined
+          : {
+              width: `${(side.size.width / widest) * 100}%`,
+              maxWidth: `${side.size.width}px`,
+              ...(align === "center" ? { marginInline: "auto" } : {}),
+            },
+    };
+    return (
+      <div className="media-compare-pane" data-side={which}>
+        <CompareLabel
+          which={which}
+          side={side}
+          other={which === "before" ? after : before}
+        />
+        {onOpen !== undefined && !side.failed ? (
+          <button
+            type="button"
+            {...box}
+            className="media-compare-box media-compare-open"
+            aria-label="Open in the viewer"
+            onClick={onOpen}
+          >
+            {side.content}
+          </button>
+        ) : (
+          <div {...box}>{side.content}</div>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
   return (
     <div className="media-compare-stage">
-      <div
-        className="media-compare-2up"
-        data-min-pane={minPane === null ? undefined : ""}
-        style={
-          minPane === null
-            ? undefined
-            : ({ "--min-pane": `${minPane}px` } as CSSProperties)
-        }
-      >
+      <div className="media-compare-2up">
         {pane(before, "before")}
         {pane(after, "after")}
       </div>

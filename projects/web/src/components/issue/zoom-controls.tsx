@@ -35,11 +35,14 @@ export function ZoomControls({
   frame,
   view,
   atCentre,
+  imageOptions = true,
 }: {
   /** Null while there is nothing to zoom, which disables every control. */
   frame: Frame | null;
   view: View | null;
   atCentre: (op: (f: Frame, v: View, cx: number, cy: number) => View) => void;
+  /** The background and scaling choices; a diagram has its own ground and is vector. */
+  imageOptions?: boolean;
 }) {
   const look = useImageLook();
   const ready = frame !== null && view !== null;
@@ -86,36 +89,44 @@ export function ZoomControls({
               1
             </DropdownMenuShortcut>
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-xs text-muted-foreground">
-            Background
-          </DropdownMenuLabel>
-          <DropdownMenuRadioGroup
-            value={look.background}
-            onValueChange={(v) =>
-              setImageLook({ background: v as ImageLook["background"] })
-            }
-          >
-            <DropdownMenuRadioItem value="black">Black</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="checker">
-              Checkerboard
-            </DropdownMenuRadioItem>
-          </DropdownMenuRadioGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-xs text-muted-foreground">
-            Scaling
-          </DropdownMenuLabel>
-          <DropdownMenuRadioGroup
-            value={look.smoothing}
-            onValueChange={(v) =>
-              setImageLook({ smoothing: v as ImageLook["smoothing"] })
-            }
-          >
-            <DropdownMenuRadioItem value="smooth">Smooth</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="pixelated">
-              Pixelated
-            </DropdownMenuRadioItem>
-          </DropdownMenuRadioGroup>
+          {imageOptions && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Background
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={look.background}
+                onValueChange={(v) =>
+                  setImageLook({ background: v as ImageLook["background"] })
+                }
+              >
+                <DropdownMenuRadioItem value="black">
+                  Black
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="checker">
+                  Checkerboard
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Scaling
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={look.smoothing}
+                onValueChange={(v) =>
+                  setImageLook({ smoothing: v as ImageLook["smoothing"] })
+                }
+              >
+                <DropdownMenuRadioItem value="smooth">
+                  Smooth
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="pixelated">
+                  Pixelated
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
       <Button

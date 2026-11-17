@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
   FileIcon,
@@ -14,6 +16,7 @@ import {
   CompareBar,
   CompareCanvas,
 } from "@/components/issue/compare-canvas.tsx";
+import { DiagramCanvas } from "@/components/issue/diagram-canvas.tsx";
 import { ImageCanvas } from "@/components/issue/image-canvas.tsx";
 import type { Widening } from "@/components/issue/use-zoom-pan.ts";
 import {
@@ -38,6 +41,7 @@ import {
   textPreviewGate,
 } from "@/lib/attachment-preview.ts";
 import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
+import { writeClipboard } from "@/lib/clipboard.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -72,15 +76,53 @@ export type CompareImage = {
   bytes?: number;
 };
 
-export type ComparePair = { before: CompareImage; after: CompareImage };
+/** One side of a diagram comparison: the coloured SVG and its mermaid source. */
+export type CompareDiagram = {
+  label: string;
+  svg: string;
+  source: string;
+  size: { width: number; height: number };
+};
+
+export type ImagePair = {
+  kind?: undefined;
+  before: CompareImage;
+  after: CompareImage;
+};
+
+/** A changed mermaid fence (T-773). */
+export type DiagramPair = {
+  kind: "diagram";
+  /** The block's own, so paging from one diagram to another starts at fit. */
+  key: string;
+  /** The fence's title, or "diagram". */
+  title: string;
+  /** Such as "sequence" or "flowchart". */
+  diagramType: string;
+  before: CompareDiagram;
+  after: CompareDiagram;
+};
+
+export type ComparePair = ImagePair | DiagramPair;
+
+/** A single mermaid fence (T-773). */
+export type DiagramView = {
+  key: string;
+  title: string;
+  diagramType: string;
+  svg: string;
+  source: string;
+  size: { width: number; height: number };
+};
 
 /**
  * What the viewer is showing, and the position in it: a post's attachment
- * set, or the image comparisons on a page (T-733).
+ * set, the comparisons on a page (T-733), or one diagram (T-773).
  */
 export type ViewerState =
   | { items: PreviewTarget[]; index: number }
-  | { compare: ComparePair[]; index: number };
+  | { compare: ComparePair[]; index: number }
+  | { diagram: DiagramView };
 
 type TextPaneProps = {
   target: PreviewTarget;
@@ -224,18 +266,22 @@ export function AttachmentViewerDialog({
     state !== null && "compare" in state
       ? state.compare[state.index]
       : undefined;
+  const diagram =
+    state !== null && "diagram" in state ? state.diagram : undefined;
   const kind =
     pair !== undefined
       ? "compare"
-      : target === undefined
-        ? null
-        : previewKind(target);
+      : diagram !== undefined
+        ? "diagram"
+        : target === undefined
+          ? null
+          : previewKind(target);
   const tabHref = target === undefined ? null : newTabHref(target);
   // Paging between images tweens from one's height to the next; from
   // anything else, including a closed viewer, the image lands at once.
   // The width a zoom widened the dialog to goes the same way, at once.
   useEffect(() => {
-    if (kind === "image" || kind === "compare") return;
+    if (kind === "image" || kind === "compare" || kind === "diagram") return;
     imageHeight.current = null;
     widening.current = { asked: null, rest: null };
     if (dialog !== null) dialog.style.minWidth = "";
@@ -245,7 +291,9 @@ export function AttachmentViewerDialog({
       ? 0
       : "items" in state
         ? state.items.length
-        : state.compare.length;
+        : "compare" in state
+          ? state.compare.length
+          : 1;
   const noun = pair !== undefined ? "comparison" : "attachment";
 
   // While the pointer is over − 100%▾ + or ‹ ›, the image keeps the height
@@ -316,7 +364,7 @@ export function AttachmentViewerDialog({
   }, [open]);
 
   const step = (delta: number) => {
-    if (state === null || count < 2) return;
+    if (state === null || "diagram" in state || count < 2) return;
     onNavigate((state.index + delta + count) % count);
   };
 
@@ -345,15 +393,21 @@ export function AttachmentViewerDialog({
             : "sm:max-w-5xl",
         )}
       >
-        {(target !== undefined || pair !== undefined) && (
+        {(target !== undefined ||
+          pair !== undefined ||
+          diagram !== undefined) && (
           <>
             <div className="flex items-center gap-1">
               <DialogTitle className="min-w-0 flex-1 truncate">
-                {pair === undefined
-                  ? target?.filename
-                  : pair.before.filename === pair.after.filename
-                    ? pair.after.filename
-                    : `${pair.before.filename} → ${pair.after.filename}`}
+                {diagram !== undefined
+                  ? diagram.title
+                  : pair === undefined
+                    ? target?.filename
+                    : pair.kind === "diagram"
+                      ? pair.title
+                      : pair.before.filename === pair.after.filename
+                        ? pair.after.filename
+                        : `${pair.before.filename} → ${pair.after.filename}`}
               </DialogTitle>
               <span
                 ref={setHoldRegion}
@@ -376,7 +430,9 @@ export function AttachmentViewerDialog({
                       <ChevronLeftIcon />
                     </Button>
                     <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-                      {(state?.index ?? 0) + 1} / {count}
+                      {(state !== null && "index" in state ? state.index : 0) +
+                        1}{" "}
+                      / {count}
                     </span>
                     <Button
                       variant="ghost"
@@ -407,7 +463,11 @@ export function AttachmentViewerDialog({
             >
               {pair !== undefined ? (
                 <CompareCanvas
-                  key={`${pair.before.src} ${pair.after.src}`}
+                  key={
+                    pair.kind === "diagram"
+                      ? pair.key
+                      : `${pair.before.src} ${pair.after.src}`
+                  }
                   pair={pair}
                   maximized={maximized}
                   toolbar={toolbar}
@@ -418,6 +478,17 @@ export function AttachmentViewerDialog({
                   cut={cut}
                   onCut={setCut}
                   fade={fade}
+                />
+              ) : diagram !== undefined ? (
+                <DiagramCanvas
+                  key={diagram.key}
+                  view={diagram}
+                  maximized={maximized}
+                  toolbar={toolbar}
+                  lastHeight={imageHeight}
+                  held={held}
+                  dialog={dialog}
+                  widening={widening}
                 />
               ) : target === undefined ? null : kind === "image" ? (
                 <ImageCanvas
@@ -461,8 +532,24 @@ export function AttachmentViewerDialog({
             {pair !== undefined && (
               <>
                 <CompareBar pair={pair} fade={fade} onFade={setFade} />
-                <CompareFooter pair={pair} />
+                {pair.kind === "diagram" ? (
+                  <DiagramFooter
+                    diagramType={pair.diagramType}
+                    sources={[
+                      { side: "before", ...pair.before },
+                      { side: "after", ...pair.after },
+                    ]}
+                  />
+                ) : (
+                  <CompareFooter pair={pair} />
+                )}
               </>
+            )}
+            {diagram !== undefined && (
+              <DiagramFooter
+                diagramType={diagram.diagramType}
+                sources={[{ source: diagram.source }]}
+              />
             )}
             {target !== undefined && (
               <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -510,7 +597,7 @@ export function AttachmentViewerDialog({
  * A comparison's footer: the new side's type and both sizes, and each side
  * to download. No new tab: the comparison is the thing being looked at.
  */
-function CompareFooter({ pair }: { pair: ComparePair }) {
+function CompareFooter({ pair }: { pair: ImagePair }) {
   const { before, after } = pair;
   return (
     <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -541,6 +628,71 @@ function CompareFooter({ pair }: { pair: ComparePair }) {
         ))}
       </span>
     </div>
+  );
+}
+
+/**
+ * A diagram's footer: its type, and its mermaid source to copy — each side's
+ * in a comparison. No download: an SVG file away from the page's font is not
+ * a faithful copy of what is drawn here.
+ */
+function DiagramFooter({
+  diagramType,
+  sources,
+}: {
+  diagramType: string;
+  /** A lone diagram's has no side. */
+  sources: Array<{ side?: "before" | "after"; label?: string; source: string }>;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+      <span className="truncate">mermaid · {diagramType}</span>
+      <span className="flex shrink-0 items-center gap-3">
+        {sources.map((source) => (
+          <CopySource key={source.side ?? "source"} {...source} />
+        ))}
+      </span>
+    </div>
+  );
+}
+
+const COPIED_MS = 1500;
+
+/** As the fence's Copy: a check for a moment, failure toasting. */
+function CopySource({
+  side,
+  label,
+  source,
+}: {
+  side?: "before" | "after";
+  label?: string;
+  source: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const name = label === undefined ? "Copy source" : `Copy ${label} source`;
+  return (
+    <button
+      type="button"
+      data-side={side}
+      aria-label={name}
+      onClick={async () => {
+        if (!(await writeClipboard(source))) return;
+        clearTimeout(timer.current);
+        setCopied(true);
+        timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+      }}
+      className="compare-viewer-download inline-flex cursor-pointer items-center gap-1 font-medium hover:underline"
+    >
+      {side !== undefined && <span className="media-compare-tick" />}
+      {copied ? (
+        <CheckIcon className="size-3.5" data-icon="copied" />
+      ) : (
+        <CopyIcon className="size-3.5" />
+      )}
+      {label === undefined ? "Copy source" : `${label} source`}
+    </button>
   );
 }
 

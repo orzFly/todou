@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type {
+  CompareDiagram,
   CompareImage,
   ComparePair,
 } from "@/components/issue/attachment-viewer.tsx";
@@ -65,7 +66,9 @@ type Hover = { pane: number; x: number; y: number };
  * with their top-left corners together, so wherever either is zoomed or
  * dragged the other follows. Side by side cuts the canvas into two panes
  * showing that same view; the overlay modes stack both in one. Mount it
- * keyed by the pair, as ImageCanvas is by its image.
+ * keyed by the pair, as ImageCanvas is by its image. Two versions of a
+ * diagram are drawn the same way, always side by side, left and right
+ * (T-773).
  */
 export function CompareCanvas({
   pair,
@@ -93,7 +96,10 @@ export function CompareCanvas({
   fade: number;
 }) {
   const look = useImageLook();
-  const mode = useCompareMode();
+  const diagram = pair.kind === "diagram";
+  const stored = useCompareMode();
+  // A diagram has no overlay modes, and leaves the page's mode alone.
+  const mode = diagram ? "2up" : stored;
   const twoUp = mode === "2up";
   const [failed, setFailed] = useState(false);
   const { before, after } = pair;
@@ -111,6 +117,15 @@ export function CompareCanvas({
   const panes = useCallback(
     (width: number, height: number, rest: number): Pane[] => {
       if (!twoUp || natural === null) return [{ x: 0, y: 0, width, height }];
+      // Left and right whatever the shape: the two read against each other,
+      // and the viewer is wide enough for it.
+      if (diagram) {
+        const w = (width - GAP) / 2;
+        return [
+          { x: 0, y: 0, width: w, height },
+          { x: w + GAP, y: 0, width: w, height },
+        ];
+      }
       // The arrangement is chosen against the tallest the canvas may get
       // and the width it rests at, so it does not flip while a restored
       // canvas grows with the zoom; the panes then split the canvas at the
@@ -136,7 +151,7 @@ export function CompareCanvas({
         { x: 0, y: h + GAP, width, height: h },
       ];
     },
-    [twoUp, natural, maximized, windowHeight],
+    [twoUp, diagram, natural, maximized, windowHeight],
   );
   const zoom = useZoomPan({
     natural,
@@ -183,6 +198,7 @@ export function CompareCanvas({
             frame={failed ? null : frame}
             view={view}
             atCentre={zoom.atCentre}
+            imageOptions={!diagram}
           />,
           toolbar,
         );
@@ -195,7 +211,7 @@ export function CompareCanvas({
 
   // Nothing to measure or zoom: both images as the browser draws them, its
   // broken-image icon and alt text being the error.
-  if (failed) {
+  if (failed && pair.kind !== "diagram") {
     return (
       <>
         {controls}
@@ -203,7 +219,7 @@ export function CompareCanvas({
           data-testid="compare-canvas"
           className="flex flex-col items-center gap-2"
         >
-          {[before, after].map((image) => (
+          {[pair.before, pair.after].map((image) => (
             <img
               key={image.src}
               src={image.src}
@@ -223,7 +239,10 @@ export function CompareCanvas({
     view === null
       ? undefined
       : `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
-  const imageStyle = (image: CompareImage, round: boolean): CSSProperties =>
+  const imageStyle = (
+    image: CompareImage | CompareDiagram,
+    round: boolean,
+  ): CSSProperties =>
     view === null
       ? {}
       : {
@@ -237,6 +256,7 @@ export function CompareCanvas({
               : undefined,
         };
   const checker = (size: { width: number; height: number }, round: boolean) =>
+    !diagram &&
     look.background === "checker" &&
     view !== null && (
       // In screen pixels like ImageCanvas's, under the picture only.
@@ -266,6 +286,9 @@ export function CompareCanvas({
       style={imageStyle(side, round)}
     />
   );
+  const drawing = (side: CompareDiagram) => (
+    <DiagramDrawing svg={side.svg} style={imageStyle(side, true)} />
+  );
   const union =
     natural === null ? null : { width: natural.w, height: natural.h };
   const second = twoUp ? zoom.panes?.[1] : undefined;
@@ -284,7 +307,8 @@ export function CompareCanvas({
         }
         className={cn(
           "compare-viewer-canvas relative touch-none overflow-hidden select-none",
-          (look.background === "black" || mode === "diff") && "bg-black",
+          ((!diagram && look.background === "black") || mode === "diff") &&
+            "bg-black",
           maximized ? "h-full" : "max-h-[75vh] min-h-24",
           fitted
             ? "cursor-zoom-in"
@@ -305,7 +329,6 @@ export function CompareCanvas({
         {twoUp
           ? (zoom.panes ?? []).map((pane, i) => {
               const which = i === 0 ? "before" : "after";
-              const side = pair[which];
               return (
                 <div
                   key={which}
@@ -318,8 +341,10 @@ export function CompareCanvas({
                     height: pane.height,
                   }}
                 >
-                  {checker(side.size, true)}
-                  {image(side, true)}
+                  {checker(pair[which].size, true)}
+                  {pair.kind === "diagram"
+                    ? drawing(pair[which])
+                    : image(pair[which], true)}
                   {hover !== null && hover.pane !== i && (
                     <span
                       aria-hidden
@@ -331,18 +356,19 @@ export function CompareCanvas({
                 </div>
               );
             })
-          : union !== null && (
+          : union !== null &&
+            pair.kind !== "diagram" && (
               <div className="compare-viewer-stack">
                 {mode !== "diff" && checker(union, false)}
                 <div className="compare-viewer-layer" data-side="before">
-                  {image(before, false)}
+                  {image(pair.before, false)}
                 </div>
                 <div
                   className="compare-viewer-layer"
                   data-side="after"
                   style={mode === "onion" ? { opacity: fade / 100 } : undefined}
                 >
-                  {image(after, false)}
+                  {image(pair.after, false)}
                 </div>
               </div>
             )}
@@ -388,7 +414,33 @@ export function CompareCanvas({
   );
 }
 
-function sideOf(image: CompareImage): CompareSide {
+/**
+ * A diagram's SVG at its natural size, transformed as an image would be: the
+ * browser redraws it as vectors at any zoom (T-773).
+ */
+export function DiagramDrawing({
+  svg,
+  style,
+}: {
+  svg: string;
+  style: CSSProperties;
+}) {
+  return (
+    <div
+      className={cn(
+        "compare-diagram absolute top-0 left-0 origin-top-left overflow-clip",
+        style.transform === undefined && "invisible",
+      )}
+      style={style}
+      // mermaid's own output under securityLevel "strict", which runs labels
+      // through DOMPurify; the colours added to it are attributes we set.
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by mermaid, see above
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+}
+
+function sideOf(image: CompareImage | CompareDiagram): CompareSide {
   return { label: image.label, content: null, size: image.size };
 }
 
@@ -405,14 +457,20 @@ export function CompareBar({
   fade: number;
   onFade: (fade: number) => void;
 }) {
-  const mode: CompareMode = useCompareMode();
+  const stored: CompareMode = useCompareMode();
+  const diagram = pair.kind === "diagram";
+  const mode = diagram ? "2up" : stored;
   const before = sideOf(pair.before);
   const after = sideOf(pair.after);
   return (
     <div className="compare-viewer-barbox">
-      <div className="compare-viewer-bar" data-mode={mode}>
+      <div
+        className="compare-viewer-bar"
+        data-mode={mode}
+        data-kind={diagram ? "diagram" : undefined}
+      >
         <CompareLabel which="before" side={before} other={after} />
-        <CompareModes pressed={mode} overlayable />
+        {!diagram && <CompareModes pressed={mode} overlayable />}
         <CompareLabel which="after" side={after} other={before} />
         {mode === "onion" && (
           <div className="compare-viewer-extra">

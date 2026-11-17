@@ -24,6 +24,7 @@ import {
 import {
   AttachmentViewerDialog,
   type ComparePair,
+  type DiagramView,
   type ViewerState,
 } from "@/components/issue/attachment-viewer.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
@@ -259,7 +260,7 @@ function SwapSide({
   );
 }
 
-type CompareEntry = {
+export type CompareEntry = {
   /** Where the comparison sits in the document. */
   anchor: () => HTMLElement | null;
   /** Null while either side has no size, or failed. */
@@ -269,13 +270,16 @@ type CompareEntry = {
 type CompareViewer = {
   register: (key: symbol, entry: CompareEntry) => () => void;
   open: (key: symbol) => void;
+  /** One diagram, on its own: nothing to page to (T-773). */
+  openDiagram: (view: DiagramView) => void;
 };
 
 /**
- * The image comparisons on one page and the one viewer they open in (T-733),
- * so ‹ › there pages through them all in document order.
+ * The comparisons on one page — images (T-733) and diagrams (T-773) — and the
+ * one viewer they open in, so ‹ › there pages through them all in document
+ * order.
  */
-const CompareViewerContext = createContext<CompareViewer | null>(null);
+export const CompareViewerContext = createContext<CompareViewer | null>(null);
 
 export function CompareViewerProvider({
   slug,
@@ -319,6 +323,7 @@ export function CompareViewerProvider({
       if (index < 0) return;
       setState({ compare: shown.map((e) => e.pair), index });
     },
+    openDiagram: (view) => setState({ diagram: view }),
   }));
   return (
     <CompareViewerContext.Provider value={viewer}>

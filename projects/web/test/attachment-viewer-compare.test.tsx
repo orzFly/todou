@@ -1,10 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AttachmentViewerDialog,
   type CompareImage,
   type ComparePair,
+  type DiagramPair,
+  type DiagramView,
   type ViewerState,
 } from "../src/components/issue/attachment-viewer.tsx";
 import { resetCompareMode, setCompareMode } from "../src/lib/compare-mode.ts";
@@ -42,14 +44,15 @@ const pair = (name: string, afterName = name): ComparePair => ({
 function Viewer({
   pairs,
   index = 0,
+  diagram,
 }: {
-  pairs: ComparePair[];
+  pairs?: ComparePair[];
   index?: number;
+  diagram?: DiagramView;
 }) {
-  const [state, setState] = useState<ViewerState | null>({
-    compare: pairs,
-    index,
-  });
+  const [state, setState] = useState<ViewerState | null>(
+    diagram !== undefined ? { diagram } : { compare: pairs ?? [], index },
+  );
   return (
     <AttachmentViewerDialog
       state={state}
@@ -121,5 +124,88 @@ describe("the viewer's comparison form", () => {
     // Off the slider the same key pages.
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
     expect(title()).toBe("b.png");
+  });
+});
+
+const SVG = '<svg viewBox="0 0 900 300"></svg>';
+
+const diagrams = (title: string): DiagramPair => ({
+  kind: "diagram",
+  key: title,
+  title,
+  diagramType: "sequence",
+  before: {
+    label: "v1",
+    svg: SVG,
+    source: "sequenceDiagram\n  A->>B: hi",
+    size: { width: 900, height: 300 },
+  },
+  after: {
+    label: "v2",
+    svg: SVG,
+    source: "sequenceDiagram\n  A->>B: hello",
+    size: { width: 900, height: 300 },
+  },
+});
+
+describe("the viewer's diagram forms (T-773)", () => {
+  const writeText = vi.fn();
+  beforeEach(() => {
+    writeText.mockReset().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("titles a diagram pair by its fence, and offers each side's source to copy", async () => {
+    render(<Viewer pairs={[diagrams("flow.mmd")]} />);
+    expect(title()).toBe("flow.mmd");
+    expect(screen.getByText("mermaid · sequence")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Download/ })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Comparison" })).toBeNull();
+    expect(screen.getAllByTestId("compare-canvas")).toHaveLength(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy v2 source" }));
+    });
+    expect(writeText).toHaveBeenCalledWith("sequenceDiagram\n  A->>B: hello");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy v1 source" }));
+    });
+    expect(writeText).toHaveBeenLastCalledWith("sequenceDiagram\n  A->>B: hi");
+  });
+
+  it("pages from a diagram pair to an image pair", () => {
+    render(<Viewer pairs={[diagrams("flow.mmd"), pair("b.png")]} />);
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "next comparison" }));
+    expect(title()).toBe("b.png");
+    expect(screen.getByRole("link", { name: "Download v2" })).toBeTruthy();
+  });
+
+  it("shows a lone diagram with its source to copy and nothing to page", async () => {
+    render(
+      <Viewer
+        diagram={{
+          key: "one",
+          title: "diagram",
+          diagramType: "flowchart",
+          svg: SVG,
+          source: "graph TD\n  a --> b",
+          size: { width: 900, height: 300 },
+        }}
+      />,
+    );
+    expect(title()).toBe("diagram");
+    expect(screen.getByTestId("diagram-canvas")).toBeTruthy();
+    expect(screen.getByText("mermaid · flowchart")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "next comparison" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "next attachment" }),
+    ).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy source" }));
+    });
+    expect(writeText).toHaveBeenCalledWith("graph TD\n  a --> b");
   });
 });

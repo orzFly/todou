@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { useRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComparePair } from "../src/components/issue/attachment-viewer.tsx";
@@ -40,7 +46,13 @@ afterEach(() => {
   resetCompareMode();
 });
 
-function Harness({ toolbar }: { toolbar?: HTMLElement }) {
+function Harness({
+  toolbar,
+  pair = PAIR,
+}: {
+  toolbar?: HTMLElement;
+  pair?: ComparePair;
+}) {
   const [cut, setCut] = useState(50);
   const [fade, setFade] = useState(50);
   const lastHeight = useRef<number | null>(null);
@@ -48,7 +60,7 @@ function Harness({ toolbar }: { toolbar?: HTMLElement }) {
   return (
     <>
       <CompareCanvas
-        pair={PAIR}
+        pair={pair}
         maximized={false}
         toolbar={toolbar ?? null}
         lastHeight={lastHeight}
@@ -59,7 +71,7 @@ function Harness({ toolbar }: { toolbar?: HTMLElement }) {
         onCut={setCut}
         fade={fade}
       />
-      <CompareBar pair={PAIR} fade={fade} onFade={setFade} />
+      <CompareBar pair={pair} fade={fade} onFade={setFade} />
     </>
   );
 }
@@ -185,6 +197,95 @@ describe("CompareCanvas", () => {
       "disabled",
       true,
     );
+    toolbar.remove();
+  });
+});
+
+// Wider than tall by far: images this shape stack, diagrams never do.
+const DIAGRAMS: ComparePair = {
+  kind: "diagram",
+  key: "d1",
+  title: "flow.mmd",
+  diagramType: "sequence",
+  before: {
+    label: "v1",
+    svg: '<svg data-side-svg="before"></svg>',
+    source: "sequenceDiagram\n  A->>B: hi",
+    size: { width: 2000, height: 400 },
+  },
+  after: {
+    label: "v2",
+    svg: '<svg data-side-svg="after"></svg>',
+    source: "sequenceDiagram\n  A->>B: hello",
+    size: { width: 2000, height: 400 },
+  },
+};
+
+describe("CompareCanvas with diagrams (T-773)", () => {
+  const drawings = () => [
+    ...canvas().querySelectorAll<HTMLElement>(".compare-diagram"),
+  ];
+
+  it("stays side by side, left and right, whatever the page's mode", () => {
+    setCompareMode("swipe");
+    let seen = "";
+    function Reader() {
+      seen = useCompareMode();
+      return null;
+    }
+    render(
+      <>
+        <Harness pair={DIAGRAMS} />
+        <Reader />
+      </>,
+    );
+    expect(canvas().dataset.mode).toBe("2up");
+    expect(canvas().dataset.direction).toBe("row");
+    expect(seen).toBe("swipe");
+    expect(screen.queryByRole("group", { name: "Comparison" })).toBeNull();
+    expect(
+      [...canvas().querySelectorAll<HTMLElement>(".compare-viewer-pane")].map(
+        (pane) => [pane.style.left, pane.style.top],
+      ),
+    ).toEqual([
+      ["0px", "0px"],
+      ["404px", "0px"],
+    ]);
+  });
+
+  it("draws each side's SVG at its natural size under one transform, with no checkerboard", () => {
+    render(<Harness pair={DIAGRAMS} />);
+    const [a, b] = drawings();
+    expect(a?.querySelector('svg[data-side-svg="before"]')).not.toBeNull();
+    expect(b?.querySelector('svg[data-side-svg="after"]')).not.toBeNull();
+    expect(a?.style.width).toBe("2000px");
+    expect(a?.style.transform).toMatch(/^translate\(.+\) scale\(.+\)$/);
+    expect(b?.style.transform).toBe(a?.style.transform);
+    expect(canvas().querySelectorAll("img")).toHaveLength(0);
+    for (const pane of canvas().querySelectorAll(".compare-viewer-pane"))
+      expect(pane.querySelector('[aria-hidden="true"]')).toBeNull();
+    fireEvent.wheel(canvas(), { clientX: 600, clientY: 150, deltaY: -200 });
+    const [c, d] = drawings();
+    expect(Number(canvas().dataset.zoom)).toBeGreaterThan(
+      Number(canvas().dataset.fit),
+    );
+    expect(d?.style.transform).toBe(c?.style.transform);
+  });
+
+  it("offers only fit and 100% in the zoom menu", async () => {
+    const toolbar = document.createElement("div");
+    document.body.append(toolbar);
+    render(<Harness toolbar={toolbar} pair={DIAGRAMS} />);
+    const readout = screen.getByRole("button", {
+      name: "zoom and display options",
+    });
+    fireEvent.pointerDown(readout, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual(["Fit0", "100%1"]);
+    expect(screen.queryByText("Background")).toBeNull();
+    expect(screen.queryByText("Scaling")).toBeNull();
     toolbar.remove();
   });
 });

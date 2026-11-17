@@ -1,13 +1,22 @@
+import { Maximize2Icon } from "lucide-react";
 import {
   type CSSProperties,
   type RefObject,
   useContext,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
+import { CompareViewerContext } from "@/components/issue/attachment-markdown.tsx";
+import {
+  AttachmentViewerDialog,
+  type DiagramPair,
+  type ViewerState,
+} from "@/components/issue/attachment-viewer.tsx";
 import { FenceFrame } from "@/components/shared/fence-frame.tsx";
 import {
   CompareLabelsContext,
@@ -22,7 +31,7 @@ import {
   errorSummary,
   renderDiagram,
 } from "@/lib/mermaid.ts";
-import { markChangedLabels } from "@/lib/mermaid-label-diff.ts";
+import { colourChanges } from "@/lib/mermaid-change.ts";
 
 // The palette is baked into the SVG at render time, so a theme switch has to
 // re-render. `data-theme` on <html> is the resolved theme — the preference
@@ -98,9 +107,26 @@ export function MermaidBlock({
   const probe = useRef<HTMLDivElement>(null);
   const result = useDiagram(probe, source);
   const [showSource, setShowSource] = useState(false);
+  const key = useId();
+  const viewer = useContext(CompareViewerContext);
+  // Outside a page that provides one, a diagram views alone.
+  const [own, setOwn] = useState<ViewerState | null>(null);
 
   const diagram = result?.ok === true ? result : null;
   const drawn = diagram !== null && !showSource;
+  const open = () => {
+    if (diagram === null) return;
+    const view = {
+      key,
+      title: title ?? "diagram",
+      diagramType: diagramType(diagram.svg),
+      svg: diagram.svg,
+      source,
+      size: { width: diagram.width, height: diagram.height },
+    };
+    if (viewer !== null) viewer.openDiagram(view);
+    else setOwn({ diagram: view });
+  };
   return (
     <div ref={probe}>
       <FenceFrame
@@ -112,10 +138,13 @@ export function MermaidBlock({
         toolbarAlwaysVisible={diagram !== null}
         actions={
           diagram !== null && (
-            <SourceToggle
-              shown={showSource}
-              onToggle={() => setShowSource((shown) => !shown)}
-            />
+            <>
+              <SourceToggle
+                shown={showSource}
+                onToggle={() => setShowSource((shown) => !shown)}
+              />
+              <OpenInViewer onOpen={open} />
+            </>
           )
         }
       >
@@ -123,26 +152,40 @@ export function MermaidBlock({
           <div
             className="mermaid-diagram overflow-x-auto p-4"
             style={{ "--diagram-width": `${diagram.width}px` } as CSSProperties}
-            // mermaid's own output under securityLevel "strict", which runs
-            // labels through DOMPurify: markup survives, scripts and handlers
-            // do not.
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by mermaid, see above
-            dangerouslySetInnerHTML={{ __html: diagram.svg }}
-          />
+          >
+            <button
+              type="button"
+              aria-label="Open in the viewer"
+              className="media-compare-open"
+              onClick={open}
+              // mermaid's own output under securityLevel "strict", which runs
+              // labels through DOMPurify: markup survives, scripts and
+              // handlers do not.
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by mermaid, see above
+              dangerouslySetInnerHTML={{ __html: diagram.svg }}
+            />
+          </div>
         ) : (
           <CodeBlock filename={filename} contents={source} bareFallback />
         )}
         {result?.ok === false && <ErrorLine error={result.error} />}
       </FenceFrame>
+      {viewer === null && (
+        <AttachmentViewerDialog
+          state={own}
+          onNavigate={() => {}}
+          onClose={() => setOwn(null)}
+        />
+      )}
     </div>
   );
 }
 
 /**
  * A changed ```mermaid fence in a compare view (T-724): both versions drawn
- * side by side, the labels that have no partner on the other side boxed in
- * red and green. Until both renders are back, and when neither parses, it is
- * the source diff the fence would otherwise be.
+ * side by side, what changed coloured red and green (T-773). Until both
+ * renders are back, and when neither parses, it is the source diff the fence
+ * would otherwise be. Either picture opens both in the viewer.
  */
 export function MermaidCompare({
   filename,
@@ -162,15 +205,58 @@ export function MermaidCompare({
   const labels = useContext(CompareLabelsContext);
   const [showSource, setShowSource] = useState(false);
 
-  // Measured during render on purpose: the marks have to arrive with the
-  // diagrams, and an effect would paint one frame of them unmarked first.
+  // Measured during render on purpose: the colours have to arrive with the
+  // diagrams, and an effect would paint one frame of them plain first.
   const marked = useMemo(
     () =>
       old?.ok === true && next?.ok === true
-        ? markChangedLabels(old.svg, next.svg)
+        ? colourChanges(old.svg, next.svg)
         : null,
     [old, next],
   );
+
+  const id = useId();
+  const pair: DiagramPair | null =
+    marked !== null && old?.ok === true && next?.ok === true
+      ? {
+          kind: "diagram",
+          key: id,
+          title: title ?? "diagram",
+          diagramType: diagramType(next.svg),
+          before: {
+            label: labels.before,
+            svg: marked.before,
+            source: before,
+            size: { width: old.width, height: old.height },
+          },
+          after: {
+            label: labels.after,
+            svg: marked.after,
+            source: after,
+            size: { width: next.width, height: next.height },
+          },
+        }
+      : null;
+  const viewer = useContext(CompareViewerContext);
+  const latest = useRef(pair);
+  useLayoutEffect(() => {
+    latest.current = pair;
+  });
+  const [key] = useState(() => Symbol("comparison"));
+  useEffect(
+    () =>
+      viewer?.register(key, {
+        anchor: () => probe.current,
+        pair: () => latest.current,
+      }),
+    [viewer, key],
+  );
+  // Outside a page that provides one, a comparison views alone.
+  const [own, setOwn] = useState<ViewerState | null>(null);
+  const open = () => {
+    if (viewer !== null) viewer.open(key);
+    else if (pair !== null) setOwn({ compare: [pair], index: 0 });
+  };
 
   const sourceDiff = (
     <CodeDiffBlock
@@ -193,10 +279,10 @@ export function MermaidCompare({
           label,
           size: { width: result.width, height: result.height },
           content: (
-            <div
+            <span
               className="mermaid-compare-diagram"
               // See MermaidBlock: mermaid's own output under securityLevel
-              // "strict"; the marks added to it are rects we build.
+              // "strict"; the colours added to it are styles and rects we set.
               // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by mermaid, see above
               dangerouslySetInnerHTML={{ __html: svg ?? result.svg }}
             />
@@ -225,7 +311,7 @@ export function MermaidCompare({
         before={side(labels.before, old, before, marked?.before)}
         after={side(labels.after, next, after, marked?.after)}
         modes={["2up"]}
-        minScale={0.75}
+        onOpen={pair === null ? undefined : open}
         align="center"
         backdrop="page"
         text={after}
@@ -233,10 +319,13 @@ export function MermaidCompare({
         actions={
           !pending &&
           !neither && (
-            <SourceToggle
-              shown={showSource}
-              onToggle={() => setShowSource((shown) => !shown)}
-            />
+            <>
+              <SourceToggle
+                shown={showSource}
+                onToggle={() => setShowSource((shown) => !shown)}
+              />
+              {pair !== null && <OpenInViewer onOpen={open} />}
+            </>
           )
         }
         replacement={
@@ -250,7 +339,36 @@ export function MermaidCompare({
           ) : undefined
         }
       />
+      {viewer === null && (
+        <AttachmentViewerDialog
+          state={own}
+          onNavigate={() => {}}
+          onClose={() => setOwn(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/** `sequence`, `flowchart` …: the SVG's role description, less mermaid's renderer version. */
+function diagramType(svg: string): string {
+  const role = /aria-roledescription="([^"]*)"/.exec(svg)?.[1] ?? "diagram";
+  return role.replace(/-v\d+$/, "");
+}
+
+function OpenInViewer({ onOpen }: { onOpen: () => void }) {
+  return (
+    <Button
+      type="button"
+      size="icon-xs"
+      variant="ghost"
+      aria-label="Open in the viewer"
+      title="Open in the viewer"
+      className="text-muted-foreground"
+      onClick={onOpen}
+    >
+      <Maximize2Icon className="size-3.5" />
+    </Button>
   );
 }
 

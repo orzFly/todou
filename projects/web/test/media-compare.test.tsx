@@ -223,7 +223,7 @@ describe("MediaCompare (T-722)", () => {
   });
 });
 
-describe("MediaCompare modes and smallest scale (T-724)", () => {
+describe("MediaCompare modes (T-724)", () => {
   it("has no mode control with one mode, and stays side by side without touching the page's mode", () => {
     render(
       <>
@@ -267,23 +267,33 @@ describe("MediaCompare modes and smallest scale (T-724)", () => {
     ).toEqual(["Side by side", "Swipe"]);
   });
 
-  it("gives side by side a smallest pane, scaled from the wider side", () => {
+  it("opens the viewer from either side's picture, given onOpen (T-773)", () => {
+    let opened = 0;
     const { container, unmount } = renderCompare({
-      minScale: 0.75,
-      before: side("v2", { width: 552, height: 328 }),
-      after: side("v5", { width: 360, height: 328 }),
+      align: "center",
+      onOpen: () => {
+        opened += 1;
+      },
     });
+    const buttons = screen.getAllByRole("button", {
+      name: "Open in the viewer",
+    });
+    expect(buttons).toHaveLength(2);
+    expect(
+      buttons.every((b) => b.classList.contains("media-compare-box")),
+    ).toBe(true);
+    fireEvent.click(buttons[1] as HTMLElement);
+    expect(opened).toBe(1);
+    // The grid has one rule for images and diagrams alike.
     const grid = container.querySelector<HTMLElement>(".media-compare-2up");
-    expect(grid?.hasAttribute("data-min-pane")).toBe(true);
-    expect(grid?.style.getPropertyValue("--min-pane")).toBe("414px");
+    expect(grid?.getAttributeNames().filter((n) => n !== "class")).toEqual([]);
+    expect(grid?.getAttribute("style")).toBeNull();
     unmount();
 
-    const plain = renderCompare();
+    renderCompare();
     expect(
-      plain.container
-        .querySelector(".media-compare-2up")
-        ?.hasAttribute("data-min-pane"),
-    ).toBe(false);
+      screen.queryByRole("button", { name: "Open in the viewer" }),
+    ).toBeNull();
   });
 
   it("sizes the side that drew when the other failed", () => {
