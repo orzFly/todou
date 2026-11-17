@@ -270,6 +270,29 @@ async function dropOn(index: number) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
   fireEvent.pointerUp(document, { ...pointer, clientX: 10 + index * 300 });
+  await clicksLandAgain();
+}
+
+/**
+ * dnd-kit stops every click's propagation at the document for a 50ms timer
+ * after a drop, and that listener outlives the unmounted board. A click inside
+ * that window still flips the native box but never reaches React, so the next
+ * test's selection silently came out empty when it clicked early (T-738).
+ */
+async function clicksLandAgain() {
+  const probe = document.body.appendChild(document.createElement("span"));
+  let landed = false;
+  probe.addEventListener("click", () => {
+    landed = true;
+  });
+  try {
+    await waitFor(() => {
+      probe.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(landed).toBe(true);
+    });
+  } finally {
+    probe.remove();
+  }
 }
 
 beforeEach(() => layOutColumns());
@@ -390,6 +413,9 @@ describe("dragging a selection (T-708)", () => {
 
     fireEvent.click(box(21));
     fireEvent.click(box(51));
+    // The bar and not `checked()`: a click React never saw still flips the
+    // native box.
+    expect(screen.getByText("2 selected")).toBeTruthy();
     await pickUp(22);
     expect(screen.queryByTestId("drag-count")).toBeNull();
     expect(shellOf(21).className).not.toContain("opacity-30");
