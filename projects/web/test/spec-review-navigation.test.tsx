@@ -263,11 +263,13 @@ function mountBranch(branch: Branch, width = 1280) {
   return { ...view, client, router };
 }
 
-async function openReview(summary = SUMMARY) {
-  fireEvent.click(
-    await screen.findByRole("button", { name: /finish review/i }, WAIT),
-  );
-  await screen.findByLabelText("Review summary", {}, WAIT);
+type Until = (assertion: () => unknown) => Promise<unknown>;
+const realUntil: Until = (assertion) => waitFor(assertion, WAIT);
+
+async function openReview(summary = SUMMARY, until = realUntil) {
+  await until(() => screen.getByRole("button", { name: /finish review/i }));
+  fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
+  await until(() => screen.getByLabelText("Review summary"));
   act(() => cmSetValue(screen.getByRole("dialog"), summary));
 }
 
@@ -319,6 +321,19 @@ async function tick(ms: number) {
   });
 }
 
+/** Date and timers only; promises and React's scheduler keep running. */
+function freezeClock() {
+  vi.useFakeTimers({
+    toFake: [
+      "Date",
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+    ],
+  });
+}
+
 // No waitFor under a frozen clock. Advance the actual scheduler, with a bound
 // so a missing router transition fails rather than hanging the test worker.
 async function clockUntil(assertion: () => void, budget = 1000) {
@@ -351,15 +366,7 @@ async function startTimedSubmit(
   const button = screen.getByRole("button", { name: LABEL[verdict] });
   const response = held<Response>();
   server.postReply = () => response.promise;
-  vi.useFakeTimers({
-    toFake: [
-      "Date",
-      "setTimeout",
-      "clearTimeout",
-      "setInterval",
-      "clearInterval",
-    ],
-  });
+  freezeClock();
   // Two activations in one turn exercise the ref/session single-flight guard,
   // before a disabled re-render can hide a second request.
   act(() => {
@@ -609,15 +616,7 @@ describe.each(BRANCHES)("%s completion failure boundaries", (branch) => {
     // No later successful GET may hide an incorrect local true mirror.
     const refresh = held<Response>();
     server.specReply = () => refresh.promise;
-    vi.useFakeTimers({
-      toFake: [
-        "Date",
-        "setTimeout",
-        "clearTimeout",
-        "setInterval",
-        "clearInterval",
-      ],
-    });
+    freezeClock();
     const start = await releasePost(post, "approve");
     expect(
       view.client.getQueryData(key)?.viewer_review?.approved_in_current_round,
@@ -778,15 +777,15 @@ describe.each(BRANCHES)("%s completion failure boundaries", (branch) => {
 });
 
 /** Close the real dialog before asking the real route blocker to leave. */
-async function leaveSpec(router: AnyRouter) {
+async function leaveSpec(router: AnyRouter, until = realUntil) {
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   void router.navigate({
     to: "/projects/$slug/issues/$number",
     params: { slug: "demo", number: "7" },
   });
-  await screen.findByText("Leave with unsaved changes?", {}, WAIT);
+  await until(() => screen.getByText("Leave with unsaved changes?"));
   fireEvent.click(screen.getByRole("button", { name: "Discard and leave" }));
-  await waitFor(() => expect(href(router)).toBe(ISSUE_URL), WAIT);
+  await until(() => expect(href(router)).toBe(ISSUE_URL));
 }
 
 describe("controlled session ownership", () => {
@@ -799,33 +798,35 @@ describe("controlled session ownership", () => {
       server.timelineReply = () => target.promise;
       const view = mountBranch("controlled");
       await openReview();
+      // Submitting… lasts until the target lookup gives up on the held GET,
+      // and it gives up by the clock — 1250ms into its first round. On a real
+      // clock a slow leave and reentry outlived that before the controls
+      // were checked (T-735).
+      freezeClock();
       fireEvent.click(screen.getByRole("button", { name: "Comment" }));
-      await waitFor(() => expect(server.posts).toHaveLength(1), WAIT);
+      await clockUntil(() => expect(server.posts).toHaveLength(1));
       if (phase === "GET") {
         await act(async () => {
           post.release(json(reviewResult("comment"), 201));
         });
-        await waitFor(
-          () => expect(server.timelineReads.length).toBeGreaterThan(0),
-          WAIT,
+        await clockUntil(() =>
+          expect(server.timelineReads.length).toBeGreaterThan(0),
         );
       }
-      await leaveSpec(view.router);
-      await act(async () => {
-        await view.router.navigate({
-          to: "/projects/$slug/issues/$number/spec",
-          params: { slug: "demo", number: "7" },
-          search: { v: 1, file: "proposal.md" },
-          hash: "spec-top",
-        });
+      await leaveSpec(view.router, clockUntil);
+      void view.router.navigate({
+        to: "/projects/$slug/issues/$number/spec",
+        params: { slug: "demo", number: "7" },
+        search: { v: 1, file: "proposal.md" },
+        hash: "spec-top",
       });
-      await openReview("new visit summary");
+      await openReview("new visit summary", clockUntil);
       pendingControls();
       await act(async () => {
         post.release(json(reviewResult("comment"), 201));
         target.release(json(reviewPages("comment").older));
       });
-      await waitFor(() => expect(success).toHaveBeenCalledTimes(1), WAIT);
+      await clockUntil(() => expect(success).toHaveBeenCalledTimes(1));
       expect(href(view.router)).toBe(SPEC_URL);
       expect(cmGetValue(screen.getByRole("dialog"))).toBe("new visit summary");
       expect(screen.queryByRole("button", { name: "Submitting…" })).toBeNull();
