@@ -147,7 +147,7 @@ function pageFixture(options: FixtureOptions = {}) {
         {
           number: next,
           author: AUTHOR,
-          message: null,
+          message: `Revise for round ${next}`,
           created_at: "2026-01-02T00:00:00Z",
         },
       ],
@@ -768,7 +768,7 @@ describe("the spec page reads the version its URL names", () => {
     // The status is the current version's, so an older one shows none.
     expect(slot()).toBeNull();
     // Named by its words alone: the arrow is decoration.
-    const link = await screen.findByRole("link", { name: "Newer version: v2" });
+    const link = await screen.findByRole("link", { name: "Open v2" });
     expect(link.closest("[data-sonner-toast]")).not.toBeNull();
     const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
     expect(href.searchParams.get("v")).toBe("2");
@@ -784,7 +784,7 @@ describe("the spec page reads the version its URL names", () => {
   it("keeps the comparison the reader pinned on the way to the latest", async () => {
     await mountPage({ version: 3, viewedVersion: 2, compare: 1 });
     const link = await screen.findByRole("link", {
-      name: "Newer version: v3",
+      name: "Open v3",
     });
     const href = new URL(link.getAttribute("href") ?? "", "http://localhost");
     expect(Object.fromEntries(href.searchParams)).toEqual({
@@ -807,8 +807,7 @@ function newerToast() {
       ...document.querySelectorAll<HTMLElement>(
         "[data-sonner-toast]:not([data-removed='true'])",
       ),
-    ].find((toast) => /Newer version: v\d+/.test(toast.textContent ?? "")) ??
-    null
+    ].find((toast) => /pushed v\d+/.test(toast.textContent ?? "")) ?? null
   );
 }
 
@@ -816,14 +815,14 @@ function newerToast() {
 function shownNewerToast(version: number) {
   return waitFor(() => {
     const toast = newerToast();
-    expect(toast?.textContent).toContain(`Newer version: v${version}`);
+    expect(toast?.textContent).toContain(`pushed v${version}`);
     return toast as HTMLElement;
   });
 }
 
 async function closeNewerToast(version: number) {
   const shown = await shownNewerToast(version);
-  fireEvent.click(within(shown).getByRole("button", { name: "Close toast" }));
+  fireEvent.click(within(shown).getByRole("button", { name: "Close" }));
   await waitFor(() => expect(newerToast()).toBeNull());
 }
 
@@ -853,6 +852,21 @@ describe("the newer-version toast", () => {
     expect(newerToast()).not.toBeNull();
   }, 10_000);
 
+  it("says who pushed the newer version and what the push says", async () => {
+    const page = await mountPage();
+    await waitFor(() => expect(router.state.location.search.v).toBe(1));
+    await pushNext(page);
+    const shown = await shownNewerToast(2);
+    expect(shown.textContent).toContain("Bot One pushed v2");
+    expect(shown.textContent).toContain("Revise for round 2");
+    await pushNext(page);
+    // Updated in place: the same toast, now about the next push.
+    await waitFor(() =>
+      expect(shown.textContent).toContain("Revise for round 3"),
+    );
+    expect(newerToast()).toBe(shown);
+  });
+
   it("stays closed once closed, until a newer version comes", async () => {
     const page = await mountPage({ version: 3, viewedVersion: 2 });
     await closeNewerToast(3);
@@ -869,9 +883,7 @@ describe("the newer-version toast", () => {
 
   it("goes when the reader follows it, without counting as closed", async () => {
     const page = await mountPage({ version: 2, viewedVersion: 1 });
-    fireEvent.click(
-      await screen.findByRole("link", { name: "Newer version: v2" }),
-    );
+    fireEvent.click(await screen.findByRole("link", { name: "Open v2" }));
     await waitFor(() => expect(shownTitle()).toBe("Version 2"));
     await waitFor(() => expect(newerToast()).toBeNull());
 
@@ -1058,9 +1070,7 @@ describe("staged comments on a newer version", () => {
       stagedDrafts: [KEPT, CHANGED],
     });
     await pushNext(page);
-    fireEvent.click(
-      await screen.findByRole("link", { name: "Newer version: v2" }),
-    );
+    fireEvent.click(await screen.findByRole("link", { name: "Open v2" }));
     await waitFor(() => expect(shownTitle()).toBe("Version 2"));
 
     // Kept: drawn on the line its paragraph moved to.
