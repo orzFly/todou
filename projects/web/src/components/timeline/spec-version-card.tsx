@@ -19,6 +19,7 @@ import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { diffstatCells, type SpecFileStat } from "@/lib/spec-version-stats.ts";
+import { formatTimelineTime } from "@/lib/timeline-time.ts";
 import { cn } from "@/lib/utils.ts";
 
 const CHANGE_BADGE: Record<
@@ -310,7 +311,7 @@ function SpecVersionCardBody({
               dateTime={withdrawal.created_at}
               title={withdrawal.created_at}
             >
-              {new Date(withdrawal.created_at).toLocaleString()}
+              {formatTimelineTime(withdrawal.created_at)}
             </time>
             {withdrawal.reason !== null && (
               <>

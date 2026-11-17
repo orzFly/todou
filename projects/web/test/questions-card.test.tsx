@@ -9,6 +9,7 @@ import type { QuestionsComponent } from "@todou/shared";
 import { Window as HappyWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
+import { formatTimelineTime } from "../src/lib/timeline-time.ts";
 import { cmPressKey, cmSetValue } from "./cm.ts";
 import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
 import { renderWithProviders } from "./render.tsx";
@@ -644,6 +645,11 @@ describe("QuestionsCard (answered)", () => {
     expect(view.getByText("ship it")).toBeTruthy();
     // No interactive option buttons remain.
     expect(view.getByText("Inline").closest("button")).toBeNull();
+    // Minutes like every other timeline time, not `toLocaleString()` seconds.
+    const at = view.container.querySelector(
+      `time[datetime="${answered.created_at}"]`,
+    );
+    expect(at?.textContent).toBe(formatTimelineTime(answered.created_at));
   });
 
   it("hides the option descriptions until the toggle is pressed", async () => {
@@ -763,6 +769,9 @@ describe("QuestionsCard (withdrawn)", () => {
     );
     expect(reason).toBeDefined();
     expect(reason?.children).toHaveLength(0);
+    expect(meta.querySelector("time")?.textContent).toBe(
+      formatTimelineTime(withdrawal.created_at),
+    );
     expect(view.getByText("Where does the payload live?")).toBeTruthy();
     expect(view.queryByText("declined to answer")).toBeNull();
     expect(view.queryByText("awaiting answer")).toBeNull();

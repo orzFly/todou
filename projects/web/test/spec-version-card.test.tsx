@@ -7,6 +7,7 @@ import {
   computeVersionStats,
   diffstatCells,
 } from "../src/lib/spec-version-stats.ts";
+import { formatTimelineTime } from "../src/lib/timeline-time.ts";
 import { renderWithProviders } from "./render.tsx";
 
 describe("computeVersionStats", () => {
@@ -280,6 +281,10 @@ describe("SpecVersionCard", () => {
     expect(history.textContent).toContain(WITHDRAWAL.reason);
     expect(history.querySelector("time")?.getAttribute("datetime")).toBe(
       WITHDRAWAL.created_at,
+    );
+    // Minutes like every other timeline time, not `toLocaleString()` seconds.
+    expect(history.querySelector("time")?.textContent).toBe(
+      formatTimelineTime(WITHDRAWAL.created_at),
     );
     expect(history.querySelectorAll("strong, em")).toHaveLength(0);
     expect(

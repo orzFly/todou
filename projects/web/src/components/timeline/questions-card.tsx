@@ -37,6 +37,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { holdRevealed, revealBlock, useOwnHold } from "@/lib/scroll-insets.ts";
+import { formatTimelineTime } from "@/lib/timeline-time.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { documentPip, useDocumentPip } from "@/lib/use-document-pip.ts";
 
@@ -327,7 +328,7 @@ function SettledCard({
 function SettledAt({ at }: { at: string }) {
   return (
     <span className="whitespace-nowrap" title={at}>
-      <time dateTime={at}>{new Date(at).toLocaleString()}</time>
+      <time dateTime={at}>{formatTimelineTime(at)}</time>
     </span>
   );
 }
