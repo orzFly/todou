@@ -1226,6 +1226,25 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
           // `<div>` inside a `<p>`. In a table cell, side by side is two
           // `inline-block`s; elsewhere the `<img>` only carries the old
           // address, and the comparison is drawn in React (T-722).
+          // An author's pair (T-767) is a comparison already: a swap of
+          // either of its images marks it changed and leaves its sides alone.
+          if (
+            child.tagName === "img" &&
+            child.properties.dataComparePair !== undefined
+          ) {
+            const at = child.position?.start.offset;
+            const rawBeforeAt = child.properties.dataPairBeforeAt;
+            const beforeAt =
+              rawBeforeAt === "" ? Number.NaN : Number(rawBeforeAt);
+            const touched = images.some(
+              (image) =>
+                image.at.start === at ||
+                (Number.isFinite(beforeAt) && image.at.start === beforeAt),
+            );
+            if (touched && !added) addClass(child, INS_BLOCK_CLASS);
+            next.push(child);
+            continue;
+          }
           if (child.tagName === "img") {
             const swap = images.find(
               (image) => image.at.start === child.position?.start.offset,

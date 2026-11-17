@@ -1518,6 +1518,14 @@ html[data-header-settling] [data-header-follow] {
     background-color: transparent;
     border-left-color: transparent;
   }
+  /* An author's pair that is new as a whole (T-767): the paragraph rather
+     than the `<img>` is the range's outermost element. */
+  .markdown-body
+    .spec-ins-block:not(.spec-annotated):has(> .spec-img-compare) {
+    background-color: transparent;
+    border-left-color: transparent;
+    padding-left: 0;
+  }
 
   /* MediaCompare (T-722). The root is the size container: the mode names
      shorten and the panes stack against the frame's own width, which a
@@ -1763,8 +1771,16 @@ html[data-header-settling] [data-header-follow] {
     gap: 0.35rem;
     font-size: 0.75rem;
     line-height: 1;
+    min-width: 0;
     white-space: nowrap;
     color: var(--foreground);
+  }
+  /* A version is always short; an author's alt (T-767) need not be. */
+  .media-compare-label-name {
+    min-width: 0;
+    max-width: 18ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .media-compare-tick {
     flex: none;
@@ -1779,6 +1795,7 @@ html[data-header-settling] [data-header-follow] {
     background: var(--diff-addition);
   }
   .media-compare-dims {
+    flex: none;
     font-family: var(--font-mono);
     font-size: 11px;
     font-variant-numeric: tabular-nums;

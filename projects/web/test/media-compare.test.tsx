@@ -107,6 +107,16 @@ describe("MediaCompare (T-722)", () => {
     expect(marked).toEqual(["400", "460"]);
   });
 
+  it("titles each side's name with all of it, for when a long one is cut (T-767)", () => {
+    const long = "Safari 18 on an iPhone 15 Pro";
+    const { container } = renderCompare({ after: side(long, SAME) });
+    const names = [
+      ...container.querySelectorAll<HTMLElement>(".media-compare-label-name"),
+    ];
+    expect(names.map((name) => name.title)).toEqual(["v2", long]);
+    expect(names[1].textContent).toBe(long);
+  });
+
   it("switches every comparison on the page together", () => {
     const { container } = render(
       <>

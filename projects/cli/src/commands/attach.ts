@@ -10,7 +10,7 @@ import type {
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { CliError } from "../errors.ts";
-import { formatBytes, table } from "../format.ts";
+import { formatBytes, makePainter, table } from "../format.ts";
 import { confirm } from "../prompt.ts";
 
 // openAsBlob never fills in a type, and the server stores whatever it gets —
@@ -45,6 +45,30 @@ export function mimeTypeFor(path: string): string {
   );
 }
 
+/** One file of an `attach` run: the name it had on disk, and what was stored. */
+export type Uploaded = { local: string; stored: Attachment };
+
+/**
+ * How to show uploaded images as a comparison (T-767): the line itself for
+ * exactly two, in the order they were given, else the shape of one. An agent
+ * that has just uploaded a before and an after is the reader this is for,
+ * and right now is when it is about to write the markdown.
+ */
+export function compareHint(images: Uploaded[]): string {
+  const [first, second] = images;
+  if (images.length === 2 && first !== undefined && second !== undefined) {
+    const image = ({ local, stored }: Uploaded) =>
+      `![${local
+        .slice(0, local.length - extname(local).length)
+        .replace(/[\\[\]]/g, "\\$&")}](${stored.url})`;
+    return [
+      "hint: to compare the two images, put them alone in one paragraph:",
+      `      ${image(first)} -> ${image(second)}`,
+    ].join("\n");
+  }
+  return "hint: to compare two images, put them alone in one paragraph: ![before](<url>) -> ![after](<url>)";
+}
+
 export class AttachCommand extends ProjectCommand {
   // `attach add` is what six of the sessions in the T-165 survey reached for
   // before finding the bare form; both spellings upload.
@@ -62,7 +86,7 @@ export class AttachCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = await this.resolveIssueRef(client, this.number);
-    const uploaded: Attachment[] = [];
+    const uploaded: Uploaded[] = [];
     for (const path of this.files) {
       let blob: Blob;
       try {
@@ -74,7 +98,7 @@ export class AttachCommand extends ProjectCommand {
         type: blob.type || mimeTypeFor(path),
       });
       const stored = await client.uploadAttachment(project, number, file);
-      uploaded.push(stored);
+      uploaded.push({ local: basename(path), stored });
       // Filenames are unique within a card, so the server may have appended
       // an id (T-269). Say so when it did: the markdown someone writes next
       // has to use the stored name, not the one on their disk.
@@ -84,11 +108,24 @@ export class AttachCommand extends ProjectCommand {
           : `uploaded ${basename(path)} as ${stored.filename}`,
       );
     }
-    this.output(uploaded, () =>
+    const stored = uploaded.map((u) => u.stored);
+    this.output(stored, () =>
       // `#id` first, the shape `attach list` prints and `attach download`
       // addresses — an upload otherwise had no way to name what it made.
-      uploaded.map((a) => `#${a.id} ${a.filename} → ${a.url}`).join("\n"),
+      stored.map((a) => `#${a.id} ${a.filename} → ${a.url}`).join("\n"),
     );
+    // On stderr, beside the `uploaded` lines: stdout is what `$(…)`, a pipe
+    // and `--json` read, and a hint in it would break all three.
+    const images = uploaded.filter((u) =>
+      u.stored.content_type.startsWith("image/"),
+    );
+    if (
+      images.length >= 2 ||
+      images.some((u) => /before|after/i.test(u.local))
+    ) {
+      const paint = makePainter(this.context.stderr, this.context.env);
+      this.note(paint("dim", compareHint(images)));
+    }
   }
 }
 

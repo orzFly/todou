@@ -15,6 +15,7 @@ import {
 import { BodyAnchor } from "@/components/shared/body-anchor.tsx";
 import { FenceFrame } from "@/components/shared/fence-frame.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
+import { DEFAULT_COMPARE_LABELS } from "@/components/shared/media-compare.tsx";
 import {
   MermaidBlock,
   MermaidCompare,
@@ -31,6 +32,11 @@ import { FENCE_COLLAPSE_LINES, fenceTitle } from "@/lib/fence-meta.ts";
 import { MARKDOWN_SYNTAX_PLUGINS } from "@/lib/markdown-processor.ts";
 import { SWAP_ALT_ATTR, SWAP_SRC_ATTR } from "@/lib/rehype-decorations.ts";
 import { rehypeDetails } from "@/lib/rehype-details.ts";
+import {
+  PAIR_ATTR,
+  pairLabel,
+  rehypeImagePairs,
+} from "@/lib/rehype-image-pairs.ts";
 import {
   CODE_CONTENT_START_ATTR,
   parseSourceLoc,
@@ -407,7 +413,14 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
                 kids.some((child) => isSwapImgNode(child));
               if (carriesEmbed) {
                 return (
-                  <div className="markdown-paragraph" {...props}>
+                  // A decoration class on the paragraph (a wholly-new pair,
+                  // T-767) joins this one rather than replacing it.
+                  <div
+                    {...props}
+                    className={["markdown-paragraph", props.className]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
                     {children}
                   </div>
                 );
@@ -462,15 +475,35 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
                 const swapAlt = (props as Record<string, unknown>)[
                   SWAP_ALT_ATTR
                 ];
+                const before = {
+                  src: swapSrc,
+                  alt: typeof swapAlt === "string" ? swapAlt : "",
+                };
+                const after = { src: props.src ?? "", alt: props.alt ?? "" };
+                const authored =
+                  (props as Record<string, unknown>)[PAIR_ATTR] !== undefined;
                 return (
                   <ImageSwapCompare
                     slug={slug}
                     issueNumber={issueNumber}
-                    before={{
-                      src: swapSrc,
-                      alt: typeof swapAlt === "string" ? swapAlt : "",
-                    }}
-                    after={{ src: props.src ?? "", alt: props.alt ?? "" }}
+                    before={before}
+                    after={after}
+                    labels={
+                      authored
+                        ? {
+                            before: pairLabel(
+                              before.alt,
+                              before.src,
+                              DEFAULT_COMPARE_LABELS.before,
+                            ),
+                            after: pairLabel(
+                              after.alt,
+                              after.src,
+                              DEFAULT_COMPARE_LABELS.after,
+                            ),
+                          }
+                        : undefined
+                    }
                     className={props.className}
                   />
                 );
@@ -504,17 +537,22 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
     [fenceBaselines, collapseLongFences, slug, issueNumber, embedded],
   );
 
-  // `rehypeDetails` goes first so that every later pass — the caller's stamp,
-  // decoration and fold passes included — walks the tree the reader will get,
-  // rather than one where a fold is still a pair of raw HTML strings. The memo
-  // is the array-identity rule this file opens with, applied to an array this
-  // component now owns.
+  // `rehypeDetails` and `rehypeImagePairs` go first so that every later pass —
+  // the caller's stamp, decoration and fold passes included — walks the tree
+  // the reader will get, rather than one where a fold is still a pair of raw
+  // HTML strings or a pair still two images. Pairs only where a comparison
+  // can be drawn: without an issue they stay two images and an arrow. The
+  // memo is the array-identity rule this file opens with, applied to an array
+  // this component now owns.
+  const pairs = issueNumber !== undefined;
   const rehypePasses = useMemo(
     () =>
-      [rehypeDetails, ...(rehypePlugins ?? [])] as ComponentProps<
-        typeof Markdown
-      >["rehypePlugins"],
-    [rehypePlugins],
+      [
+        rehypeDetails,
+        ...(pairs ? [rehypeImagePairs] : []),
+        ...(rehypePlugins ?? []),
+      ] as ComponentProps<typeof Markdown>["rehypePlugins"],
+    [pairs, rehypePlugins],
   );
 
   return (

@@ -1097,4 +1097,87 @@ describe("attach", () => {
       { id: 12, filename: "envelope.txt", url: "/attachments/envelope.txt" },
     ]);
   });
+
+  describe("the comparison hint (T-767)", () => {
+    /** Uploads `names`, the server storing each with the type it was sent. */
+    async function upload(names: string[], extra: string[] = []) {
+      let id = 0;
+      const { fetchImpl } = fakeFetch([
+        [
+          "POST",
+          "/api/projects/todou/attachments/direct-uploads",
+          {
+            __status: 409,
+            body: { error: { code: "direct_upload_unavailable" } },
+          },
+        ],
+        [
+          "POST",
+          "/api/projects/todou/attachments",
+          (init: RequestInit) => {
+            const file = (init.body as FormData).get("file") as File;
+            id += 1;
+            return {
+              id,
+              filename: file.name,
+              content_type: file.type,
+              size: 1,
+              url: `/api/projects/todou/attachments/${id}/download/${encodeURIComponent(file.name)}`,
+              uploader: me,
+              created_at: "2026-11-17T12:00:00Z",
+            };
+          },
+        ],
+      ]);
+      const paths = names.map((name) => {
+        const path = join(dir, name);
+        writeFileSync(path, "x");
+        return path;
+      });
+      return runCli(["attach", "3", ...paths, ...extra], {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+    }
+    const hints = (stderr: string) => stderr.split("hint:").length - 1;
+
+    it("spells out the line for two images, in the order given", async () => {
+      const result = await upload(["login [old].png", "login-new.png"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain(
+        "hint: to compare the two images, put them alone in one paragraph:\n" +
+          "      ![login \\[old\\]](/api/projects/todou/attachments/1/download/login%20%5Bold%5D.png)" +
+          " -> ![login-new](/api/projects/todou/attachments/2/download/login-new.png)\n",
+      );
+      expect(result.stdout).toBe(
+        "#1 login [old].png → /api/projects/todou/attachments/1/download/login%20%5Bold%5D.png\n" +
+          "#2 login-new.png → /api/projects/todou/attachments/2/download/login-new.png\n",
+      );
+    });
+
+    it("keeps --json output a bare array", async () => {
+      const result = await upload(["a.png", "b.png"], ["--json"]);
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toHaveLength(2);
+      expect(hints(result.stderr)).toBe(1);
+    });
+
+    it("gives the shape for one image named before or after, in any case", async () => {
+      const result = await upload(["Before.PNG"]);
+      expect(result.stderr).toContain(
+        "hint: to compare two images, put them alone in one paragraph: ![before](<url>) -> ![after](<url>)\n",
+      );
+    });
+
+    it("gives the shape, once, for three images", async () => {
+      const result = await upload(["a.png", "b.png", "c.png"]);
+      expect(hints(result.stderr)).toBe(1);
+      expect(result.stderr).toContain("![before](<url>) -> ![after](<url>)");
+    });
+
+    it("says nothing for one ordinary image, or a file that is not one", async () => {
+      expect(hints((await upload(["shot.png"])).stderr)).toBe(0);
+      expect(hints((await upload(["after.txt"])).stderr)).toBe(0);
+    });
+  });
 });

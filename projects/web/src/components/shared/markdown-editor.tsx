@@ -31,6 +31,7 @@ import {
   type CodeEditorHandle,
 } from "@/components/shared/code-editor.tsx";
 import { PlainMarkdownEditor } from "@/components/shared/plain-markdown-editor.tsx";
+import { imagePairs } from "@/lib/editor/image-pairs.ts";
 import { handlePaste, pasteAs } from "@/lib/editor/paste-as.ts";
 import { toggleQuote } from "@/lib/editor/quote-toggle.ts";
 import { stagedTokenAtoms } from "@/lib/editor/staged-token-atoms.ts";
@@ -338,6 +339,7 @@ const CodeMirrorMarkdownEditor = forwardRef<
       }}
       extensions={[
         pasteAs(),
+        imagePairs(),
         dropCursorExtension,
         tokenExtension,
         EditorView.domEventHandlers({

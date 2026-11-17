@@ -398,7 +398,12 @@ export function CompareLabel({
   return (
     <span className="media-compare-label" data-side={which}>
       <span className="media-compare-tick" />
-      <span className="font-semibold">{side.label}</span>
+      <span
+        className="media-compare-label-name font-semibold"
+        title={side.label}
+      >
+        {side.label}
+      </span>
       {side.size !== null && (
         <span className="media-compare-dims">
           {dimension("width")}×{dimension("height")}

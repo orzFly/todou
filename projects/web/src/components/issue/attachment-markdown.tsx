@@ -368,15 +368,19 @@ export function ImageSwapCompare({
   issueNumber,
   before,
   after,
+  labels: authored,
   className,
 }: {
   slug: string;
   issueNumber: number;
   before: { src: string; alt: string };
   after: { src: string; alt: string };
+  /** An author's own names for the sides (T-767), over the page's versions. */
+  labels?: { before: string; after: string };
   className?: string;
 }) {
-  const labels = useContext(CompareLabelsContext);
+  const pageLabels = useContext(CompareLabelsContext);
+  const labels = authored ?? pageLabels;
   // undefined until reported; null once it failed.
   const [beforeSize, setBeforeSize] = useState<ImageSize | null>();
   const [afterSize, setAfterSize] = useState<ImageSize | null>();

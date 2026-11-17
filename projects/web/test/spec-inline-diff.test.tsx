@@ -2450,3 +2450,60 @@ describe("an edit inside an inline code span (T-695)", () => {
     expect(texts(container, "del.spec-del")).toEqual(["old"]);
   });
 });
+
+describe("an author's image pair in the spec comparison (T-767)", () => {
+  const pair = (a: string, b: string) => `## 图\n\n![旧](${a}) → ![新](${b})\n`;
+  const pairBlock = (container: HTMLElement) => {
+    const blocks = container.querySelectorAll<HTMLElement>(".media-compare");
+    expect(blocks).toHaveLength(1);
+    return blocks[0];
+  };
+  const srcs = (block: HTMLElement) =>
+    ["before", "after"].map((side) =>
+      block.querySelector(`[data-side="${side}"] img`)?.getAttribute("src"),
+    );
+
+  it("draws the new version's pair, marked changed, when its second image was swapped", async () => {
+    const { container } = await renderDiff(
+      pair(IMG_A, IMG_C),
+      pair(IMG_A, IMG_D),
+      [],
+      { before: "v1", after: "v2" },
+    );
+    const block = pairBlock(container);
+    expect(block.classList.contains("spec-ins-block")).toBe(true);
+    expect(srcs(block)).toEqual([IMG_A, IMG_D]);
+    expect(texts(container, ".media-compare-label-name")).toEqual(["旧", "新"]);
+  });
+
+  it("marks it changed when its first image was swapped", async () => {
+    const { container } = await renderDiff(
+      pair(IMG_A, IMG_C),
+      pair(IMG_B, IMG_C),
+    );
+    const block = pairBlock(container);
+    expect(block.classList.contains("spec-ins-block")).toBe(true);
+    expect(srcs(block)).toEqual([IMG_B, IMG_C]);
+  });
+
+  it("leaves an unchanged pair unmarked", async () => {
+    const body = `${pair(IMG_A, IMG_C)}\n正文。\n`;
+    const { container } = await renderDiff(body, `${body}\n又一段。\n`);
+    const block = pairBlock(container);
+    expect(block.classList.contains("spec-ins-block")).toBe(false);
+  });
+
+  it("marks the paragraph of a wholly new pair, and draws it once", async () => {
+    const { container } = await renderDiff(
+      "## 图\n\n正文。\n",
+      `${pair(IMG_A, IMG_C)}\n正文。\n`,
+    );
+    const block = pairBlock(container);
+    expect(
+      block
+        .closest(".markdown-paragraph")
+        ?.classList.contains("spec-ins-block"),
+    ).toBe(true);
+    expect(srcs(block)).toEqual([IMG_A, IMG_C]);
+  });
+});
