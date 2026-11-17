@@ -89,6 +89,7 @@ import {
   type SelectionState,
   useSelection,
 } from "@/lib/use-selection.ts";
+import { useSweepSelect } from "@/lib/use-sweep-select.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -256,6 +257,13 @@ export function BoardPage() {
       selectionRef.current.toggle(issueNumber, { extend }),
     [],
   );
+  const sweep = useSweepSelect({
+    isSelected: (issueNumber: number) =>
+      selectionRef.current.isSelected(issueNumber),
+    paint: (issueNumbers: readonly number[], on: boolean) =>
+      selectionRef.current.paint(issueNumbers, on),
+    parse: Number,
+  });
   const onSelectColumn = useCallback(
     (issueNumbers: readonly number[]) =>
       selectionRef.current.toggleGroup(issueNumbers),
@@ -412,6 +420,9 @@ export function BoardPage() {
           className="group/select flex min-h-60 flex-1 gap-4 overflow-x-auto"
           // Once anything is selected, every card shows its box (T-732).
           data-selecting={selection.selected.length > 0 ? "" : undefined}
+          onPointerDownCapture={
+            canTriage ? sweep.onPointerDownCapture : undefined
+          }
         >
           {statuses.data.map((status) => (
             <BoardColumn
@@ -606,6 +617,7 @@ function BoardCard({
       // a per-project address that a move between projects replaces, and a
       // snapshot outlives the board it was taken from (T-407).
       data-return-id={String(issue.id)}
+      data-sweep-key={onSelect ? issue.number : undefined}
     >
       {onSelect && (
         <CardSelectBox
@@ -647,6 +659,7 @@ const CardSelectBox = memo(function CardSelectBox({
   return (
     <span
       data-card-select=""
+      data-sweep-start=""
       className="absolute -top-1.5 -left-1.5 leading-none"
     >
       <Checkbox

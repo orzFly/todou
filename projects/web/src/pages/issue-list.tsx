@@ -106,6 +106,7 @@ import {
   type Selection,
   useSelection,
 } from "@/lib/use-selection.ts";
+import { useSweepSelect } from "@/lib/use-sweep-select.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -339,6 +340,11 @@ export function ProjectIssueListPage({
   // The server refuses a status change below `issue.triage`, and status is
   // the only thing a selection does here yet.
   const canSelect = useCanIfLoaded(slug, "issue.triage");
+  const sweep = useSweepSelect({
+    isSelected: selection.isSelected,
+    paint: selection.paint,
+    parse: Number,
+  });
 
   // Nothing upstream catches a failed counts read any more, so it is handled
   // where a failed group already is: inside the list area, with the header
@@ -435,6 +441,9 @@ export function ProjectIssueListPage({
               className="group/select"
               data-selecting={
                 canSelect && selection.selected.length > 0 ? "" : undefined
+              }
+              onPointerDownCapture={
+                canSelect ? sweep.onPointerDownCapture : undefined
               }
             >
               {grouped ? (

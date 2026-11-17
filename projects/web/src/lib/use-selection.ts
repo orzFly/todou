@@ -15,6 +15,11 @@ export interface Selection<K> {
   toggleAll: () => void;
   /** `toggleAll` over part of the list, such as one column of a board. */
   toggleGroup: (group: readonly K[]) => void;
+  /**
+   * Sets `keys` to `on` whatever they were, for a sweep across the boxes
+   * (T-772). The last key becomes the anchor a shift-click extends from.
+   */
+  paint: (keys: readonly K[], on: boolean) => void;
   clear: () => void;
   state: SelectionState;
 }
@@ -89,6 +94,25 @@ export function useSelection<K>(keys: readonly K[]): Selection<K> {
     [live],
   );
 
+  const paint = useCallback(
+    (painted: readonly K[], on: boolean) => {
+      const last = painted.at(-1);
+      if (last === undefined) return;
+      anchor.current = last;
+      // From the pending state rather than `live`: a sweep paints on every
+      // pointer move, and two moves can land before the next render.
+      setPicked((prev) => {
+        const next = new Set(keys.filter((key) => prev.has(key)));
+        for (const key of painted) {
+          if (on) next.add(key);
+          else next.delete(key);
+        }
+        return next;
+      });
+    },
+    [keys],
+  );
+
   const isSelected = useCallback((key: K) => live.has(key), [live]);
 
   return {
@@ -97,6 +121,7 @@ export function useSelection<K>(keys: readonly K[]): Selection<K> {
     toggle,
     toggleAll,
     toggleGroup,
+    paint,
     clear,
     state,
   };

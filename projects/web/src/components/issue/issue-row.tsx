@@ -187,6 +187,7 @@ export function IssueRow({
       // rather than the number, because a move rewrites the number and the
       // remembered anchor would then name a different card — or none.
       data-return-id={returnAnchor ? String(issue.id) : undefined}
+      data-sweep-key={select ? issue.number : undefined}
       className={cn(
         ISSUE_LIST_ROW,
         "group/row relative grid grid-cols-subgrid items-center border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50",
@@ -203,6 +204,7 @@ export function IssueRow({
         // ring fits inside the page's 16px gutter.
         <label
           htmlFor={`issue-select-${issue.id}`}
+          data-sweep-start=""
           className="absolute inset-y-0 -left-3 flex w-[26px] cursor-pointer items-center pl-[3.5px] touch:hidden"
         >
           <Checkbox
