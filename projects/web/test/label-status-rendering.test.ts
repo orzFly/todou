@@ -464,4 +464,18 @@ describe("one status picker, one row height (T-739)", () => {
       all.flatMap((s) => hits(s.file, s.source, /\bmin-h-8\.5\b/g)),
     ).toEqual([]);
   });
+
+  it("holds the editor's status, label and person rows to the same 30px", () => {
+    // CodeMirror's panel cannot take a class string, so its theme spells the
+    // row out; this pins the spelling to PICKER_ROW's height.
+    const theme = readFileSync(
+      join(SRC, "lib/editor/ref-completion.ts"),
+      "utf8",
+    );
+    for (const row of ["cm-completion-face", "cm-completion-user"]) {
+      const block = theme.match(new RegExp(`li\\.${row}": \\{([^}]*)\\}`))?.[1];
+      expect(block, row).toMatch(/minHeight: "1\.875rem"/);
+      expect(block, row).toMatch(/padding: "0\.25rem 0\.5rem"/);
+    }
+  });
 });

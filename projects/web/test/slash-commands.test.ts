@@ -3,6 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Label, Member, Status } from "@todou/shared";
 import { describe, expect, it } from "vitest";
+import { faceOptionClass } from "../src/lib/editor/face-completion.tsx";
 import { commandCompletionSource } from "../src/lib/editor/slash-commands.ts";
 import {
   buildCommandRegistry,
@@ -401,6 +402,28 @@ describe("commandCompletionSource (the panel)", () => {
       "In Progress",
       "Done",
       "Won't Fix",
+    ]);
+  });
+
+  it("draws status and label arguments as the pickers do (T-739)", () => {
+    const statuses = at("/status ")?.options ?? [];
+    expect(statuses.map(faceOptionClass)).toEqual(
+      statuses.map(() => "cm-completion-face"),
+    );
+    // Equal scores sort by label: without a descending boost CodeMirror
+    // shows Done before Todo, unlike every status menu.
+    const boosts = statuses.map((o) => o.boost ?? 0);
+    expect(boosts).toEqual([...boosts].sort((a, b) => b - a));
+    expect(new Set(boosts).size).toBe(boosts.length);
+    const labels = at("/label ")?.options ?? [];
+    expect(labels.map(faceOptionClass)).toEqual(
+      labels.map(() => "cm-completion-face"),
+    );
+    // A person's row stays the person's, not a face.
+    expect((at("/assign ")?.options ?? []).map(faceOptionClass)).toEqual([
+      "",
+      "",
+      "",
     ]);
   });
 

@@ -76,6 +76,9 @@ export type CommandRegistry = {
   /** Argument candidates, for the panel's second stage. */
   statusNames: string[];
   labelNames: string[];
+  /** What `statusNames` and `labelNames` name, so the panel can draw them. */
+  statuses: Status[];
+  labels: Label[];
   memberLogins: string[];
   /**
    * Who each of `memberLogins` names, `me` included, so the panel can draw
@@ -280,6 +283,8 @@ export function buildCommandRegistry({
     byName: new Map(commands.map((c) => [c.name, c])),
     statusNames: statuses.map((s) => s.name),
     labelNames: labels.map((l) => l.name),
+    statuses,
+    labels,
     memberLogins: [
       ...(me === undefined ? [] : ["me"]),
       ...members.map((m) => m.user.login),

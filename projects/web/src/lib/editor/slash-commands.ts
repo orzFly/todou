@@ -20,6 +20,7 @@ import {
   commandLinesOf,
 } from "@/lib/slash-commands.ts";
 import { inCodeContext } from "./code-context.ts";
+import { withLabel, withStatus } from "./face-completion.tsx";
 import { withUser } from "./user-completion.tsx";
 
 /**
@@ -111,14 +112,28 @@ export function commandCompletionSource(
             ? ["force"]
             : registry.statusNames;
     if (names.length === 0) return null;
-    const options: Completion[] = names.map((name) => {
-      const user =
-        command.argument === "member"
-          ? registry.memberUsers.get(name)
-          : undefined;
-      return user === undefined
+    const options: Completion[] = names.map((name, index) => {
+      if (command.argument === "member") {
+        const user = registry.memberUsers.get(name);
+        return user === undefined
+          ? { label: name, type: "command" }
+          : withUser({ label: name, detail: displayNameOf(user) }, user);
+      }
+      const label =
+        command.argument === "label" ? registry.labels[index] : undefined;
+      if (label !== undefined) {
+        return withLabel({ label: name, type: "command" }, label);
+      }
+      const status =
+        command.argument === "status" ? registry.statuses[index] : undefined;
+      // Equal scores sort by label, which would put Done before Todo; the
+      // boost keeps the project's own order, as the status menu has it.
+      return status === undefined
         ? { label: name, type: "command" }
-        : withUser({ label: name, detail: displayNameOf(user) }, user);
+        : withStatus(
+            { label: name, type: "command", boost: Math.max(-99, -index) },
+            status,
+          );
     });
     /**
      * A command that also stands alone gets a first row that ends it, so
