@@ -42,7 +42,7 @@ import {
   StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
-import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { StatusMenu } from "@/components/issue/status-menu.tsx";
 import { PageSkeleton } from "@/components/page-skeleton.tsx";
 import { CommandErrors } from "@/components/shared/command-errors.tsx";
 import { EditorShortcutsHelp } from "@/components/shared/editor-shortcuts-help.tsx";
@@ -55,13 +55,6 @@ import { useCommandRegistry } from "@/components/timeline/composer.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
 import {
   completionWith,
@@ -188,6 +181,9 @@ function NewIssueForm({
   const defaultStatus =
     createdDefaultRef.current ?? pickDefaultStatus(statuses.data);
   const defaultStatusId = defaultStatus?.id;
+  // Before anybody picks, the pill shows the status the server will choose.
+  const shownStatus =
+    statuses.data.find((s) => String(s.id) === statusId) ?? defaultStatus;
 
   // The whole unfinished draft is protected, including sidebar-only work.
   // Keep this protection until replay completes; successful navigation opts
@@ -467,23 +463,13 @@ function NewIssueForm({
           {canTriage && (
             <>
               <SidebarSection name="status" title="Status">
-                {/* A select rather than the card page's pill-and-dropdown:
-                    this is the one field with a value before anybody picks
-                    one, and the placeholder is where that default is said. */}
-                <Select value={statusId} onValueChange={setStatusId}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue
-                      placeholder={defaultStatus?.name ?? "Status"}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statuses.data.map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)}>
-                        <StatusPill status={s} />
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {shownStatus && (
+                  <StatusMenu
+                    status={shownStatus}
+                    statuses={statuses.data}
+                    onStatus={(s) => setStatusId(String(s.id))}
+                  />
+                )}
               </SidebarSection>
 
               <SidebarSection

@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { useRefCandidates } from "@/api/ref-candidates.ts";
+import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import {
   Popover,
@@ -205,7 +206,8 @@ export function RefPicker({
         aria-selected={active === index}
         disabled={pending}
         className={cn(
-          "flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none disabled:cursor-default disabled:opacity-50",
+          "flex w-full cursor-pointer items-center rounded-sm text-left outline-none disabled:cursor-default disabled:opacity-50",
+          PICKER_ROW,
           active === index && "bg-accent",
         )}
         onMouseDown={(event) => event.preventDefault()}

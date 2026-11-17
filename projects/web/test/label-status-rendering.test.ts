@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { PICKER_ROW } from "../src/components/issue/picker-row.ts";
 
 // Anchored on the package directory vitest runs from, not on
 // `import.meta.url`: under this setup that is not a `file:` URL.
@@ -280,5 +281,187 @@ describe("labels and statuses are drawn only by their components (T-715)", () =>
       "StatusHeading",
       "StatusPill",
     ]);
+  });
+});
+
+/**
+ * A status is offered for choice in one way, at one row height (T-739). The
+ * new-issue page once picked its status from a `Select` of its own, whose
+ * rows were 4px shorter than the card page's `StatusMenu`; the user chose the
+ * shorter row, which `PICKER_ROW` now is, and every status row is held to it.
+ *
+ * Blind spots, stated so nobody mistakes this for a proof:
+ * - A picker is a `.tsx` that draws a `StatusPill` and holds a row. A status
+ *   held in some other element than a pill — a bare `<option>` — is not seen,
+ *   though the T-715 scan above flags its name printed as text.
+ * - Rows are told apart from other tags by name or by `role="option"`. A
+ *   hand-built `<div onClick>` list is not a row to this scan.
+ * - A row is recognised as narrow by naming `PICKER_ROW` in its opening tag.
+ *   A class placed after it in `cn()` that overrides the height is not seen;
+ *   `picker-row-geometry.test.tsx` covers that for the rendered pickers.
+ * - Counted per file, not per row: the filter bar's sort rows may skip
+ *   `PICKER_ROW`, so a wide status row added there goes unseen only if a
+ *   sort row is removed in the same change.
+ */
+
+/** Opening tags that are a row of a menu, a select or a listbox. */
+const ROW_TAG =
+  /^(SelectItem|DropdownMenuItem|DropdownMenuCheckboxItem|DropdownMenuRadioItem|CommandItem)$/;
+
+/**
+ * Every opening JSX tag in a source, as text, with its line. Braces are
+ * counted so that an arrow function in a handler does not end the tag.
+ */
+function openingTags(source: string): Array<{ line: number; text: string }> {
+  const out: Array<{ line: number; text: string }> = [];
+  for (const m of source.matchAll(/<([A-Za-z][\w.]*)\b/g)) {
+    let depth = 0;
+    let quote: string | null = null;
+    let end = -1;
+    for (let i = (m.index as number) + m[0].length; i < source.length; i++) {
+      const c = source[i] as string;
+      if (quote !== null) {
+        if (c === quote) quote = null;
+      } else if (c === '"' || c === "`" || (depth > 0 && c === "'")) {
+        quote = c;
+      } else if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (c === ">" && depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    if (end === -1) continue;
+    out.push({
+      line: source.slice(0, m.index).split("\n").length,
+      text: `${m[1]} ${source.slice((m.index as number) + m[0].length, end)}`,
+    });
+  }
+  return out;
+}
+
+function rows(file: string, source: string): Hit[] {
+  return openingTags(source)
+    .filter(
+      ({ text }) =>
+        ROW_TAG.test(text.split(" ")[0] as string) ||
+        /role="option"|\.\.\.optionProps\(/.test(text),
+    )
+    .map(({ line, text }) => ({ file, line, text: text.trim() }));
+}
+
+/**
+ * A row is narrow if its opening tag names `PICKER_ROW`, or takes the header
+ * search's `OPTION` — directly, by spreading `optionProps`, or through the
+ * `props.className` that spread produced. `OPTION` is built from `PICKER_ROW`,
+ * which is asserted below rather than trusted.
+ */
+const narrow = (row: Hit) =>
+  /PICKER_ROW|\bOPTION\b|\.\.\.optionProps\(|\bprops\.className\b/.test(
+    row.text,
+  );
+
+const isStatusPicker = (file: string, source: string) =>
+  /<StatusPill\b/.test(source) && rows(file, source).length > 0;
+
+/** The pickers that offer a status. A sixth is a decision, not a drift. */
+const STATUS_PICKERS = [
+  "components/issue/bulk-status-menu.tsx",
+  "components/issue/filter-bar.tsx",
+  "components/issue/ref-picker.tsx",
+  "components/issue/status-menu.tsx",
+  "components/search-box.tsx",
+];
+
+/** Rows in a status picker that hold no status, with exact counts. */
+const WIDE_ROW_EXCEPTIONS: Record<string, { count: number; reason: string }> = {
+  "components/issue/filter-bar.tsx": {
+    count: 6,
+    reason:
+      "the sort order's five `SelectItem`s and the disabled `None defined` " +
+      "row hold no status",
+  },
+};
+
+// Verbatim from before T-739, as the T-715 fixtures above are.
+const BEFORE_T739 = {
+  newIssueSelect: `                <Select value={statusId} onValueChange={setStatusId}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue
+                      placeholder={defaultStatus?.name ?? "Status"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statuses.data.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        <StatusPill status={s} />
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>`,
+  searchOption: `const OPTION = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm";`,
+};
+
+describe("the T-739 scanner catches the drawings it exists for", () => {
+  it("flags the new-issue page's own status select", () => {
+    expect(isStatusPicker("x.tsx", BEFORE_T739.newIssueSelect)).toBe(true);
+    const found = rows("x.tsx", BEFORE_T739.newIssueSelect);
+    expect(found).toHaveLength(1);
+    expect(found.filter((r) => !narrow(r))).toHaveLength(1);
+  });
+
+  it("flags a status row that left PICKER_ROW out", () => {
+    const found = rows(
+      "x.tsx",
+      `<DropdownMenuItem key={s.id} className="cursor-pointer" onSelect={() => onStatus(s)}>`,
+    );
+    expect(found).toHaveLength(1);
+    expect(narrow(found[0] as Hit)).toBe(false);
+  });
+
+  it("does not end a row's tag at an arrow function", () => {
+    const [row] = rows(
+      "x.tsx",
+      `<DropdownMenuItem onSelect={() => go()} className={cn(PICKER_ROW)}>`,
+    );
+    expect(row && narrow(row)).toBe(true);
+  });
+
+  it("flags a header search option not built from PICKER_ROW", () => {
+    expect(BEFORE_T739.searchOption).not.toMatch(
+      /const OPTION = cn\([^)]*PICKER_ROW/,
+    );
+  });
+});
+
+describe("one status picker, one row height (T-739)", () => {
+  const all = sources();
+
+  it("offers a status only through the listed pickers", () => {
+    expect(
+      all.filter((s) => isStatusPicker(s.file, s.source)).map((s) => s.file),
+    ).toEqual(STATUS_PICKERS);
+  });
+
+  it("holds every row of a status picker to PICKER_ROW", () => {
+    const found = all
+      .filter((s) => STATUS_PICKERS.includes(s.file))
+      .flatMap((s) => rows(s.file, s.source).filter((r) => !narrow(r)));
+    expect(countBy(found), JSON.stringify(found, null, 1)).toEqual(
+      expectedCounts(WIDE_ROW_EXCEPTIONS),
+    );
+    const search = all.find((s) => s.file === "components/search-box.tsx");
+    expect(search?.source).toMatch(/const OPTION = cn\([^)]*PICKER_ROW/);
+  });
+
+  it("keeps PICKER_ROW the narrow row the user chose", () => {
+    // 30px: a 22px pill with 4px above and below. The 34px row the card page
+    // had is the one T-739 retired.
+    expect(PICKER_ROW.split(" ")).toEqual(
+      expect.arrayContaining(["min-h-7.5", "py-1"]),
+    );
+    expect(
+      all.flatMap((s) => hits(s.file, s.source, /\bmin-h-8\.5\b/g)),
+    ).toEqual([]);
   });
 });

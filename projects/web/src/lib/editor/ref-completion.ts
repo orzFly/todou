@@ -286,7 +286,7 @@ export const completionTheme = EditorView.theme({
     fontFamily: "inherit",
   },
   // The 16rem above loses to the base theme's `10em` on the longer selector,
-  // which at 14px is 140px: four 34px person rows and the top of a fifth.
+  // which at 14px is 140px: four 30px person rows and most of a fifth.
   ".cm-tooltip.cm-tooltip-autocomplete > ul": { maxHeight: "16rem" },
   ".cm-tooltip-autocomplete > ul > li": {
     display: "flex",
@@ -312,14 +312,14 @@ export const completionTheme = EditorView.theme({
   // takes the icon's place, and the login is set like a name, not like code.
   // Named in full: CodeMirror's base theme sets the list's font and its rows'
   // 1px padding through `.cm-tooltip.cm-tooltip-autocomplete > ul`, which
-  // outranks a shorter selector. The row is held to PICKER_ROW's 34px and
+  // outranks a shorter selector. The row is held to PICKER_ROW's 30px and
   // padding: at the panel's own 22px, the 20px avatar touched both edges and
   // its badge hung into the next row.
   ".cm-tooltip.cm-tooltip-autocomplete > ul > li.cm-completion-user": {
     alignItems: "center",
     gap: "0.5rem",
-    minHeight: "2.125rem",
-    padding: "0.375rem 0.5rem",
+    minHeight: "1.875rem",
+    padding: "0.25rem 0.5rem",
     fontFamily: "var(--font-sans)",
     fontSize: "0.875rem",
   },

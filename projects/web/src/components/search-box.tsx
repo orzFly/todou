@@ -32,6 +32,7 @@ import { referenceDirectoryQuery } from "@/api/references.ts";
 import { searchFacetsQuery } from "@/api/search.ts";
 import { useSearchHistory } from "@/api/search-history.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import {
   highlightParts,
@@ -98,8 +99,10 @@ function pointsElsewhere(row: JumpRow, slug: string): boolean {
  * `w-full` because a `<button>` row resolves `width: auto` to fit-content and
  * would otherwise shrink to a pill beside its full-width neighbours; on the
  * `<a>` and `<div>` rows, which are block already, it changes nothing.
+ * The geometry is every picker's, so a status here is the height it is in the
+ * card's status menu (T-739).
  */
-const OPTION = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm";
+const OPTION = cn("flex w-full items-center rounded-md", PICKER_ROW);
 
 /**
  * A row's leading glyph, centred where an avatar would sit and in a column as

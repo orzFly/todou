@@ -1098,7 +1098,7 @@ function AddPersonForm({
           aria-live="polite"
           // A picker row's height without its inset: the avatar starts on the
           // form's own left edge, under the `@`, not 8px in from it.
-          className="flex min-h-8.5 w-fit max-w-full items-center gap-2 py-1.5 text-sm"
+          className="flex min-h-7.5 w-fit max-w-full items-center gap-2 py-1 text-sm"
         >
           <UserOption user={found.data} />
         </div>

@@ -13,6 +13,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type {
   Attachment,
@@ -640,10 +641,16 @@ describe("the new-issue sidebar's picked assignees (T-391)", () => {
 // These helpers use the rendered pickers, so the navigation cases exercise
 // the same state changes as a reader with an otherwise empty form.
 async function pickStatus(name: "Todo" | "Done") {
-  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
-  fireEvent.click(await screen.findByRole("option", { name }));
-  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-  expect(screen.getByRole("combobox").textContent).toContain(name);
+  const trigger = () =>
+    within(
+      screen
+        .getByRole("heading", { name: "Status" })
+        .closest("[data-sidebar-section]") as HTMLElement,
+    ).getByRole("button");
+  fireEvent.pointerDown(trigger(), { button: 0, pointerType: "mouse" });
+  fireEvent.click(await screen.findByRole("menuitem", { name }));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(trigger().textContent).toContain(name);
 }
 
 async function toggleBug() {
