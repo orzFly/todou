@@ -38,9 +38,10 @@ export function StatusPill({
  * Only the name gives ground: a long one truncates rather than squeezing the
  * count beside it (T-303).
  *
- * `select` is behaviour, not a second drawing: a board column's select-all
- * box takes the dot's cell, so the name does not move when it appears
- * (T-732). Without it the output is what it always was.
+ * `select` is behaviour, not a second drawing: the select-all box of a board
+ * column (T-732) or a list group (T-768) takes the dot's cell, so the name
+ * does not move when it appears. The caller's row is `group/colhead`, whose
+ * hover shows the box. Without it the output is what it always was.
  */
 export function StatusHeading({
   status,
@@ -73,7 +74,7 @@ export function StatusHeading({
           indeterminate={select.indeterminate}
           disabled={select.disabled}
           onChange={select.onChange}
-          // Touch gets no board selection, so no invisible box to tap.
+          // Touch gets no selection here, so no invisible box to tap.
           className="touch:pointer-events-none"
         />
       ) : (

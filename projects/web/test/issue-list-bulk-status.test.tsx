@@ -372,10 +372,39 @@ describe("selecting issues on the list (T-707)", () => {
     );
   });
 
+  it("selects a whole group from its header's dot (T-768)", async () => {
+    mountList(statefulServer());
+    await screen.findByText("card 22");
+    const group = (name: string) =>
+      screen.getByLabelText(
+        `select every issue in ${name}`,
+      ) as HTMLInputElement;
+
+    fireEvent.click(box(21));
+    expect(group("Todo").indeterminate).toBe(true);
+    expect(group("Next").indeterminate).toBe(false);
+    expect(group("Next").checked).toBe(false);
+
+    fireEvent.click(group("Todo"));
+    expect(checked()).toEqual(["select #21", "select #22"]);
+    expect(group("Todo").checked).toBe(true);
+    expect(group("Todo").indeterminate).toBe(false);
+
+    fireEvent.click(group("Next"));
+    expect(checked()).toHaveLength(4);
+    expect(
+      (screen.getByLabelText("select all issues") as HTMLInputElement).checked,
+    ).toBe(true);
+
+    fireEvent.click(group("Todo"));
+    expect(checked()).toEqual(["select #51", "select #52"]);
+  });
+
   it("offers no selection below issue.triage", async () => {
     mountList(statefulServer(), { role: "reporter" });
     await screen.findByText("card 22");
     expect(screen.queryByLabelText("select all issues")).toBeNull();
+    expect(screen.queryByLabelText("select every issue in Todo")).toBeNull();
     expect(document.querySelector("li input[type=checkbox]")).toBeNull();
   });
 });

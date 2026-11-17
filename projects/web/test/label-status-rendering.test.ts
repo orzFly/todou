@@ -122,7 +122,8 @@ const ALLOWED_PROPS: Record<string, string[]> = {
   LabelChip: ["label"],
   LabelChips: ["labels", "onRemove"],
   StatusPill: ["status"],
-  // The dot's cell doubles as a board column's select-all box (T-732).
+  // The dot's cell doubles as a board column's or list group's select-all
+  // box (T-732, T-768).
   StatusHeading: ["status", "select"],
 };
 

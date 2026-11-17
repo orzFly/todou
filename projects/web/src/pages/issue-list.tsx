@@ -101,7 +101,11 @@ import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
 import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
-import { type Selection, useSelection } from "@/lib/use-selection.ts";
+import {
+  groupState,
+  type Selection,
+  useSelection,
+} from "@/lib/use-selection.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -918,6 +922,8 @@ function IssueGroup({
     [narrowing, items, typed],
   );
   const selectable = useReportShown(`status:${status.id}`, shown);
+  const selection = useContext(SelectionContext);
+  const numbers = useMemo(() => shown.map((issue) => issue.number), [shown]);
   const grid = useIssueListGrid();
   const lastCursor =
     paged.pages.length === 0
@@ -1010,8 +1016,17 @@ function IssueGroup({
           top: "calc(var(--group-sticky-top, 56px) + var(--vv-top, 0px) - var(--header-hide, 0px))",
         }}
       >
-        <div className="flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm">
-          <StatusHeading status={status} />
+        <div className="group/colhead flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm">
+          {/* The dot doubles as the group's select-all, as a board column's
+              does (T-768). */}
+          <StatusHeading
+            status={status}
+            select={
+              selection
+                ? selectAllOf(selection, numbers, status.name)
+                : undefined
+            }
+          />
           <span className="text-muted-foreground">{total}</span>
         </div>
       </div>
@@ -1075,6 +1090,21 @@ function IssueGroup({
       </ul>
     </section>
   );
+}
+
+function selectAllOf(
+  selection: Selection<number>,
+  numbers: readonly number[],
+  name: string,
+) {
+  const state = groupState(new Set(selection.selected), numbers);
+  return {
+    checked: state === "all",
+    indeterminate: state === "some",
+    disabled: numbers.length === 0,
+    onChange: () => selection.toggleGroup(numbers),
+    label: `select every issue in ${name}`,
+  };
 }
 
 /** Exported for tests (pagination state, like IssueRow). */
