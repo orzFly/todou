@@ -1,6 +1,5 @@
 import { PassThrough, Readable } from "node:stream";
-import { Builtins, Cli } from "clipanion";
-import type { CliContext } from "../src/api-command.ts";
+import { createCli } from "../src/cli.ts";
 import type { Clock } from "../src/clock.ts";
 import { commands } from "../src/commands/index.ts";
 import type { UpgradeSeam } from "../src/commands/upgrade.ts";
@@ -135,15 +134,7 @@ export async function runCli(
     upgrade?: UpgradeSeam;
   } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const cli = new Cli<CliContext>({
-    binaryLabel: "todou",
-    binaryName: "todou",
-    binaryVersion: "0.0.0-test",
-  });
-  for (const command of commands) {
-    cli.register(command);
-  }
-  cli.register(Builtins.HelpCommand);
+  const cli = createCli("0.0.0-test");
 
   const stdout = new PassThrough();
   const stderr = new PassThrough();

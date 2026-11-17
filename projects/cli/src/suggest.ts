@@ -148,6 +148,14 @@ export function suggestVerbs(
 }
 
 /**
+ * `-h=<index>` is how clipanion's own "Multiple commands match" listing says
+ * to pick one, so the attached form counts as help too.
+ */
+function asksForHelp(token: string): boolean {
+  return /^(-h|--help)(=|$)/.test(token);
+}
+
+/**
  * The error lines for an argv clipanion is certain to reject, or `null` to
  * let it through.
  *
@@ -165,7 +173,7 @@ export function guardUnknownCommand(
   if (argv.length === 0) return null;
   const first = argv[0];
   if (first.startsWith("-")) return null;
-  if (argv.some((token) => token === "-h" || token === "--help")) return null;
+  if (argv.some(asksForHelp)) return null;
 
   const group = table.get(first);
   if (group === undefined) return unknownFirstWord(first, table);
@@ -226,7 +234,7 @@ export function guardDashLeadingValue(
   argv: readonly string[],
 ): string[] | null {
   if (argv.length === 0 || argv[0].startsWith("-")) return null;
-  if (argv.some((token) => token === "-h" || token === "--help")) return null;
+  if (argv.some(asksForHelp)) return null;
   for (let i = 0; i < argv.length - 1; i++) {
     if (!DASH_VALUE_FLAGS.includes(argv[i])) continue;
     if (!argv[i + 1].startsWith("--")) continue;
