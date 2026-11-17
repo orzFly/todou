@@ -398,11 +398,11 @@
       "guarded": true
     },
     {
-      "id": "projects/web/src/components/insights/insights-settings.tsx :: mapping ROLE_LABELS #1",
+      "id": "projects/web/src/components/settings/statuses-section.tsx :: mapping ROLE_LABELS #1",
       "guarded": true
     },
     {
-      "id": "projects/web/src/components/insights/insights-settings.tsx :: read ROLE_LABELS[role] #1",
+      "id": "projects/web/src/components/settings/statuses-section.tsx :: read ROLE_LABELS[role] #1",
       "guarded": false
     },
     {
@@ -752,7 +752,7 @@
     "projects/web/src/api/useUserEvents.ts :: switch event.kind #1",
     "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #1",
     "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #2",
-    "projects/web/src/components/insights/insights-settings.tsx :: read ROLE_LABELS[role] #1",
+    "projects/web/src/components/settings/statuses-section.tsx :: read ROLE_LABELS[role] #1",
     "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[t] #1",
     "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[tab] #1",
     "projects/web/src/components/page-skeleton.tsx :: switch kind #1",

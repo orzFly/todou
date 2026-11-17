@@ -87,5 +87,9 @@ export function roleException(
   status: Pick<Status, "category">,
   role: string,
 ): string | null {
-  return PLAIN_ROLE[status.category] === role ? null : role;
+  // A category from a newer server has no plain role; every role departs.
+  const plain = Object.hasOwn(PLAIN_ROLE, status.category)
+    ? PLAIN_ROLE[status.category]
+    : undefined;
+  return plain === role ? null : role;
 }
