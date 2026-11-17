@@ -1,10 +1,9 @@
 import {
   keepPreviousData,
-  mutationOptions,
   type QueryClient,
   queryOptions,
 } from "@tanstack/react-query";
-import { type BurnQuery, type PutSettings, TodouError } from "@todou/shared";
+import type { BurnQuery } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 
 export const insightsKeys = {
@@ -66,18 +65,3 @@ export async function invalidateInsights(
     queryClient.invalidateQueries({ queryKey: insightsKeys.burn(slug) }),
   ]);
 }
-
-export const updateInsightsSettingsMutation = (
-  queryClient: QueryClient,
-  slug: string,
-) =>
-  mutationOptions({
-    mutationFn: (input: PutSettings) => api.updateInsightsSettings(slug, input),
-    onSuccess: () => invalidateInsights(queryClient, slug),
-    // A stale optimistic-concurrency version needs fresh settings as well.
-    onError: (error) => {
-      if (error instanceof TodouError && error.status === 409) {
-        return invalidateInsights(queryClient, slug);
-      }
-    },
-  });

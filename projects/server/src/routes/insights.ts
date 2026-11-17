@@ -6,6 +6,7 @@ import {
   BurnResponse,
   ErrorBody,
   ProjectRef,
+  PutRoleInput,
   PutSettings,
   Settings,
 } from "@todou/shared";
@@ -19,6 +20,7 @@ import {
 } from "../services/insights.ts";
 import {
   getInsightsSettings,
+  setInsightsRole,
   updateInsightsSettings,
 } from "../services/insights-settings.ts";
 import { roleTag } from "./role-tag.ts";
@@ -64,6 +66,22 @@ const putSettingsRoute = createRoute({
   path: "/{slug}/insights/settings",
   summary: `Replace burn-chart status roles ${roleTag("status.manage")}`,
   request: { params, body: jsonBody(PutSettings) },
+  responses: {
+    200: { description: "Saved insights settings", ...jsonBody(Settings) },
+  },
+});
+
+const putRoleRoute = createRoute({
+  method: "put",
+  path: "/{slug}/insights/settings/roles/{statusId}",
+  summary: `Set one status's insights role ${roleTag("status.manage")}`,
+  request: {
+    params: z.strictObject({
+      slug: ProjectRef,
+      statusId: z.coerce.number().int().positive(),
+    }),
+    body: jsonBody(PutRoleInput),
+  },
   responses: {
     200: { description: "Saved insights settings", ...jsonBody(Settings) },
   },
@@ -144,6 +162,19 @@ export function insightsRoutes(readHooks?: InsightsReadHooks) {
       200,
     ),
   );
+  app.openapi(putRoleRoute, async (c) => {
+    const { slug, statusId } = c.req.valid("param");
+    return c.json(
+      await setInsightsRole(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        statusId,
+        c.req.valid("json").role,
+      ),
+      200,
+    );
+  });
   app.openapi(getBurnRoute, async (c) =>
     c.json(
       await getInsightsBurn(

@@ -4,13 +4,18 @@ import {
   ProjectRef,
   Status,
   StatusCreateInput,
+  StatusOrder,
+  StatusOrderInput,
   StatusUpdateInput,
+  StatusUsage,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import {
   createStatus,
   deleteStatus,
   listStatuses,
+  listStatusUsage,
+  reorderStatuses,
   updateStatus,
 } from "../services/statuses.ts";
 import { roleTag } from "./role-tag.ts";
@@ -30,6 +35,24 @@ const listRoute = createRoute({
   summary: "Ordered status set (kanban columns)",
   request: { params: slugParam },
   responses: { 200: { description: "Statuses", ...jsonBody(z.array(Status)) } },
+});
+
+const usageRoute = createRoute({
+  method: "get",
+  path: "/{slug}/statuses/usage",
+  summary: "Issue counts per status",
+  request: { params: slugParam },
+  responses: {
+    200: { description: "Status usage", ...jsonBody(z.array(StatusUsage)) },
+  },
+});
+
+const orderRoute = createRoute({
+  method: "put",
+  path: "/{slug}/statuses/order",
+  summary: `Reorder statuses and place the block clear line ${roleTag("status.manage")}`,
+  request: { params: slugParam, body: jsonBody(StatusOrderInput) },
+  responses: { 200: { description: "Reordered", ...jsonBody(StatusOrder) } },
 });
 
 const createRouteDef = createRoute({
@@ -65,6 +88,29 @@ export function statusRoutes() {
         c.get("appCtx"),
         c.get("user"),
         c.req.valid("param").slug,
+      ),
+      200,
+    ),
+  );
+
+  app.openapi(usageRoute, async (c) =>
+    c.json(
+      await listStatusUsage(
+        c.get("appCtx"),
+        c.get("user"),
+        c.req.valid("param").slug,
+      ),
+      200,
+    ),
+  );
+
+  app.openapi(orderRoute, async (c) =>
+    c.json(
+      await reorderStatuses(
+        c.get("appCtx"),
+        c.get("user"),
+        c.req.valid("param").slug,
+        c.req.valid("json"),
       ),
       200,
     ),

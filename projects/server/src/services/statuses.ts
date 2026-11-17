@@ -1,14 +1,21 @@
 import type {
   Status,
   StatusCreateInput,
+  StatusOrder,
+  StatusOrderInput,
   StatusUpdateInput,
+  StatusUsage,
 } from "@todou/shared";
-import { and, asc, count, eq, ne } from "drizzle-orm";
+import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { issues, projectMeta, statuses } from "../db/project-schema.ts";
-import { ConflictError, NotFoundError } from "../errors.ts";
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationFailedError,
+} from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
 import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
 
@@ -38,6 +45,116 @@ export async function listStatuses(
     .where(eq(statuses.projectId, project.id))
     .orderBy(asc(statuses.position), asc(statuses.id));
   return rows.map(toStatus);
+}
+
+export async function listStatusUsage(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+): Promise<StatusUsage[]> {
+  const { project } = await requireCapability(ctx, actor, slug, "status.list");
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  return db
+    .select({
+      id: statuses.id,
+      issues: sql<number>`(count(${issues.id}) filter (where ${issues.deletedAt} is null))::int`,
+      trashed: sql<number>`(count(${issues.id}) filter (where ${issues.deletedAt} is not null))::int`,
+    })
+    .from(statuses)
+    .leftJoin(issues, eq(issues.statusId, statuses.id))
+    .where(eq(statuses.projectId, project.id))
+    .groupBy(statuses.id)
+    .orderBy(asc(statuses.id));
+}
+
+/**
+ * The whole order and the clear line in one write (T-712). One drop on the
+ * Statuses page can change both — dragging the line's own status above it
+ * moves the line to the next one — and as two writes it would reevaluate
+ * blocks twice and announce a state nobody arranged.
+ */
+export async function reorderStatuses(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  input: StatusOrderInput,
+): Promise<StatusOrder> {
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "status.manage",
+  );
+  const db = await ctx.router.forProject(routeInfoOf(project));
+
+  const result = await db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(statuses)
+      .where(eq(statuses.projectId, project.id))
+      .orderBy(asc(statuses.position), asc(statuses.id));
+    const known = new Set(rows.map((row) => row.id));
+    const supplied = new Set(input.ids);
+    if (
+      supplied.size !== input.ids.length ||
+      supplied.size !== known.size ||
+      input.ids.some((id) => !known.has(id))
+    ) {
+      throw new ConflictError("statuses changed — reload");
+    }
+    const line = input.block_clear_status_id;
+    if (typeof line === "number" && !supplied.has(line)) {
+      throw new ValidationFailedError("unknown status_id");
+    }
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const moved: number[] = [];
+    const ordered = [];
+    for (const [index, id] of input.ids.entries()) {
+      const row = byId.get(id) as StatusRow;
+      if (row.position !== index) {
+        moved.push(id);
+        await tx
+          .update(statuses)
+          .set({ position: index })
+          .where(eq(statuses.id, id));
+      }
+      ordered.push({ ...row, position: index });
+    }
+
+    const meta = await tx
+      .select({ lineId: projectMeta.blockClearStatusId })
+      .from(projectMeta)
+      .where(eq(projectMeta.projectId, project.id));
+    const before = meta[0]?.lineId ?? null;
+    const after = line === undefined ? before : line;
+    if (after !== before) {
+      await tx
+        .update(projectMeta)
+        .set({ blockClearStatusId: after })
+        .where(eq(projectMeta.projectId, project.id));
+    }
+    return { ordered, moved, lineChanged: after !== before, line: after };
+  });
+
+  if (result.moved.length > 0 || result.lineChanged) {
+    const changes = await reevaluateProjectBlocks(ctx, project, db);
+    await announceBlockChanges(ctx, changes, actor.id);
+  }
+  for (const id of result.moved) {
+    ctx.bus.publish(project.id, { entity: "status", id, action: "updated" });
+  }
+  if (result.lineChanged) {
+    ctx.bus.publish(project.id, {
+      entity: "project",
+      id: project.id,
+      action: "updated",
+    });
+  }
+  return {
+    statuses: result.ordered.map(toStatus),
+    block_clear_status_id: result.line,
+  };
 }
 
 export async function createStatus(

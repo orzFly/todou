@@ -26,7 +26,6 @@ const PROJECT = [
   ["Statuses", "/projects/p/settings/statuses"],
   ["Labels", "/projects/p/settings/labels"],
   ["References", "/projects/p/settings/references"],
-  ["Insights", "/projects/p/settings/insights"],
 ] as const;
 
 /**
@@ -78,14 +77,9 @@ function renderAt(url: string) {
         ),
         project.addChildren([
           projectSettings.addChildren(
-            [
-              "/",
-              "members",
-              "statuses",
-              "labels",
-              "references",
-              "insights",
-            ].map((path) => child(projectSettings, path)),
+            ["/", "members", "statuses", "labels", "references"].map((path) =>
+              child(projectSettings, path),
+            ),
           ),
         ]),
       ]),

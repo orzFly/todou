@@ -60,7 +60,6 @@ import {
 import { ProjectLayout, ProjectRouteError } from "@/pages/project-layout.tsx";
 import {
   ProjectGeneralSettingsPage,
-  ProjectInsightsSettingsPage,
   ProjectLabelsSettingsPage,
   ProjectMembersSettingsPage,
   ProjectReferencesSettingsPage,
@@ -441,10 +440,18 @@ const projectReferencesSettingsRoute = createRoute({
   component: ProjectReferencesSettingsPage,
 });
 
+// Chart roles moved into each status's editor (T-712); old links and
+// bookmarks still land on the page that holds them.
 const projectInsightsSettingsRoute = createRoute({
   getParentRoute: () => projectSettingsRoute,
   path: "insights",
-  component: ProjectInsightsSettingsPage,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/projects/$slug/settings/statuses",
+      params,
+      replace: true,
+    });
+  },
 });
 
 const inboxRoute = createRoute({

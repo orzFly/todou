@@ -123,6 +123,12 @@ export const statusesQuery = (slug: string) =>
     staleTime: METADATA_STALE_MS,
   });
 
+export const statusUsageQuery = (slug: string) =>
+  queryOptions({
+    queryKey: ["statuses", slug, "usage"],
+    queryFn: () => api.statusUsage(slug),
+  });
+
 export const labelsQuery = (slug: string) =>
   queryOptions({
     queryKey: ["labels", slug],

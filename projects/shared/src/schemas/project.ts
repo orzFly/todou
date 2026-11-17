@@ -212,6 +212,35 @@ export const StatusUpdateInput = z.object({
 export type StatusUpdateInput = z.infer<typeof StatusUpdateInput>;
 
 /**
+ * One drop on the Statuses page (T-712): the whole order, and where the
+ * block clear line now sits, written together so a drop across the line is
+ * one reevaluation of blocks rather than one per moved row.
+ */
+export const StatusOrderInput = z.object({
+  ids: z.array(Id).min(1),
+  block_clear_status_id: Id.nullable().optional(),
+});
+export type StatusOrderInput = z.infer<typeof StatusOrderInput>;
+
+export const StatusOrder = z.object({
+  statuses: z.array(Status),
+  block_clear_status_id: Id.nullable(),
+});
+export type StatusOrder = z.infer<typeof StatusOrder>;
+
+/**
+ * Issues sitting in a status (T-712). Trashed ones are split out because
+ * the issue list does not show them, yet they still keep a status from
+ * being deleted.
+ */
+export const StatusUsage = z.object({
+  id: Id,
+  issues: z.number().int().nonnegative(),
+  trashed: z.number().int().nonnegative(),
+});
+export type StatusUsage = z.infer<typeof StatusUsage>;
+
+/**
  * The status flow agents work in (see the todou-cli skill). Shared because
  * two places must agree on it: the server seeds it into every new project,
  * and `todou status init` applies it to projects that predate it.

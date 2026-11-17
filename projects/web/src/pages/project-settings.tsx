@@ -20,19 +20,12 @@ import {
   type ProjectUpdateInput,
   ROLE_RANK,
   roleRankOf,
-  type Status,
-  type StatusUpdateInput,
   type TodouError,
 } from "@todou/shared";
 import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  ChartLineIcon,
-  CheckIcon,
   ChevronDownIcon,
   CircleDotIcon,
   HashIcon,
-  PinIcon,
   PlusIcon,
   SettingsIcon,
   TagIcon,
@@ -50,14 +43,13 @@ import {
   membersQuery,
   meQuery,
   projectQuery,
-  statusesQuery,
   useCan,
 } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
 import { userQuery } from "@/api/users.ts";
-import { InsightsSettings } from "@/components/insights/insights-settings.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
-import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { ColorSwatches } from "@/components/settings/color-swatches.tsx";
+import { StatusesSection } from "@/components/settings/statuses-section.tsx";
 import {
   SettingsLayout,
   SettingsNavGroup,
@@ -73,11 +65,6 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -103,16 +90,6 @@ import { cn } from "@/lib/utils";
 export const ROLES: readonly MemberRole[] = MEMBER_ROLES;
 
 export { PRESET_COLORS };
-
-/** Lenient hand-typed hex → canonical #rrggbb, or null when unparseable. */
-export function normalizeHexColor(input: string): string | null {
-  const raw = input.trim().replace(/^#/, "").toLowerCase();
-  if (/^[0-9a-f]{6}$/.test(raw)) return `#${raw}`;
-  if (/^[0-9a-f]{3}$/.test(raw)) {
-    return `#${raw.replaceAll(/./g, (c) => c + c)}`;
-  }
-  return null;
-}
 
 /** Everything under /projects/$slug/settings, one category per route (T-557). */
 export function ProjectSettingsLayout() {
@@ -164,13 +141,6 @@ export function ProjectSettingsLayout() {
             >
               References
             </SettingsNavLink>
-            <SettingsNavLink
-              to="/projects/$slug/settings/insights"
-              params={{ slug }}
-              icon={ChartLineIcon}
-            >
-              Insights
-            </SettingsNavLink>
           </SettingsNavGroup>
         </>
       }
@@ -214,10 +184,6 @@ export function ProjectLabelsSettingsPage() {
 
 export function ProjectReferencesSettingsPage() {
   return <ReferencesSection slug={useSettingsSlug()} />;
-}
-
-export function ProjectInsightsSettingsPage() {
-  return <InsightsSettings slug={useSettingsSlug()} />;
 }
 
 export function SlugSection({ slug }: { slug: string }) {
@@ -1217,350 +1183,6 @@ export function AccessDenialsSection({ slug }: { slug: string }) {
         </Table>
       </div>
     </section>
-  );
-}
-
-export function StatusesSection({ slug }: { slug: string }) {
-  const statuses = useSuspenseQuery(statusesQuery(slug));
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState<"open" | "closed">("open");
-  const queryClient = useQueryClient();
-  const invalidate = (slug: string) =>
-    queryClient.invalidateQueries({ queryKey: ["statuses", slug] });
-  const create = useMutation({
-    mutationFn: (vars: {
-      slug: string;
-      name: string;
-      category: "open" | "closed";
-    }) =>
-      api.createStatus(vars.slug, {
-        name: vars.name,
-        category: vars.category,
-        color: "#6b7280",
-      }),
-    onSuccess: (_data, vars) => {
-      setName("");
-      invalidate(vars.slug);
-    },
-    onError: (error) => toast.error(error.message),
-  });
-  const patch = useMutation({
-    mutationFn: (vars: {
-      slug: string;
-      id: number;
-      input: StatusUpdateInput;
-    }) => api.updateStatus(vars.slug, vars.id, vars.input),
-    onSuccess: (_data, vars) => invalidate(vars.slug),
-    onError: (error) => toast.error(error.message),
-  });
-  const remove = useMutation({
-    mutationFn: (vars: { slug: string; id: number }) =>
-      api.deleteStatus(vars.slug, vars.id),
-    onSuccess: (_data, vars) => invalidate(vars.slug),
-    onError: (error) =>
-      toast.error(
-        error.message.includes("used by")
-          ? "Status is in use — move its issues to another status first."
-          : error.message,
-      ),
-  });
-  function swap(index: number, direction: -1 | 1) {
-    const a = statuses.data[index];
-    const b = statuses.data[index + direction];
-    if (!a || !b) return;
-    patch.mutate({ slug, id: a.id, input: { position: b.position } });
-    patch.mutate({ slug, id: b.id, input: { position: a.position } });
-  }
-
-  return (
-    <section className="space-y-3">
-      <h2 className="text-lg font-semibold">Statuses</h2>
-      <div className="space-y-2">
-        {statuses.data.map((status: Status, index: number) => (
-          <div
-            key={status.id}
-            className="flex items-center gap-2 rounded-md border px-3 py-1.5"
-          >
-            <StatusPill status={status} />
-            <span className="text-xs text-muted-foreground">
-              {status.category}
-            </span>
-            {status.is_default && (
-              <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                default
-              </span>
-            )}
-            <span className="ml-auto flex items-center gap-1">
-              <ColorPicker
-                name={status.name}
-                color={status.color}
-                onPick={(color) =>
-                  patch.mutate({ slug, id: status.id, input: { color } })
-                }
-              />
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={
-                  status.is_default
-                    ? `clear default status`
-                    : `make ${status.name} the default status`
-                }
-                title={
-                  status.is_default
-                    ? "Clear default — new issues go to the first status"
-                    : "New issues default to this status"
-                }
-                onClick={() =>
-                  patch.mutate({
-                    slug,
-                    id: status.id,
-                    input: { is_default: !status.is_default },
-                  })
-                }
-              >
-                <PinIcon
-                  className={
-                    status.is_default
-                      ? "size-4 fill-primary text-primary"
-                      : "size-4 text-muted-foreground"
-                  }
-                />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`move ${status.name} up`}
-                disabled={index === 0}
-                onClick={() => swap(index, -1)}
-              >
-                <ArrowUpIcon className="size-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`move ${status.name} down`}
-                disabled={index === statuses.data.length - 1}
-                onClick={() => swap(index, 1)}
-              >
-                <ArrowDownIcon className="size-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`delete ${status.name}`}
-                onClick={() => remove.mutate({ slug, id: status.id })}
-              >
-                <Trash2Icon className="size-4" />
-              </Button>
-            </span>
-          </div>
-        ))}
-      </div>
-      <form
-        className="flex items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (name.trim()) create.mutate({ slug, name, category });
-        }}
-      >
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="New status name"
-          className="w-48"
-        />
-        <Select
-          value={category}
-          onValueChange={(v) => setCategory(v as "open" | "closed")}
-        >
-          <SelectTrigger className="w-28" size="sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="open">open</SelectItem>
-            <SelectItem value="closed">closed</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button type="submit" size="sm">
-          <PlusIcon className="size-3.5" /> Add
-        </Button>
-      </form>
-      <ClearLinePicker slug={slug} statuses={statuses.data} />
-    </section>
-  );
-}
-
-/**
- * Which status stops a card blocking the ones waiting for it (T-377).
- *
- * Inside Statuses rather than beside it: the value names a status, the rule
- * is read off their order, and reordering the list above silently moves what
- * this means.
- */
-function ClearLinePicker({
-  slug,
-  statuses,
-}: {
-  slug: string;
-  statuses: Status[];
-}) {
-  const project = useSuspenseQuery(projectQuery(slug));
-  const queryClient = useQueryClient();
-  const current = project.data.block_clear_status_id ?? null;
-  const set = useMutation({
-    mutationFn: (vars: { slug: string; id: number | null }) =>
-      api.updateProject(vars.slug, { block_clear_status_id: vars.id }),
-    onSuccess: (_data, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["project", vars.slug] });
-      // Every card's badge may have moved with the line.
-      queryClient.invalidateQueries({ queryKey: ["issues"] });
-      queryClient.invalidateQueries({ queryKey: ["issue"] });
-    },
-    onError: (error) => toast.error(error.message),
-  });
-
-  return (
-    <div className="flex items-center gap-2 border-t pt-3">
-      <span className="text-sm">Blocks clear at</span>
-      <Select
-        value={current === null ? "none" : String(current)}
-        onValueChange={(v) =>
-          set.mutate({ slug, id: v === "none" ? null : Number(v) })
-        }
-      >
-        <SelectTrigger className="w-56" size="sm" aria-label="blocks clear at">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="none">any closed status</SelectItem>
-          {statuses.map((status) => (
-            <SelectItem key={status.id} value={String(status.id)}>
-              <StatusPill status={status} /> or later
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
-function ColorPicker({
-  name,
-  color,
-  onPick,
-}: {
-  name: string;
-  color: string;
-  onPick: (color: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`change ${name} color`}
-          title="Change color"
-        >
-          <span
-            className="size-4 rounded-full border"
-            style={{ backgroundColor: color }}
-            aria-hidden
-          />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-2">
-        <ColorSwatches
-          name={name}
-          color={color}
-          onPick={(picked) => {
-            onPick(picked);
-            setOpen(false);
-          }}
-        />
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/**
- * The presets plus a free hex. No `<form>` of its own: the label editor
- * holds it inside its form, so Enter in the hex field is caught here
- * instead of submitting the label.
- */
-function ColorSwatches({
-  name,
-  color,
-  onPick,
-}: {
-  name: string;
-  color: string;
-  onPick: (color: string) => void;
-}) {
-  const [hex, setHex] = useState(color);
-  const normalized = normalizeHexColor(hex);
-  // A preset click moves the colour under the field; keep showing it.
-  const [shown, setShown] = useState(color);
-  if (shown !== color) {
-    setShown(color);
-    setHex(color);
-  }
-
-  return (
-    <div>
-      <div className="grid w-fit grid-cols-6 gap-2 sm:gap-1.5">
-        {PRESET_COLORS.map((preset) => (
-          <button
-            key={preset}
-            type="button"
-            aria-label={`set ${name} color ${preset}`}
-            aria-pressed={preset === color.toLowerCase()}
-            className="flex size-9 cursor-pointer items-center justify-center rounded-full border transition-transform hover:scale-110 sm:size-6"
-            style={{ backgroundColor: preset }}
-            onClick={() => onPick(preset)}
-          >
-            {preset === color.toLowerCase() && (
-              <CheckIcon className="size-3.5 text-white drop-shadow" />
-            )}
-          </button>
-        ))}
-      </div>
-      <div className="mt-2 flex items-center gap-1.5">
-        <input
-          type="color"
-          value={normalized ?? color}
-          onChange={(e) => setHex(e.target.value)}
-          aria-label={`custom color for ${name}`}
-          className="size-7 shrink-0 cursor-pointer rounded border"
-        />
-        <Input
-          value={hex}
-          onChange={(e) => setHex(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key !== "Enter") return;
-            e.preventDefault();
-            if (normalized) onPick(normalized);
-          }}
-          placeholder="#8b5cf6"
-          aria-label={`custom hex for ${name}`}
-          // text-base below md: sub-16px inputs trigger iOS focus auto-zoom.
-          className="h-7 w-24 font-mono text-base md:text-xs"
-        />
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={!normalized}
-          onClick={() => normalized && onPick(normalized)}
-        >
-          Set
-        </Button>
-      </div>
-    </div>
   );
 }
 

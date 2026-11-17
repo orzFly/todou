@@ -138,8 +138,8 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Closed client producer: issueListVerdict constructs contains/read/unknown local literals; entryWantsRefetch switches on that computed result, not HTTP enum fields.",
   "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #2":
     "Closed client producer: issueListVerdict constructs contains/read/unknown local literals; entryWantsRefetch switches on that computed result, not HTTP enum fields.",
-  "projects/web/src/components/insights/insights-settings.tsx :: read ROLE_LABELS[role] #1":
-    "Closed options: Role.options.map((role) => ...) -> ROLE_LABELS[role]. Wire entry.role is only compared in checked={entry.role === role}; it is never the lookup key.",
+  "projects/web/src/components/settings/statuses-section.tsx :: read ROLE_LABELS[role] #1":
+    "Closed options: Role.options.map((role) => ...) -> ROLE_LABELS[role]. The wire role is only compared in aria-pressed={value === option}; it is never the lookup key.",
   "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[t] #1":
     "Closed client tabs: local Radix triggers emit browse/bulk/json; both parser lookups exclude browse before indexing the bulk/json parser table.",
   "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[tab] #1":
