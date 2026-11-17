@@ -221,7 +221,7 @@ export function CommentReference({
         data-comment-title
       />
     ) : (
-      <span data-comment-title className="font-medium text-foreground">
+      <span data-comment-title className="font-medium">
         {shownTitle}
       </span>
     );

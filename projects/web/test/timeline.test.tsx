@@ -1503,7 +1503,7 @@ describe("block folds on the page (T-598)", () => {
       expect(container.querySelector(`#event-${id}`)).toBeNull();
     }
     expect(
-      container.querySelector('[data-testid="fold-comment-link"]'),
+      container.querySelector('[data-testid="fold-reference"]'),
     ).not.toBeNull();
   });
 
@@ -1523,7 +1523,7 @@ describe("block folds on the page (T-598)", () => {
       expect(container.querySelectorAll(`[id="event-${id}"]`)).toHaveLength(1);
     }
     expect(
-      container.querySelector('[data-testid="fold-comment-link"]'),
+      container.querySelector('[data-testid="fold-reference"]'),
     ).toBeNull();
 
     fireEvent.click(toggle);

@@ -1674,37 +1674,62 @@ describe("block groups (T-598)", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("links a folded comment reference from its own card's row", async () => {
+  it("draws a folded comment reference as its reference row does (T-718)", async () => {
     const host = block("block_added", "blocked", 5);
     const other = block("block_added", "blocked", 6);
-    const folded = foldOf(host, { references: [reference(5, 77)] });
-    const { findByTestId, container } = renderWithProviders(
+    const absorbed = reference(5, 77);
+    const client = crossClient([
+      ["todou", refItem(5, "Five")],
+      ["todou", refItem(6, "Six")],
+    ]);
+    seedComment(client, "todou", 5, 77);
+    const commentLink = async (container: HTMLElement) =>
+      waitFor(() => {
+        const anchors = container.querySelectorAll('a[data-comment-link="77"]');
+        expect(anchors).toHaveLength(1);
+        return anchors[0] as HTMLAnchorElement;
+      });
+
+    const folded = renderWithProviders(
       <EventGroup
         family="block_added"
         events={[host, other]}
         slug="todou"
         issueNumber={1}
-        folded={folded}
+        folded={foldOf(host, { references: [absorbed] })}
       />,
-      crossClient(),
+      client,
     );
-    await findByTestId("event-group");
-    const links = container.querySelectorAll(
-      '[data-testid="fold-comment-link"]',
+    const inFold = await commentLink(folded.container);
+    expect(inFold.closest("li")?.id).toBe(`event-${host.id}`);
+    expect(folded.queryAllByTestId("fold-reference")).toHaveLength(1);
+    expect(inFold.textContent).toBe("T-5 Five · #comment-77 by Alice");
+    // The fold takes the block row's own link's place, not a second one.
+    expect(inFold.closest("li")?.querySelectorAll("a")).toHaveLength(1);
+    // A comment's title carries the row's colour, as a bare card's does.
+    expect(inFold.querySelector("[data-comment-title]")?.className).toBe(
+      "font-medium",
     );
-    expect(links).toHaveLength(1);
-    const link = links[0] as HTMLElement;
-    expect(link.tagName).toBe("A");
-    expect(link.getAttribute("href")).toBe(
-      "/projects/todou/issues/5#comment-77",
+    const faceInFold = inFold.outerHTML;
+    folded.unmount();
+
+    const referenced = renderWithProviders(
+      <EventGroup
+        family="referenced"
+        events={[absorbed]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      client,
     );
-    expect(link.textContent).toBe("comment");
-    expect(link.closest("li")?.id).toBe(`event-${host.id}`);
+    expect((await commentLink(referenced.container)).outerHTML).toBe(
+      faceInFold,
+    );
   });
 
-  it("leaves a reference from a card body without a link", async () => {
+  it("leaves a reference from a card body as the bare block row", async () => {
     const host = block("block_added", "blocked", 5);
-    const { findByTestId, queryByTestId } = renderWithProviders(
+    const { findByTestId, queryByTestId, container } = renderWithProviders(
       <EventGroup
         family="block_added"
         events={[host]}
@@ -1715,10 +1740,13 @@ describe("block groups (T-598)", () => {
       crossClient(),
     );
     await findByTestId("event-group");
-    expect(queryByTestId("fold-comment-link")).toBeNull();
+    expect(queryByTestId("fold-reference")).toBeNull();
+    expect(container.querySelector("li a")?.getAttribute("href")).toBe(
+      "/projects/todou/issues/5",
+    );
   });
 
-  it("drops the comment link once opened", async () => {
+  it("draws the bare block row once opened", async () => {
     const host = block("block_added", "blocked", 5);
     const folded = foldOf(host, { references: [reference(5, 77)] }, true);
     const { findByTestId, queryByTestId } = renderWithProviders(
@@ -1733,7 +1761,7 @@ describe("block groups (T-598)", () => {
     );
     const toggle = await findByTestId("fold-toggle");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(queryByTestId("fold-comment-link")).toBeNull();
+    expect(queryByTestId("fold-reference")).toBeNull();
   });
 
   it("asks its owner to toggle", async () => {

@@ -3,7 +3,6 @@ import type { Label, TimelineEvent } from "@todou/shared";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  MessageSquareTextIcon,
   UserMinusIcon,
   UserPlusIcon,
 } from "lucide-react";
@@ -45,7 +44,7 @@ import {
   resolveUser,
   useEventEntities,
 } from "@/components/timeline/use-event-entities.ts";
-import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
+import { eventAnchor } from "@/lib/timeline-anchors.ts";
 import {
   formatTimelineTime,
   TIMELINE_ROW_NARROW,
@@ -474,10 +473,11 @@ function ReferencedGroup({
  * wrapping in full (T-598). A lone event takes this shape too, for the same
  * reason a lone reference does.
  *
- * While collapsed, a card whose reference came from a comment keeps a link
- * to that comment on its row: the reference row that carried it is off the
- * page, and the comment may be the only place that says why the block was
- * added. Expanded, the reference row is back and carries it itself.
+ * While collapsed, a card whose reference came from a comment is drawn the
+ * way that reference row draws it, comment and author included (T-718): the
+ * row is off the page, the comment may be the only place that says why the
+ * block was added, and the card should not change face when the fold opens.
+ * Expanded, the reference row is back and carries it itself.
  *
  * Given `undoneBy`, the events are adds that were removed again with
  * nothing else to fold them under (T-613): one dimmed group, each row
@@ -535,60 +535,46 @@ function BlockGroup({
             node: <span id={eventAnchor(remove.id)}>{other.node}</span>,
           };
         }
+        const fromComments = references.filter((reference) =>
+          namesComment(reference, ctx),
+        );
         return {
           key: event.id,
           id: eventAnchor(event.id),
           title: event.created_at,
-          node: (
-            <>
-              {other.node}
-              {references.map((reference) => (
-                <CommentLink
-                  key={reference.id}
-                  reference={reference}
-                  ctx={ctx}
-                />
-              ))}
-            </>
-          ),
+          node:
+            fromComments.length === 0
+              ? other.node
+              : fromComments.map((reference) => (
+                  <span
+                    key={reference.id}
+                    className="block"
+                    data-testid="fold-reference"
+                  >
+                    {referenceSource(reference, ctx).node}
+                  </span>
+                )),
         };
       })}
     />
   );
 }
 
-/** The comment a folded reference was written in, or nothing where the
-    reference came from a card body or its project cannot be named. */
-function CommentLink({
-  reference,
-  ctx,
-}: {
-  reference: TimelineEvent;
-  ctx: EventRenderContext;
-}) {
+/** A folded reference written in a comment its project can be named for. One
+    from a card body says nothing the block row does not. */
+function namesComment(
+  reference: TimelineEvent,
+  ctx: EventRenderContext,
+): boolean {
   const { by_comment, by_issue, by_project_id } = reference.payload;
   if (typeof by_comment !== "number" || typeof by_issue !== "number") {
-    return null;
+    return false;
   }
   // The fold only takes a reference that names its project by id or names
   // none, so a missing id here means this project.
-  const slug =
-    typeof by_project_id === "number"
-      ? ctx.slugOfProject?.(by_project_id)
-      : ctx.slug;
-  if (slug === undefined) return null;
   return (
-    <Link
-      to="/projects/$slug/issues/$number"
-      params={{ slug, number: String(by_issue) }}
-      hash={commentAnchor(by_comment)}
-      state={ctx.returnState}
-      className="ml-1.5 inline-flex items-center gap-0.5 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
-      data-testid="fold-comment-link"
-    >
-      <MessageSquareTextIcon className="size-3" />
-      comment
-    </Link>
+    typeof by_project_id !== "number" ||
+    ctx.slugOfProject?.(by_project_id) !== undefined
   );
 }
 
