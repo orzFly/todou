@@ -28,6 +28,10 @@ import {
   MarkdownViewWithPlugins,
   useMarkdownRemarkPlugins,
 } from "@/components/shared/markdown-view.tsx";
+import {
+  CompareLabelsContext,
+  DEFAULT_COMPARE_LABELS,
+} from "@/components/shared/media-compare.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -608,6 +612,7 @@ export const AnnotatedMarkdown = memo(function AnnotatedMarkdown({
   onRemoveDraft,
   onResolve,
   resolving = false,
+  compareLabels,
 }: {
   slug: string;
   issueNumber: number;
@@ -635,6 +640,11 @@ export const AnnotatedMarkdown = memo(function AnnotatedMarkdown({
   onRemoveDraft: (id: string) => void;
   onResolve: (commentId: number) => void;
   resolving?: boolean;
+  /**
+   * What a swapped image's two sides are called (T-722): the baseline and
+   * the viewed version. Pass a stable object; this component is memoized.
+   */
+  compareLabels?: { before: string; after: string };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [chips, setChips] = useState<Chip[]>([]);
@@ -1024,16 +1034,22 @@ export const AnnotatedMarkdown = memo(function AnnotatedMarkdown({
       onClick={onClick}
       data-testid="annotated-markdown"
     >
-      <MarkdownViewWithPlugins
-        slug={slug}
-        issueNumber={issueNumber}
-        rehypePlugins={rehypePlugins}
-        fenceBaselines={fenceBaselines}
-        collapseLongFences={false}
-        remarkPlugins={remarkPlugins}
+      {/* Always the provider, never only when there are labels: a wrapper
+          that came and went would remount the document under it (T-60). */}
+      <CompareLabelsContext.Provider
+        value={compareLabels ?? DEFAULT_COMPARE_LABELS}
       >
-        {body}
-      </MarkdownViewWithPlugins>
+        <MarkdownViewWithPlugins
+          slug={slug}
+          issueNumber={issueNumber}
+          rehypePlugins={rehypePlugins}
+          fenceBaselines={fenceBaselines}
+          collapseLongFences={false}
+          remarkPlugins={remarkPlugins}
+        >
+          {body}
+        </MarkdownViewWithPlugins>
+      </CompareLabelsContext.Provider>
 
       {chips.map((chip) => (
         <AnnotationChip

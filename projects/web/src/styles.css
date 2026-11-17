@@ -1469,23 +1469,311 @@ html[data-header-settling] [data-header-follow] {
       var(--muted)
     );
   }
-  /* A swapped image and the one it replaced, side by side (T-223). Two
+  /* A swapped image and the one it replaced, side by side in the table cell
+     the swap happened in (T-223). Everywhere else `MediaCompare` draws the
+     swap (T-722); a table is `width: max-content`, and that component in a
+     cell would push the columns to its right out of view. Two
      `inline-block`s rather than a flex container, because the two `<img>`s
-     have to stay direct children of their `<p>`: `markdown-view.tsx` reads
-     that relationship to tell an embed card from an ordinary image, and a
-     wrapper would put a `<div>` inside a `<p>` besides. `min-width` is the
+     have to stay direct children of their parent: a wrapper would put a
+     `<div>` inside a `<p>` wherever the cell holds one. `min-width` is the
      whole narrow-column story — once two halves no longer fit, inline-block
      wrapping stacks them, with no media query to keep in sync. */
-  .markdown-body del.spec-img-del,
-  .markdown-body img.spec-img-new {
+  .markdown-body :is(td, th) del.spec-img-del,
+  .markdown-body :is(td, th) img.spec-img-new {
     display: inline-block;
     vertical-align: top;
     width: calc(50% - 0.6rem);
     min-width: 15rem;
     margin: 0.35rem 0;
   }
-  .markdown-body del.spec-img-del {
+  .markdown-body :is(td, th) del.spec-img-del {
     margin-right: 0.75rem;
+  }
+
+  /* A swapped image outside a table (T-722). Its sides' red and green tags
+     already say which is old and which new, so neither the 12% wash it would
+     wear as `.spec-ins-block` nor the paragraph's 6% wash is drawn — the same
+     reasoning as `.spec-fence-diff` above. The classes stay for the fold pass
+     and the ↑/↓ nav; an annotation's amber still shows. */
+  .markdown-body .spec-ins-block.spec-img-compare {
+    background: none;
+    border-left: 0;
+    padding-left: 0;
+    border-radius: 0;
+  }
+  .markdown-body
+    .spec-changed:not(.spec-annotated):has(> .spec-img-compare) {
+    background-color: transparent;
+    border-left-color: transparent;
+  }
+
+  /* MediaCompare (T-722). The root is the size container: the mode names
+     shorten and the panes stack against the frame's own width, which a
+     viewport query cannot know inside a spec column beside a file tree. */
+  .media-compare {
+    container-type: inline-size;
+    margin-block: 0 1rem;
+  }
+  .markdown-body .media-compare:last-child {
+    margin-bottom: 0;
+  }
+  .media-compare-short {
+    display: none;
+  }
+  @container (max-width: 26rem) {
+    .media-compare-long {
+      display: none;
+    }
+    .media-compare-short {
+      display: inline;
+    }
+  }
+  .media-compare-stage {
+    padding: 0.75rem;
+  }
+  .media-compare-2up {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    align-items: start;
+  }
+  @container (max-width: 30rem) {
+    .media-compare-2up {
+      grid-template-columns: 1fr;
+    }
+  }
+  .media-compare-pane {
+    display: grid;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+  /* The width is the component's; whatever is inside fills it. */
+  .media-compare-box > :is(img, svg) {
+    display: block;
+    width: 100%;
+    max-width: none;
+    height: auto;
+  }
+  .media-compare-2up .media-compare-box {
+    position: relative;
+    max-width: 100%;
+  }
+  .media-compare-2up .media-compare-box[data-sized] {
+    overflow: clip;
+    border-radius: var(--radius-sm);
+    outline: 1px solid var(--border);
+    outline-offset: -1px;
+  }
+  .media-compare-2up .media-compare-box[data-sized]::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 1;
+    height: 2px;
+  }
+  [data-side="before"] > .media-compare-box[data-sized]::before {
+    background: var(--diff-deletion);
+  }
+  [data-side="after"] > .media-compare-box[data-sized]::before {
+    background: var(--diff-addition);
+  }
+  /* The attachment viewer's checkerboard (image-canvas.tsx), so a transparent
+     pixel reads the same here as there; dark themes take two dark greys. */
+  .media-compare {
+    --compare-checker:
+      repeating-conic-gradient(#d4d4d4 0 25%, #fff 0 50%) 0 0 / 16px 16px;
+  }
+  .dark .media-compare {
+    --compare-checker:
+      repeating-conic-gradient(#3a3a3a 0 25%, #2a2a2a 0 50%) 0 0 / 16px 16px;
+  }
+  .media-compare[data-backdrop="checker"]
+    .media-compare-2up
+    .media-compare-box[data-sized],
+  .media-compare[data-backdrop="checker"]
+    .media-compare-overlay:not([data-mode="diff"]) {
+    background: var(--compare-checker);
+  }
+  .media-compare[data-backdrop="page"]
+    .media-compare-2up
+    .media-compare-box[data-sized],
+  .media-compare[data-backdrop="page"]
+    .media-compare-overlay:not([data-mode="diff"]) {
+    background: var(--background);
+  }
+
+  /* Swipe, onion skin and difference: both sides stacked on one stage. */
+  .media-compare-overlay {
+    position: relative;
+    margin-inline: auto;
+    overflow: clip;
+    border-radius: var(--radius-sm);
+    outline: 1px solid var(--border);
+    outline-offset: -1px;
+    touch-action: pan-y;
+  }
+  .media-compare-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .media-compare-overlay .media-compare-box {
+    position: absolute;
+    top: 0;
+  }
+  /* Both layers are cut, on the full-stage layer rather than on the picture:
+     cutting only the new one lets the old show through its transparent
+     pixels, and two pictures of different sizes cut by their own boxes would
+     be cut in two different places. */
+  .media-compare-overlay[data-mode="swipe"]
+    .media-compare-layer[data-side="before"] {
+    clip-path: inset(0 calc(100% - var(--cut)) 0 0);
+  }
+  .media-compare-overlay[data-mode="swipe"]
+    .media-compare-layer[data-side="after"] {
+    clip-path: inset(0 0 0 var(--cut));
+  }
+  /* Same-coloured opaque grounds under both sides, so a pixel transparent in
+     both counts as unchanged; `isolation` keeps the blend off the page. */
+  .media-compare-overlay[data-mode="diff"] {
+    background: #000;
+    isolation: isolate;
+  }
+  .media-compare[data-backdrop="checker"]
+    .media-compare-overlay[data-mode="diff"]
+    .media-compare-box {
+    background: #fff;
+  }
+  .media-compare[data-backdrop="page"]
+    .media-compare-overlay[data-mode="diff"]
+    .media-compare-box {
+    background: var(--background);
+  }
+  .media-compare-overlay[data-mode="diff"]
+    .media-compare-layer[data-side="after"] {
+    mix-blend-mode: difference;
+  }
+  .media-compare-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: var(--cut);
+    z-index: 2;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--foreground);
+    box-shadow: 0 0 0 1px
+      color-mix(in oklab, var(--background) 70%, transparent);
+    pointer-events: none;
+  }
+  .media-compare-grip {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 9999px;
+    background: var(--foreground);
+    color: var(--background);
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.25);
+  }
+  .media-compare-overlay:has(.media-compare-swipe:focus-visible)
+    .media-compare-grip {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* The whole stage is the slider. Its thumb is a hair wide so that where
+     the pointer lands is where the cut goes: a native thumb's half-width
+     would put the two up to 8px apart near either edge. */
+  .media-compare-swipe {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    appearance: none;
+    background: transparent;
+    opacity: 0;
+    cursor: ew-resize;
+  }
+  .media-compare-swipe::-webkit-slider-thumb {
+    appearance: none;
+    width: 1px;
+    height: 100%;
+  }
+  .media-compare-swipe::-moz-range-thumb {
+    width: 1px;
+    border: 0;
+  }
+  .media-compare-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.25rem 0.75rem;
+    margin-inline: auto;
+    padding-top: 0.625rem;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+  }
+  .media-compare-foot[data-mode="onion"] {
+    justify-content: center;
+  }
+  .media-compare-fade {
+    width: min(16rem, 50%);
+    accent-color: var(--foreground);
+  }
+  @container (max-width: 26rem) {
+    .media-compare-message {
+      order: 3;
+      flex-basis: 100%;
+      text-align: center;
+    }
+  }
+  .media-compare-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--foreground);
+  }
+  .media-compare-tick {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+  .media-compare-label[data-side="before"] .media-compare-tick {
+    background: var(--diff-deletion);
+  }
+  .media-compare-label[data-side="after"] .media-compare-tick {
+    background: var(--diff-addition);
+  }
+  .media-compare-dims {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted-foreground);
+  }
+  .media-compare-dims mark {
+    padding: 0 2px;
+    border-radius: 3px;
+    color: inherit;
+    background: color-mix(in oklab, var(--diff-addition) 22%, transparent);
+  }
+  .media-compare-label[data-side="before"] .media-compare-dims mark {
+    background: color-mix(in oklab, var(--diff-deletion) 18%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .media-compare * {
+      transition: none;
+    }
   }
 
   /* A column or a row the new version no longer has, put back where it stood

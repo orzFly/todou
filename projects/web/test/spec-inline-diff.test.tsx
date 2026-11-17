@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { SpecCommentItem } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import { FENCE_DIFF_CLASS } from "../src/components/shared/markdown-view.tsx";
@@ -86,6 +86,7 @@ async function renderDiff(
   before: string,
   after: string,
   annotations: DisplayedAnnotation[] = [],
+  compareLabels?: { before: string; after: string },
 ) {
   const view = renderWithProviders(
     <AnnotatedMarkdown
@@ -94,6 +95,7 @@ async function renderDiff(
       body={after}
       baselineBody={before}
       annotations={annotations}
+      compareLabels={compareLabels}
       changedRanges={changedLineRanges(before, after)}
       onStage={() => {}}
       onEditDraft={() => {}}
@@ -1609,23 +1611,79 @@ describe("what the engine emits for image edits (T-223)", () => {
 });
 
 describe("how image edits render (T-223)", () => {
-  it("puts the old image beside the new one, in the same paragraph", async () => {
+  it("draws a swap outside a table as one comparison of the two (T-722)", async () => {
     const { container } = await renderDiff(
       `## 图\n\n![](${IMG_A})\n`,
       `## 图\n\n![](${IMG_B})\n`,
     );
-    const old = container.querySelector("del.spec-del-block.spec-img-del");
-    expect(old?.querySelector("img")?.getAttribute("src")).toBe(IMG_A);
-    const fresh = old?.nextElementSibling;
-    expect(fresh?.tagName).toBe("IMG");
-    expect(fresh?.getAttribute("src")).toBe(IMG_B);
-    expect([...(fresh?.classList ?? [])]).toEqual(
-      expect.arrayContaining(["spec-ins-block", "spec-img-new"]),
+    expect(container.querySelector(".spec-img-del, .spec-img-new")).toBeNull();
+    const compare = container.querySelector(".media-compare");
+    // The decoration classes land on the component's root, so ↑↓ still stops
+    // on it and the fold pass still counts it as a change.
+    expect([...(compare?.classList ?? [])]).toEqual(
+      expect.arrayContaining(["spec-ins-block", "spec-img-compare"]),
     );
-    // Both direct children of the `<p>`: `markdown-view.tsx` reads exactly
-    // that relationship to decide whether a paragraph carries an embed card.
-    expect(old?.parentElement?.tagName).toBe("P");
-    expect(fresh?.parentElement).toBe(old?.parentElement);
+    expect(
+      compare?.querySelector('[data-side="before"] img')?.getAttribute("src"),
+    ).toBe(IMG_A);
+    expect(
+      compare?.querySelector('[data-side="after"] img')?.getAttribute("src"),
+    ).toBe(IMG_B);
+    // Block content: the paragraph it sits in is a `<div>`, never a `<p>`.
+    expect(compare?.parentElement?.tagName).toBe("DIV");
+    expect(
+      compare?.parentElement?.classList.contains("markdown-paragraph"),
+    ).toBe(true);
+  });
+
+  it("names a comparison's sides after the versions it is given", async () => {
+    const { container } = await renderDiff(
+      `![](${IMG_A})\n`,
+      `![](${IMG_B})\n`,
+      [],
+      { before: "v2", after: "v5" },
+    );
+    expect(texts(container, ".media-compare-label")).toEqual(["v2", "v5"]);
+  });
+
+  it("names them Before and After when nothing names the versions", async () => {
+    const { container } = await renderDiff(
+      `![](${IMG_A})\n`,
+      `![](${IMG_B})\n`,
+    );
+    expect(texts(container, ".media-compare-label")).toEqual([
+      "Before",
+      "After",
+    ]);
+  });
+
+  it("opens the overlay modes once both sides have loaded, and not when one fails", async () => {
+    const { container } = await renderDiff(
+      `![](${IMG_A})\n`,
+      `![](${IMG_B})\n`,
+    );
+    const swipe = () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Swipe"]');
+    expect(swipe()?.disabled).toBe(true);
+    const load = (side: string, width: number, height: number) => {
+      const img = container.querySelector<HTMLImageElement>(
+        `[data-side="${side}"] img`,
+      );
+      if (img === null) throw new Error(`no ${side} image`);
+      Object.defineProperty(img, "naturalWidth", { value: width });
+      Object.defineProperty(img, "naturalHeight", { value: height });
+      fireEvent.load(img);
+    };
+    load("before", 720, 400);
+    expect(swipe()?.disabled).toBe(true);
+    load("after", 720, 460);
+    expect(swipe()?.disabled).toBe(false);
+    expect(texts(container, "mark[data-changed]")).toEqual(["400", "460"]);
+
+    const img = container.querySelector('[data-side="after"] img');
+    if (img === null) throw new Error("no after image");
+    fireEvent.error(img);
+    expect(swipe()?.disabled).toBe(true);
   });
 
   it("does not draw the same image twice when only the alt moved", async () => {
@@ -1644,13 +1702,16 @@ describe("how image edits render (T-223)", () => {
       `看这张 ![](${IMG_A}) 就懂了。\n`,
       `看这张 ![](${IMG_B}) 就懂了。\n`,
     );
-    const paragraph = container.querySelector("p");
-    expect(paragraph?.textContent).toBe("看这张  就懂了。");
+    const paragraph = container.querySelector(".markdown-paragraph");
     expect(
-      paragraph
-        ?.querySelector("del.spec-img-del")
-        ?.nextElementSibling?.getAttribute("src"),
-    ).toBe(IMG_B);
+      [...(paragraph?.childNodes ?? [])].map((node) =>
+        node.nodeType === 1
+          ? (node as Element).classList.contains("media-compare")
+            ? "COMPARE"
+            : (node as Element).tagName
+          : node.textContent,
+      ),
+    ).toEqual(["看这张 ", "COMPARE", " 就懂了。"]);
     expect(container.querySelector("ins.spec-ins")).toBeNull();
   });
 

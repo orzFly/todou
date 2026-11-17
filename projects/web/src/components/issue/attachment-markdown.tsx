@@ -1,4 +1,11 @@
-import type { ComponentProps, ReactNode } from "react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  type SyntheticEvent,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import {
   useAttachmentAddress,
   useAttachmentDeleted,
@@ -11,8 +18,16 @@ import {
   DeletedAttachmentMark,
 } from "@/components/issue/attachment-list.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
+import {
+  CompareLabelsContext,
+  type CompareSide,
+  MediaCompare,
+} from "@/components/shared/media-compare.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
-import type { AttachmentRef } from "@/lib/attachment-refs.ts";
+import {
+  type AttachmentRef,
+  parseAttachmentHref,
+} from "@/lib/attachment-refs.ts";
 
 /**
  * The markdown overrides for attachment addresses (T-242).
@@ -103,11 +118,27 @@ export function MarkdownAttachmentAnchor({
   );
 }
 
+type ImageSize = { width: number; height: number };
+
+/** `onLoad`/`onError` for an `<img>` whose natural size someone is waiting on. */
+function sizeHandlers(onSize: ((size: ImageSize | null) => void) | undefined) {
+  if (onSize === undefined) return {};
+  return {
+    onLoad: (e: SyntheticEvent<HTMLImageElement>) =>
+      onSize({
+        width: e.currentTarget.naturalWidth,
+        height: e.currentTarget.naturalHeight,
+      }),
+    onError: () => onSize(null),
+  };
+}
+
 export function MarkdownAttachmentImage({
   slug,
   issueNumber,
   address,
   embedded,
+  onSize,
   node: _node,
   ...props
 }: ComponentProps<"img"> & {
@@ -116,6 +147,8 @@ export function MarkdownAttachmentImage({
   address: AttachmentRef;
   /** Inside a document card already: embeds become links, not nested cards. */
   embedded: boolean;
+  /** The natural size once loaded; null when there is nothing to load (T-722). */
+  onSize?: (size: ImageSize | null) => void;
   node?: unknown;
 }): ReactNode {
   const { id, viaAlias, url, deleted } = useResolved(
@@ -123,6 +156,9 @@ export function MarkdownAttachmentImage({
     issueNumber,
     address,
   );
+  useEffect(() => {
+    if (deleted) onSize?.(null);
+  }, [deleted, onSize]);
   if (deleted) {
     return (
       <DeletedAttachmentMark
@@ -133,7 +169,7 @@ export function MarkdownAttachmentImage({
   }
   if (id === null) {
     // biome-ignore lint/a11y/useAltText: alt is forwarded via props when the markdown provides one
-    return <img {...props} />;
+    return <img {...props} {...sizeHandlers(onSize)} />;
   }
   // An alias was written when the file lived elsewhere; its canonical URL
   // saves every reader a 301 and is certainly readable from this project.
@@ -177,6 +213,91 @@ export function MarkdownAttachmentImage({
       // than on a wrapper, so the classes have to survive this swap or the
       // decoration is lost (T-223).
       className={props.className}
+      onSize={onSize}
+    />
+  );
+}
+
+/** One side of a swap: an attachment when the address names one, else a plain image. */
+function SwapSide({
+  slug,
+  issueNumber,
+  src,
+  alt,
+  onSize,
+}: {
+  slug: string;
+  issueNumber: number;
+  src: string;
+  alt: string;
+  onSize: (size: ImageSize | null) => void;
+}) {
+  const address = parseAttachmentHref(src);
+  if (address === null) {
+    return <img src={src} alt={alt} {...sizeHandlers(onSize)} />;
+  }
+  return (
+    <MarkdownAttachmentImage
+      slug={slug}
+      issueNumber={issueNumber}
+      address={address}
+      embedded={false}
+      src={src}
+      alt={alt}
+      onSize={onSize}
+    />
+  );
+}
+
+/**
+ * A swapped image in the spec comparison (T-722): the image adapter for
+ * `MediaCompare`. Each side resolves its address as any markdown image does,
+ * so a deleted file shows its mark and a click opens the viewer; the sizes
+ * they report are what let the overlay modes line the two up.
+ */
+export function ImageSwapCompare({
+  slug,
+  issueNumber,
+  before,
+  after,
+  className,
+}: {
+  slug: string;
+  issueNumber: number;
+  before: { src: string; alt: string };
+  after: { src: string; alt: string };
+  className?: string;
+}) {
+  const labels = useContext(CompareLabelsContext);
+  // undefined until reported; null once it failed.
+  const [beforeSize, setBeforeSize] = useState<ImageSize | null>();
+  const [afterSize, setAfterSize] = useState<ImageSize | null>();
+  const side = (
+    label: string,
+    image: { src: string; alt: string },
+    size: ImageSize | null | undefined,
+    onSize: (size: ImageSize | null) => void,
+  ): CompareSide => ({
+    label,
+    content: (
+      <SwapSide
+        slug={slug}
+        issueNumber={issueNumber}
+        src={image.src}
+        alt={image.alt}
+        onSize={onSize}
+      />
+    ),
+    size: size ?? null,
+    failed: size === null,
+  });
+  return (
+    <MediaCompare
+      before={side(labels.before, before, beforeSize, setBeforeSize)}
+      after={side(labels.after, after, afterSize, setAfterSize)}
+      align="start"
+      backdrop="checker"
+      className={className}
     />
   );
 }

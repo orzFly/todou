@@ -834,6 +834,13 @@ function SpecViewBody({
     if (baselineBody === undefined || selected === undefined) return [];
     return changedLineRanges(baselineBody, selected.body);
   }, [baselineBody, selected]);
+  const compareLabels = useMemo(
+    () =>
+      baseline === null
+        ? undefined
+        : { before: `v${baseline}`, after: `v${version}` },
+    [baseline, version],
+  );
 
   // Files of the viewed version that differ from the baseline (new or
   // modified), in sidebar order — the rail the change navigation rides
@@ -1962,6 +1969,7 @@ function SpecViewBody({
                       onRemoveDraft={drafts.remove}
                       onResolve={resolveComment}
                       resolving={resolve.isPending}
+                      compareLabels={compareLabels}
                     />
                   )}
                 </div>

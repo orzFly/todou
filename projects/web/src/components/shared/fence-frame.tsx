@@ -97,17 +97,23 @@ export function FenceFrame({
   text,
   lang,
   title,
+  leading,
   collapsible = false,
   toolbarAlwaysVisible = false,
   actions,
   children,
 }: {
-  /** What Copy and the download hand over: the fence as written. */
-  text: string;
+  /** What Copy and the download hand over: the fence as written. Without it, no Copy. */
+  text?: string;
   /** Shown in the floating toolbar; a header's filename says it instead. */
   lang?: string;
   /** A filename: draws the header in place of the floating toolbar. */
   title?: string;
+  /**
+   * Controls at the head's left edge; draws the header as `title` does. A
+   * floating toolbar would sit on the corner of whatever the frame shows.
+   */
+  leading?: ReactNode;
   /** Caps the height to scroll inside the frame, with Expand to lift it. */
   collapsible?: boolean;
   /** For a toolbar that is the only way to reach something, as a diagram's. */
@@ -138,14 +144,25 @@ export function FenceFrame({
           )}
         </Button>
       )}
-      <CopyButton text={text} />
+      {text !== undefined && <CopyButton text={text} />}
     </>
   );
   return (
     <div className="fence-frame relative overflow-clip rounded-lg border">
-      {title !== undefined ? (
-        <div className="fence-head flex min-h-[34px] items-center gap-1 rounded-t-lg border-b bg-muted/40 py-0.5 pr-1 pl-3 select-none">
-          <FenceTitleLink title={title} text={text} />
+      {title !== undefined || leading !== undefined ? (
+        <div
+          className={cn(
+            "fence-head flex min-h-[34px] items-center gap-1 rounded-t-lg border-b bg-muted/40 py-0.5 pr-1 select-none",
+            leading !== undefined ? "pl-2" : "pl-3",
+          )}
+        >
+          {leading}
+          {title !== undefined &&
+            (text !== undefined ? (
+              <FenceTitleLink title={title} text={text} />
+            ) : (
+              <span className="truncate font-mono text-xs">{title}</span>
+            ))}
           <span className="ml-auto flex shrink-0 items-center gap-0.5">
             {controls}
           </span>

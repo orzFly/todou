@@ -146,4 +146,24 @@ describe("FenceFrame", () => {
       container.querySelector(".fence-tools")?.hasAttribute("data-always"),
     ).toBe(true);
   });
+
+  it("has no Copy when it is given no text", () => {
+    render(
+      <FenceFrame lang="ts">
+        <pre>{TEXT}</pre>
+      </FenceFrame>,
+    );
+    expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+  });
+
+  it("puts `leading` in a standing header instead of the floating toolbar", () => {
+    const { container } = render(
+      <FenceFrame leading={<button type="button">Mode</button>}>
+        <div />
+      </FenceFrame>,
+    );
+    const head = container.querySelector(".fence-head");
+    expect(head?.querySelector("button")?.textContent).toBe("Mode");
+    expect(container.querySelector(".fence-tools")).toBeNull();
+  });
 });

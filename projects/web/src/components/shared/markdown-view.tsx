@@ -8,6 +8,7 @@ import {
   referenceDirectoryQuery,
 } from "@/api/references.ts";
 import {
+  ImageSwapCompare,
   MarkdownAttachmentAnchor,
   MarkdownAttachmentImage,
 } from "@/components/issue/attachment-markdown.tsx";
@@ -25,6 +26,7 @@ import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
 import { FENCE_COLLAPSE_LINES, fenceTitle } from "@/lib/fence-meta.ts";
 import { MARKDOWN_SYNTAX_PLUGINS } from "@/lib/markdown-processor.ts";
+import { SWAP_ALT_ATTR, SWAP_SRC_ATTR } from "@/lib/rehype-decorations.ts";
 import { rehypeDetails } from "@/lib/rehype-details.ts";
 import {
   CODE_CONTENT_START_ATTR,
@@ -50,7 +52,7 @@ type HastNode = {
   type: string;
   tagName?: string;
   value?: string;
-  properties?: { className?: unknown; src?: unknown };
+  properties?: { className?: unknown; src?: unknown; dataSwapSrc?: unknown };
   children?: HastNode[];
   data?: { meta?: unknown };
 };
@@ -72,6 +74,19 @@ function isEmbedImgNode(child: HastNode): boolean {
   const src = child.properties?.src;
   const ref = typeof src === "string" ? parseAttachmentHref(src) : null;
   return ref !== null && isTextEmbedName(ref.name ?? "");
+}
+
+/**
+ * True when this img node is a swapped image our override turns into an
+ * image comparison (T-722), which is block content too. Answers from the
+ * tree alone, for the reason `isEmbedImgNode` gives.
+ */
+function isSwapImgNode(child: HastNode): boolean {
+  return (
+    child.type === "element" &&
+    child.tagName === "img" &&
+    typeof child.properties?.dataSwapSrc === "string"
+  );
 }
 
 /**
@@ -366,20 +381,20 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
             ),
           }
         : {
-            // A document card is block content, which HTML forbids
-            // inside <p>; paragraphs that carry an embed swap to a
-            // <div> (same typography via .markdown-paragraph).
+            // A document card and an image comparison are block content,
+            // which HTML forbids inside <p>; paragraphs that carry one swap
+            // to a <div> (same typography via .markdown-paragraph).
             p: ({
               node,
               children,
               ...props
             }: ComponentProps<"p"> & { node?: unknown }): ReactNode => {
+              const kids = (node as HastNode | undefined)?.children ?? [];
               const carriesEmbed =
-                issueNumber !== undefined &&
-                !embedded &&
-                ((node as HastNode | undefined)?.children ?? []).some((child) =>
-                  isEmbedImgNode(child),
-                );
+                (issueNumber !== undefined &&
+                  !embedded &&
+                  kids.some((child) => isEmbedImgNode(child))) ||
+                kids.some((child) => isSwapImgNode(child));
               if (carriesEmbed) {
                 return (
                   <div className="markdown-paragraph" {...props}>
@@ -432,6 +447,24 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
             img: (
               props: ComponentProps<"img"> & { node?: unknown },
             ): ReactNode => {
+              const swapSrc = (props as Record<string, unknown>)[SWAP_SRC_ATTR];
+              if (typeof swapSrc === "string" && issueNumber !== undefined) {
+                const swapAlt = (props as Record<string, unknown>)[
+                  SWAP_ALT_ATTR
+                ];
+                return (
+                  <ImageSwapCompare
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    before={{
+                      src: swapSrc,
+                      alt: typeof swapAlt === "string" ? swapAlt : "",
+                    }}
+                    after={{ src: props.src ?? "", alt: props.alt ?? "" }}
+                    className={props.className}
+                  />
+                );
+              }
               const target = parseAttachmentHref(props.src);
               if (target !== null && issueNumber !== undefined) {
                 return (

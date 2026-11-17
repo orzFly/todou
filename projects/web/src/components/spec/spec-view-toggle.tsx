@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "@/lib/segment-styles.ts";
 import type { SpecSearch, SpecView } from "@/lib/spec-search.ts";
 import { cn } from "@/lib/utils.ts";
 
@@ -24,12 +25,6 @@ const OPTIONS: Array<{
     plainTitle: "Read this version's raw markdown source",
   },
 ];
-
-const SEGMENT =
-  "flex-1 rounded-full px-2 py-0.5 text-center text-xs leading-5 transition-colors";
-
-const SEGMENT_ON = "bg-foreground font-medium text-background";
-const SEGMENT_OFF = "text-muted-foreground hover:text-foreground";
 
 /**
  * How the document is drawn: rendered or as its markdown source (T-192).

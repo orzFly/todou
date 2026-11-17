@@ -559,6 +559,7 @@ export function AttachmentInlineImage({
   src,
   alt,
   className,
+  onSize,
 }: {
   slug: string;
   issueNumber: number;
@@ -571,6 +572,8 @@ export function AttachmentInlineImage({
    * are painted on the element itself rather than on a wrapper (T-223).
    */
   className?: string;
+  /** The natural size once loaded; null when it failed to (T-722). */
+  onSize?: (size: { width: number; height: number } | null) => void;
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const [viewer, setViewer] = useState<ViewerState | null>(null);
@@ -587,6 +590,15 @@ export function AttachmentInlineImage({
         src={src}
         alt={alt}
         className={cn("cursor-zoom-in", className)}
+        onLoad={
+          onSize &&
+          ((e) =>
+            onSize({
+              width: e.currentTarget.naturalWidth,
+              height: e.currentTarget.naturalHeight,
+            }))
+        }
+        onError={onSize && (() => onSize(null))}
         onClick={() =>
           setViewer(
             viewerStateFor(
