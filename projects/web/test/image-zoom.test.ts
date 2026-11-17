@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   actualAt,
   canvasHeight,
+  canvasWidth,
   clampView,
   type Frame,
   fitScale,
@@ -177,6 +178,26 @@ describe("canvasHeight", () => {
   it("never asks for less than the width-fit height", () => {
     expect(canvasHeight(wide, 0.1)).toBe(250);
     expect(canvasHeight(icon, 1)).toBe(48);
+  });
+});
+
+describe("a canvas the zoom widened (T-774)", () => {
+  const widened: Frame = { ...wide, width: 1600, restWidth: 1000 };
+
+  it("asks for the image's width, never narrower than at rest", () => {
+    expect(canvasWidth(wide, fitScale(wide))).toBe(1000);
+    expect(canvasWidth(wide, 1)).toBe(2000);
+    expect(canvasWidth(widened, 0.3)).toBe(1000);
+  });
+
+  it("fits as it would at rest, so fitting asks for the rest width back", () => {
+    expect(fitScale(widened)).toBe(fitScale(wide));
+    expect(canvasWidth(widened, fitScale(widened))).toBe(1000);
+    expect(canvasHeight(widened, fitScale(widened))).toBe(250);
+  });
+
+  it("centres the rest fit in the wider canvas", () => {
+    expect(fitView(widened)).toEqual({ z: 0.5, x: 300, y: 0 });
   });
 });
 

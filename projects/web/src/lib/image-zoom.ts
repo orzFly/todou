@@ -12,7 +12,18 @@ export type Frame = {
   naturalHeight: number;
   /** Whether fit may enlarge an image smaller than the canvas (maximized). */
   upscale: boolean;
+  /**
+   * The canvas's width before the zoom widened the dialog (T-774). Fit is
+   * measured against it, so fitting a widened canvas shrinks the dialog
+   * back instead of settling on a wider fit that holds it open.
+   */
+  restWidth?: number;
 };
+
+/** The width fit is measured against: the canvas at rest. */
+function fitWidth(f: Frame): number {
+  return Math.min(f.width, f.restWidth ?? f.width);
+}
 
 export type View = { z: number; x: number; y: number };
 
@@ -21,7 +32,7 @@ export const MAX_NATURAL_SCALE = 8;
 
 export function fitScale(f: Frame): number {
   const contain = Math.min(
-    f.width / f.naturalWidth,
+    fitWidth(f) / f.naturalWidth,
     f.height / f.naturalHeight,
   );
   return f.upscale ? contain : Math.min(1, contain);
@@ -89,8 +100,17 @@ export function clampView(f: Frame, v: View): View {
  * because the canvas is measured back with clientHeight.
  */
 export function canvasHeight(f: Frame, z: number): number {
-  const restingScale = Math.min(1, f.width / f.naturalWidth);
+  const restingScale = Math.min(1, fitWidth(f) / f.naturalWidth);
   return Math.round(f.naturalHeight * Math.max(z, restingScale));
+}
+
+/**
+ * The width a restored canvas asks for at zoom `z`, the same way: the
+ * image's own, never narrower than the canvas at rest (T-774). Whole pixels
+ * past rest, because the canvas is measured back with clientWidth.
+ */
+export function canvasWidth(f: Frame, z: number): number {
+  return Math.max(Math.round(f.naturalWidth * z), f.restWidth ?? f.width);
 }
 
 /**

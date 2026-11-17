@@ -44,6 +44,7 @@ function Harness({ toolbar }: { toolbar?: HTMLElement }) {
   const [cut, setCut] = useState(50);
   const [fade, setFade] = useState(50);
   const lastHeight = useRef<number | null>(null);
+  const widening = useRef({ asked: null, rest: null });
   return (
     <>
       <CompareCanvas
@@ -52,6 +53,8 @@ function Harness({ toolbar }: { toolbar?: HTMLElement }) {
         toolbar={toolbar ?? null}
         lastHeight={lastHeight}
         held={null}
+        dialog={null}
+        widening={widening}
         cut={cut}
         onCut={setCut}
         fade={fade}

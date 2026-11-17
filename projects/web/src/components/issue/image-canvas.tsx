@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { useZoomPan } from "@/components/issue/use-zoom-pan.ts";
+import {
+  releaseWidth,
+  useZoomPan,
+  type Widening,
+} from "@/components/issue/use-zoom-pan.ts";
 import { ZoomControls } from "@/components/issue/zoom-controls.tsx";
 import { useImageLook } from "@/lib/image-look.ts";
 import { fitScale } from "@/lib/image-zoom.ts";
@@ -19,7 +23,8 @@ export const CHECKER =
  * so paging starts every image at fit; `lastHeight` carries the canvas
  * height across that remount, so the next image tweens from it. While
  * `held` is set the canvas keeps that height whatever the zoom or image
- * asks for, and moves to its own once it is cleared.
+ * asks for, and moves to its own once it is cleared. Zoomed in, it widens
+ * `dialog` with it, `widening` carrying that across paging (T-774).
  */
 export function ImageCanvas({
   src,
@@ -28,6 +33,8 @@ export function ImageCanvas({
   toolbar,
   lastHeight,
   held,
+  dialog,
+  widening,
 }: {
   src: string;
   alt: string;
@@ -35,6 +42,8 @@ export function ImageCanvas({
   toolbar: HTMLElement | null;
   lastHeight: { current: number | null };
   held: number | null;
+  dialog: HTMLElement | null;
+  widening: { current: Widening };
 }) {
   const look = useImageLook();
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
@@ -48,7 +57,14 @@ export function ImageCanvas({
     height,
     atCentre,
     handlers,
-  } = useZoomPan({ natural, maximized, lastHeight, held });
+  } = useZoomPan({
+    natural,
+    maximized,
+    lastHeight,
+    held,
+    dialog,
+    widening,
+  });
 
   // Nothing to measure or zoom; the static image is what the viewer showed
   // before T-535, and its alt text and broken-image icon are the error.
@@ -113,6 +129,7 @@ export function ImageCanvas({
           draggable={false}
           onError={() => {
             lastHeight.current = null;
+            releaseWidth(dialog, widening);
             setFailed(true);
           }}
           onLoad={(e) =>

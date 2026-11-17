@@ -15,6 +15,7 @@ import {
   CompareCanvas,
 } from "@/components/issue/compare-canvas.tsx";
 import { ImageCanvas } from "@/components/issue/image-canvas.tsx";
+import type { Widening } from "@/components/issue/use-zoom-pan.ts";
 import {
   type DocumentRender,
   DocumentView,
@@ -214,6 +215,8 @@ export function AttachmentViewerDialog({
   const [maximized, setMaximized] = useState(false);
   const [toolbar, setToolbar] = useState<HTMLElement | null>(null);
   const imageHeight = useRef<number | null>(null);
+  const [dialog, setDialog] = useState<HTMLElement | null>(null);
+  const widening = useRef<Widening>({ asked: null, rest: null });
 
   const target =
     state !== null && "items" in state ? state.items[state.index] : undefined;
@@ -230,9 +233,13 @@ export function AttachmentViewerDialog({
   const tabHref = target === undefined ? null : newTabHref(target);
   // Paging between images tweens from one's height to the next; from
   // anything else, including a closed viewer, the image lands at once.
+  // The width a zoom widened the dialog to goes the same way, at once.
   useEffect(() => {
-    if (kind !== "image" && kind !== "compare") imageHeight.current = null;
-  }, [kind]);
+    if (kind === "image" || kind === "compare") return;
+    imageHeight.current = null;
+    widening.current = { asked: null, rest: null };
+    if (dialog !== null) dialog.style.minWidth = "";
+  }, [kind, dialog]);
   const count =
     state === null
       ? 0
@@ -321,6 +328,7 @@ export function AttachmentViewerDialog({
       }}
     >
       <DialogContent
+        ref={setDialog}
         aria-describedby={undefined}
         showCloseButton={false}
         onKeyDown={(e) => {
@@ -405,6 +413,8 @@ export function AttachmentViewerDialog({
                   toolbar={toolbar}
                   lastHeight={imageHeight}
                   held={held}
+                  dialog={dialog}
+                  widening={widening}
                   cut={cut}
                   onCut={setCut}
                   fade={fade}
@@ -418,6 +428,8 @@ export function AttachmentViewerDialog({
                   toolbar={toolbar}
                   lastHeight={imageHeight}
                   held={held}
+                  dialog={dialog}
+                  widening={widening}
                 />
               ) : kind === "html" ? (
                 // Never add allow-same-origin: attachments share the API's

@@ -14,7 +14,11 @@ import type {
   ComparePair,
 } from "@/components/issue/attachment-viewer.tsx";
 import { CHECKER } from "@/components/issue/image-canvas.tsx";
-import { useZoomPan } from "@/components/issue/use-zoom-pan.ts";
+import {
+  releaseWidth,
+  useZoomPan,
+  type Widening,
+} from "@/components/issue/use-zoom-pan.ts";
 import { ZoomControls } from "@/components/issue/zoom-controls.tsx";
 import {
   CompareLabel,
@@ -69,6 +73,8 @@ export function CompareCanvas({
   toolbar,
   lastHeight,
   held,
+  dialog,
+  widening,
   cut,
   onCut,
   fade,
@@ -78,6 +84,8 @@ export function CompareCanvas({
   toolbar: HTMLElement | null;
   lastHeight: { current: number | null };
   held: number | null;
+  dialog: HTMLElement | null;
+  widening: { current: Widening };
   /** Swipe's split, in percent of the canvas width. */
   cut: number;
   onCut: (cut: number) => void;
@@ -101,14 +109,15 @@ export function CompareCanvas({
   );
   const windowHeight = useWindowHeight();
   const panes = useCallback(
-    (width: number, height: number): Pane[] => {
+    (width: number, height: number, rest: number): Pane[] => {
       if (!twoUp || natural === null) return [{ x: 0, y: 0, width, height }];
-      // The arrangement is chosen against the tallest the canvas may get,
-      // so it does not flip while a restored canvas grows with the zoom;
-      // the panes then split the canvas at the height it has now.
+      // The arrangement is chosen against the tallest the canvas may get
+      // and the width it rests at, so it does not flip while a restored
+      // canvas grows with the zoom; the panes then split the canvas at the
+      // size it has now.
       const cap = maximized ? height : windowHeight * 0.75;
       const { direction } = sideBySidePanes(
-        width,
+        rest,
         cap,
         { width: natural.w, height: natural.h },
         maximized,
@@ -129,7 +138,15 @@ export function CompareCanvas({
     },
     [twoUp, natural, maximized, windowHeight],
   );
-  const zoom = useZoomPan({ natural, panes, maximized, lastHeight, held });
+  const zoom = useZoomPan({
+    natural,
+    panes,
+    maximized,
+    lastHeight,
+    held,
+    dialog,
+    widening,
+  });
   const { frame, view, fitted, dragging, height, handlers } = zoom;
 
   // Only a mouse has a pointer resting somewhere to mark.
@@ -172,6 +189,7 @@ export function CompareCanvas({
 
   const onError = () => {
     lastHeight.current = null;
+    releaseWidth(dialog, widening);
     setFailed(true);
   };
 
