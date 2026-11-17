@@ -7,7 +7,7 @@ disable-model-invocation: true
 # Brainstorming on a todou issue
 
 - The whole exchange stays on the issue, so whoever implements it can replay every decision.
-- Questions, the spec review loop and what a spec may hold: `/todou-cli`.
+- Taking the issue, questions and the spec gate: `/todou-workflow`. Commands: `/todou-cli`.
 
 <HARD-GATE>
 No code, no scaffolding, no implementation skill until the latest spec version is `approved`. This
@@ -17,9 +17,9 @@ still pushed and approved.
 
 ## Steps
 
-1. Take the issue and watch it now (`/todou-cli`). Read the code, docs, recent commits and the issue.
+1. Take the issue and watch it now. Read the code, docs, recent commits and the issue.
 2. Ask clarifying questions on the issue: purpose, constraints, success criteria.
-3. Write the design into a scratch dir (`mktemp -d`).
+3. Write the design into a scratch dir.
 4. Self-review, then `spec push <n> <dir> --message "brainstorm v1" --wait`; revise until the latest
    version is approved.
 5. Invoke `/todou-plan`.
@@ -28,7 +28,6 @@ still pushed and approved.
 
 - Several independent subsystems: an issue each, then brainstorm the first.
 - Prefer multiple-choice questions with options you already researched; the homework is yours.
-- A need outside this issue: `issue create` at once.
 - Weigh two or three approaches. The comparison, rejected options and reasons go in the spec; ask on
   the issue only when the choice is the user's to make.
 - Follow existing patterns. Fixes the work needs go in the design; an optional refactor is a question.
@@ -37,11 +36,9 @@ still pushed and approved.
 
 ## The documents
 
-- `proposal.md`: as `/todou-cli` describes.
+- `proposal.md`: as `/todou-workflow` describes.
 - `brainstorm.md`: approaches weighed, chosen, rejected and why; architecture, components, data flow,
   error handling, testing — each scaled to its complexity.
-- Self-review: no placeholders, no contradictions, one plan's worth of scope, nothing readable two ways.
-- Leave everything on the tracker: mockups attached, conclusions in the spec.
 
 ## Visual material
 

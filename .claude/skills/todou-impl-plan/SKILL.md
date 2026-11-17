@@ -5,16 +5,16 @@ description: Execute an approved todou spec plan — pull the spec set from the 
 
 # todou implement plan
 
+- Taking the issue, the spec gate and the finish: `/todou-workflow`. Commands: `/todou-cli`.
+
 ## Steps
 
-1. `spec status <n>`: the latest version must be `approved`. Otherwise follow `/todou-cli`, "Spec
-   documents", and do not start.
+1. `spec status <n>`: the latest version must be `approved`. Otherwise do not start.
 2. `spec pull <n> <dir>` into a scratch dir. Read whichever exist: `proposal.md`, `design.md`,
    `api.md`, `plan.md`.
-3. Take the issue and watch it now (`/todou-cli`). Follow `plan.md`, tracking several steps in a task
-   list.
-4. Verify against the plan's acceptance criteria, commit on your branch without merging, move the
-   issue to Ready to Ship, post a summary comment, report in the terminal.
+3. Take the issue and watch it now. Follow `plan.md`, tracking several steps in a task list.
+4. Verify against the plan's acceptance criteria, then finish as development complete
+   (`/todou-workflow`, "Taking an issue").
 
 ## When reality contradicts the plan
 

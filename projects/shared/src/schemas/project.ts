@@ -241,7 +241,7 @@ export const StatusUsage = z.object({
 export type StatusUsage = z.infer<typeof StatusUsage>;
 
 /**
- * The status flow agents work in (see the todou-cli skill). Shared because
+ * The status flow agents work in (see the todou-workflow skill). Shared because
  * two places must agree on it: the server seeds it into every new project,
  * and `todou status init` applies it to projects that predate it.
  *

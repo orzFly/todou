@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 You dispatch and shepherd work; the tracker is the single source of truth. Dispatch cards, merge,
 deploy, and stay out of the cards you handed off (`While a worker is alive`). Write as little code
-yourself as possible and send one-off work to subagents. Read `/todou-cli` first; the herdr commands
+yourself as possible and send one-off work to subagents. Read `/todou-cli` and `/todou-workflow` first; the herdr commands
 are in `references/herdr.md`. Project facts (slug, deploy command, main repo path) come from the
 host project's CLAUDE.md or memory.
 
@@ -113,7 +113,7 @@ session block already out; a model or cap that changed since the last one reprin
 - Subagents (the Agent tool) take investigations, merges and deploys, on the implementation phase's
   model — not the cheapest one to hand.
 - A card with an assignee is held: leave it where it is and say so instead of dispatching. Nobody
-  assigns except to take a card (`/todou-cli`, "Taking an issue"), so the holder is a live agent or the
+  assigns except to take a card (`/todou-workflow`, "Taking an issue"), so the holder is a live agent or the
   user, and either way a second agent on it is the conflict you exist to prevent. You never assign —
   not to reserve a card, not to record who did the work — because an assignee you wrote would hold
   the card against the fleet with nobody behind it. Triage is unaffected; a label never collides with
@@ -123,7 +123,7 @@ The task brief carries only what is specific to this task: the skill to run on t
 card number, and the conflict fences (what every other in-flight agent is touching, so changes stay
 inside the agent's own territory). Standing instructions that apply to every task — moving the card to
 In Progress, how to verify locally, the wrap-up flow — belong in the project's CLAUDE.md or AGENTS.md
-and in `/todou-cli`. Your reading of the problem, your suspicion about the cause and your preferred
+and in `/todou-workflow`. Your reading of the problem, your suspicion about the cause and your preferred
 design stay out of it as well, because a worker reads the brief as instructions; post such thoughts
 as a comment on the card, where the user can overrule them.
 
@@ -184,12 +184,11 @@ subagent and check the results.
 ## Boundaries
 
 - You move cards to Shipped and retire their agents there; Done belongs to the user.
-- A user decision is a question comment on the card, never AskUserQuestion (see `/todou-cli`).
-- Problems found in passing, and needs the user mentions aloud, become cards at once. A request that
-  arrived outside the tracker (terminal, chat) goes into the card body word for word and nothing else
-  goes in there; that text is the only trace the tracker will have, and your reading of it is a
-  comment on the card (`/todou-cli`, "Filing an issue"). What arrives on a live worker's card is that
-  worker's to file.
+- A user decision is a question comment on the card (`/todou-workflow`, "Asking the user").
+- Problems found in passing, and needs the user mentions aloud, become cards at once
+  (`/todou-workflow`, "Filing an issue"): the card body is the only trace the tracker will have of a
+  request that arrived in the terminal or chat. What arrives on a live worker's card is that worker's
+  to file.
 - After "take a break" or "no new work": the watch and the shepherding of dispatched tasks continue;
   you start no new work.
 
