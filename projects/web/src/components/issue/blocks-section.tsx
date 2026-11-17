@@ -5,6 +5,7 @@ import { useCan } from "@/api/queries.ts";
 import { RefPicker } from "@/components/issue/ref-picker.tsx";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
+import { TrashedBlocker } from "@/components/shared/trashed-blocker.tsx";
 import { Button } from "@/components/ui/button";
 
 type Direction = "blocked_by" | "blocks";
@@ -115,17 +116,27 @@ function BlockList({
         <ul className="space-y-1">
           {refs.map((ref) => (
             <li key={ref.edge_id} className="flex items-baseline gap-1">
+              {/* The hanging indent is the leading status glyph's width
+                  (size-3.5 + mr-0.5), so a wrapped title continues under
+                  its own text rather than under the glyph. */}
               <span
                 className={
                   ref.cleared_at === null
-                    ? "min-w-0"
-                    : "min-w-0 text-muted-foreground line-through"
+                    ? "min-w-0 pl-4 -indent-4"
+                    : "min-w-0 pl-4 -indent-4 text-muted-foreground line-through"
                 }
               >
                 {ref.hidden || ref.project === null || ref.number === null ? (
                   <span className="text-muted-foreground italic">
                     a card you cannot see
                   </span>
+                ) : direction === "blocked_by" && ref.blocker_deleted ? (
+                  <TrashedBlocker
+                    slug={ref.project}
+                    number={ref.number}
+                    spelling={ref.ref}
+                    pageSlug={slug}
+                  />
                 ) : (
                   <IssueLink
                     slug={ref.project}
@@ -133,14 +144,15 @@ function BlockList({
                     pageSlug={slug}
                   />
                 )}
+                {direction === "blocked_by" &&
+                  ref.blocker_deleted &&
+                  ref.cleared_at === null && (
+                    <span className="text-xs whitespace-nowrap text-muted-foreground">
+                      {" "}
+                      (in the trash)
+                    </span>
+                  )}
               </span>
-              {direction === "blocked_by" &&
-                ref.blocker_deleted &&
-                ref.cleared_at === null && (
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    (in the trash)
-                  </span>
-                )}
               {editable && (
                 <button
                   type="button"

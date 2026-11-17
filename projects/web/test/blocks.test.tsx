@@ -136,19 +136,62 @@ describe("BlocksSection (T-377)", () => {
     expect(section.textContent).toContain("a card you cannot see");
   });
 
-  it("says the blocker is in the trash, which the ref cannot", async () => {
+  it("names a trashed blocker by its title, as the badge preview does (T-727)", async () => {
     const client = clientAs("writer");
+    // What the reference batch answers for a card in the trash.
     client.setQueryData(issueRefQuery("p", 372).queryKey, null);
+    const details = vi.spyOn(api, "getIssue").mockResolvedValue({
+      ...listItem({ number: 372, title: "Trashed prerequisite" }),
+      body: "",
+      deleted_at: "2026-09-12T00:00:00Z",
+    });
     const view = renderWithProviders(
       <BlocksSection
         slug="p"
-        issue={issue({ blocked_by: [blockRef({ blocker_deleted: true })] })}
+        issue={issue({
+          blocked_by: [blockRef({ blocker_deleted: true, ref: "P-372" })],
+        })}
         trashed={false}
       />,
       client,
     );
     const section = await view.findByTestId("blocks-blocked_by");
+    await waitFor(() =>
+      expect(section.textContent).toContain("P-372 Trashed prerequisite"),
+    );
     expect(section.textContent).toContain("(in the trash)");
+    const link = section.querySelector("a[data-issue-link='372']");
+    expect(link?.getAttribute("href")).toBe("/projects/p/issues/372");
+    // In the title's own text box, so it follows the last word of a wrapped
+    // title instead of sitting beside the box's first line.
+    expect(link?.nextElementSibling?.textContent?.trim()).toBe(
+      "(in the trash)",
+    );
+    expect(details.mock.calls).toEqual([["p", 372]]);
+  });
+
+  it("reads a blocks entry through the reference batch even when this card is trashed", async () => {
+    const client = clientAs("writer");
+    client.setQueryData(issueRefQuery("p", 372).queryKey, {
+      ...listItem({ number: 372, title: "Downstream card" }),
+    });
+    const details = vi.spyOn(api, "getIssue");
+    const view = renderWithProviders(
+      <BlocksSection
+        slug="p"
+        // Every edge out of a trashed card carries `blocker_deleted`; the card
+        // at the other end of a blocks entry is not the one in the trash.
+        issue={issue({ blocks: [blockRef({ blocker_deleted: true })] })}
+        trashed={true}
+      />,
+      client,
+    );
+    const section = await view.findByTestId("blocks-blocks");
+    await waitFor(() =>
+      expect(section.textContent).toContain("Downstream card"),
+    );
+    expect(section.textContent).not.toContain("(in the trash)");
+    expect(details).not.toHaveBeenCalled();
   });
 
   it("offers no editing to a reader, and none on a trashed card", async () => {

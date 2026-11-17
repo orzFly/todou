@@ -1,8 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import type { BlockRef } from "@todou/shared";
 import type { ReactNode } from "react";
-import { issueQuery } from "@/api/issues.ts";
 import {
   CLOSE_DELAY_MS,
   HoverDepth,
@@ -10,7 +7,7 @@ import {
   useCanHoverPreview,
 } from "@/components/shared/hover-preview.ts";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
-import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { TrashedBlocker } from "@/components/shared/trashed-blocker.tsx";
 import {
   HoverCard,
   HoverCardContent,
@@ -46,7 +43,8 @@ export function BlockedHoverCard({
               titles without a request behind every badge on the page. */}
           <ul className="max-h-64 space-y-1 overflow-y-auto overscroll-contain text-sm wrap-anywhere">
             {refs.map((ref) => (
-              <li key={ref.edge_id}>
+              // Hang wrapped titles past the status glyph, as the sidebar does.
+              <li key={ref.edge_id} className="pl-4 -indent-4">
                 {ref.hidden || ref.project === null || ref.number === null ? (
                   <span className="text-muted-foreground italic">
                     a card you cannot see
@@ -55,7 +53,8 @@ export function BlockedHoverCard({
                   <TrashedBlocker
                     slug={ref.project}
                     number={ref.number}
-                    spelled={`${ref.project === slug ? "" : `${ref.project}/`}${ref.ref ?? `#${ref.number}`}`}
+                    spelling={ref.ref}
+                    pageSlug={slug}
                   />
                 ) : (
                   <IssueLink
@@ -76,34 +75,5 @@ export function BlockedHoverCard({
         </HoverDepth.Provider>
       </HoverCardContent>
     </HoverCard>
-  );
-}
-
-/**
- * The normal reference batch excludes trash. The detail endpoint applies
- * trash read permissions, and shares its cache with the issue page.
- */
-function TrashedBlocker({
-  slug,
-  number,
-  spelled,
-}: {
-  slug: string;
-  number: number;
-  spelled: string;
-}) {
-  const issue = useQuery({ ...issueQuery(slug, number), staleTime: 60_000 });
-  const returnState = useReturnLinkState();
-  if (!issue.data) return <span>{spelled}</span>;
-  return (
-    <Link
-      to="/projects/$slug/issues/$number"
-      params={{ slug, number: String(number) }}
-      state={returnState}
-      className="font-medium hover:underline"
-    >
-      <span className="font-normal text-muted-foreground">{spelled} </span>
-      {issue.data.title}
-    </Link>
   );
 }

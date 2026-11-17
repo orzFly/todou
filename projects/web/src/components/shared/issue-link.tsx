@@ -5,6 +5,7 @@ import {
   formatRef,
   type LinkTarget,
   parseInternalHref,
+  type Status,
 } from "@todou/shared";
 import { CircleDotIcon, CircleIcon, CircleSlashIcon } from "lucide-react";
 import { type ComponentProps, Fragment, type ReactNode } from "react";
@@ -303,32 +304,7 @@ export function IssueLink({
     >
       {item && (
         <>
-          {enumLookup(
-            {
-              open: (
-                <CircleDotIcon
-                  aria-hidden
-                  className={iconClass}
-                  style={{ color: item.status.color }}
-                />
-              ),
-              closed: (
-                <CircleSlashIcon
-                  aria-hidden
-                  className={iconClass}
-                  style={{ color: item.status.color }}
-                />
-              ),
-            },
-            item.status.category,
-            () => (
-              <CircleIcon
-                aria-hidden
-                className={cn(iconClass, "text-muted-foreground")}
-              />
-            ),
-            "issue status category",
-          )}
+          <IssueStatusIcon status={item.status} className={iconClass} />
           {isComment && (
             <CommentReference
               spelled={spelled}
@@ -386,6 +362,42 @@ export function IssueLink({
     );
   }
   return link;
+}
+
+/** The glyph a resolved reference leads with, coloured by its status. */
+export function IssueStatusIcon({
+  status,
+  className,
+}: {
+  status: Pick<Status, "category" | "color">;
+  className: string;
+}) {
+  return enumLookup(
+    {
+      open: (
+        <CircleDotIcon
+          aria-hidden
+          className={className}
+          style={{ color: status.color }}
+        />
+      ),
+      closed: (
+        <CircleSlashIcon
+          aria-hidden
+          className={className}
+          style={{ color: status.color }}
+        />
+      ),
+    },
+    status.category,
+    () => (
+      <CircleIcon
+        aria-hidden
+        className={cn(className, "text-muted-foreground")}
+      />
+    ),
+    "issue status category",
+  );
 }
 
 /**
