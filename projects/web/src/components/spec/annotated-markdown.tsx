@@ -16,6 +16,7 @@ import {
   useState,
 } from "react";
 import type Markdown from "react-markdown";
+import { CompareViewerProvider } from "@/components/issue/attachment-markdown.tsx";
 import {
   COMMENT_HEADER_ACTION,
   COMMENT_HEADER_ROW,
@@ -1039,16 +1040,18 @@ export const AnnotatedMarkdown = memo(function AnnotatedMarkdown({
       <CompareLabelsContext.Provider
         value={compareLabels ?? DEFAULT_COMPARE_LABELS}
       >
-        <MarkdownViewWithPlugins
-          slug={slug}
-          issueNumber={issueNumber}
-          rehypePlugins={rehypePlugins}
-          fenceBaselines={fenceBaselines}
-          collapseLongFences={false}
-          remarkPlugins={remarkPlugins}
-        >
-          {body}
-        </MarkdownViewWithPlugins>
+        <CompareViewerProvider slug={slug} issueNumber={issueNumber}>
+          <MarkdownViewWithPlugins
+            slug={slug}
+            issueNumber={issueNumber}
+            rehypePlugins={rehypePlugins}
+            fenceBaselines={fenceBaselines}
+            collapseLongFences={false}
+            remarkPlugins={remarkPlugins}
+          >
+            {body}
+          </MarkdownViewWithPlugins>
+        </CompareViewerProvider>
       </CompareLabelsContext.Provider>
 
       {chips.map((chip) => (

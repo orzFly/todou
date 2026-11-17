@@ -1774,6 +1774,151 @@ html[data-header-settling] [data-header-follow] {
   .media-compare-label[data-side="before"] .media-compare-dims mark {
     background: color-mix(in oklab, var(--diff-deletion) 18%, transparent);
   }
+  /* The attachment viewer's comparison (T-733, compare-canvas.tsx). Panes and
+     layers are placed by the component; every picture in them carries the
+     same transform. */
+  .compare-viewer-pane,
+  .compare-viewer-stack {
+    position: absolute;
+    overflow: hidden;
+  }
+  .compare-viewer-stack {
+    inset: 0;
+  }
+  .compare-viewer-pane::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 2;
+    height: 2px;
+    pointer-events: none;
+  }
+  .compare-viewer-pane[data-side="before"]::before {
+    background: var(--diff-deletion);
+  }
+  .compare-viewer-pane[data-side="after"]::before {
+    background: var(--diff-addition);
+  }
+  .compare-viewer-layer {
+    position: absolute;
+    inset: 0;
+  }
+  /* Cut on the full-canvas layers, as in the inline swipe, so the split is a
+     place on screen and the pictures pan under it. */
+  .compare-viewer-canvas[data-mode="swipe"]
+    .compare-viewer-layer[data-side="before"] {
+    clip-path: inset(0 calc(100% - var(--cut)) 0 0);
+  }
+  .compare-viewer-canvas[data-mode="swipe"]
+    .compare-viewer-layer[data-side="after"] {
+    clip-path: inset(0 0 0 var(--cut));
+  }
+  .compare-viewer-canvas[data-mode="diff"] .compare-viewer-stack {
+    isolation: isolate;
+  }
+  .compare-viewer-canvas[data-mode="diff"] .compare-viewer-layer img {
+    background: #fff;
+  }
+  .compare-viewer-canvas[data-mode="diff"]
+    .compare-viewer-layer[data-side="after"] {
+    mix-blend-mode: difference;
+  }
+  .compare-viewer-crosshair {
+    position: absolute;
+    z-index: 3;
+    width: 21px;
+    height: 21px;
+    margin: -10px 0 0 -10px;
+    pointer-events: none;
+  }
+  .compare-viewer-crosshair::before,
+  .compare-viewer-crosshair::after {
+    content: "";
+    position: absolute;
+    background: #fff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.65);
+  }
+  .compare-viewer-crosshair::before {
+    left: 10px;
+    top: 0;
+    width: 1px;
+    height: 21px;
+  }
+  .compare-viewer-crosshair::after {
+    top: 10px;
+    left: 0;
+    width: 21px;
+    height: 1px;
+  }
+  .compare-viewer-handle {
+    z-index: 4;
+  }
+  .compare-viewer-grip {
+    width: 32px;
+    height: 32px;
+    cursor: ew-resize;
+    touch-action: none;
+    pointer-events: auto;
+  }
+  /* A 52px target round a 32px grip. */
+  .compare-viewer-grip::after {
+    content: "";
+    position: absolute;
+    inset: -10px;
+    border-radius: 9999px;
+  }
+  .compare-viewer-canvas:has(.compare-viewer-swipe:focus-visible)
+    .compare-viewer-grip {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .compare-viewer-barbox {
+    container-type: inline-size;
+  }
+  .compare-viewer-bar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+  }
+  .compare-viewer-bar > .media-compare-label[data-side="after"] {
+    justify-self: end;
+  }
+  .compare-viewer-extra {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: center;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+  }
+  @container (max-width: 40rem) {
+    .compare-viewer-bar {
+      grid-template-columns: 1fr 1fr;
+    }
+    .compare-viewer-bar .media-compare-modes {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      justify-self: center;
+    }
+    .compare-viewer-bar > .media-compare-label {
+      grid-row: 2;
+    }
+    .compare-viewer-extra {
+      grid-row: 3;
+    }
+    .compare-viewer-bar .media-compare-long {
+      display: none;
+    }
+    .compare-viewer-bar .media-compare-short {
+      display: inline;
+    }
+  }
+  .compare-viewer-download[data-side="before"] .media-compare-tick {
+    background: var(--diff-deletion);
+  }
+  .compare-viewer-download[data-side="after"] .media-compare-tick {
+    background: var(--diff-addition);
+  }
   @media (prefers-reduced-motion: reduce) {
     .media-compare * {
       transition: none;

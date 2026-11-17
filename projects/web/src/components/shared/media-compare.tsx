@@ -83,7 +83,44 @@ export function MediaCompare({
   const mode = overlayable ? stored : "2up";
   const pressed = replacement === undefined ? mode : null;
 
-  const modes = (
+  return (
+    <div
+      className={cn("media-compare select-none", className)}
+      data-backdrop={backdrop}
+    >
+      <FenceFrame
+        text={text}
+        leading={<CompareModes pressed={pressed} overlayable={overlayable} />}
+        actions={actions}
+      >
+        {replacement ??
+          (mode === "2up" || before.size === null || after.size === null ? (
+            <SideBySide before={before} after={after} align={align} />
+          ) : (
+            <Overlay
+              mode={mode}
+              before={{ ...before, size: before.size }}
+              after={{ ...after, size: after.size }}
+              align={align}
+            />
+          ))}
+      </FenceFrame>
+    </div>
+  );
+}
+
+/**
+ * The four modes as one segmented control, writing the page's shared mode.
+ * The overlay three are off until both sides have a size to line up.
+ */
+export function CompareModes({
+  pressed,
+  overlayable,
+}: {
+  pressed: CompareMode | null;
+  overlayable: boolean;
+}) {
+  return (
     <fieldset
       aria-label="Comparison"
       className="media-compare-modes inline-flex h-7 shrink-0 items-center rounded-full border p-0.5"
@@ -110,27 +147,6 @@ export function MediaCompare({
         </button>
       ))}
     </fieldset>
-  );
-
-  return (
-    <div
-      className={cn("media-compare select-none", className)}
-      data-backdrop={backdrop}
-    >
-      <FenceFrame text={text} leading={modes} actions={actions}>
-        {replacement ??
-          (mode === "2up" || before.size === null || after.size === null ? (
-            <SideBySide before={before} after={after} align={align} />
-          ) : (
-            <Overlay
-              mode={mode}
-              before={{ ...before, size: before.size }}
-              after={{ ...after, size: after.size }}
-              align={align}
-            />
-          ))}
-      </FenceFrame>
-    </div>
   );
 }
 
@@ -302,7 +318,7 @@ function Overlay({
  * because scaling hides it: two screenshots drawn at one width look the same
  * size whatever their pixels say. A dimension the two disagree on is marked.
  */
-function CompareLabel({
+export function CompareLabel({
   which,
   side,
   other,

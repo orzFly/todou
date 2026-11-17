@@ -1,9 +1,13 @@
+import { Maximize2Icon } from "lucide-react";
 import {
   type ComponentProps,
+  createContext,
   type ReactNode,
   type SyntheticEvent,
   useContext,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -17,12 +21,18 @@ import {
   AttachmentRichLink,
   DeletedAttachmentMark,
 } from "@/components/issue/attachment-list.tsx";
+import {
+  AttachmentViewerDialog,
+  type ComparePair,
+  type ViewerState,
+} from "@/components/issue/attachment-viewer.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
 import {
   CompareLabelsContext,
   type CompareSide,
   MediaCompare,
 } from "@/components/shared/media-compare.tsx";
+import { Button } from "@/components/ui/button";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import {
   type AttachmentRef,
@@ -249,11 +259,109 @@ function SwapSide({
   );
 }
 
+type CompareEntry = {
+  /** Where the comparison sits in the document. */
+  anchor: () => HTMLElement | null;
+  /** Null while either side has no size, or failed. */
+  pair: () => ComparePair | null;
+};
+
+type CompareViewer = {
+  register: (key: symbol, entry: CompareEntry) => () => void;
+  open: (key: symbol) => void;
+};
+
+/**
+ * The image comparisons on one page and the one viewer they open in (T-733),
+ * so ‹ › there pages through them all in document order.
+ */
+const CompareViewerContext = createContext<CompareViewer | null>(null);
+
+export function CompareViewerProvider({
+  slug,
+  issueNumber,
+  children,
+}: {
+  slug: string;
+  issueNumber: number;
+  children: ReactNode;
+}) {
+  const entries = useRef(new Map<symbol, CompareEntry>());
+  const [state, setState] = useState<ViewerState | null>(null);
+  // Never a new value: the document under the provider must not re-render
+  // because a viewer opened over it.
+  const [viewer] = useState<CompareViewer>(() => ({
+    register: (key, entry) => {
+      entries.current.set(key, entry);
+      return () => {
+        entries.current.delete(key);
+      };
+    },
+    open: (key) => {
+      // Taken as the page stands now and kept while the viewer is open.
+      const shown = [...entries.current]
+        .map(([k, entry]) => ({
+          k,
+          anchor: entry.anchor(),
+          pair: entry.pair(),
+        }))
+        .filter(
+          (e): e is { k: symbol; anchor: HTMLElement; pair: ComparePair } =>
+            e.anchor !== null && e.pair !== null,
+        )
+        .sort((a, b) =>
+          a.anchor.compareDocumentPosition(b.anchor) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+            ? -1
+            : 1,
+        );
+      const index = shown.findIndex((e) => e.k === key);
+      if (index < 0) return;
+      setState({ compare: shown.map((e) => e.pair), index });
+    },
+  }));
+  return (
+    <CompareViewerContext.Provider value={viewer}>
+      {children}
+      <AttachmentViewerDialog
+        state={state}
+        onNavigate={(index) => setState((s) => s && { ...s, index })}
+        onClose={() => setState(null)}
+        slug={slug}
+        issueNumber={issueNumber}
+      />
+    </CompareViewerContext.Provider>
+  );
+}
+
+/** What the viewer needs of one side beyond its size: name, type, bytes. */
+function useSwapTarget(
+  slug: string,
+  issueNumber: number,
+  image: { src: string; alt: string },
+) {
+  const ref = parseAttachmentHref(image.src);
+  const address = useAttachmentAddress(ref);
+  const found = useAttachmentForRef(slug, issueNumber, address);
+  const here = address != null && address.slug === slug;
+  // The address the page drew it from, as MarkdownAttachmentImage picks it,
+  // so the viewer reuses the loaded image rather than fetching it again.
+  const viaAlias =
+    found != null && !(here && ref !== null && ref.id === found.id);
+  return {
+    src: viaAlias ? found.url : image.src,
+    filename: found?.filename ?? (image.alt || "image"),
+    contentType: found?.content_type,
+    bytes: found?.size,
+  };
+}
+
 /**
  * A swapped image in the spec comparison (T-722): the image adapter for
  * `MediaCompare`. Each side resolves its address as any markdown image does,
  * so a deleted file shows its mark and a click opens the viewer; the sizes
- * they report are what let the overlay modes line the two up.
+ * they report are what let the overlay modes line the two up. The head's
+ * button opens the pair in the viewer instead, at one zoom (T-733).
  */
 export function ImageSwapCompare({
   slug,
@@ -272,6 +380,33 @@ export function ImageSwapCompare({
   // undefined until reported; null once it failed.
   const [beforeSize, setBeforeSize] = useState<ImageSize | null>();
   const [afterSize, setAfterSize] = useState<ImageSize | null>();
+  const beforeTarget = useSwapTarget(slug, issueNumber, before);
+  const afterTarget = useSwapTarget(slug, issueNumber, after);
+  const pair: ComparePair | null =
+    beforeSize == null || afterSize == null
+      ? null
+      : {
+          before: { ...beforeTarget, label: labels.before, size: beforeSize },
+          after: { ...afterTarget, label: labels.after, size: afterSize },
+        };
+
+  const viewer = useContext(CompareViewerContext);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const latest = useRef(pair);
+  useLayoutEffect(() => {
+    latest.current = pair;
+  });
+  const [key] = useState(() => Symbol("comparison"));
+  useEffect(
+    () =>
+      viewer?.register(key, {
+        anchor: () => anchor.current,
+        pair: () => latest.current,
+      }),
+    [viewer, key],
+  );
+  // Outside a page that provides one, a comparison views alone.
+  const [own, setOwn] = useState<ViewerState | null>(null);
   const side = (
     label: string,
     image: { src: string; alt: string },
@@ -292,12 +427,41 @@ export function ImageSwapCompare({
     failed: size === null,
   });
   return (
-    <MediaCompare
-      before={side(labels.before, before, beforeSize, setBeforeSize)}
-      after={side(labels.after, after, afterSize, setAfterSize)}
-      align="start"
-      backdrop="checker"
-      className={className}
-    />
+    <>
+      <MediaCompare
+        before={side(labels.before, before, beforeSize, setBeforeSize)}
+        after={side(labels.after, after, afterSize, setAfterSize)}
+        align="start"
+        backdrop="checker"
+        actions={
+          <Button
+            ref={anchor}
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Open in the viewer"
+            title="Open in the viewer"
+            className="text-muted-foreground"
+            disabled={pair === null}
+            onClick={() => {
+              if (viewer !== null) viewer.open(key);
+              else if (pair !== null) setOwn({ compare: [pair], index: 0 });
+            }}
+          >
+            <Maximize2Icon className="size-3.5" />
+          </Button>
+        }
+        className={className}
+      />
+      {viewer === null && (
+        <AttachmentViewerDialog
+          state={own}
+          onNavigate={() => {}}
+          onClose={() => setOwn(null)}
+          slug={slug}
+          issueNumber={issueNumber}
+        />
+      )}
+    </>
   );
 }

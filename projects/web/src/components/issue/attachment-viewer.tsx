@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { attachmentTextQuery } from "@/api/attachments.ts";
+import {
+  CompareBar,
+  CompareCanvas,
+} from "@/components/issue/compare-canvas.tsx";
 import { ImageCanvas } from "@/components/issue/image-canvas.tsx";
 import {
   type DocumentRender,
@@ -53,11 +57,29 @@ function newTabHref(target: PreviewTarget): string | null {
 const RELEASE_DELAY = 400;
 const RELEASE_NOW = ["keydown", "pointerdown", "wheel"] as const;
 
-/** What the viewer is showing: a post's attachment set and a position. */
-export type ViewerState = {
-  items: PreviewTarget[];
-  index: number;
+/** One side of an image comparison, as the viewer draws and offers it. */
+export type CompareImage = {
+  /** The side's tag, such as "v2". */
+  label: string;
+  /** Where it is drawn and downloaded from. */
+  src: string;
+  filename: string;
+  /** Natural size, already measured where the comparison was drawn. */
+  size: { width: number; height: number };
+  /** Known only when the image resolved to an attachment. */
+  contentType?: string;
+  bytes?: number;
 };
+
+export type ComparePair = { before: CompareImage; after: CompareImage };
+
+/**
+ * What the viewer is showing, and the position in it: a post's attachment
+ * set, or the image comparisons on a page (T-733).
+ */
+export type ViewerState =
+  | { items: PreviewTarget[]; index: number }
+  | { compare: ComparePair[]; index: number };
 
 type TextPaneProps = {
   target: PreviewTarget;
@@ -170,7 +192,8 @@ function DownloadOnlyPane({ target }: { target: PreviewTarget }) {
  * The attachment viewer (T-58): one dialog for images, sandboxed HTML,
  * text/markdown, and download-only fallbacks. A post's attachments page
  * with ‹ › / arrow keys (controls live in the title bar, never floated
- * over the content), and every kind offers native fullscreen.
+ * over the content), and every kind offers native fullscreen. A page's
+ * image comparisons page the same way, two images at one zoom (T-733).
  */
 export function AttachmentViewerDialog({
   state,
@@ -192,15 +215,31 @@ export function AttachmentViewerDialog({
   const [toolbar, setToolbar] = useState<HTMLElement | null>(null);
   const imageHeight = useRef<number | null>(null);
 
-  const target = state?.items[state.index];
-  const kind = target === undefined ? null : previewKind(target);
+  const target =
+    state !== null && "items" in state ? state.items[state.index] : undefined;
+  const pair =
+    state !== null && "compare" in state
+      ? state.compare[state.index]
+      : undefined;
+  const kind =
+    pair !== undefined
+      ? "compare"
+      : target === undefined
+        ? null
+        : previewKind(target);
   const tabHref = target === undefined ? null : newTabHref(target);
   // Paging between images tweens from one's height to the next; from
   // anything else, including a closed viewer, the image lands at once.
   useEffect(() => {
-    if (kind !== "image") imageHeight.current = null;
+    if (kind !== "image" && kind !== "compare") imageHeight.current = null;
   }, [kind]);
-  const count = state?.items.length ?? 0;
+  const count =
+    state === null
+      ? 0
+      : "items" in state
+        ? state.items.length
+        : state.compare.length;
+  const noun = pair !== undefined ? "comparison" : "attachment";
 
   // While the pointer is over − 100%▾ + or ‹ ›, the image keeps the height
   // it had when the pointer arrived, and takes its own once the pointer
@@ -259,6 +298,15 @@ export function AttachmentViewerDialog({
   useEffect(() => {
     if (!open) setHeld(null);
   }, [open]);
+  // A comparison's split and opacity carry across paging and mode changes,
+  // and start over at every opening.
+  const [cut, setCut] = useState(50);
+  const [fade, setFade] = useState(50);
+  useEffect(() => {
+    if (open) return;
+    setCut(50);
+    setFade(50);
+  }, [open]);
 
   const step = (delta: number) => {
     if (state === null || count < 2) return;
@@ -289,11 +337,15 @@ export function AttachmentViewerDialog({
             : "sm:max-w-5xl",
         )}
       >
-        {target && (
+        {(target !== undefined || pair !== undefined) && (
           <>
             <div className="flex items-center gap-1">
               <DialogTitle className="min-w-0 flex-1 truncate">
-                {target.filename}
+                {pair === undefined
+                  ? target?.filename
+                  : pair.before.filename === pair.after.filename
+                    ? pair.after.filename
+                    : `${pair.before.filename} → ${pair.after.filename}`}
               </DialogTitle>
               <span
                 ref={setHoldRegion}
@@ -310,7 +362,7 @@ export function AttachmentViewerDialog({
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      aria-label="previous attachment"
+                      aria-label={`previous ${noun}`}
                       onClick={() => step(-1)}
                     >
                       <ChevronLeftIcon />
@@ -321,7 +373,7 @@ export function AttachmentViewerDialog({
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      aria-label="next attachment"
+                      aria-label={`next ${noun}`}
                       onClick={() => step(1)}
                     >
                       <ChevronRightIcon />
@@ -345,7 +397,19 @@ export function AttachmentViewerDialog({
                 maximized ? "flex-1" : "max-h-[75vh]",
               )}
             >
-              {kind === "image" ? (
+              {pair !== undefined ? (
+                <CompareCanvas
+                  key={`${pair.before.src} ${pair.after.src}`}
+                  pair={pair}
+                  maximized={maximized}
+                  toolbar={toolbar}
+                  lastHeight={imageHeight}
+                  held={held}
+                  cut={cut}
+                  onCut={setCut}
+                  fade={fade}
+                />
+              ) : target === undefined ? null : kind === "image" ? (
                 <ImageCanvas
                   key={target.url}
                   src={target.url}
@@ -382,43 +446,89 @@ export function AttachmentViewerDialog({
                 <DownloadOnlyPane target={target} />
               )}
             </div>
-            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-              <span className="truncate">
-                {[
-                  target.content_type,
-                  target.size !== undefined
-                    ? formatSize(target.size)
-                    : undefined,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-              <span className="flex shrink-0 items-center gap-3">
-                {tabHref !== null && (
+            {pair !== undefined && (
+              <>
+                <CompareBar pair={pair} fade={fade} onFade={setFade} />
+                <CompareFooter pair={pair} />
+              </>
+            )}
+            {target !== undefined && (
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span className="truncate">
+                  {[
+                    target.content_type,
+                    target.size !== undefined
+                      ? formatSize(target.size)
+                      : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                <span className="flex shrink-0 items-center gap-3">
+                  {tabHref !== null && (
+                    <a
+                      href={tabHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-medium hover:underline"
+                    >
+                      <ExternalLinkIcon className="size-3.5" />
+                      Open in new tab
+                    </a>
+                  )}
                   <a
-                    href={tabHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href={target.url}
+                    download={target.filename}
                     className="inline-flex items-center gap-1 font-medium hover:underline"
                   >
-                    <ExternalLinkIcon className="size-3.5" />
-                    Open in new tab
+                    <DownloadIcon className="size-3.5" />
+                    Download
                   </a>
-                )}
-                <a
-                  href={target.url}
-                  download={target.filename}
-                  className="inline-flex items-center gap-1 font-medium hover:underline"
-                >
-                  <DownloadIcon className="size-3.5" />
-                  Download
-                </a>
-              </span>
-            </div>
+                </span>
+              </div>
+            )}
           </>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * A comparison's footer: the new side's type and both sizes, and each side
+ * to download. No new tab: the comparison is the thing being looked at.
+ */
+function CompareFooter({ pair }: { pair: ComparePair }) {
+  const { before, after } = pair;
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+      <span className="truncate">
+        {[
+          after.contentType,
+          before.bytes !== undefined && after.bytes !== undefined
+            ? `${formatSize(before.bytes)} → ${formatSize(after.bytes)}`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+      </span>
+      <span className="flex shrink-0 items-center gap-3">
+        {(["before", "after"] as const).map((which) => (
+          <a
+            key={which}
+            href={pair[which].src}
+            download={pair[which].filename}
+            data-side={which}
+            aria-label={`Download ${pair[which].label}`}
+            className="compare-viewer-download inline-flex items-center gap-1 font-medium hover:underline"
+          >
+            <span className="media-compare-tick" />
+            <DownloadIcon className="size-3.5" />
+            {pair[which].label}
+          </a>
+        ))}
+      </span>
+    </div>
   );
 }
 

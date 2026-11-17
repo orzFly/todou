@@ -150,3 +150,48 @@ export function wheelFactor(
     deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 400 : deltaY;
   return Math.exp(-px * (ctrlKey ? 0.01 : 0.002));
 }
+
+/** A rectangle of the canvas that one picture is drawn in, in canvas pixels. */
+export type Pane = { x: number; y: number; width: number; height: number };
+
+/**
+ * Side by side's two panes in a canvas (T-733): left and right, or one above
+ * the other, whichever draws the pictures larger at fit — a wide screenshot
+ * stacks, a tall one sits beside its twin. A tie keeps them side by side, the
+ * arrangement the inline comparison uses. The panes are as tall as `cap`
+ * allows; the canvas then asks for its own height from them.
+ */
+export function sideBySidePanes(
+  canvasWidth: number,
+  cap: number,
+  natural: { width: number; height: number },
+  upscale: boolean,
+  gap = 8,
+): { direction: "row" | "column"; panes: [Pane, Pane] } {
+  const scaleAt = (width: number, height: number) =>
+    fitScale({
+      width,
+      height,
+      naturalWidth: natural.width,
+      naturalHeight: natural.height,
+      upscale,
+    });
+  const rowWidth = (canvasWidth - gap) / 2;
+  const columnHeight = (cap - gap) / 2;
+  if (scaleAt(rowWidth, cap) >= scaleAt(canvasWidth, columnHeight)) {
+    return {
+      direction: "row",
+      panes: [
+        { x: 0, y: 0, width: rowWidth, height: cap },
+        { x: rowWidth + gap, y: 0, width: rowWidth, height: cap },
+      ],
+    };
+  }
+  return {
+    direction: "column",
+    panes: [
+      { x: 0, y: 0, width: canvasWidth, height: columnHeight },
+      { x: 0, y: columnHeight + gap, width: canvasWidth, height: columnHeight },
+    ],
+  };
+}

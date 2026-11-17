@@ -15,7 +15,8 @@ export const attachmentsQuery = (slug: string, issueNumber: number) =>
 
 /**
  * Which project a reference landed on: undefined while the directory is
- * still loading, null once it is in and holds no such project.
+ * still loading, null once it is in and holds no such project, or when the
+ * address is no attachment's at all.
  *
  * A slug spelling answers without consulting anything, which is what keeps
  * the zero-wait path of an address written under the project being read.
@@ -23,9 +24,10 @@ export const attachmentsQuery = (slug: string, issueNumber: number) =>
  * one `MarkdownView` subscribes to, so the answer is normally already there.
  */
 export function useAttachmentAddress(
-  ref: AttachmentRef,
+  ref: AttachmentRef | null,
 ): AttachmentAddress | null | undefined {
   const projects = useQuery(projectsQuery);
+  if (ref === null) return null;
   const project = ref.project;
   if (project.kind === "slug") {
     return { slug: project.slug, id: ref.id, name: ref.name };
