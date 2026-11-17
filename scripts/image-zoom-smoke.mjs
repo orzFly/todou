@@ -4,7 +4,8 @@
  * fit / 100% / background / scaling menu (T-537), and the dialog growing
  * with the zoom up to its cap (T-548), tweened, and paging tweened too
  * (T-551), the height held while the pointer rests on ‹ › (T-556) and
- * for a moment after it leaves (T-559).
+ * for a moment after it leaves (T-559), and widening with the zoom up to
+ * the viewport (T-774).
  * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--cpu-throttle=N] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
@@ -266,19 +267,38 @@ async function waitForViewer(page, name) {
   throw new Error("viewer never showed a measured image");
 }
 
+/**
+ * Wait for the viewer to stop resizing: no size tween left on the dialog or
+ * anything in it (the canvas's height, T-551; the dialog's width, T-774), and
+ * the same size and zoom on two polls in a row. One poll is not enough: it
+ * can land before the next tween is committed, and a state read then pairs a
+ * box from one frame with a view placed for another.
+ */
 async function settle(page) {
   const deadline = Date.now() + 5_000;
+  let last = null;
   while (Date.now() < deadline) {
-    const running = await evaluate(
-      page,
-      () =>
-        document.querySelector("[data-testid=image-canvas]")?.getAnimations()
-          .length ?? 0,
-    );
-    if (running === 0) return;
-    await sleep(50);
+    const now = await evaluate(page, () => {
+      const dialog = document.querySelector("[role=dialog]");
+      const canvas = document.querySelector("[data-testid=image-canvas]");
+      const sizing = (dialog?.getAnimations({ subtree: true }) ?? []).filter(
+        (a) =>
+          a.effect
+            ?.getKeyframes()
+            .some((k) => "width" in k || "minWidth" in k || "height" in k),
+      ).length;
+      const d = dialog?.getBoundingClientRect();
+      const c = canvas?.getBoundingClientRect();
+      return {
+        sizing,
+        shape: `${d?.width}/${c?.height}/${canvas?.dataset.zoom}`,
+      };
+    });
+    if (now.sizing === 0 && now.shape === last) return;
+    last = now.shape;
+    await sleep(80);
   }
-  throw new Error("the canvas's height animation never finished");
+  throw new Error("the viewer never stopped resizing");
 }
 
 /**
@@ -649,6 +669,7 @@ function readDialog() {
     y: r.y,
     w: r.width,
     h: r.height,
+    vw: innerWidth,
     vh: innerHeight,
     // The canvas's max-h-[75vh].
     cap: innerHeight * 0.75,
@@ -694,7 +715,9 @@ async function desktopCases(page, fixture) {
   const px = s0.rect.x + s0.rect.w * 0.5;
   const py = s0.rect.y + s0.rect.h * 0.4;
   const before = pixelAt(s0, px, py);
-  await io.wheel(px, py, -100, 5);
+  // Deep enough that the image still outgrows the dialog once it has widened
+  // to the viewport (T-774), so the drag below has room on both axes.
+  await io.wheel(px, py, -100, 7);
   const s1 = await io.state();
   const after = pixelAt(s1, px, py);
   check(
@@ -978,7 +1001,10 @@ async function growCases(page, { reduced = false } = {}) {
       steps.every(
         ({ s, d }) =>
           s.rect.h <= d.cap + 0.5 &&
-          d.w === d0.w &&
+          // Widening with the zoom (T-774), never past the viewport's 1rem
+          // margins.
+          d.w >= d0.w &&
+          d.w <= d.vw - 32 &&
           d.y >= 0 &&
           d.y + d.h <= d.vh &&
           near(d.y + d.h / 2, d.vh / 2, 1),
