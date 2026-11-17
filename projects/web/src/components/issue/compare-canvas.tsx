@@ -250,6 +250,7 @@ export function CompareCanvas({
   );
   const union =
     natural === null ? null : { width: natural.w, height: natural.h };
+  const second = twoUp ? zoom.panes?.[1] : undefined;
 
   return (
     <>
@@ -261,11 +262,7 @@ export function CompareCanvas({
         data-zoom={view === null ? undefined : view.z.toFixed(4)}
         data-fit={frame === null ? undefined : fitScale(frame).toFixed(4)}
         data-direction={
-          zoom.panes === null || !twoUp
-            ? undefined
-            : zoom.panes[1].y > 0
-              ? "column"
-              : "row"
+          second === undefined ? undefined : second.y > 0 ? "column" : "row"
         }
         className={cn(
           "compare-viewer-canvas relative touch-none overflow-hidden select-none",

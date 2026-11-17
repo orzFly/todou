@@ -149,6 +149,24 @@ describe("CompareCanvas", () => {
     expect(canvas().dataset.mode).toBe("diff");
   });
 
+  // T-770: the render that switches to side by side ran before the canvas
+  // was re-measured, against the single pane an overlay mode is cut into.
+  it.each(["swipe", "onion", "diff"] as const)(
+    "goes from %s to side by side with both panes",
+    (mode) => {
+      setCompareMode(mode);
+      render(<Harness />);
+      fireEvent.click(screen.getByRole("button", { name: "Side by side" }));
+      expect(canvas().dataset.mode).toBe("2up");
+      expect(canvas().dataset.direction).toBe("row");
+      const [a, b] = transforms();
+      expect(b).toBe(a);
+      fireEvent.click(screen.getByRole("button", { name: "Swipe" }));
+      fireEvent.click(screen.getByRole("button", { name: "Side by side" }));
+      expect(transforms()).toHaveLength(2);
+    },
+  );
+
   it("disables the zoom controls once an image fails to load", () => {
     const toolbar = document.createElement("div");
     document.body.append(toolbar);

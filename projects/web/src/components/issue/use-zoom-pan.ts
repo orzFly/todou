@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -310,12 +311,20 @@ export function useZoomPan({
     if (pointers.current.size === 0) setDragging(false);
   };
 
+  // Cut by the callback this render was given, not read from the last
+  // measure: a caller switching how its canvas is cut renders once before
+  // the effect re-measures, and must not see the old cut then (T-770).
+  const panes = useMemo(
+    () => (layout === null ? null : layoutPanes(layout.width, layout.height)),
+    [layout, layoutPanes],
+  );
+
   const ready = frame !== null && view !== null && layout !== null;
   const fitted = !ready || isFitted(frame, view);
   // Every row of panes grows by what its pane asks for beyond its height
   // now: one row for a single picture or two side by side, two when they
   // are stacked.
-  const rows = ready ? new Set(layout.panes.map((p) => p.y)).size : 1;
+  const rows = panes === null ? 1 : new Set(panes.map((p) => p.y)).size;
   const height = maximized
     ? undefined
     : (held ??
@@ -352,7 +361,7 @@ export function useZoomPan({
     canvasRef,
     frame,
     view,
-    panes: layout?.panes ?? null,
+    panes,
     ready,
     fitted,
     dragging,
