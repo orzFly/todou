@@ -1224,6 +1224,14 @@ html[data-header-settling] [data-header-follow] {
     max-width: none !important;
     height: auto;
   }
+  /* In a comparison the pane is already sized (T-724); the same inline
+     max-width has to be beaten to fill it. */
+  .mermaid-compare-diagram > svg {
+    display: block;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto;
+  }
 
   /* A code block's toolbar (T-706) shows on hover or once focus is inside,
      so Tab to Copy brings it up. Without hover it stays, and FenceFrame
@@ -1541,10 +1549,21 @@ html[data-header-settling] [data-header-follow] {
     gap: 0.75rem;
     align-items: start;
   }
+  /* A block with a smallest scale lays out by it instead (T-724): two panes
+     while both fit at that scale, then one, then the stage scrolls. */
   @container (max-width: 30rem) {
-    .media-compare-2up {
+    .media-compare-2up:not([data-min-pane]) {
       grid-template-columns: 1fr;
     }
+  }
+  .media-compare-2up[data-min-pane] {
+    grid-template-columns: repeat(auto-fit, minmax(var(--min-pane), 1fr));
+  }
+  /* The container lets a pane centre in what the stage shows (`100cqw`)
+     rather than in a column wider than it. */
+  .media-compare-stage:has(> .media-compare-2up[data-min-pane]) {
+    overflow-x: auto;
+    container-type: inline-size;
   }
   .media-compare-pane {
     display: grid;

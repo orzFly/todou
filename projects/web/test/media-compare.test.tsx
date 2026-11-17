@@ -4,7 +4,7 @@ import {
   type CompareSide,
   MediaCompare,
 } from "../src/components/shared/media-compare.tsx";
-import { resetCompareMode } from "../src/lib/compare-mode.ts";
+import { resetCompareMode, setCompareMode } from "../src/lib/compare-mode.ts";
 
 beforeEach(() => resetCompareMode());
 
@@ -210,5 +210,82 @@ describe("MediaCompare (T-722)", () => {
       ["50%", "400px"],
       ["100%", "800px"],
     ]);
+  });
+});
+
+describe("MediaCompare modes and smallest scale (T-724)", () => {
+  it("has no mode control with one mode, and stays side by side without touching the page's mode", () => {
+    render(
+      <>
+        <div data-testid="one">
+          <MediaCompare
+            before={side("v2", SAME)}
+            after={side("v5", SAME)}
+            align="center"
+            backdrop="page"
+            modes={["2up"]}
+          />
+        </div>
+        <div data-testid="all">
+          <MediaCompare
+            before={side("v2", SAME)}
+            after={side("v5", SAME)}
+            align="start"
+            backdrop="checker"
+          />
+        </div>
+      </>,
+    );
+    const one = screen.getByTestId("one");
+    const all = screen.getByTestId("all");
+    expect(one.querySelector('fieldset[aria-label="Comparison"]')).toBeNull();
+    expect(one.querySelector(".fence-tools")?.hasAttribute("data-always")).toBe(
+      true,
+    );
+    act(() => setCompareMode("swipe"));
+    expect(one.querySelector(".media-compare-2up")).not.toBeNull();
+    expect(one.querySelector(".media-compare-overlay")).toBeNull();
+    expect(mode("Swipe", all).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("offers only the modes it is given", () => {
+    const { container } = renderCompare({ modes: ["2up", "swipe"] });
+    expect(
+      [...container.querySelectorAll('[aria-label="Comparison"] button')].map(
+        (button) => button.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Side by side", "Swipe"]);
+  });
+
+  it("gives side by side a smallest pane, scaled from the wider side", () => {
+    const { container, unmount } = renderCompare({
+      minScale: 0.75,
+      before: side("v2", { width: 552, height: 328 }),
+      after: side("v5", { width: 360, height: 328 }),
+    });
+    const grid = container.querySelector<HTMLElement>(".media-compare-2up");
+    expect(grid?.hasAttribute("data-min-pane")).toBe(true);
+    expect(grid?.style.getPropertyValue("--min-pane")).toBe("414px");
+    unmount();
+
+    const plain = renderCompare();
+    expect(
+      plain.container
+        .querySelector(".media-compare-2up")
+        ?.hasAttribute("data-min-pane"),
+    ).toBe(false);
+  });
+
+  it("sizes the side that drew when the other failed", () => {
+    const { container } = renderCompare({
+      before: side("v2", null, true),
+      after: side("v5", { width: 1456, height: 781 }),
+    });
+    const [failed, drawn] = container.querySelectorAll<HTMLElement>(
+      ".media-compare-2up .media-compare-box",
+    );
+    expect(failed?.style.width).toBe("");
+    expect(drawn?.style.maxWidth).toBe("1456px");
+    expect(drawn?.style.width).toBe("100%");
   });
 });

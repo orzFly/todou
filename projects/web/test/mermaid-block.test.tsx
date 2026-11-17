@@ -8,7 +8,7 @@ import {
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
-import { errorSummary, viewBoxWidth } from "../src/lib/mermaid.ts";
+import { errorSummary, viewBoxSize } from "../src/lib/mermaid.ts";
 import { rehypeSourceLines } from "../src/lib/rehype-source-lines.ts";
 import { renderWithProviders } from "./render.tsx";
 
@@ -28,13 +28,16 @@ vi.mock("@pierre/diffs/react", () => ({
 
 // mermaid itself cannot lay anything out under happy-dom (no getBBox), so the
 // renderer is the seam: these cases pin what the block does with each answer.
+type Result =
+  | { ok: true; svg: string; width: number; height: number }
+  | { ok: false; error: string };
 const render = vi.hoisted(() => ({
-  next: { ok: true, svg: "", width: 0 } as
-    | { ok: true; svg: string; width: number }
-    | { ok: false; error: string },
+  next: { ok: true, svg: "", width: 0, height: 0 } as Result,
+  // Answers by source, for a comparison whose two sides differ.
+  bySource: new Map<string, Result>(),
 }));
 const renderDiagram = vi.hoisted(() =>
-  vi.fn(async (_source: string) => render.next),
+  vi.fn(async (source: string) => render.bySource.get(source) ?? render.next),
 );
 vi.mock("../src/lib/mermaid.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/mermaid.ts")>()),
@@ -51,6 +54,7 @@ const FENCE = `\`\`\`mermaid\n${DIAGRAM}\n\`\`\`\n`;
 beforeEach(() => {
   delete document.documentElement.dataset.theme;
   renderDiagram.mockClear();
+  render.bySource.clear();
 });
 
 async function mount(source: string, fenceBaselines?: Map<number, string>) {
@@ -70,7 +74,7 @@ async function mount(source: string, fenceBaselines?: Map<number, string>) {
 
 describe("mermaid fences (T-523)", () => {
   it("draws the diagram, with its source one toggle away", async () => {
-    render.next = { ok: true, svg: SVG, width: 1360 };
+    render.next = { ok: true, svg: SVG, width: 1360, height: 164 };
     const container = await mount(FENCE);
     await waitFor(() => {
       expect(container.querySelector(".mermaid-diagram svg")).not.toBeNull();
@@ -122,7 +126,7 @@ describe("mermaid fences (T-523)", () => {
     const writeText = vi.fn(async (_text: string) => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     try {
-      render.next = { ok: true, svg: SVG, width: 1360 };
+      render.next = { ok: true, svg: SVG, width: 1360, height: 164 };
       const container = await mount(FENCE);
       await waitFor(() => {
         expect(container.querySelector(".mermaid-diagram svg")).not.toBeNull();
@@ -152,7 +156,7 @@ describe("mermaid fences (T-523)", () => {
   });
 
   it("re-renders when the resolved theme changes", async () => {
-    render.next = { ok: true, svg: SVG, width: 1360 };
+    render.next = { ok: true, svg: SVG, width: 1360, height: 164 };
     const container = await mount(FENCE);
     await waitFor(() => {
       expect(container.querySelector(".mermaid-diagram svg")).not.toBeNull();
@@ -166,25 +170,124 @@ describe("mermaid fences (T-523)", () => {
     });
   });
 
-  it("leaves other fences, and changed diagrams in a compare view, as code", async () => {
+  it("leaves other fences as code", async () => {
     await mount("```ts\nconst x = 1;\n```\n");
     expect((await screen.findByTestId("code")).textContent).toContain(
       "const x = 1;",
     );
-
-    const changed = await mount(FENCE, new Map([[1, "flowchart LR\n  A"]]));
-    expect((await screen.findByTestId("fence-diff")).textContent).toContain(
-      "游戏连接或回放",
-    );
-    expect(changed.querySelector(".mermaid-diagram")).toBeNull();
     expect(renderDiagram).not.toHaveBeenCalled();
   });
 });
 
+describe("changed diagrams in a compare view (T-724)", () => {
+  const OLD = "flowchart LR\n  A[旧]";
+  const OLD_SVG =
+    '<svg id="mermaid-2" viewBox="0 0 552 328"><text>旧</text></svg>';
+  const PARSE_ERROR =
+    "Parse error on line 2:\n...\n---^\nExpecting 'SQE', got 'PS'";
+  const compare = () => mount(FENCE, new Map([[1, OLD]]));
+  const drawn = (container: HTMLElement) =>
+    container.querySelectorAll(".mermaid-compare-diagram svg");
+
+  beforeEach(() => {
+    render.bySource.set(OLD, {
+      ok: true,
+      svg: OLD_SVG,
+      width: 552,
+      height: 328,
+    });
+    render.next = { ok: true, svg: SVG, width: 1360, height: 164 };
+  });
+
+  it("draws both versions side by side, and copies the new source", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    try {
+      const container = await compare();
+      await waitFor(() => expect(drawn(container)).toHaveLength(2));
+      expect(renderDiagram.mock.calls.map(([source]) => source).sort()).toEqual(
+        [DIAGRAM, OLD].sort(),
+      );
+      expect(screen.queryByTestId("fence-diff")).toBeNull();
+      expect(
+        container.querySelector('fieldset[aria-label="Comparison"]'),
+      ).toBeNull();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+      });
+      expect(writeText).toHaveBeenCalledWith(DIAGRAM);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("switches to the source diff and back", async () => {
+    const container = await compare();
+    await waitFor(() => expect(drawn(container)).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Source" }));
+    expect(await screen.findByTestId("fence-diff")).toBeTruthy();
+    expect(drawn(container)).toHaveLength(0);
+    const back = screen.getByRole("button", { name: "Diagram" });
+    expect(back.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(back);
+    expect(drawn(container)).toHaveLength(2);
+    expect(screen.queryByTestId("fence-diff")).toBeNull();
+  });
+
+  it("shows the side that does not parse as its error and source", async () => {
+    render.bySource.set(OLD, { ok: false, error: PARSE_ERROR });
+    const container = await compare();
+    await waitFor(() => expect(drawn(container)).toHaveLength(1));
+    const old = container.querySelector('[data-side="before"]') as HTMLElement;
+    expect(
+      within(old).getByText("Parse error on line 2: Expecting 'SQE', got 'PS'"),
+    ).toBeTruthy();
+    expect(within(old).getByTestId("code").textContent).toContain("旧");
+    expect(
+      container.querySelector('[data-side="after"] .mermaid-compare-diagram'),
+    ).not.toBeNull();
+  });
+
+  it("is the source diff with the error under it when neither parses", async () => {
+    render.bySource.set(OLD, { ok: false, error: PARSE_ERROR });
+    render.next = { ok: false, error: "No diagram type detected" };
+    const container = await compare();
+    expect(await screen.findByText("No diagram type detected")).toBeTruthy();
+    expect(screen.getByTestId("fence-diff")).toBeTruthy();
+    expect(drawn(container)).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Source" })).toBeNull();
+  });
+
+  it("is the source diff until both renders are back", async () => {
+    renderDiagram.mockImplementation(() => new Promise(() => {}));
+    try {
+      const container = await compare();
+      expect(await screen.findByTestId("fence-diff")).toBeTruthy();
+      expect(drawn(container)).toHaveLength(0);
+      expect(screen.queryByRole("button", { name: "Source" })).toBeNull();
+    } finally {
+      renderDiagram.mockImplementation(
+        async (source: string) => render.bySource.get(source) ?? render.next,
+      );
+    }
+  });
+
+  it("keeps the fence's diff class and source-line stamp", async () => {
+    const container = await compare();
+    await waitFor(() => expect(drawn(container)).toHaveLength(2));
+    const fence = container.querySelector(".markdown-fence");
+    expect(fence?.classList.contains("spec-fence-diff")).toBe(true);
+    expect(fence?.getAttribute("data-loc")).toBe("1-4");
+  });
+});
+
 describe("mermaid helpers", () => {
-  it("reads the natural width off the viewBox", () => {
-    expect(viewBoxWidth('<svg viewBox="4 4 1360.5 164">')).toBe(1360.5);
-    expect(viewBoxWidth("<svg>")).toBe(0);
+  it("reads the natural size off the viewBox", () => {
+    expect(viewBoxSize('<svg viewBox="4 4 1360.5 164">')).toEqual({
+      width: 1360.5,
+      height: 164,
+    });
+    expect(viewBoxSize("<svg>")).toEqual({ width: 0, height: 0 });
   });
 
   it("keeps a single-line error as it is", () => {

@@ -47,7 +47,12 @@ beforeEach(() => {
 describe("renderDiagram scratch drawing (T-703)", () => {
   it("draws off the page, in a host that is gone once the diagram is back", async () => {
     const result = await renderDiagram("flowchart LR\n  A", PALETTE, "serif");
-    expect(result).toEqual({ ok: true, svg: expect.any(String), width: 120 });
+    expect(result).toEqual({
+      ok: true,
+      svg: expect.any(String),
+      width: 120,
+      height: 40,
+    });
     expect(seen.container).toBeDefined();
     expect(seen.visibility).toBe("hidden");
     expect(seen.position).toBe("fixed");

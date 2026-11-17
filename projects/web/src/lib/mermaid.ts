@@ -12,7 +12,7 @@ export type DiagramPalette = {
 };
 
 export type DiagramResult =
-  | { ok: true; svg: string; width: number }
+  | { ok: true; svg: string; width: number; height: number }
   | { ok: false; error: string };
 
 type Mermaid = typeof import("mermaid")["default"];
@@ -57,7 +57,7 @@ export function renderDiagram(
         source,
         scratch,
       );
-      return { ok: true, svg, width: viewBoxWidth(svg) };
+      return { ok: true, svg, ...viewBoxSize(svg) };
     } catch (error) {
       return {
         ok: false,
@@ -79,7 +79,7 @@ export function renderDiagram(
  * than `display: none`, because text is measured with getBBox(), which needs
  * a layout box.
  */
-function scratchHost(): HTMLDivElement {
+export function scratchHost(): HTMLDivElement {
   const host = document.createElement("div");
   host.setAttribute("aria-hidden", "true");
   host.style.cssText =
@@ -113,10 +113,13 @@ function themeVariables(p: DiagramPalette, fontFamily: string) {
   };
 }
 
-/** The diagram's natural width, which the fit rule in styles.css scales from. */
-export function viewBoxWidth(svg: string): number {
-  const match = /viewBox="[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)/.exec(svg);
-  return match ? Number(match[1]) : 0;
+/** The diagram's natural size, which the fit rule in styles.css scales from. */
+export function viewBoxSize(svg: string): { width: number; height: number } {
+  const match =
+    /viewBox="[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/.exec(svg);
+  return match
+    ? { width: Number(match[1]), height: Number(match[2]) }
+    : { width: 0, height: 0 };
 }
 
 /**

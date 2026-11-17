@@ -39,6 +39,8 @@ const MODES: Array<{ value: CompareMode; long: string; short: string }> = [
   { value: "diff", long: "Difference", short: "Diff" },
 ];
 
+const ALL_MODES: readonly CompareMode[] = MODES.map((option) => option.value);
+
 /**
  * Two versions of a picture, compared side by side, by swipe, by onion skin or
  * by difference (T-722). It knows nothing of what the two are: an image and a
@@ -54,8 +56,11 @@ export function MediaCompare({
   align,
   backdrop,
   text,
+  title,
   actions,
   replacement,
+  modes = ALL_MODES,
+  minScale,
   className,
 }: {
   before: CompareSide;
@@ -66,10 +71,20 @@ export function MediaCompare({
   backdrop: "checker" | "page";
   /** Handed to the frame's Copy; leave it out for no Copy. */
   text?: string;
+  /** A fence's filename; see `FenceFrame`. */
+  title?: string;
   /** More controls at the head's right edge. */
   actions?: ReactNode;
   /** Drawn in place of the comparison, with no mode pressed. */
   replacement?: ReactNode;
+  /** The modes this block offers, all four by default. With one there is no mode control. */
+  modes?: readonly CompareMode[];
+  /**
+   * The smallest scale side by side may draw at, relative to the wider side's
+   * natural width. Given, side by side lays out by it: the panes stack when
+   * two will not fit, and the stage scrolls sideways when one will not.
+   */
+  minScale?: number;
   className?: string;
 }) {
   const stored = useCompareMode();
@@ -80,8 +95,9 @@ export function MediaCompare({
     !after.failed;
   // Falling back leaves the store alone: a block that cannot overlay must not
   // switch every other block on the page back with it.
-  const mode = overlayable ? stored : "2up";
+  const mode = overlayable && modes.includes(stored) ? stored : "2up";
   const pressed = replacement === undefined ? mode : null;
+  const choosable = modes.length > 1;
 
   return (
     <div
@@ -90,12 +106,29 @@ export function MediaCompare({
     >
       <FenceFrame
         text={text}
-        leading={<CompareModes pressed={pressed} overlayable={overlayable} />}
+        title={title}
+        leading={
+          choosable ? (
+            <CompareModes
+              pressed={pressed}
+              overlayable={overlayable}
+              modes={modes}
+            />
+          ) : undefined
+        }
+        // With no mode control there is no head bar, and the floating tools
+        // may hold the only way back to the source, so they never hide.
+        toolbarAlwaysVisible={!choosable}
         actions={actions}
       >
         {replacement ??
           (mode === "2up" || before.size === null || after.size === null ? (
-            <SideBySide before={before} after={after} align={align} />
+            <SideBySide
+              before={before}
+              after={after}
+              align={align}
+              minScale={minScale}
+            />
           ) : (
             <Overlay
               mode={mode}
@@ -110,22 +143,24 @@ export function MediaCompare({
 }
 
 /**
- * The four modes as one segmented control, writing the page's shared mode.
- * The overlay three are off until both sides have a size to line up.
+ * The modes as one segmented control, writing the page's shared mode. The
+ * overlay three are off until both sides have a size to line up.
  */
 export function CompareModes({
   pressed,
   overlayable,
+  modes = ALL_MODES,
 }: {
   pressed: CompareMode | null;
   overlayable: boolean;
+  modes?: readonly CompareMode[];
 }) {
   return (
     <fieldset
       aria-label="Comparison"
       className="media-compare-modes inline-flex h-7 shrink-0 items-center rounded-full border p-0.5"
     >
-      {MODES.map((option) => (
+      {MODES.filter((option) => modes.includes(option.value)).map((option) => (
         <button
           key={option.value}
           type="button"
@@ -154,15 +189,25 @@ function SideBySide({
   before,
   after,
   align,
+  minScale,
 }: {
   before: CompareSide;
   after: CompareSide;
   align: "start" | "center";
+  minScale?: number;
 }) {
+  // A side that failed never reports a size, so the other is the widest there
+  // is; waiting on it would squeeze a wide picture into half the stage.
   const widest =
-    before.size === null || after.size === null
-      ? null
-      : Math.max(before.size.width, after.size.width);
+    before.size !== null && after.size !== null
+      ? Math.max(before.size.width, after.size.width)
+      : before.size !== null && after.failed
+        ? before.size.width
+        : after.size !== null && before.failed
+          ? after.size.width
+          : null;
+  const minPane =
+    minScale === undefined || widest === null ? null : widest * minScale;
   const pane = (side: CompareSide, which: "before" | "after") => (
     <div className="media-compare-pane" data-side={which}>
       <CompareLabel
@@ -181,7 +226,16 @@ function SideBySide({
             : {
                 width: `${(side.size.width / widest) * 100}%`,
                 maxWidth: `${side.size.width}px`,
-                marginInline: align === "center" ? "auto" : undefined,
+                ...(align !== "center"
+                  ? {}
+                  : minPane === null
+                    ? { marginInline: "auto" }
+                    : {
+                        // Centred in what the stage shows, not in the whole
+                        // column: once the column outgrows the stage, centring
+                        // in it would open the scroller on blank space.
+                        marginLeft: `max(0px, (min(100%, 100cqw) - min(${(side.size.width / widest) * 100}%, ${side.size.width}px)) / 2)`,
+                      }),
               }
         }
       >
@@ -191,7 +245,15 @@ function SideBySide({
   );
   return (
     <div className="media-compare-stage">
-      <div className="media-compare-2up">
+      <div
+        className="media-compare-2up"
+        data-min-pane={minPane === null ? undefined : ""}
+        style={
+          minPane === null
+            ? undefined
+            : ({ "--min-pane": `${minPane}px` } as CSSProperties)
+        }
+      >
         {pane(before, "before")}
         {pane(after, "after")}
       </div>

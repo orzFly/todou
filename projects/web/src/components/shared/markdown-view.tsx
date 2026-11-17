@@ -15,7 +15,10 @@ import {
 import { BodyAnchor } from "@/components/shared/body-anchor.tsx";
 import { FenceFrame } from "@/components/shared/fence-frame.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
-import { MermaidBlock } from "@/components/shared/mermaid-block.tsx";
+import {
+  MermaidBlock,
+  MermaidCompare,
+} from "@/components/shared/mermaid-block.tsx";
 import { PatchView } from "@/components/shared/patch-view.tsx";
 import {
   CodeBlock,
@@ -145,9 +148,9 @@ function MarkdownPre({
   const loc = typeof stamp === "string" ? parseSourceLoc(stamp) : null;
   const filename = fenceFilename(fence.tag);
   const baseline = loc === null ? undefined : fenceBaselines?.get(loc.start);
-  // A changed diagram stays a source diff: there is no per-line red and green
-  // to draw on a picture. A changed patch likewise — a diff of a diff is
-  // only readable as its text.
+  // A changed diagram is drawn as its two versions side by side (T-724). A
+  // changed patch stays a source diff — a diff of a diff is only readable as
+  // its text.
   // A plain fence tokenizes off the main thread (T-602): the first one in a
   // language compiles that grammar, 520 ms for TypeScript at 4× CPU
   // throttling, in the middle of the page's first load.
@@ -158,7 +161,14 @@ function MarkdownPre({
   // A diagram and a patch draw their own frames: each has controls of its
   // own to put in it.
   const block =
-    baseline !== undefined ? (
+    baseline !== undefined && tag === "mermaid" ? (
+      <MermaidCompare
+        filename={filename}
+        before={baseline}
+        after={fence.text}
+        title={title}
+      />
+    ) : baseline !== undefined ? (
       <FenceFrame
         text={fence.text}
         lang={fence.tag}
