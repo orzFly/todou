@@ -32,6 +32,7 @@ import type {
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBoardMove } from "../src/api/board.ts";
+import { insightsSettingsQuery } from "../src/api/insights.ts";
 import {
   useDeleteIssueMutation,
   useIssueLabelsMutation,
@@ -48,8 +49,10 @@ import {
   meQuery,
   projectQuery,
   statusesQuery,
+  statusUsageQuery,
 } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
+import { StatusesSection } from "../src/components/settings/statuses-section.tsx";
 import { ReviewSubmitDialog } from "../src/components/spec/review-submit.tsx";
 import { labelColorFor } from "../src/lib/labels.ts";
 import type { SpecReviewDraft } from "../src/lib/spec-drafts.ts";
@@ -60,7 +63,6 @@ import {
   ProjectSection,
   ReferencesSection,
   SlugSection,
-  StatusesSection,
 } from "../src/pages/project-settings.tsx";
 import { cmSetValue } from "./cm.ts";
 import { renderWithProviders } from "./render.tsx";
@@ -102,6 +104,7 @@ const project = (slug: string, name: string): Project => ({
   name,
   description: `Project ${name}.`,
   created_at: "2026-08-01T00:00:00.000Z",
+  viewer_role: "admin",
 });
 
 const referenceConfig = (slug: string): ReferenceConfig => ({
@@ -160,7 +163,7 @@ function stubFetch(): Call[] {
     };
     calls.push(call);
     // A list the Labels page maps over, refetched on mount.
-    if (url.endsWith("/labels/usage")) {
+    if (url.endsWith("/labels/usage") || url.endsWith("/statuses/usage")) {
       return new Response("[]", {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -205,6 +208,27 @@ function seed(client: QueryClient) {
   client.setQueryData(accessDenialsQuery("q").queryKey, [] as AccessDenial[]);
   client.setQueryData(statusesQuery("p").queryKey, statuses);
   client.setQueryData(statusesQuery("q").queryKey, statuses);
+  for (const slug of ["p", "q"]) {
+    client.setQueryData(insightsSettingsQuery(slug).queryKey, {
+      version: "0.x",
+      source: "default",
+      roles: statuses.map((s) => ({
+        status_id: s.id,
+        name: s.name,
+        category: s.category,
+        color: s.color,
+        position: s.position,
+        role:
+          s.category === "closed"
+            ? ("completed" as const)
+            : ("remaining" as const),
+      })),
+    });
+    client.setQueryData(
+      statusUsageQuery(slug).queryKey,
+      statuses.map((s) => ({ id: s.id, issues: 0, trashed: 0 })),
+    );
+  }
   client.setQueryData(labelsQuery("p").queryKey, [
     {
       id: 3,
@@ -262,6 +286,8 @@ type ProjectCase = {
   trigger: (view: SectionView) => void | Promise<void>;
   editWhilePaused: boolean;
   edit?: (view: SectionView) => void;
+  /** Statuses hides its controls from anyone without `status.manage`. */
+  asAdmin?: true;
   expect: (call: Call) => void;
 };
 
@@ -446,15 +472,17 @@ const cases: ProjectCase[] = [
   {
     name: "StatusesSection create",
     section: StatusesSection,
+    asAdmin: true,
     trigger: (view) => {
-      fireEvent.change(view.getByPlaceholderText("New status name"), {
+      fireEvent.click(view.getByRole("button", { name: /New status/ }));
+      fireEvent.change(view.getByLabelText("Name"), {
         target: { value: "in review" },
       });
-      fireEvent.click(view.getByRole("button", { name: "Add" }));
+      fireEvent.click(view.getByRole("button", { name: "Create" }));
     },
     editWhilePaused: true,
     edit: (view) => {
-      fireEvent.change(view.getByPlaceholderText("New status name"), {
+      fireEvent.change(view.getByLabelText("Name"), {
         target: { value: "Edited While Paused" },
       });
     },
@@ -463,19 +491,18 @@ const cases: ProjectCase[] = [
       expect(JSON.parse(call.body ?? "{}")).toEqual({
         name: "in review",
         category: "open",
-        color: "#6b7280",
+        color: labelColorFor("in review"),
       });
     },
   },
   {
     name: "StatusesSection patch",
     section: StatusesSection,
+    asAdmin: true,
     trigger: (view) => {
-      fireEvent.click(
-        view.container.querySelector(
-          "button[aria-label='make done the default status']",
-        ) as HTMLButtonElement,
-      );
+      fireEvent.click(view.getByLabelText("edit status done"));
+      fireEvent.click(view.getByLabelText("New issues start here"));
+      fireEvent.click(view.getByRole("button", { name: "Save" }));
     },
     editWhilePaused: false,
     expect: (call) => {
@@ -487,11 +514,12 @@ const cases: ProjectCase[] = [
   {
     name: "StatusesSection remove",
     section: StatusesSection,
-    trigger: (view) => {
+    asAdmin: true,
+    trigger: async (view) => {
+      fireEvent.click(view.getByLabelText("edit status done"));
+      fireEvent.click(view.getByRole("button", { name: /Delete/ }));
       fireEvent.click(
-        view.container.querySelector(
-          "button[aria-label='delete done']",
-        ) as HTMLButtonElement,
+        await view.findByRole("button", { name: "Delete status" }),
       );
     },
     editWhilePaused: false,
@@ -568,6 +596,9 @@ describe("a project write the settings page then left", () => {
     const calls = stubFetch();
     const client = queryClient();
     seed(client);
+    if (c.asAdmin) {
+      client.setQueryData(projectQuery("p").queryKey, project("p", "Pea"));
+    }
     // Through the router shim: the user chips these sections render are links
     // now (T-391), and a link needs router context to resolve its href.
     const setSlug = { current: (_: string) => {} };

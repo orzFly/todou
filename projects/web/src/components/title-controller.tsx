@@ -43,8 +43,6 @@ function titleFor(
       return `${ctx.projectName} · labels`;
     case "/authed/projects/$slug/settings/references":
       return `${ctx.projectName} · references`;
-    case "/authed/projects/$slug/settings/insights":
-      return `${ctx.projectName} · insights settings`;
     case "/authed/projects/$slug/issues/new":
       return `New issue · ${ctx.projectName}`;
     case "/authed/projects/$slug/issues/$number":

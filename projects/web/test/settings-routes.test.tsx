@@ -79,3 +79,14 @@ describe("account settings routes (T-557)", () => {
     ).toBeTruthy();
   });
 });
+
+describe("project settings routes (T-712)", () => {
+  it("sends the old Insights settings address to Statuses", async () => {
+    mountAt("/projects/p/settings/insights");
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        "/projects/p/settings/statuses",
+      ),
+    );
+  });
+});

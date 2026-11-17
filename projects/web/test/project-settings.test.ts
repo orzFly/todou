@@ -1,10 +1,7 @@
 import { MEMBER_ROLES } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import {
-  normalizeHexColor,
-  PRESET_COLORS,
-  ROLES,
-} from "../src/pages/project-settings.tsx";
+import { normalizeHexColor } from "../src/components/settings/color-swatches.tsx";
+import { PRESET_COLORS, ROLES } from "../src/pages/project-settings.tsx";
 
 describe("the member role picker", () => {
   it("offers every role, most privileged first", () => {
