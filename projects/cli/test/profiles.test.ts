@@ -601,6 +601,30 @@ describe("act-as profiles", () => {
         expect(readFileSync(configPath(env)).equals(before)).toBe(true);
       });
 
+      it("refuses a server that ignores the header and answers as the owner", async () => {
+        const env = seeded("login-ignored");
+        const before = readFileSync(configPath(env));
+        const { fetchImpl } = fakeFetch([["GET", "/api/me", human]]);
+        const result = await runCli(
+          [
+            "login",
+            "http://stub.test",
+            "--profile",
+            "x",
+            "--act-as",
+            "bot-one",
+          ],
+          { fetchImpl, env },
+        );
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain(
+          "http://stub.test answered as user, not bot-one; nothing was saved",
+        );
+        expect(result.stderr).toContain("0.6.8 or later");
+        expect(result.stderr).not.toContain("logged in");
+        expect(readFileSync(configPath(env)).equals(before)).toBe(true);
+      });
+
       it("needs a stored default token, and --profile", async () => {
         const { fetchImpl, calls } = fakeFetch([["GET", "/api/me", human]]);
         const bare = await runCli(

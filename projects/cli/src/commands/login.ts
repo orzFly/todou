@@ -245,6 +245,15 @@ export class LoginCommand extends Command<CliContext> {
       },
       fetch: this.context.fetchImpl,
     }).me();
+    // A server that predates act-as ignores the header and answers as the
+    // token's owner; storing that would make every later write the human's.
+    // The server trims the header before resolving it, so compare likewise.
+    if (me.login !== (this.actAs as string).trim()) {
+      throw new CliError(
+        `${origin} answered as ${me.login}, not ${this.actAs}; nothing was saved`,
+        "acting as an agent needs a todou server at 0.6.8 or later",
+      );
+    }
 
     const entry = own.servers[origin] ?? { tokens: {} };
     entry.tokens = { ...entry.tokens, [profile]: { act_as: me.login } };
