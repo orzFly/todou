@@ -26,6 +26,7 @@ import {
   UserSelectTrigger,
 } from "@/components/shared/user-picker.tsx";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -273,18 +274,24 @@ export function TokensSettingsPage() {
                 {TOKEN_SCOPES.map((scope) => (
                   <label
                     key={scope}
+                    htmlFor={`scope-${scope}-box`}
                     className="flex cursor-pointer items-start gap-3 px-3 py-2.5 hover:bg-muted/40"
                   >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 size-4 accent-primary"
-                      aria-labelledby={`scope-${scope}`}
-                      aria-describedby={`scope-${scope}-grants`}
-                      checked={scopes.includes(scope)}
-                      onChange={(e) =>
-                        setScopes(toggleScope(scopes, scope, e.target.checked))
-                      }
-                    />
+                    {/* The margin sits outside the box: on the input itself
+                        it would push the box off its own tick. */}
+                    <span className="mt-0.5 flex">
+                      <Checkbox
+                        id={`scope-${scope}-box`}
+                        aria-labelledby={`scope-${scope}`}
+                        aria-describedby={`scope-${scope}-grants`}
+                        checked={scopes.includes(scope)}
+                        onChange={(e) =>
+                          setScopes(
+                            toggleScope(scopes, scope, e.target.checked),
+                          )
+                        }
+                      />
+                    </span>
                     <span className="min-w-0 space-y-0.5">
                       <span
                         id={`scope-${scope}`}

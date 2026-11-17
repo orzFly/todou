@@ -115,7 +115,8 @@ const ALLOWED_PROPS: Record<string, string[]> = {
   LabelChip: ["label"],
   LabelChips: ["labels", "onRemove"],
   StatusPill: ["status"],
-  StatusHeading: ["status"],
+  // The dot's cell doubles as a board column's select-all box (T-732).
+  StatusHeading: ["status", "select"],
 };
 
 function extraProps(file: string, source: string): Hit[] {

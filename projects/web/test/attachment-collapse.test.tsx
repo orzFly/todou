@@ -45,7 +45,7 @@ function seeded(count: number, issueNumber = 7): QueryClient {
 
 const filenames = (container: HTMLElement) =>
   [...container.querySelectorAll("li")].map(
-    (li) => li.querySelector("span")?.textContent,
+    (li) => li.querySelector("a span")?.textContent,
   );
 
 describe("the attachment section folds a long list", () => {

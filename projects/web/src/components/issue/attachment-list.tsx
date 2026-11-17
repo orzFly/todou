@@ -30,7 +30,7 @@ import {
   RICH_CHIP_SKIN,
   RICH_CHIP_STRUCTURE,
 } from "@/components/shared/rich-chip.ts";
-import { Checkbox } from "@/components/ui/checkbox";
+import { SelectSlot } from "@/components/ui/checkbox";
 import {
   formatSize,
   isArchiveFile,
@@ -130,16 +130,24 @@ export function AttachmentList({
 
   return (
     <section className="rounded-lg border" id="attachments">
-      <div className="flex flex-wrap items-center gap-x-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
-        {selectable && (
-          <Checkbox
+      {/* The paperclip's cell is 16px, `px-3` and `gap-x-2` like a row's
+          icon cell and the label's padding, so the clip, every file icon and
+          every box sit on one vertical line (T-732). */}
+      <div className="group/att-head flex flex-wrap items-center gap-x-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
+        {selectable ? (
+          <SelectSlot
+            icon={<PaperclipIcon className="size-3.5 text-muted-foreground" />}
+            hoverGroup="att-head"
             aria-label="select all attachments"
             checked={selection.state === "all"}
             indeterminate={selection.state === "some"}
             onChange={selection.toggleAll}
           />
+        ) : (
+          <span className="inline-grid size-4 shrink-0 place-items-center">
+            <PaperclipIcon className="size-3.5 text-muted-foreground" />
+          </span>
         )}
-        <PaperclipIcon className="size-3.5 text-muted-foreground" />
         <span className="font-medium">Attachments</span>
         <span className="text-muted-foreground">{items.length}</span>
         {selectable && (
@@ -179,22 +187,33 @@ export function AttachmentList({
           // somewhere in the middle.
           const index = shownIndex + hiddenBefore;
           const Icon = attachmentIcon(attachment);
+          const icon = (
+            <Icon
+              className="size-4 shrink-0 text-muted-foreground"
+              data-attachment-icon=""
+            />
+          );
           return (
             <li
               key={attachment.id}
               className={cn(
-                "flex items-center hover:bg-muted/40",
-                selection.isSelected(attachment.id) && "bg-muted/60",
+                "group/att flex items-center hover:bg-muted/40",
+                selection.isSelected(attachment.id) &&
+                  "bg-primary/10 hover:bg-primary/10",
               )}
             >
               {selectable && (
                 // The label is the hit area: the whole left gutter, row
-                // height, rather than a 16px box beside a link.
+                // height, rather than a 16px box beside a link. The file's
+                // icon lives in it, standing for "not selected", so a tap on
+                // the icon selects on touch too (T-732).
                 <label
                   htmlFor={`attachment-select-${attachment.id}`}
                   className="flex shrink-0 cursor-pointer items-center self-stretch pr-2 pl-3"
                 >
-                  <Checkbox
+                  <SelectSlot
+                    icon={icon}
+                    hoverGroup="att"
                     id={`attachment-select-${attachment.id}`}
                     aria-label={`select ${attachment.filename}`}
                     checked={selection.isSelected(attachment.id)}
@@ -220,7 +239,7 @@ export function AttachmentList({
                   }
                 }}
               >
-                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                {!selectable && icon}
                 <span className="truncate font-medium hover:underline">
                   {attachment.filename}
                 </span>

@@ -73,10 +73,11 @@ function seeded(): QueryClient {
 const identityOf = (icon: Element | null | undefined) =>
   [...(icon?.classList ?? [])].find((c) => c.startsWith("lucide-")) ?? null;
 
-// The body list puts a download icon in a second anchor on each row; the
-// type icon is the first one, inside the row link.
-const iconsOf = (roots: Iterable<Element>) =>
-  [...roots].map((root) => identityOf(root.querySelector("a svg")));
+// The body list marks its type icon, which sits in the select label rather
+// than the row link once the list is selectable (T-732); the sidebar's is the
+// first icon inside its row link.
+const iconsOf = (roots: Iterable<Element>, selector = "a svg") =>
+  [...roots].map((root) => identityOf(root.querySelector(selector)));
 
 describe("the shared attachment icon table", () => {
   it("types every row of the body list", async () => {
@@ -87,7 +88,7 @@ describe("the shared attachment icon table", () => {
     await waitFor(() => {
       const rows = view.container.querySelectorAll("li");
       expect(rows).toHaveLength(FILES.length);
-      expect(iconsOf(rows)).toEqual(WANTED);
+      expect(iconsOf(rows, "[data-attachment-icon]")).toEqual(WANTED);
     });
   });
 

@@ -5,6 +5,7 @@
 @import "overlayscrollbars/overlayscrollbars.css";
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant touch (@media (hover: none) and (pointer: coarse));
 
 @theme inline {
     --font-heading: var(--font-sans);

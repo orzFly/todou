@@ -1,4 +1,5 @@
 import type { Status } from "@todou/shared";
+import { SelectSlot } from "@/components/ui/checkbox";
 
 /**
  * The only drawing of a status (T-715), in menus and completions as much as
@@ -36,19 +37,48 @@ export function StatusPill({
  * it renders into the caller's flex row, whose gap and text size it takes.
  * Only the name gives ground: a long one truncates rather than squeezing the
  * count beside it (T-303).
+ *
+ * `select` is behaviour, not a second drawing: a board column's select-all
+ * box takes the dot's cell, so the name does not move when it appears
+ * (T-732). Without it the output is what it always was.
  */
 export function StatusHeading({
   status,
+  select,
 }: {
   status: Pick<Status, "name" | "color">;
+  select?: {
+    checked: boolean;
+    indeterminate: boolean;
+    disabled: boolean;
+    onChange: () => void;
+    label: string;
+  };
 }) {
+  const dot = (
+    <span
+      className="size-2.5 shrink-0 rounded-full"
+      style={{ backgroundColor: status.color }}
+      aria-hidden
+    />
+  );
   return (
     <>
-      <span
-        className="size-2.5 shrink-0 rounded-full"
-        style={{ backgroundColor: status.color }}
-        aria-hidden
-      />
+      {select ? (
+        <SelectSlot
+          icon={dot}
+          hoverGroup="colhead"
+          aria-label={select.label}
+          checked={select.checked}
+          indeterminate={select.indeterminate}
+          disabled={select.disabled}
+          onChange={select.onChange}
+          // Touch gets no board selection, so no invisible box to tap.
+          className="touch:pointer-events-none"
+        />
+      ) : (
+        dot
+      )}
       <span className="min-w-0 truncate font-medium">{status.name}</span>
     </>
   );

@@ -85,6 +85,39 @@ describe("attachment multi-select (T-699)", () => {
     expect(screen.queryByTestId("attachment-bulk-download")).toBeNull();
   });
 
+  it("keeps a lone file's icon in its link", async () => {
+    const view = renderWithProviders(
+      <AttachmentList slug="b" issueNumber={7} />,
+      seeded([file(1, "only.txt")]),
+    );
+    await screen.findByText("only.txt");
+    const row = view.container.querySelector("li") as HTMLElement;
+    expect(row.querySelector("label")).toBeNull();
+    expect(row.querySelector("a [data-attachment-icon]")).not.toBeNull();
+  });
+
+  it("selects from the file's icon, and opens from its name (T-732)", async () => {
+    stubFetch({});
+    const view = renderWithProviders(
+      <AttachmentList slug="b" issueNumber={7} />,
+      seeded([file(1, "a.txt"), file(2, "b.txt")]),
+    );
+    const name = await screen.findByText("b.txt");
+    const row = name.closest("li") as HTMLElement;
+    expect(row.querySelector("a svg[data-attachment-icon]")).toBeNull();
+    const icon = row.querySelector(
+      "label [data-attachment-icon]",
+    ) as SVGElement;
+    expect(icon).not.toBeNull();
+    const box = screen.getByLabelText("select b.txt") as HTMLInputElement;
+
+    fireEvent.click(name);
+    expect(box.checked).toBe(false);
+    fireEvent.click(icon);
+    expect(box.checked).toBe(true);
+    expect(view.container.querySelectorAll("label")).toHaveLength(2);
+  });
+
   it("archives every file, fetched from /view, when nothing is selected", async () => {
     const blobs: Blob[] = [];
     vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {

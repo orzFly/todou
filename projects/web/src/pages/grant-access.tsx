@@ -33,6 +33,7 @@ import { RolePermissionsDialog } from "@/components/shared/role-permissions-tabl
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -522,9 +523,7 @@ function TargetRow({
   return (
     <div className="flex flex-wrap items-center gap-3 px-3 py-3">
       {isAdmin ? (
-        <input
-          type="checkbox"
-          className="accent-primary"
+        <Checkbox
           aria-label={`include ${slug}`}
           checked={included}
           onChange={(e) => onInclude(slug, e.target.checked)}

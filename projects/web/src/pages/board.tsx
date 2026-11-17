@@ -409,7 +409,9 @@ export function BoardPage() {
             instead of the columns being crushed to nothing. */}
         <div
           ref={canvas}
-          className="flex min-h-60 flex-1 gap-4 overflow-x-auto"
+          className="group/select flex min-h-60 flex-1 gap-4 overflow-x-auto"
+          // Once anything is selected, every card shows its box (T-732).
+          data-selecting={selection.selected.length > 0 ? "" : undefined}
         >
           {statuses.data.map((status) => (
             <BoardColumn
@@ -501,18 +503,21 @@ const BoardColumn = memo(function BoardColumn({
       // is still the column the canvas has to find again (T-407).
       data-return-id={String(status.id)}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm">
-        {select && (
-          <Checkbox
-            aria-label={`select every issue in ${status.name}`}
-            checked={columnState === "all"}
-            indeterminate={columnState === "some"}
-            disabled={numbers.length === 0}
-            onChange={() => select.onSelectColumn(numbers)}
-            className="shrink-0 disabled:cursor-default disabled:opacity-40"
-          />
-        )}
-        <StatusHeading status={status} />
+      <div className="group/colhead flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm">
+        <StatusHeading
+          status={status}
+          select={
+            select
+              ? {
+                  checked: columnState === "all",
+                  indeterminate: columnState === "some",
+                  disabled: numbers.length === 0,
+                  onChange: () => select.onSelectColumn(numbers),
+                  label: `select every issue in ${status.name}`,
+                }
+              : undefined
+          }
+        />
         <Badge variant="secondary" className="ml-auto shrink-0">
           {column.data?.items.length ?? "…"}
         </Badge>
@@ -587,15 +592,14 @@ function BoardCard({
   const carried =
     selected &&
     (active?.data.current as CardDragData | undefined)?.selected === true;
-
   return (
     <div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
       className={cn(
-        "group/card cursor-grab rounded-md border bg-background p-2.5 shadow-xs",
-        selected && "border-primary bg-primary/5",
+        "group/card relative cursor-grab rounded-md border bg-background p-2.5 shadow-xs",
+        selected && "border-primary bg-primary/10 ring-1 ring-primary/70",
         (isDragging || carried) && "opacity-30",
       )}
       // The card's own id, the same identity `key` uses above. The number is
@@ -603,34 +607,73 @@ function BoardCard({
       // snapshot outlives the board it was taken from (T-407).
       data-return-id={String(issue.id)}
     >
+      {onSelect && (
+        <CardSelectBox
+          slug={slug}
+          number={issue.number}
+          selected={selected}
+          onSelect={onSelect}
+        />
+      )}
       <BoardCardContent
         slug={slug}
         issue={issue}
         edit={edit}
         watchers={watchers}
-        selected={selected}
-        onSelect={onSelect}
       />
     </div>
   );
 }
+
+/**
+ * On the card's corner, where the drag count appears for the same selection
+ * (T-732). 6px out plus the 3px focus ring stays inside the column's 8px
+ * padding, which clips. Opaque while unchecked so the card's border does not
+ * run through the box. Memoized apart from the shell around it, which dnd-kit
+ * re-renders on every drag (T-691).
+ */
+const CardSelectBox = memo(function CardSelectBox({
+  slug,
+  number,
+  selected,
+  onSelect,
+}: {
+  slug: string;
+  number: number;
+  selected: boolean;
+  onSelect: (issueNumber: number, extend: boolean) => void;
+}) {
+  const ref = formatRef(useRefPrefix(slug), number);
+  return (
+    <span
+      data-card-select=""
+      className="absolute -top-1.5 -left-1.5 leading-none"
+    >
+      <Checkbox
+        aria-label={`select ${ref}`}
+        checked={selected}
+        // onClick rather than onChange: only the click carries shiftKey, and
+        // it fires for Space as well.
+        onClick={(e) => onSelect(number, e.shiftKey)}
+        onChange={() => {}}
+        onPointerDown={keepOffDrag}
+        className="bg-background opacity-0 group-hover/card:opacity-100 group-data-[selecting]/select:opacity-100 checked:opacity-100 focus-visible:opacity-100 touch:hidden"
+      />
+    </span>
+  );
+});
 
 export const BoardCardContent = memo(function BoardCardContent({
   slug,
   issue,
   edit,
   watchers = NO_WATCHERS,
-  selected = false,
-  onSelect,
 }: {
   slug: string;
   issue: IssueListItem;
   edit?: CardEdit;
   /** This card's card-level watchers (T-540). */
   watchers?: readonly Watcher[];
-  selected?: boolean;
-  /** Absent where the card offers no selection; it then has no checkbox. */
-  onSelect?: (issueNumber: number, extend: boolean) => void;
 }) {
   const editable = edit?.canTriage ? edit : undefined;
   const refPrefix = useRefPrefix(slug);
@@ -646,7 +689,6 @@ export const BoardCardContent = memo(function BoardCardContent({
   // its top margin.
   const showMeta =
     editable !== undefined ||
-    onSelect !== undefined ||
     placement === "after" ||
     issue.open_questions > 0 ||
     issue.spec_review_status === "unreviewed" ||
@@ -710,18 +752,6 @@ export const BoardCardContent = memo(function BoardCardContent({
           data-card-meta=""
           className="mt-0.5 flex flex-wrap items-center gap-1.5 overflow-hidden pt-1 pb-1 -mb-1"
         >
-          {onSelect && (
-            <Checkbox
-              aria-label={`select ${ref}`}
-              checked={selected}
-              // onClick rather than onChange: only the click carries shiftKey,
-              // and it fires for Space as well.
-              onClick={(e) => onSelect(issue.number, e.shiftKey)}
-              onChange={() => {}}
-              onPointerDown={keepOffDrag}
-              className="shrink-0"
-            />
-          )}
           {placement === "after" && (
             <span className="text-xs text-muted-foreground">{ref}</span>
           )}

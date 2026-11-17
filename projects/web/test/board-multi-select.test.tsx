@@ -198,7 +198,7 @@ const columnBox = (name: string) =>
 const checked = () =>
   [
     ...document.querySelectorAll<HTMLInputElement>(
-      "[data-return-id] [data-card-meta] input[type=checkbox]",
+      "[data-return-id] > [data-card-select] input[type=checkbox]",
     ),
   ]
     .filter((input) => input.checked)
@@ -324,6 +324,21 @@ describe("selecting cards on the board (T-708)", () => {
       { number: 52, status_id: done.id },
     ]);
     expect(checked()).toEqual([]);
+  });
+
+  it("marks the board as selecting while anything is selected (T-732)", async () => {
+    mountBoard(statefulServer());
+    await screen.findByText("card 61");
+    const canvas = column("Todo").parentElement as HTMLElement;
+    expect(canvas.hasAttribute("data-selecting")).toBe(false);
+
+    fireEvent.click(box(21));
+    expect(canvas.hasAttribute("data-selecting")).toBe(true);
+    // The box sits on the card's corner, no longer on its meta row.
+    expect(box(21).closest("[data-card-meta]")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Clear selection"));
+    expect(canvas.hasAttribute("data-selecting")).toBe(false);
   });
 
   it("offers no checkboxes to a reporter", async () => {

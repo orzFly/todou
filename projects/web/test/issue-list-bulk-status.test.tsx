@@ -351,6 +351,27 @@ describe("selecting issues on the list (T-707)", () => {
     expect(checked()).toHaveLength(4);
   });
 
+  it("keeps no column for the boxes, and marks the list while selecting (T-732)", async () => {
+    const { unmount } = mountList(statefulServer());
+    await screen.findByText("card 22");
+    const selectable = [...document.querySelectorAll("ul")].map(
+      (ul) => ul.className,
+    );
+    const selecting = () => document.querySelector("[data-selecting]");
+    expect(selecting()).toBeNull();
+    fireEvent.click(box(21));
+    expect(selecting()?.contains(box(21))).toBe(true);
+    fireEvent.click(screen.getByLabelText("Clear selection"));
+    expect(selecting()).toBeNull();
+    unmount();
+
+    mountList(statefulServer(), { role: "reporter" });
+    await screen.findByText("card 22");
+    expect(selectable).toEqual(
+      [...document.querySelectorAll("ul")].map((ul) => ul.className),
+    );
+  });
+
   it("offers no selection below issue.triage", async () => {
     mountList(statefulServer(), { role: "reporter" });
     await screen.findByText("card 22");

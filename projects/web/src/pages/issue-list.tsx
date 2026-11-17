@@ -426,28 +426,36 @@ export function ProjectIssueListPage({
       <Suspense fallback={<IssueListBodySkeleton />}>
         <ReportShownContext.Provider value={canSelect ? reportShown : null}>
           <SelectionContext.Provider value={canSelect ? selection : null}>
-            {grouped ? (
-              <GroupedIssueList
-                slug={slug}
-                statuses={statuses.data}
-                counts={counts.data}
-                allLabels={labels.data}
-                search={search}
-                typed={typed}
-                onCreateLabel={canCreateLabels ? createLabel : undefined}
-                onReady={setBodyReady}
-              />
-            ) : (
-              <FlatIssueList
-                slug={slug}
-                statuses={statuses.data}
-                allLabels={labels.data}
-                search={search}
-                typed={typed}
-                onCreateLabel={canCreateLabels ? createLabel : undefined}
-                onReady={setBodyReady}
-              />
-            )}
+            {/* Once anything is selected, every row shows its box (T-732). */}
+            <div
+              className="group/select"
+              data-selecting={
+                canSelect && selection.selected.length > 0 ? "" : undefined
+              }
+            >
+              {grouped ? (
+                <GroupedIssueList
+                  slug={slug}
+                  statuses={statuses.data}
+                  counts={counts.data}
+                  allLabels={labels.data}
+                  search={search}
+                  typed={typed}
+                  onCreateLabel={canCreateLabels ? createLabel : undefined}
+                  onReady={setBodyReady}
+                />
+              ) : (
+                <FlatIssueList
+                  slug={slug}
+                  statuses={statuses.data}
+                  allLabels={labels.data}
+                  search={search}
+                  typed={typed}
+                  onCreateLabel={canCreateLabels ? createLabel : undefined}
+                  onReady={setBodyReady}
+                />
+              )}
+            </div>
           </SelectionContext.Provider>
         </ReportShownContext.Provider>
       </Suspense>
@@ -556,7 +564,7 @@ export function TrashView({
 /**
  * How a list hands the page the rows it shows, keyed by the same lane name
  * the return driver uses. Null where the reader cannot select, which is also
- * how a list knows to leave out the checkbox track.
+ * how a list knows to leave out the checkboxes.
  */
 const ReportShownContext = createContext<
   ((lane: string, items: readonly IssueListItem[] | null) => void) | null
@@ -575,8 +583,10 @@ function useReportShown(lane: string, items: readonly IssueListItem[]) {
 }
 
 /**
- * Select-all and what a selection can do (T-707). The box sits over the
- * rows' own checkbox column: 1px of list border plus the rows' 14px padding.
+ * Select-all and what a selection can do (T-707). The box always shows, as
+ * the one way into selecting that needs no hover, and starts where the rest
+ * of the toolbar does rather than hanging like the rows' boxes (T-732).
+ * Touch gets no list selection, so none of this renders there.
  */
 function IssueSelectionBar({
   slug,
@@ -589,7 +599,7 @@ function IssueSelectionBar({
 }) {
   const count = selection.selected.length;
   return (
-    <div className="ml-[15px] flex items-center gap-2">
+    <div className="flex items-center gap-2 touch:hidden">
       <Checkbox
         aria-label="select all issues"
         checked={selection.state === "all"}
@@ -908,7 +918,7 @@ function IssueGroup({
     [narrowing, items, typed],
   );
   const selectable = useReportShown(`status:${status.id}`, shown);
-  const grid = useIssueListGrid({ select: selectable });
+  const grid = useIssueListGrid();
   const lastCursor =
     paged.pages.length === 0
       ? (group.data?.next_cursor ?? null)
@@ -1107,7 +1117,7 @@ export function IssueList({
     [narrowing, items, typed],
   );
   const selectable = useReportShown("flat", shown);
-  const grid = useIssueListGrid({ select: selectable });
+  const grid = useIssueListGrid();
   // A null next_cursor on the newest loaded page means the end was reached;
   // `??` would resurrect page 1's cursor there and Load More would re-append
   // page 2 forever.

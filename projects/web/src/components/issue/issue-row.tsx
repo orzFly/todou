@@ -72,32 +72,17 @@ const ISSUE_LIST_GRID_NO_MARKER_TRAILING_REF =
   "grid grid-cols-[minmax(0,1fr)] gap-x-2 px-3.5";
 
 /**
- * The two layouts with a checkbox track ahead of the read marker, for a list
- * the reader can select from (T-707).
- */
-const ISSUE_LIST_GRID_SELECT =
-  "grid grid-cols-[16px_27px_max-content_minmax(0,1fr)] gap-x-2 px-3.5";
-const ISSUE_LIST_GRID_SELECT_TRAILING_REF =
-  "grid grid-cols-[16px_27px_minmax(0,1fr)] gap-x-2 px-3.5";
-
-/**
  * The column layout a list of `IssueRow`s must wear, per the viewer's
- * preference. `readMarker: false` and `select: true` must match the rows' own
- * props: the track and the control are one decision, made once by the list.
- * Selecting is only offered beside a read marker, which every list that
- * selects has.
+ * preference. `readMarker: false` must match the rows' own prop: the track
+ * and the control are one decision, made once by the list. Selecting takes
+ * no track; the row's box hangs on the list's border (T-732).
  */
 export function useIssueListGrid({
   readMarker = true,
-  select = false,
 }: {
   readMarker?: boolean;
-  select?: boolean;
 } = {}): string {
   const leads = useRefPlacement("list") === "before";
-  if (select && readMarker) {
-    return leads ? ISSUE_LIST_GRID_SELECT : ISSUE_LIST_GRID_SELECT_TRAILING_REF;
-  }
   if (!readMarker) {
     return leads
       ? ISSUE_LIST_GRID_NO_MARKER
@@ -186,8 +171,9 @@ export function IssueRow({
    */
   returnAnchor?: boolean;
   /**
-   * The row's checkbox (T-707), in a track the list adds with
-   * `useIssueListGrid({ select: true })`. `extend` is a shift-click.
+   * The row's checkbox (T-707). The list wraps its rows in `group/select`
+   * with `data-selecting` so every box shows once any is checked (T-732).
+   * `extend` is a shift-click.
    */
   select?: { checked: boolean; onToggle: (extend: boolean) => void };
 }) {
@@ -203,16 +189,21 @@ export function IssueRow({
       data-return-id={returnAnchor ? String(issue.id) : undefined}
       className={cn(
         ISSUE_LIST_ROW,
-        "grid grid-cols-subgrid items-center border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50",
-        select?.checked && "bg-muted/60",
+        "group/row relative grid grid-cols-subgrid items-center border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50",
+        select?.checked && "bg-primary/10 hover:bg-primary/10",
       )}
     >
       {select && (
-        // The label is the hit area: it reaches back over the row's padding
-        // to the list's edge, so the box is not a 16px target.
+        // Hung on the list's left border, centred on it, so an idle list keeps
+        // no column for a box nobody is using (T-732). The row bleeds to the
+        // list's padding edge, so the 1px border is at x -1..0 and the box at
+        // -8.5..7.5. The label is the hit area, from the box's outer edge to
+        // the end of the row's padding, at full row height. Nothing above the
+        // list clips (T-306), and the 11.5px it reaches out with its focus
+        // ring fits inside the page's 16px gutter.
         <label
           htmlFor={`issue-select-${issue.id}`}
-          className="-my-2.5 -ml-3.5 flex cursor-pointer items-center self-stretch py-2.5 pl-3.5"
+          className="absolute inset-y-0 -left-3 flex w-[26px] cursor-pointer items-center pl-[3.5px] touch:hidden"
         >
           <Checkbox
             id={`issue-select-${issue.id}`}
@@ -222,6 +213,7 @@ export function IssueRow({
             // and it fires for Space as well.
             onClick={(e) => select.onToggle(e.shiftKey)}
             onChange={() => {}}
+            className="bg-background opacity-0 group-hover/row:opacity-100 group-data-[selecting]/select:opacity-100 checked:opacity-100 focus-visible:opacity-100"
           />
         </label>
       )}
@@ -295,19 +287,14 @@ export function IssueRow({
         <div
           className={cn(
             "mt-1 flex flex-wrap items-center gap-1.5",
-            // One track later behind a checkbox, one earlier when the
-            // marker's column is not there.
-            select && readMarker
+            // One track earlier when the marker's column is not there.
+            readMarker
               ? refLeads
-                ? "col-start-4"
-                : "col-start-3"
-              : readMarker
-                ? refLeads
-                  ? "col-start-3"
-                  : "col-start-2"
-                : refLeads
-                  ? "col-start-2"
-                  : "col-start-1",
+                ? "col-start-3"
+                : "col-start-2"
+              : refLeads
+                ? "col-start-2"
+                : "col-start-1",
           )}
         >
           {meta}
