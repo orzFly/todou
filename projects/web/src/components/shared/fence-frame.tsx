@@ -168,14 +168,18 @@ export function FenceFrame({
           </span>
         </div>
       ) : (
-        // In the flow, not floating over the code: on touch it never hides,
-        // and anywhere it would cover the end of a long first line. It
-        // reaches down into the content's own top padding to cost less
-        // height — but not over a scroller, whose lines would pass under it.
+        // Where it hides until hover it floats over the corner, so a block at
+        // rest costs no height (T-737); shown, it may cover the end of a long
+        // first line, hence opaque. Where it never hides — no hover, or a
+        // diagram's — that cover would be permanent, so it takes a row in the
+        // flow, reaching down into the content's own top padding to cost
+        // less — but not over a scroller, whose lines would pass under it.
         <div
           className={cn(
-            "fence-tools relative z-10 mt-1 mr-1 ml-auto flex w-fit items-center gap-0.5 rounded-md border bg-background/90 p-px shadow-xs select-none",
+            "fence-tools relative z-10 mt-1 mr-1 ml-auto flex w-fit items-center gap-0.5 rounded-md border bg-background p-px shadow-xs select-none",
             !collapsible && "-mb-3",
+            !toolbarAlwaysVisible &&
+              "can-hover:absolute can-hover:top-1 can-hover:right-1 can-hover:m-0",
           )}
           data-always={toolbarAlwaysVisible ? "" : undefined}
         >

@@ -6,6 +6,9 @@
 
 @custom-variant dark (&:is(.dark *));
 @custom-variant touch (@media (hover: none) and (pointer: coarse));
+/* Not `not-touch`: a fine pointer without hover (some styluses, headless
+   Chromium) never brings a hover-only control up either. */
+@custom-variant can-hover (@media (hover: hover));
 
 @theme inline {
     --font-heading: var(--font-sans);
@@ -1223,7 +1226,8 @@ html[data-header-settling] [data-header-follow] {
   }
 
   /* A code block's toolbar (T-706) shows on hover or once focus is inside,
-     so Tab to Copy brings it up. Touch has no hover, so there it stays. */
+     so Tab to Copy brings it up. Without hover it stays, and FenceFrame
+     gives it a row of its own rather than floating it over the code. */
   .fence-tools {
     opacity: 0;
     transition: opacity 120ms cubic-bezier(0.16, 1, 0.3, 1);

@@ -35,8 +35,10 @@ describe("FenceFrame", () => {
     const tools = container.querySelector(".fence-tools");
     expect(tools?.textContent).toContain("ts");
     expect(tools?.className).toContain("select-none");
-    // Floating, it covered the end of the first line wherever it showed.
-    expect(tools?.className).not.toMatch(/\babsolute\b/);
+    // Floats only where hover hides it, so a block at rest reserves no row;
+    // without hover it would sit on the first line for good.
+    expect(tools?.className).toContain("can-hover:absolute");
+    expect(tools?.className).not.toMatch(/(^|\s)absolute\b/);
     expect(tools?.hasAttribute("data-always")).toBe(false);
     expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
     expect(container.querySelector(".fence-head")).toBeNull();
@@ -142,9 +144,10 @@ describe("FenceFrame", () => {
         <pre>{TEXT}</pre>
       </FenceFrame>,
     );
-    expect(
-      container.querySelector(".fence-tools")?.hasAttribute("data-always"),
-    ).toBe(true);
+    const tools = container.querySelector(".fence-tools");
+    expect(tools?.hasAttribute("data-always")).toBe(true);
+    // Never hidden, so never over the content.
+    expect(tools?.className).not.toContain("absolute");
   });
 
   it("has no Copy when it is given no text", () => {
