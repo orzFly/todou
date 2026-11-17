@@ -4,6 +4,7 @@ import type { Clock } from "../src/clock.ts";
 import { commands } from "../src/commands/index.ts";
 import type { UpgradeSeam } from "../src/commands/upgrade.ts";
 import type { ProcessTreeIo } from "../src/harness/process-tree.ts";
+import type { DiagramParser } from "../src/mermaid/types.ts";
 import type { openPeerPush } from "../src/peer-push.ts";
 
 /**
@@ -132,6 +133,7 @@ export async function runCli(
     /** Ancestors the harness may attribute itself to; unset means none. */
     processTree?: Partial<ProcessTreeIo>;
     upgrade?: UpgradeSeam;
+    diagramParser?: () => Promise<DiagramParser>;
   } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const cli = createCli("0.0.0-test");
@@ -175,6 +177,7 @@ export async function runCli(
     openBrowser: options.openBrowser ?? (() => {}),
     openPeerPush: options.openPeerPush,
     upgrade: options.upgrade,
+    diagramParser: options.diagramParser,
   });
 
   return {

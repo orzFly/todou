@@ -76,6 +76,8 @@ EOF2
 - Draft in a scratch dir; git never carries them.
 - `spec push <n> <dir> --message vN [--if-version v] --wait` — the last stdout line is the outcome.
 - `approved` (latest version only; confirm with `spec status`) · `changes_requested` · `feedback` · `withdrawn`.
+- `not waiting`: a mermaid diagram does not parse (stderr names `file:line`); fix it and push again
+  with `--if-version`. Comment and issue writes print the same warning with the command to update.
 - Exit 0 is not approval.
 - Reworking a pending version: `spec withdraw <n> --if-version v` first.
 - `spec comments <n> --unresolved` → revise → `spec resolve <n> <ids…>` → push again.

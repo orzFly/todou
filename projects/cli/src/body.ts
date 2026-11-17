@@ -101,6 +101,32 @@ function guardBodyPath(
 }
 
 /**
+ * The file a body was read from, where the user can edit it and send it
+ * again; null when it came from anywhere else — `--body`, stdin, `<(…)`,
+ * the editor's scratch file — and has to be written out to be fixed. The
+ * path is returned as typed, relative paths included, because it is printed
+ * back to the person who typed it.
+ */
+export function bodyLocation(options: {
+  body?: string;
+  bodyFile?: string;
+  cwd: string;
+}): { kind: "file"; path: string } | null {
+  const path = options.bodyFile;
+  if (options.body !== undefined || path === undefined || path === "-") {
+    return null;
+  }
+  if (STREAM_PATHS.some((pattern) => pattern.test(path))) return null;
+  try {
+    // A named pipe outside STREAM_PATHS reads once, like stdin.
+    if (!statSync(resolve(options.cwd, path)).isFile()) return null;
+  } catch {
+    return null;
+  }
+  return { kind: "file", path };
+}
+
+/**
  * Issue/comment body from, in order: --body, --body-file (- = stdin), or —
  * only on a TTY — $EDITOR on a scratch file. Agents never reach the editor:
  * without a TTY the command fails fast instead of hanging on user input.

@@ -228,6 +228,9 @@ importers:
       clipanion:
         specifier: 4.0.0-rc.4
         version: 4.0.0-rc.4(typanion@3.14.0)
+      mermaid:
+        specifier: ^12.2.0
+        version: 12.2.0
       smol-toml:
         specifier: ^1.7.1
         version: 1.7.1

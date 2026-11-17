@@ -16,8 +16,14 @@ import {
   type ResolvedContext,
   resolveContext,
 } from "./context.ts";
+import {
+  type DocLocation,
+  type FixHint,
+  reportDiagramProblems,
+} from "./diagram-report.ts";
 import { discoverDirConfig, displayPath } from "./dir-config.ts";
 import { CliError, NoAccessError, reportError } from "./errors.ts";
+import { makePainter } from "./format.ts";
 import { type GrantAccessKind, grantAccessLines } from "./grant-access.ts";
 import { detectAgentContext, liveSessionIdReader } from "./harness/index.ts";
 import type { ProcessTreeIo } from "./harness/process-tree.ts";
@@ -27,6 +33,7 @@ import {
   type LadderResult,
   resolvePrefixedRef,
 } from "./locator.ts";
+import type { DiagramParser } from "./mermaid/types.ts";
 import { parseIssueRef } from "./parse.ts";
 import type { openPeerPush } from "./peer-push.ts";
 import type { RefFormat } from "./refs.ts";
@@ -121,6 +128,8 @@ export type CliContext = BaseContext & {
   processTree?: Partial<ProcessTreeIo>;
   /** Test seam; production leaves it unset and inspects this very process. */
   upgrade?: UpgradeSeam;
+  /** Test seam; production leaves it unset and loads the bundled mermaid. */
+  diagramParser?: () => Promise<DiagramParser>;
 };
 
 /** Base for every command that talks to a server: context, client, --json. */
@@ -400,6 +409,20 @@ export abstract class ApiCommand extends Command<CliContext> {
 
   protected note(line: string): void {
     this.context.stderr.write(`${line}\n`);
+  }
+
+  /** Warns on stderr about mermaid diagrams in what was just written (T-769). */
+  protected reportDiagrams(
+    docs: Array<{ text: string; location: DocLocation }>,
+    fix: FixHint,
+  ): Promise<{ broken: number }> {
+    return reportDiagramProblems({
+      docs,
+      fix,
+      note: (line) => this.note(line),
+      paint: makePainter(this.context.stderr, this.context.env),
+      parser: this.context.diagramParser,
+    });
   }
 }
 

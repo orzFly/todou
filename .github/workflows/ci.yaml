@@ -74,6 +74,7 @@ jobs:
           deno-version: v2.9.8
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:cli
+      - run: node scripts/mermaid-bundle-smoke.mjs dist/todou.cjs
       # A Linux build never takes the Mac-host path of the normalizer that
       # build:cli just ran, so this one exercises it on a doctored copy.
       - run: node scripts/normalize-vfs-case-check.mjs dist/todou-macos-arm64

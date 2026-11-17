@@ -1,7 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { DiagramParser } from "../src/mermaid/types.ts";
 import { fakeFetch, loggedInEnv, type Route, runCli } from "./harness.ts";
 
 const me = {
@@ -1179,5 +1187,203 @@ describe("attach", () => {
       expect(hints((await upload(["shot.png"])).stderr)).toBe(0);
       expect(hints((await upload(["after.txt"])).stderr)).toBe(0);
     });
+  });
+});
+
+/** T-769: a write whose body holds a broken mermaid diagram warns after it. */
+describe("mermaid diagrams in what was written", () => {
+  const dir = mkdtempSync(join(tmpdir(), "todou-diagrams-"));
+  const scratch = join(dir, "tmp");
+  mkdirSync(scratch);
+  beforeAll(() => {
+    // Scratch bodies land in os.tmpdir(); keep them inside this run's dir.
+    vi.stubEnv("TMPDIR", scratch);
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // The broken diagram's content starts on line 3, and the parser blames
+  // its line 2.
+  const BODY = "Context\n```mermaid\nflowchart LR\n  B -->|BAD(x)| C\n```\n";
+  const brokenParser: DiagramParser = async (sources) =>
+    sources.map((source) =>
+      source.includes("BAD")
+        ? { ok: false, message: "Parse error on line 2:\n...", line: 2 }
+        : { ok: true },
+    );
+  const cleanParser: DiagramParser = async (sources) =>
+    sources.map(() => ({ ok: true }));
+
+  const commentReply = (id: number) => (init: RequestInit) => ({
+    type: "comment",
+    id,
+    author: me,
+    body: jsonBody(init).body,
+    created_at: "2026-08-11T12:00:00Z",
+    edited_at: null,
+  });
+  const routes: Route[] = [
+    ["GET", "/api/projects/todou/statuses", statuses],
+    ["POST", "/api/projects/todou/issues/7/comments", commentReply(42)],
+    ["PATCH", "/api/projects/todou/issues/7/comments/12", commentReply(12)],
+    ["POST", "/api/projects/todou/issues/3/comments", commentReply(43)],
+    [
+      "POST",
+      "/api/projects/todou/issues",
+      (init: RequestInit) =>
+        issueWith({ number: 9, body: jsonBody(init).body }),
+    ],
+    [
+      "PATCH",
+      "/api/projects/todou/issues/3",
+      (init: RequestInit) => issueWith({ ...jsonBody(init) }),
+    ],
+  ];
+
+  /**
+   * Runs argv once with a parser that fails the diagram and once with one
+   * that passes it: the warning is the only difference allowed.
+   */
+  async function both(argv: string[], stdinText?: string) {
+    const run = (parser: DiagramParser) =>
+      runCli(argv, {
+        fetchImpl: fakeFetch(routes).fetchImpl,
+        env: loggedInEnv("todou"),
+        stdinText,
+        diagramParser: async () => parser,
+      });
+    const broken = await run(brokenParser);
+    const clean = await run(cleanParser);
+    expect(broken.exitCode).toBe(0);
+    expect(clean.exitCode).toBe(0);
+    expect(broken.stdout).toBe(clean.stdout);
+    expect(clean.stderr).toBe("");
+    return broken;
+  }
+
+  /** The scratch file the last run wrote, checked against the body. */
+  function takeScratch(name: string): string {
+    const [sub] = readdirSync(scratch);
+    const path = join(scratch, sub, name);
+    expect(readFileSync(path, "utf8")).toBe(BODY);
+    rmSync(join(scratch, sub), { recursive: true });
+    return path;
+  }
+
+  it("comment add --body-file <file> points at the file as typed", async () => {
+    const file = join(dir, "body.md");
+    writeFileSync(file, BODY);
+    const result = await both(["comment", "add", "7", "--body-file", file]);
+    expect(result.stderr).toBe(
+      [
+        "warning: 1 mermaid diagram fails to parse — the web shows its source and this error instead of the diagram",
+        `  ${file}:4`,
+        "    Parse error on line 2:",
+        "    ...",
+        "  the comment is posted; fix the file and update it:",
+        `    todou comment edit 7 42 -p todou --body-file ${file}`,
+        "",
+      ].join("\n"),
+    );
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+
+  it("comment add --body-file - writes the body out to fix", async () => {
+    const result = await both(
+      ["comment", "add", "7", "--body-file", "-"],
+      BODY,
+    );
+    const path = takeScratch("comment-42.md");
+    expect(result.stderr).toContain(`  ${path}:4\n`);
+    expect(result.stderr).toContain(
+      `todou comment edit 7 42 -p todou --body-file ${path}\n`,
+    );
+  });
+
+  it("comment add --body writes the body out to fix", async () => {
+    const result = await both(["comment", "add", "7", "--body", BODY]);
+    const path = takeScratch("comment-42.md");
+    expect(result.stderr).toContain(`  ${path}:4\n`);
+  });
+
+  it("comment add --json keeps stdout to the document", async () => {
+    const result = await both([
+      "comment",
+      "add",
+      "7",
+      "--body",
+      BODY,
+      "--json",
+    ]);
+    takeScratch("comment-42.md");
+    expect(JSON.parse(result.stdout)).toMatchObject({ id: 42 });
+  });
+
+  it("comment edit points back at comment edit", async () => {
+    const result = await both(["comment", "edit", "7", "12", "--body", BODY]);
+    const path = takeScratch("comment-12.md");
+    expect(result.stderr).toContain(
+      `todou comment edit 7 12 -p todou --body-file ${path}\n`,
+    );
+  });
+
+  it("issue close -c checks the closing comment", async () => {
+    const result = await both(["issue", "close", "3", "-c", BODY]);
+    const path = takeScratch("comment-43.md");
+    expect(result.stderr).toContain(
+      `todou comment edit 3 43 -p todou --body-file ${path}\n`,
+    );
+  });
+
+  it("issue create points at issue edit", async () => {
+    const result = await both(["issue", "create", "-t", "T", "-b", BODY]);
+    const path = takeScratch("issue-9.md");
+    expect(result.stderr).toContain(
+      "  the issue is saved; fix the file and update it:\n",
+    );
+    expect(result.stderr).toContain(
+      `todou issue edit 9 -p todou --body-file ${path}\n`,
+    );
+  });
+
+  it("issue edit checks a body it writes", async () => {
+    const result = await both(["issue", "edit", "3", "-b", BODY]);
+    const path = takeScratch("issue-3.md");
+    expect(result.stderr).toContain(
+      `todou issue edit 3 -p todou --body-file ${path}\n`,
+    );
+  });
+
+  it("does not load the parser when nothing written holds a diagram", async () => {
+    let loaded = 0;
+    const result = await runCli(
+      ["comment", "add", "7", "--body", "```ts\nx\n```"],
+      {
+        fetchImpl: fakeFetch(routes).fetchImpl,
+        env: loggedInEnv("todou"),
+        diagramParser: async () => {
+          loaded += 1;
+          return cleanParser;
+        },
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(loaded).toBe(0);
+  });
+
+  it("still exits 0 when the parser cannot load", async () => {
+    const result = await runCli(["comment", "add", "7", "--body", BODY], {
+      fetchImpl: fakeFetch(routes).fetchImpl,
+      env: loggedInEnv("todou"),
+      diagramParser: async () => {
+        throw new Error("no registerHooks here");
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe(
+      "could not check mermaid diagrams: no registerHooks here\n",
+    );
   });
 });

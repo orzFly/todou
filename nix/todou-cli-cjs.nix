@@ -31,7 +31,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     # Highest version currently supported; 1 and 2 are slated for removal in
     # 26.11.
     fetcherVersion = 4;
-    hash = "sha256-RTfJnCnIQ6YMqbVmbMgQWXK8TlknDcs8SacOJMDpr10=";
+    hash = "sha256-4ga/Cuw8R9xgwUh0K557cl0gShocVhvSR20IBtl4gp8=";
   };
 
   # nixpkgs' esbuild is 0.27.2 against the lock file's 0.28.2. The two bundles
@@ -41,7 +41,10 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   # fetchPnpmDeps installs with --force and would pull esbuild's and biome's
   # binaries for every platform. Release artifacts are unaffected: build-cli.sh
   # still bundles with the lock file's esbuild.
-  nativeBuildInputs = [ common.pnpm pnpmConfigHook common.esbuild ];
+  #
+  # node runs projects/cli/build/embed-mermaid.mjs, which bundle-cli.sh calls to
+  # compress the mermaid sub-bundle into the CLI.
+  nativeBuildInputs = [ common.pnpm pnpmConfigHook common.esbuild common.nodejs ];
 
   # Invoked through bash rather than its shebang: the build sandbox has /bin/sh
   # but no /usr/bin/env.

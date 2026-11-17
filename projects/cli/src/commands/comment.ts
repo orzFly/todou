@@ -9,6 +9,7 @@ import {
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
+import { bodyDoc } from "../diagram-report.ts";
 import { CliError } from "../errors.ts";
 import {
   elision,
@@ -190,6 +191,10 @@ export class CommentAddCommand extends ProjectCommand {
             ` · ${bodyShape(body)}`
           : `asked ${component.questions.length} question(s) on ${posted.issue_ref} — ` +
             `wait for answers with \`todou question wait ${number} ${comment.id}\``,
+    );
+    await this.reportDiagrams(
+      [bodyDoc(body, this, `comment-${comment.id}.md`)],
+      { kind: "comment", project, number, commentId: comment.id },
     );
   }
 }
@@ -570,6 +575,10 @@ export class CommentEditCommand extends ProjectCommand {
     this.output(
       edited,
       () => `edited ${commentRef(commentId)} on ${edited.issue_ref}`,
+    );
+    await this.reportDiagrams(
+      [bodyDoc(body, this, `comment-${commentId}.md`)],
+      { kind: "comment", project, number, commentId },
     );
   }
 }

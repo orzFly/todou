@@ -179,6 +179,11 @@ export class SpecPushCommand extends ProjectCommand {
       the cursor to a second command, which is the thing \`--wait\`
       replaces.
 
+      A mermaid diagram that does not parse is reported on stderr after
+      the push, by file and line. Under \`--wait\` the push then does not
+      wait at all: it ends with \`not waiting: …\` (\`not_waiting\` under
+      \`--json\`), since a reviewer would find broken diagrams to judge.
+
       \`--since <cursor>\` says where the pusher last looked. The push runs
       regardless; afterwards the entries between that cursor and now —
       other people's only, as watches count them — are listed on stderr
@@ -297,7 +302,44 @@ export class SpecPushCommand extends ProjectCommand {
               ...changeLines(result),
             ].join("\n"),
     );
+    const { broken } = await this.reportDiagrams(
+      input.data.files.map((file) => ({
+        text: file.body,
+        location: { kind: "spec", path: file.path },
+      })),
+      { kind: "spec" },
+    );
     if (!this.wait) return;
+    // A reviewer opening this version would find broken diagrams and little
+    // else to judge; the wait would most likely end in "changes requested"
+    // for something the pusher can fix right now.
+    if (broken > 0) {
+      const refPrefix = await fetchRefPrefix(client, project);
+      const ref = refPrefix === null ? number : formatRef(refPrefix, number);
+      this.outputBatch(
+        [
+          {
+            type: "outcome",
+            outcome: "not_waiting",
+            version: result.version,
+            broken_diagrams: broken,
+          },
+        ],
+        () =>
+          [
+            ...(outcome.cursor === undefined
+              ? []
+              : [
+                  paint(
+                    "dim",
+                    `cursor: ${outcome.cursor} (spec wait ${ref} --since <cursor>)`,
+                  ),
+                ]),
+            `not waiting: ${broken} diagram(s) do not parse — fix and push again`,
+          ].join("\n"),
+      );
+      return 0;
+    }
     // An unchanged push is the case that makes waiting from the state, not
     // from the event, load-bearing: no new version means the verdict on the
     // old one may already be in, and the wait has to return it rather than

@@ -27,6 +27,7 @@ import {
 import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { openChangeNudges } from "../change-nudges.ts";
+import { bodyDoc } from "../diagram-report.ts";
 import { CliError } from "../errors.ts";
 import {
   elision,
@@ -1759,6 +1760,10 @@ export class IssueCreateCommand extends ProjectCommand {
     });
     const created = withRef(issue, await fetchRefPrefix(client, project));
     this.output(created, () => `${created.ref} created: ${created.title}`);
+    await this.reportDiagrams(
+      [bodyDoc(body, this, `issue-${issue.number}.md`)],
+      { kind: "issue", project, number: issue.number },
+    );
   }
 }
 
@@ -1962,6 +1967,12 @@ export class IssueEditCommand extends ProjectCommand {
     const single = numbers.length === 1 ? written[0] : undefined;
     if (single !== undefined) {
       this.output(single, () => `${single.ref} updated`);
+      if (shared.body !== undefined) {
+        await this.reportDiagrams(
+          [bodyDoc(shared.body, this, `issue-${single.number}.md`)],
+          { kind: "issue", project, number: single.number },
+        );
+      }
       return 0;
     }
     if (this.json) {
@@ -2151,14 +2162,27 @@ export class IssueCloseCommand extends ProjectCommand {
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = await this.resolveIssueRef(client, this.number);
     const target = await resolveClosedStatus(client, project, this.status);
-    if (this.comment !== undefined) {
-      await client.createComment(project, number, this.comment);
-    }
+    const text = this.comment;
+    const comment =
+      text === undefined
+        ? undefined
+        : await client.createComment(project, number, text);
     const issue = await client.updateIssue(project, number, {
       status_id: target.id,
     });
     const closed = withRef(issue, await fetchRefPrefix(client, project));
     this.output(closed, () => `${closed.ref} closed (${target.name})`);
+    if (comment !== undefined && text !== undefined) {
+      await this.reportDiagrams(
+        [
+          {
+            text,
+            location: { kind: "scratch", name: `comment-${comment.id}.md` },
+          },
+        ],
+        { kind: "comment", project, number, commentId: comment.id },
+      );
+    }
   }
 }
 

@@ -478,6 +478,103 @@ describe("spec push", () => {
   });
 });
 
+/** T-769: broken mermaid diagrams in a pushed set. */
+describe("spec push with mermaid diagrams", () => {
+  // design.md's diagram starts on line 5; the parser blames its line 2.
+  const FILES = {
+    "plan.md": "# Plan\n\n```mermaid\nflowchart LR\n```\n",
+    "design.md": "# Design\n\nIntro\n```mermaid\nflowchart LR\n  BAD\n```\n",
+  };
+  const parser = (fail: boolean) => async () => async (sources: string[]) =>
+    sources.map((source) =>
+      fail && source.includes("BAD")
+        ? { ok: false as const, message: "Parse error on line 2:", line: 2 }
+        : { ok: true as const },
+    );
+  const push: Route = [
+    "POST",
+    "/api/projects/proj/issues/23/spec/push",
+    {
+      unchanged: false,
+      version: 4,
+      added: ["design.md", "plan.md"],
+      changed: [],
+      removed: [],
+      cursor: "3:z.1.4",
+    },
+  ];
+  // Only the push is routed, so a wait that started anyway would fail the
+  // command on its first request.
+  const run = (argv: string[], fail: boolean) =>
+    runCli(["spec", "push", "23", specDir(FILES), ...argv], {
+      fetchImpl: fakeFetch([push]).fetchImpl,
+      env: ENV,
+      diagramParser: parser(fail),
+    });
+
+  it("names the file and line in the set, after the push's output", async () => {
+    const broken = await run([], true);
+    const clean = await run([], false);
+    expect(broken.exitCode).toBe(0);
+    expect(broken.stdout).toBe(clean.stdout);
+    expect(clean.stderr).toBe("");
+    expect(broken.stderr).toBe(
+      [
+        "warning: 1 of 2 mermaid diagrams fails to parse — the web shows its source and this error instead of the diagram",
+        "  design.md:6",
+        "    Parse error on line 2:",
+        "  the spec is pushed; fix the diagrams and push again",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("does not wait for a review of a version with broken diagrams", async () => {
+    const wait = vi.spyOn(specWait, "waitForSpecReview").mockResolvedValue(0);
+    try {
+      const result = await run(["--wait"], true);
+      expect(result.exitCode).toBe(0);
+      expect(wait).not.toHaveBeenCalled();
+      expect(result.stdout.trimEnd().split("\n").slice(-2)).toEqual([
+        "cursor: 3:z.1.4 (spec wait 23 --since <cursor>)",
+        "not waiting: 1 diagram(s) do not parse — fix and push again",
+      ]);
+      expect(result.stderr).toContain("  design.md:6\n");
+    } finally {
+      wait.mockRestore();
+    }
+  });
+
+  it("ends --json --wait with a not_waiting outcome", async () => {
+    const result = await run(["--wait", "--json"], true);
+    expect(result.exitCode).toBe(0);
+    const records = result.stdout
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records[0]).toMatchObject({ type: "push", cursor: "3:z.1.4" });
+    expect(records.at(-1)).toEqual({
+      type: "outcome",
+      outcome: "not_waiting",
+      version: 4,
+      broken_diagrams: 1,
+    });
+  });
+
+  it("waits as before when every diagram parses", async () => {
+    const wait = vi.spyOn(specWait, "waitForSpecReview").mockResolvedValue(0);
+    try {
+      const result = await run(["--wait"], false);
+      expect(result.exitCode).toBe(0);
+      expect(wait).toHaveBeenCalledOnce();
+      expect(result.stdout).not.toContain("not waiting");
+      expect(result.stderr).toBe("");
+    } finally {
+      wait.mockRestore();
+    }
+  });
+});
+
 describe("spec pull", () => {
   const SPEC = {
     version: 2,

@@ -28,6 +28,14 @@
         fi
         touch $out
       '';
+
+      # The embedded mermaid only works when four build steps line up, and
+      # only running the bundle shows that they do (T-769).
+      mermaid-smoke = runCommand "todou-cli-cjs-test-mermaid" { } ''
+        export HOME="$PWD/home" && mkdir -p "$HOME"
+        ${common.nodejs}/bin/node ${../scripts/mermaid-bundle-smoke.mjs} ${bundle}
+        touch $out
+      '';
     };
 
   cli = { todou-cli, todou-cli-cjs, denoEnv }:
