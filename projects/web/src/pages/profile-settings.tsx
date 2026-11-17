@@ -161,7 +161,7 @@ export function ProfileSettingsPage() {
 /** How issues, references and icons are drawn for this account (T-557). */
 export function AppearanceSettingsPage() {
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="@container max-w-4xl space-y-6">
       <h1 className="text-xl font-semibold">Appearance</h1>
       <DisplaySection />
       <BodyReferencesSection />
@@ -243,7 +243,7 @@ function DisplaySection() {
       <div className="space-y-1">
         <h2 className="font-medium">Issue number placement</h2>
       </div>
-      <div className="space-y-2">
+      <PreviewRow preview={<ListPreview />}>
         <PlacementRow
           id="ref-placement-list"
           label="Issue lists & Inbox"
@@ -252,9 +252,8 @@ function DisplaySection() {
           disabled={pending}
           onChange={(value) => patch.mutate({ ref_placement_list: value })}
         />
-        <ListPreview />
-      </div>
-      <div className="space-y-2">
+      </PreviewRow>
+      <PreviewRow preview={<BoardPreview />}>
         <PlacementRow
           id="ref-placement-board"
           label="Board cards"
@@ -263,9 +262,8 @@ function DisplaySection() {
           disabled={pending}
           onChange={(value) => patch.mutate({ ref_placement_board: value })}
         />
-        <BoardPreview />
-      </div>
-      <div className="space-y-2">
+      </PreviewRow>
+      <PreviewRow preview={<DetailPreview />}>
         <PlacementRow
           id="ref-placement-detail"
           label="Issue page title"
@@ -275,9 +273,8 @@ function DisplaySection() {
           disabled={pending}
           onChange={(value) => patch.mutate({ ref_placement_detail: value })}
         />
-        <DetailPreview />
-      </div>
-      <div className="space-y-2">
+      </PreviewRow>
+      <PreviewRow preview={<ReferencePreview />}>
         <PlacementRow
           id="ref-placement-reference"
           label="Issue references"
@@ -286,8 +283,7 @@ function DisplaySection() {
           disabled={pending}
           onChange={(value) => patch.mutate({ ref_placement_reference: value })}
         />
-        <ReferencePreview />
-      </div>
+      </PreviewRow>
     </div>
   );
 }
@@ -304,7 +300,7 @@ function BodyReferencesSection() {
 
   return (
     <div className="space-y-4 border-t pt-6">
-      <div className="space-y-1">
+      <div className="max-w-prose space-y-1">
         <h2 className="font-medium">References in text</h2>
         <p className="text-sm text-muted-foreground">
           These reach references inside descriptions and comments. Timeline rows
@@ -316,40 +312,52 @@ function BodyReferencesSection() {
           full reference.
         </p>
       </div>
-      <BodyReferencesPreview />
-      <ToggleRow
-        id="boxed-ref-links"
-        label="Bordered references"
-        checked={boxed}
-        disabled={pending}
-        onChange={(checked) => patch.mutate({ boxed_ref_links: checked })}
-      />
-      <ToggleRow
-        id="truncate-ref-title"
-        label="Shorten long titles"
-        checked={truncate}
-        disabled={pending}
-        onChange={(checked) => patch.mutate({ truncate_ref_title: checked })}
-      />
-      <ToggleRow
-        id="show-repeated-ref-title"
-        label="Title on every mention"
-        description="Repeated comments keep their reference and author. Comments on this card show only #comment-N and the author; ordinary issue references to this card say “current” when this is off."
-        checked={repeated}
-        disabled={pending}
-        onChange={(checked) =>
-          patch.mutate({ show_repeated_ref_title: checked })
-        }
-      />
-      <ToggleRow
-        id="open-external-links-in-new-tab"
-        label="Open external links in a new tab"
-        checked={newTab}
-        disabled={pending}
-        onChange={(checked) =>
-          patch.mutate({ open_external_links_in_new_tab: checked })
-        }
-      />
+      <div className={PREVIEW_GRID}>
+        {/* One sample answers all four switches, so it stays beside them
+            while they scroll; first in the DOM so that, stacked, it leads. */}
+        <div className="@2xl:sticky @2xl:top-6 @2xl:col-start-2 @2xl:row-start-1">
+          <PreviewFrame>
+            <BodyReferencesPreview />
+          </PreviewFrame>
+        </div>
+        <div className="space-y-4 @2xl:col-start-1 @2xl:row-start-1">
+          <ToggleRow
+            id="boxed-ref-links"
+            label="Bordered references"
+            checked={boxed}
+            disabled={pending}
+            onChange={(checked) => patch.mutate({ boxed_ref_links: checked })}
+          />
+          <ToggleRow
+            id="truncate-ref-title"
+            label="Shorten long titles"
+            checked={truncate}
+            disabled={pending}
+            onChange={(checked) =>
+              patch.mutate({ truncate_ref_title: checked })
+            }
+          />
+          <ToggleRow
+            id="show-repeated-ref-title"
+            label="Title on every mention"
+            description="Repeated comments keep their reference and author. Comments on this card show only #comment-N and the author; ordinary issue references to this card say “current” when this is off."
+            checked={repeated}
+            disabled={pending}
+            onChange={(checked) =>
+              patch.mutate({ show_repeated_ref_title: checked })
+            }
+          />
+          <ToggleRow
+            id="open-external-links-in-new-tab"
+            label="Open external links in a new tab"
+            checked={newTab}
+            disabled={pending}
+            onChange={(checked) =>
+              patch.mutate({ open_external_links_in_new_tab: checked })
+            }
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -454,11 +462,7 @@ const PREVIEW_PEOPLE = [
  */
 function FallbackPreview({ children }: { children: ReactNode }) {
   return (
-    <div
-      aria-hidden="true"
-      data-fallback-preview=""
-      className="flex gap-2 pt-1"
-    >
+    <div aria-hidden="true" data-fallback-preview="" className="flex gap-2">
       {children}
     </div>
   );
@@ -477,13 +481,7 @@ function FallbackAvatarsSection() {
       <div className="space-y-1">
         <h2 className="font-medium">Icons without an image</h2>
       </div>
-      <PlacementRow
-        id="project-icon-fallback"
-        label="Projects"
-        value={project}
-        options={PROJECT_ICON_FALLBACKS}
-        disabled={pending}
-        onChange={(value) => patch.mutate({ project_icon_fallback: value })}
+      <PreviewRow
         preview={
           <FallbackPreview>
             {PREVIEW_PROJECTS.map((sample) => (
@@ -495,14 +493,17 @@ function FallbackAvatarsSection() {
             ))}
           </FallbackPreview>
         }
-      />
-      <PlacementRow
-        id="user-avatar-fallback"
-        label="People"
-        value={user}
-        options={USER_AVATAR_FALLBACKS}
-        disabled={pending}
-        onChange={(value) => patch.mutate({ user_avatar_fallback: value })}
+      >
+        <PlacementRow
+          id="project-icon-fallback"
+          label="Projects"
+          value={project}
+          options={PROJECT_ICON_FALLBACKS}
+          disabled={pending}
+          onChange={(value) => patch.mutate({ project_icon_fallback: value })}
+        />
+      </PreviewRow>
+      <PreviewRow
         preview={
           <FallbackPreview>
             {PREVIEW_PEOPLE.map((sample) => (
@@ -510,7 +511,16 @@ function FallbackAvatarsSection() {
             ))}
           </FallbackPreview>
         }
-      />
+      >
+        <PlacementRow
+          id="user-avatar-fallback"
+          label="People"
+          value={user}
+          options={USER_AVATAR_FALLBACKS}
+          disabled={pending}
+          onChange={(value) => patch.mutate({ user_avatar_fallback: value })}
+        />
+      </PreviewRow>
     </div>
   );
 }
@@ -526,14 +536,47 @@ function TextEditorSection() {
       <div className="space-y-1">
         <h2 className="font-medium">Text editor</h2>
       </div>
-      <ToggleRow
-        id="plain-text-editor"
-        label="Plain text box in this browser"
-        description="Gives up suggestions after #, @ and /, and pasting rich text as markdown."
-        checked={plain}
-        disabled={false}
-        onChange={setPlainTextEditor}
-      />
+      <div className={PREVIEW_GRID}>
+        <ToggleRow
+          id="plain-text-editor"
+          label="Plain text box in this browser"
+          description="Gives up suggestions after #, @ and /, and pasting rich text as markdown."
+          checked={plain}
+          disabled={false}
+          onChange={setPlainTextEditor}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Controls in the first column, what they draw in the second; one column on a
+ * narrow container, where the sample drops under its control (T-729).
+ */
+const PREVIEW_GRID =
+  "grid items-start gap-x-8 gap-y-2 @2xl:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]";
+
+/** The one frame every sample on this page sits in (T-729). */
+function PreviewFrame({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border bg-muted/40 p-4">
+      {children}
+    </div>
+  );
+}
+
+function PreviewRow({
+  preview,
+  children,
+}: {
+  preview: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className={PREVIEW_GRID}>
+      {children}
+      <PreviewFrame>{preview}</PreviewFrame>
     </div>
   );
 }
@@ -579,7 +622,6 @@ function PlacementRow<V extends string>({
   options,
   disabled,
   onChange,
-  preview,
 }: {
   id: string;
   label: string;
@@ -588,7 +630,6 @@ function PlacementRow<V extends string>({
   options: ReadonlyArray<{ value: V; label: string; sample?: ReactNode }>;
   disabled: boolean;
   onChange: (value: V) => void;
-  preview?: ReactNode;
 }) {
   const selected = options.find((option) => option.value === value);
   return (
@@ -598,7 +639,6 @@ function PlacementRow<V extends string>({
         {description && (
           <p className="text-sm text-muted-foreground">{description}</p>
         )}
-        {preview}
       </div>
       <Select
         value={value}
@@ -609,7 +649,7 @@ function PlacementRow<V extends string>({
       >
         <SelectTrigger id={id} className="shrink-0">
           {/* Radix mirrors the chosen item's text into the trigger, sample
-              and all; the preview beside the label already draws it. */}
+              and all; the preview beside the row already draws it. */}
           <SelectValue>
             {selected?.sample ? selected.label : undefined}
           </SelectValue>

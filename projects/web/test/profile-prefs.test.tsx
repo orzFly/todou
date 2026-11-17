@@ -357,7 +357,8 @@ describe("preview under icons without an image (T-558)", () => {
     view: ReturnType<typeof renderSettings>,
     name: string,
   ) {
-    const row = (await view.findByRole("combobox", { name })).parentElement;
+    const row = (await view.findByRole("combobox", { name })).parentElement
+      ?.parentElement;
     const preview = row?.querySelector("[data-fallback-preview]");
     return [...(preview?.querySelectorAll('[data-slot="avatar"]') ?? [])].map(
       (avatar) => {
@@ -658,5 +659,23 @@ describe("previews under issue number placement and references (T-710)", () => {
       expect(preview.getAttribute("aria-hidden")).toBe("true");
       expect(preview.hasAttribute("inert")).toBe(true);
     }
+  });
+
+  it("draws every sample in one frame of its own (T-729)", async () => {
+    const view = renderSettings();
+    await bodyPreview(view);
+    const samples = document.querySelectorAll(
+      "[data-appearance-preview], [data-fallback-preview]",
+    );
+    expect(samples).toHaveLength(7);
+    const frames = new Set(
+      [...samples].map((sample) => sample.parentElement?.className),
+    );
+    expect(frames.size).toBe(1);
+    expect([...frames][0]).toMatch(/(^|\s)border(\s|$)/);
+    // The frame is the only box: the body sample used to draw its own.
+    expect(
+      document.querySelector("[data-appearance-preview].border"),
+    ).toBeNull();
   });
 });

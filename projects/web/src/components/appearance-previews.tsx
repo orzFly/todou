@@ -166,7 +166,7 @@ function PreviewSandbox({
 function ListSample() {
   const grid = useIssueListGrid({ readMarker: false });
   return (
-    <ul className={`${grid} rounded-md border`}>
+    <ul className={`${grid} rounded-md border bg-background`}>
       {[SHORT, SIGN_IN].map((issue) => (
         <IssueRow
           key={issue.id}
@@ -220,7 +220,7 @@ export function ReferencePreview() {
 
 export function BodyReferencesPreview() {
   return (
-    <PreviewSandbox className="rounded-md border px-3 py-2">
+    <PreviewSandbox>
       <MarkdownView slug={SLUG}>{BODY}</MarkdownView>
     </PreviewSandbox>
   );
