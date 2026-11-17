@@ -95,11 +95,11 @@ EOF2
 ## Markdown
 
 - GFM: tables, `- [ ]` task lists, `~~strike~~`
-- ```` ```mermaid ```` → diagram · ```` ```diff ```` → diff view · other fences highlighted
+- Fences that render: ```` ```mermaid ```` → diagram; ```` ```diff ```` / ```` ```patch ```` → diff view. Other fences are highlighted.
 - `<details><summary>…</summary>…</details>` → fold (bare tags only)
 - leading `---` YAML frontmatter → table
 - `[name](/api/projects/<proj>/attachments/<id>/download/<name>)` → attachment link
-- `![](…/download/shot.png)` → inline image · `![](…/download/page.html)` (any text file) → embedded document
+- `![](…/download/<file>)` embeds an attachment: any image; `.md` rendered; `.patch` / `.diff` as a diff; `.html`, `.txt` and other text files as a document.
 - `![before](/...) -> ![plan A](/...)` on a separated paragraph → compare images (side by side, swipe, …); each alt labels its side
 - `T-1144` → issue (the project's own spelling; `#1144` only where it has no prefix)
 - `#comment-1144` → comment 1144 of this project: comment ids are their own sequence, unrelated to issue T-1144
