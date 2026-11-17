@@ -7,7 +7,8 @@ disable-model-invocation: true
 # Brainstorming on a todou issue
 
 - The whole exchange stays on the issue, so whoever implements it can replay every decision.
-- Taking the issue, questions and the spec gate: `/todou-workflow`. Commands: `/todou-cli`.
+- Taking the issue and the spec gate: `/todou-workflow`. Questions and what a spec may hold:
+  `/todou-cli`.
 
 <HARD-GATE>
 No code, no scaffolding, no implementation skill until the latest spec version is `approved`. This
@@ -36,7 +37,7 @@ still pushed and approved.
 
 ## The documents
 
-- `proposal.md`: as `/todou-workflow` describes.
+- `proposal.md`: as `/todou-cli` describes.
 - `brainstorm.md`: approaches weighed, chosen, rejected and why; architecture, components, data flow,
   error handling, testing — each scaled to its complexity.
 

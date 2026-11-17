@@ -184,9 +184,9 @@ subagent and check the results.
 ## Boundaries
 
 - You move cards to Shipped and retire their agents there; Done belongs to the user.
-- A user decision is a question comment on the card (`/todou-workflow`, "Asking the user").
+- A user decision is a question comment on the card (`/todou-cli`, "Asking the user questions").
 - Problems found in passing, and needs the user mentions aloud, become cards at once
-  (`/todou-workflow`, "Filing an issue"): the card body is the only trace the tracker will have of a
+  (`/todou-cli`, "Filing an issue"): the card body is the only trace the tracker will have of a
   request that arrived in the terminal or chat. What arrives on a live worker's card is that worker's
   to file.
 - After "take a break" or "no new work": the watch and the shepherding of dispatched tasks continue;

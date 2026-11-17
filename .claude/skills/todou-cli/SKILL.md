@@ -1,11 +1,12 @@
 ---
 name: todou-cli
-description: todou CLI quick reference — issue/comment/attach/watch/question/spec commands, refs, and the markdown the tracker renders. Read this first before touching a todou tracker; how work moves through it is /todou-workflow.
+description: todou CLI quick reference — issue/comment/attach/watch commands and the rules for filing, commenting, asking and writing specs on a todou tracker. Read this first before touching a todou tracker; the agent workflow (status flow, taking an issue, the spec gate) is /todou-workflow.
 ---
 
 # todou CLI
 
-- How work moves through the tracker — status flow, filing, comments, the spec gate: `/todou-workflow`.
+- Everything goes through the tracker: questions, reports, deliverables, reviews.
+- Status flow, taking an issue and the spec gate: `/todou-workflow`.
 - Flags and examples: `todou <command> --help`.
 - `<n>` takes `T-16`, `<proj>/16`, `#16` or a URL; `-p` takes a slug or id.
 - Bodies: `--body-file -` with a `<<'EOF'` heredoc; `--body-file <(…) --questions <(…)` together.
@@ -26,6 +27,22 @@ description: todou CLI quick reference — issue/comment/attach/watch/question/s
 - Writing a ref notifies that issue: only when the link means something; "this issue" for your own.
 - Commits and source use the project's form (`T-16`), never a bare `#16`.
 
+## Filing an issue
+
+- Create the issue first; investigate on it afterwards.
+- Body: the user's words verbatim (no blockquote) plus what they handed over, ending `— <who>, in the terminal, <date>`.
+- Self-found: the observation and the command that measured it; unmeasured parts named.
+- Your reading (cause, fix, related issues) is a comment right after.
+- Title names the symptom, never an inferred cause.
+- One unit of work per issue; report which issue got which part.
+
+## Comments
+
+- Conclusion first. No preamble, recap or closer.
+- One point per comment; bold the claim; steps the reader must take are numbered.
+- Don't restate what the reader can already see.
+- Failure: cause, then fix; if still open, the one thing that unblocks it.
+
 ## Waiting
 
 - Run `todou agent how-to-watch` first and do what it prints.
@@ -36,7 +53,7 @@ description: todou CLI quick reference — issue/comment/attach/watch/question/s
 
 ## Asking the user questions
 
-- Every field below renders markdown:
+- On the issue, never AskUserQuestion. Every field below renders markdown:
 
 ```bash
 todou comment add -p <proj> 16 --body-file <(cat <<'EOF'
@@ -51,21 +68,26 @@ EOF2
 )
 ```
 
+- Each question carries your recommendation and why.
 - `question wait <n> <id> --forever`; moot → `question withdraw <n> <id> --reason …`.
 
 ## Spec documents
 
+- Draft in a scratch dir; git never carries them.
 - `spec push <n> <dir> --message vN [--if-version v] --wait` — the last stdout line is the outcome.
 - `approved` (latest version only; confirm with `spec status`) · `changes_requested` · `feedback` · `withdrawn`.
 - Exit 0 is not approval.
 - Reworking a pending version: `spec withdraw <n> --if-version v` first.
 - `spec comments <n> --unresolved` → revise → `spec resolve <n> <ids…>` → push again.
+- Documents state the design as it stands: no history, no review notes, no copied issue text.
+- `proposal.md`: the user's requirements that have no tracker trace, verbatim.
 - Reviewing: `spec review <n> --approve --version N | --request-changes | --comment`; the pusher may only `--comment`.
 - `--annotations -`: `[{"path","body","quote"}]` (or `line_start`/`line_end`), against a `spec pull` of that version.
 
 ## Attachments
 
 - `attach` prints `#id name → url`; paste the url verbatim.
+- Demo pages and mockups go on the issue, not local disk.
 - No hand-written `curl` with a token from `config.toml`; use `attach download` or `todou api`.
 
 ## Markdown

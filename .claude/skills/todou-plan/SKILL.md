@@ -5,8 +5,8 @@ description: Turn an approved design into a reviewable implementation plan as a 
 
 # todou plan
 
-- The plan is a spec set on the issue. Taking the issue, questions and the spec gate:
-  `/todou-workflow`. Commands: `/todou-cli`.
+- The plan is a spec set on the issue. Taking the issue and the spec gate: `/todou-workflow`.
+  Questions and what a spec may hold: `/todou-cli`.
 
 ## Steps
 
@@ -18,7 +18,7 @@ description: Turn an approved design into a reviewable implementation plan as a 
 
 ## The documents
 
-- `proposal.md`: as `/todou-workflow` describes; start from the brainstorm's if there was one.
+- `proposal.md`: as `/todou-cli` describes; start from the brainstorm's if there was one.
 - `design.md`: the architecture in brief. Name every third-party library you add and every well-known
   algorithm you hand-roll. Carry over an approved brainstorm design.
 - `api.md`, only when API design is involved: endpoints and schemas.
