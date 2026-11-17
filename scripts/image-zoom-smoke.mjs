@@ -5,7 +5,7 @@
  * with the zoom up to its cap (T-548), tweened, and paging tweened too
  * (T-551), the height held while the pointer rests on ‹ › (T-556) and
  * for a moment after it leaves (T-559).
- * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
+ * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--cpu-throttle=N] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
  * Exit: 0 every case as expected; 1 an assertion; 2 infrastructure failure.
@@ -21,7 +21,7 @@ import { createBrowserStack } from "./lib/browser-stack.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const HELP = `image-zoom-smoke — wheel, drag, click, pinch and the title-bar zoom menu
 
-Usage: node scripts/image-zoom-smoke.mjs [--keep] [--help]
+Usage: node scripts/image-zoom-smoke.mjs [--keep] [--cpu-throttle=N] [--help]
 
 Seeds an issue with a tall, a wide and a 48px image, opens the attachment viewer and
 drives it with CDP input (mouse wheel, ctrl+wheel, press/move/release, touch),
@@ -35,6 +35,8 @@ evidence the case depends on the viewer and not on chance. Every run gets a
 fresh browser context, so no run inherits another's stored choices.
 
 --keep  Retain isolated artifacts under .tmp/ after cleanup.
+--cpu-throttle=N  Slow every page's CPU N times, as a loaded machine does:
+        the tween cases must hold however few frames a tween paints.
 Exit codes: 0 pass, 1 assertion, 2 infrastructure error.
 `;
 
@@ -195,6 +197,11 @@ const FAULTS = {
   storage: `Storage.prototype.setItem = function () {};`,
   // What T-535 shipped on a phone: − and + beside the filename.
   "zoom-buttons-shown": `addEventListener("DOMContentLoaded", () => document.head.append(Object.assign(document.createElement("style"), { textContent: '[aria-label="zoom out"], [aria-label="zoom in"] { display: inline-flex !important; }' })));`,
+  // The height lands at once: no tween to see (T-771).
+  "tween-skipped": `{ const animate = Element.prototype.animate; Element.prototype.animate = function (keyframes, options) { return animate.call(this, keyframes, { ...options, duration: 0 }); }; }`,
+  // The tween plays to its end, but the canvas is pinned at its final
+  // height, so the dialog jumps while the animation's clock says otherwise.
+  "tween-overridden": `{ const animate = Element.prototype.animate; Element.prototype.animate = function (keyframes, options) { this.style.setProperty("height", keyframes.at(-1).height, "important"); return animate.call(this, keyframes, options); }; }`,
 };
 
 async function openViewer(context, fixture, screen, fault, name) {
@@ -222,6 +229,10 @@ async function openViewer(context, fixture, screen, fault, name) {
       },
     ],
   });
+  if (fixture.cpuThrottle > 1)
+    await page.send("Emulation.setCPUThrottlingRate", {
+      rate: fixture.cpuThrottle,
+    });
   await page.navigate(fixture.issueUrl);
   try {
     await waitForViewer(page, name ?? fixture.names[0]);
@@ -280,6 +291,13 @@ async function startSampling(page) {
   await evaluate(page, async () => {
     const dialog = document.querySelector("[role=dialog]");
     const samples = [];
+    const heights = () => ({
+      h: dialog.getBoundingClientRect().height,
+      canvas:
+        dialog
+          .querySelector("[data-testid=image-canvas]")
+          ?.getBoundingClientRect().height ?? null,
+    });
     const ro = new ResizeObserver(() => {
       const img = dialog.querySelector("[data-testid=image-canvas] img");
       const r = img?.getBoundingClientRect();
@@ -294,14 +312,29 @@ async function startSampling(page) {
     const canvas = dialog.querySelector("[data-testid=image-canvas]");
     if (canvas) ro.observe(canvas);
     // Every frame, changed or not: a red with few samples says whether the
-    // browser was painting slowly or the dialog did not move.
+    // browser was painting slowly or the dialog did not move. Each frame also
+    // collects the height animations running in the dialog, so the verdict
+    // can read the tween's own clock instead of counting frames. A tween is
+    // listed here from the frame its start time resolves, at currentTime 0,
+    // so however slow the frames, none finishes unseen.
     const frames = [];
+    const tweens = [];
     const tick = (t) => {
-      frames.push(Math.round(t));
+      const playing = [];
+      for (const a of dialog.getAnimations({ subtree: true })) {
+        if (!a.effect.getKeyframes().some((k) => k.height !== undefined))
+          continue;
+        if (!tweens.includes(a)) tweens.push(a);
+        playing.push({
+          i: tweens.indexOf(a),
+          progress: a.effect.getComputedTiming().progress,
+        });
+      }
+      frames.push({ t: Math.round(t), ...heights(), playing });
       if (window.__tween?.ro === ro) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
-    window.__tween = { ro, samples, frames };
+    window.__tween = { ro, samples, frames, tweens, canvas };
     // Past the observation's first report, so the action starts after it.
     await new Promise((done) =>
       requestAnimationFrame(() => requestAnimationFrame(done)),
@@ -335,48 +368,141 @@ function firstMove({ samples }, from, since) {
   return moved === undefined ? null : moved.t - since;
 }
 
-async function stopSampling(page) {
-  // Paging: the next image has to load before its height can move.
+async function stopSampling(page, { paged = false } = {}) {
+  // Paging: the next image has to load before its height can move. The
+  // viewer keys its canvas by image, and the route changes after the key,
+  // so until the old canvas is gone its measurement says nothing (T-771).
   const deadline = Date.now() + 10_000;
   while (
-    !(await evaluate(page, () => {
-      const canvas = document.querySelector("[data-testid=image-canvas]");
-      return canvas?.dataset.zoom !== undefined;
-    }))
+    !(await evaluate(
+      page,
+      (paged) => {
+        const canvas = document.querySelector("[data-testid=image-canvas]");
+        return (
+          canvas?.dataset.zoom !== undefined &&
+          (!paged || canvas !== window.__tween.canvas)
+        );
+      },
+      paged,
+    ))
   ) {
     if (Date.now() > deadline) throw new Error("next image never measured");
     await sleep(50);
   }
   await settle(page);
-  // A frame for the last step to be reported.
-  await sleep(100);
+  // A frame for the last step to be reported, however long it takes.
+  await evaluate(
+    page,
+    () =>
+      new Promise((done) =>
+        requestAnimationFrame(() => requestAnimationFrame(done)),
+      ),
+  );
   return evaluate(page, () => {
-    const { ro, samples, frames } = window.__tween;
+    const { ro, samples, frames, tweens } = window.__tween;
     ro.disconnect();
     window.__tween = null;
-    const gaps = frames.slice(1).map((t, i) => t - frames[i]);
-    return { samples, frameGaps: gaps };
+    const dialog = document.querySelector("[role=dialog]");
+    const heights = () => ({
+      h: dialog.getBoundingClientRect().height,
+      canvas: dialog
+        .querySelector("[data-testid=image-canvas]")
+        .getBoundingClientRect().height,
+    });
+    const px = (k) => Number.parseFloat(k.height);
+    const runs = tweens.map((a) => {
+      const keyframes = a.effect.getKeyframes();
+      const { activeDuration } = a.effect.getComputedTiming();
+      const run = {
+        state: a.playState,
+        from: px(keyframes[0]),
+        to: px(keyframes.at(-1)),
+        duration: activeDuration,
+        replay: [],
+      };
+      if (run.state !== "finished") return run;
+      // Replayed on its own clock, after the fact: what the dialog is a
+      // quarter, half and three quarters of the way through, whatever the
+      // frame rate was when it played. Cancelling drops the effect again.
+      a.pause();
+      for (const at of [0.25, 0.5, 0.75]) {
+        a.currentTime = activeDuration * at;
+        run.replay.push(heights());
+      }
+      a.cancel();
+      run.after = heights();
+      return run;
+    });
+    return {
+      samples,
+      frames,
+      runs,
+      frameGaps: frames.slice(1).map((f, i) => f.t - frames[i].t),
+    };
   });
 }
 
 /**
- * The dialog's heights (or the canvas's) from `from` to `to`, tweened: frames between,
- * every one moving the same way. Reduced motion: nothing in between.
+ * The dialog's heights (or the canvas's) from `from` to `to`, tweened: a
+ * height animation played to its end, whose replay sits strictly between the
+ * two and moves one way, every frame painted while it ran shows the height
+ * its progress asks for, and every frame moves the same way. Reduced motion,
+ * or a change that never tweens: no height animation and nothing in between.
+ *
+ * Judged on the tween's clock, never on how many frames it painted: a
+ * loaded headless Chromium paints 80–300ms apart, and a 200ms tween may
+ * show one frame or none between its ends (T-771).
  */
-function tweenVerdict({ samples, frameGaps }, from, to, reduced, of = "h") {
+function tweenVerdict(
+  { samples, frames, runs, frameGaps },
+  from,
+  to,
+  reduced,
+  of = "h",
+) {
   const hs = samples.map((s) => s[of]);
-  const between = hs.filter(
-    (h) => Math.min(from, to) + 1 < h && h < Math.max(from, to) - 1,
-  );
+  const inside = (h) =>
+    Math.min(from, to) + 1 < h && h < Math.max(from, to) - 1;
+  const between = hs.filter(inside);
   const sign = Math.sign(to - from);
-  const monotonic = hs.every((h, i) => i === 0 || (h - hs[i - 1]) * sign >= 0);
+  const oneWay = (xs) =>
+    xs.every((h, i) => i === 0 || (h - xs[i - 1]) * sign >= 0);
+  const monotonic = oneWay(hs);
   const lands = hs.length > 0 && near(hs.at(-1), to, 0.5);
+  // A height change mid-tween cancels the running one and starts the next
+  // from where it stood, so only the last may finish.
+  const last = runs.at(-1);
+  const at = (x) => x[of];
+  const played =
+    last !== undefined &&
+    runs.every((r, i) =>
+      i === runs.length - 1 ? r.state === "finished" : r.state === "idle",
+    ) &&
+    last.duration > 0 &&
+    near(last.to - runs[0].from, to - from, 1) &&
+    last.replay.map(at).every(inside) &&
+    oneWay([from, ...last.replay.map(at), to]) &&
+    near(at(last.after), to, 0.5);
+  // The keyframes are the canvas's; the dialog is the canvas plus a fixed
+  // frame. Progress is the eased one, so a frame on the tween's tail may sit
+  // within a pixel of `to` and still be on the curve.
+  const offset = of === "canvas" ? 0 : from - (runs[0]?.from ?? 0);
+  const midway = frames.flatMap((f) =>
+    f.playing
+      .filter(({ progress }) => progress > 0 && progress < 1)
+      .map(({ i, progress }) => ({
+        got: at(f),
+        want: offset + runs[i].from + (runs[i].to - runs[i].from) * progress,
+      })),
+  );
   const ok =
     Math.abs(to - from) > 50 &&
     lands &&
-    // Two, not a duration's worth of frames: here a frame in which the dialog
-    // resizes takes headless Chromium 50–100ms, most of it outside script.
-    (reduced ? between.length === 0 : between.length >= 2 && monotonic);
+    (reduced
+      ? runs.length === 0 && between.length === 0
+      : played &&
+        monotonic &&
+        midway.every(({ got, want }) => near(got, want, 1)));
   return {
     ok,
     detail: {
@@ -386,6 +512,12 @@ function tweenVerdict({ samples, frameGaps }, from, to, reduced, of = "h") {
       monotonic,
       heights: hs.map((h) => Math.round(h)),
       ms: samples.map((s) => s.t - samples[0].t),
+      tweens: runs.map((r) => ({
+        ...r,
+        replay: r.replay.map((x) => Math.round(at(x))),
+        after: r.after && at(r.after),
+      })),
+      midway: midway.map(({ got, want }) => [got, want].map(Math.round)),
       frameGaps,
     },
   };
@@ -475,8 +607,14 @@ function input(page) {
       );
       if (!trigger) throw new Error("no zoom menu trigger");
       await tap(trigger);
-      await sleep(200);
-      const entry = await centre("[role=menuitem], [role=menuitemradio]", item);
+      // Polled: on a loaded machine the menu can take longer than any fixed
+      // wait to open (T-771).
+      let entry = null;
+      const opened = Date.now() + 5_000;
+      while (!entry && Date.now() < opened) {
+        await sleep(200);
+        entry = await centre("[role=menuitem], [role=menuitemradio]", item);
+      }
       if (!entry) throw new Error(`no menu item ${item}`);
       await tap(entry);
       await sleep(200);
@@ -909,11 +1047,11 @@ async function growCases(page, { reduced = false } = {}) {
   // the wide image's grown height down to the icon's 96px, and back up.
   await startSampling(page);
   await io.key("ArrowLeft", "ArrowLeft", 37);
-  const pagedOut = await stopSampling(page);
+  const pagedOut = await stopSampling(page, { paged: true });
   const { s: sIcon, d: dIcon } = await sample();
   await startSampling(page);
   await io.key("ArrowRight", "ArrowRight", 39);
-  const pagedBack = await stopSampling(page);
+  const pagedBack = await stopSampling(page, { paged: true });
   const { s: s7, d: d7 } = await sample();
   const out1 = tweenVerdict(pagedOut, d6.h, dIcon.h, reduced);
   const back1 = tweenVerdict(pagedBack, dIcon.h, d7.h, reduced);
@@ -1053,7 +1191,9 @@ async function growCases(page, { reduced = false } = {}) {
       near(sFit.view.z, sFit.fit, 1e-4) &&
       sFit.rect.h < s9.rect.h - 100 &&
       keyAfter !== null &&
-      keyAfter < RELEASE_DELAY - 150,
+      // The release fires RELEASE_DELAY after the leave at the earliest, so
+      // any move before then is the key's, however slow the frames (T-771).
+      keyAfter < RELEASE_DELAY,
     { afterLeaveMs: keyAfter, delay: RELEASE_DELAY, canvasH: sFit.rect.h },
   );
 
@@ -1297,7 +1437,12 @@ async function phoneCases(page) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.some((arg) => !["--keep", "--help"].includes(arg))) {
+  const throttle = args.find((arg) => arg.startsWith("--cpu-throttle="));
+  const cpuThrottle = throttle ? Number(throttle.split("=")[1]) : 1;
+  if (
+    !(cpuThrottle >= 1) ||
+    args.some((arg) => arg !== throttle && !["--keep", "--help"].includes(arg))
+  ) {
     console.error("Unknown argument. Try --help.");
     return 2;
   }
@@ -1336,7 +1481,7 @@ async function main() {
       prefix: "image-zoom-smoke-",
       keep,
     });
-    const fixture = await seed(stack);
+    const fixture = { ...(await seed(stack)), cpuThrottle };
     const browser = await startBrowser({
       dir: stack.dir,
       chromium: stack.chromium,
@@ -1376,14 +1521,25 @@ async function main() {
     ]) {
       await runOne(name, DESKTOP, desktopCases, fault, requiredRed);
     }
-    await runOne(
-      "desktop-grow",
-      DESKTOP,
-      (p) => growCases(p),
-      null,
-      [],
-      "wide.png",
-    );
+    const tweened = [
+      "paging-tweens-height",
+      "pointer-leave-tweens-height",
+      "paged-height-tweens-on-leave",
+    ];
+    for (const [name, fault, requiredRed] of [
+      ["desktop-grow", null, []],
+      ["fault-tween-skipped", "tween-skipped", tweened],
+      ["fault-tween-overridden", "tween-overridden", tweened],
+    ]) {
+      await runOne(
+        name,
+        DESKTOP,
+        (p) => growCases(p),
+        fault,
+        requiredRed,
+        "wide.png",
+      );
+    }
     // T-551: the same growth with prefers-reduced-motion, which lands at once.
     await runOne(
       "desktop-grow-reduced-motion",
