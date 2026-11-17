@@ -802,6 +802,71 @@ describe("Composer folding", () => {
     await waitFor(() => expect(folded(view)).toBe(true));
   });
 
+  describe("holds still until the press that left it has had its click (T-717)", () => {
+    const foldedAtClick = (view: { container: HTMLElement }) => {
+      const seen: boolean[] = [];
+      outside.addEventListener("click", () => seen.push(folded(view)));
+      return seen;
+    };
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it("for a mouse, which moves focus while the button is still down", async () => {
+      const view = mount();
+      cmFocus(view.container);
+      await waitFor(() => expect(folded(view)).toBe(false));
+      const seen = foldedAtClick(view);
+      fireEvent.pointerDown(outside);
+      leaveFor(view, outside);
+      await tick();
+      expect(folded(view)).toBe(false);
+      fireEvent.pointerUp(outside);
+      outside.click();
+      expect(seen).toEqual([false]);
+      await waitFor(() => expect(folded(view)).toBe(true));
+    });
+
+    it("for a tap, which moves focus only after the finger has lifted", async () => {
+      const view = mount();
+      cmFocus(view.container);
+      await waitFor(() => expect(folded(view)).toBe(false));
+      const seen = foldedAtClick(view);
+      fireEvent.pointerDown(outside);
+      fireEvent.pointerUp(outside);
+      // A tap's mousedown and click share one task: a fold rendered from the
+      // blur's microtasks would be in place before the click, and one from a
+      // timer would not. `act` drains microtasks on `setImmediate`, which
+      // stays real.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        await act(async () => leaveFor(view, outside));
+        outside.click();
+        expect(seen).toEqual([false]);
+        act(() => vi.runOnlyPendingTimers());
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(folded(view)).toBe(true);
+    });
+
+    it("for a press after a Safari blur, which folds from the press itself", async () => {
+      const view = mount();
+      cmFocus(view.container);
+      await waitFor(() => expect(attachButton(view)).not.toBeNull());
+      const attach = attachButton(view) as HTMLButtonElement;
+      fireEvent.pointerDown(attach);
+      leaveFor(view, null);
+      fireEvent.pointerUp(attach);
+      const seen = foldedAtClick(view);
+      fireEvent.pointerDown(outside);
+      await tick();
+      expect(folded(view)).toBe(false);
+      fireEvent.pointerUp(outside);
+      outside.click();
+      expect(seen).toEqual([false]);
+      await waitFor(() => expect(folded(view)).toBe(true));
+    });
+  });
+
   it("stays open while Tab moves focus to the attach button", async () => {
     const view = mount();
     cmFocus(view.container);
@@ -826,6 +891,7 @@ describe("Composer folding", () => {
     // Nothing inside holds focus now, so no blur will come: a press elsewhere
     // is the only signal that the reader has left.
     fireEvent.pointerDown(outside);
+    fireEvent.pointerUp(outside);
     await waitFor(() => expect(folded(view)).toBe(true));
   });
 
@@ -938,6 +1004,7 @@ describe("Composer folding", () => {
 
     // Nothing inside holds focus now, so the next press outside is the leave.
     fireEvent.pointerDown(outside);
+    fireEvent.pointerUp(outside);
     await waitFor(() => expect(folded(view)).toBe(true));
   });
 

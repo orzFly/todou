@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Real-browser regression for the popovers attached to the comment composer
- * against its fold-when-empty rule (T-532, T-580).
+ * against its fold-when-empty rule (T-532, T-580, T-717).
  * Usage: node scripts/composer-popover-fold-smoke.mjs [--keep] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
@@ -25,13 +25,16 @@ The box must stay unfolded while either is open or pressed, must fold once a
 press outside takes focus away, and must stay unfolded when Escape hands focus
 back to the button. Runs once with motion and once with reduced motion, where
 the popover leaves no exit animation to blur from. Hovering the watchers line
-must not take the caret out of the editor.
+must not take the caret out of the editor. At 360px, tapping Assignees below
+the unfolded box must open its popover even though the box folds and moves
+the button up.
 
 --keep  Retain isolated artifacts under .tmp/ after cleanup.
 Exit codes: 0 pass, 1 assertion, 2 infrastructure error.
 `;
 
 const PHONE = { width: 390, height: 844, deviceScaleFactor: 2, mobile: true };
+const NARROW = { width: 360, height: 900, deviceScaleFactor: 2, mobile: true };
 const DESKTOP = { width: 1280, height: 900, deviceScaleFactor: 1 };
 
 async function seed(stack) {
@@ -140,6 +143,7 @@ function readState() {
   });
   return {
     onTop,
+    open: open.length,
     folded: root.hasAttribute("data-collapsed"),
     help: open.some((node) => node.querySelector("table") !== null),
     watchers: open.some((node) => node.textContent.includes("Watching")),
@@ -354,6 +358,65 @@ async function phoneCases(page) {
   return out;
 }
 
+/**
+ * A control under the unfolded box that opens on click, tapped while the box
+ * holds focus (T-717). The box folds once that tap has moved focus, and the
+ * page below moves up with it; the popover has to open all the same.
+ */
+async function narrowCases(page) {
+  const io = input(page);
+  const out = [];
+  const check = (name, ok, detail) =>
+    out.push({ name, ok: Boolean(ok), detail });
+  const ASSIGNEES = 'button[aria-label="Edit assignees"]';
+  for (let round = 1; round <= 3; round++) {
+    await evaluate(page, () => window.scrollTo(0, 0));
+    await io.tap(EDITOR);
+    const s0 = await io.state();
+    check(`r${round}-tap-unfolds`, !s0.folded && s0.focusInEditor, s0);
+    // The aim is only worth taking where the button itself is what a tap
+    // there would hit. It is taken at the top of the page: scrolled down to
+    // the button, the browser held it in place across the fold, and the tap
+    // landed on it whatever the composer did.
+    const aim = await evaluate(
+      page,
+      (selector) => {
+        const node = document.querySelector(selector);
+        const r = node.getBoundingClientRect();
+        const x = r.x + r.width / 2;
+        const y = r.y + r.height / 2;
+        return {
+          top: r.top,
+          scrollY: window.scrollY,
+          hit: node.contains(document.elementFromPoint(x, y)),
+        };
+      },
+      ASSIGNEES,
+    );
+    const s1 = await io.state(300);
+    check(`r${round}-aim-clear`, aim.hit && aim.scrollY === 0 && !s1.folded, {
+      ...aim,
+      ...s1,
+    });
+    await io.tap(ASSIGNEES);
+    const s2 = await io.state();
+    const after = await evaluate(
+      page,
+      (selector) =>
+        document.querySelector(selector).getBoundingClientRect().top,
+      ASSIGNEES,
+    );
+    check(
+      `r${round}-assignees-opens-as-box-folds`,
+      s2.folded && s2.open > 0 && after < aim.top,
+      { moved: aim.top - after, ...s2 },
+    );
+    await io.key("Escape", "Escape", 27);
+    await io.state();
+  }
+  return out;
+}
+
 /** The other page with the help button, outside any folding box. */
 async function newIssueCase(page, fixture) {
   const io = input(page);
@@ -442,6 +505,8 @@ async function main() {
         ["desktop-reduced-motion", DESKTOP, true, desktopCases],
         ["phone", PHONE, false, phoneCases],
         ["phone-reduced-motion", PHONE, true, phoneCases],
+        ["narrow", NARROW, false, narrowCases],
+        ["narrow-reduced-motion", NARROW, true, narrowCases],
       ]) {
         const page = await openCard(context, fixture, viewport, reduced);
         try {

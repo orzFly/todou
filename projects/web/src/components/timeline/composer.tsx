@@ -356,6 +356,12 @@ const NO_WATCHERS: readonly Watcher[] = [];
  * A press outside while focus is still inside is left to the blur that
  * follows: a touch that starts a scroll moves no focus, and the box with the
  * keyboard up must not fold under the reader's caret.
+ *
+ * Leaving folds only once the press that left has had its click (T-717).
+ * Folding moves everything below the box, and that click is aimed where the
+ * press landed: a mouse's goes to what holds both ends of the press, and a
+ * tap's is hit-tested again after its mousedown has moved focus. A control
+ * under the box that acts on click would lose it either way.
  */
 function useEngaged(root: RefObject<HTMLElement | null>): boolean {
   const [engaged, setEngaged] = useState(false);
@@ -366,13 +372,33 @@ function useEngaged(root: RefObject<HTMLElement | null>): boolean {
     const within = (node: unknown) =>
       node instanceof Node && host.contains(node);
     let pressing = false;
+    let held = false;
+    let waiting: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // A mouse's pointerup-to-click and a tap's mousedown-to-click each run in
+    // one task, so a timeout set from inside either fires after the click.
+    const settle = (fold: () => void) => {
+      clearTimeout(timer);
+      timer = setTimeout(fold, 0);
+    };
+    const leave = (fold: () => void) => {
+      if (held) waiting = fold;
+      else settle(fold);
+    };
 
     const down = (event: PointerEvent) => {
+      held = true;
       pressing = within(event.target);
-      if (!pressing && !within(document.activeElement)) setEngaged(false);
+      if (!pressing && !within(document.activeElement)) {
+        leave(() => setEngaged(false));
+      }
     };
     const up = () => {
+      held = false;
       pressing = false;
+      if (waiting !== null) settle(waiting);
+      waiting = null;
     };
     const focusIn = (event: FocusEvent) => {
       // The opener is focused by the very press that opens it, and unfolding
@@ -385,14 +411,16 @@ function useEngaged(root: RefObject<HTMLElement | null>): boolean {
       ) {
         return;
       }
+      waiting = null;
+      clearTimeout(timer);
       setEngaged(true);
     };
     const focusOut = (event: FocusEvent) => {
       if (within(event.relatedTarget)) return;
       if (pressing || !document.hasFocus()) return;
       const left = event.target;
-      // A removal blurs mid-commit; by the microtask the node is gone.
-      queueMicrotask(() => {
+      // A removal blurs mid-commit; by the time this runs the node is gone.
+      leave(() => {
         if (left instanceof Node && !left.isConnected) return;
         setEngaged(false);
       });
@@ -405,7 +433,10 @@ function useEngaged(root: RefObject<HTMLElement | null>): boolean {
     document.addEventListener("pointercancel", up, listen);
     host.addEventListener("focusin", focusIn, { signal: controller.signal });
     host.addEventListener("focusout", focusOut, { signal: controller.signal });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
   }, [root]);
 
   return engaged;
