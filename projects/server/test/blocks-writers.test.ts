@@ -34,6 +34,8 @@ const EVALUATORS = [
 const DECLARED: Record<string, string> = {
   "db/project-schema.ts": "the column definitions themselves",
   "routes/statuses.ts": "route wiring; the write is in services/statuses.ts",
+  "routes/insights.ts":
+    "route wiring for a status's chart role, which the verdict never reads",
   "services/inbox.ts": "reads the status for the keep-check",
   "services/labels.ts": "reads each card's status to count a label's open uses",
   "services/search.ts": "reads the status for the facets",

@@ -80,6 +80,7 @@ import type {
   RefFormatSetInput,
   ResolvedRef,
   RevisionPage,
+  Role,
   SearchFacets,
   SearchPage,
   Settings,
@@ -94,7 +95,10 @@ import type {
   SpecWithdrawResult,
   Status,
   StatusCreateInput,
+  StatusOrder,
+  StatusOrderInput,
   StatusUpdateInput,
+  StatusUsage,
   TimelineComment,
   TimelineEvent,
   TimelinePage,
@@ -725,6 +729,12 @@ export class TodouClient {
     this.request<Settings>("PUT", `/projects/${slug}/insights/settings`, {
       json: input,
     });
+  setInsightsRole = (slug: string, statusId: number, role: Role) =>
+    this.request<Settings>(
+      "PUT",
+      `/projects/${slug}/insights/settings/roles/${statusId}`,
+      { json: { role } },
+    );
   getInsightsBurn = (slug: string, query: BurnQuery) =>
     this.request<BurnResponse>("GET", `/projects/${slug}/insights/burn`, {
       query: { ...query },
@@ -800,6 +810,12 @@ export class TodouClient {
     });
   deleteStatus = (slug: string, id: number) =>
     this.request<void>("DELETE", `/projects/${slug}/statuses/${id}`);
+  reorderStatuses = (slug: string, input: StatusOrderInput) =>
+    this.request<StatusOrder>("PUT", `/projects/${slug}/statuses/order`, {
+      json: input,
+    });
+  statusUsage = (slug: string) =>
+    this.request<StatusUsage[]>("GET", `/projects/${slug}/statuses/usage`);
 
   getReferenceConfig = (slug: string) =>
     this.request<ReferenceConfig>("GET", `/projects/${slug}/references/config`);

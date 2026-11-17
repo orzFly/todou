@@ -19,6 +19,19 @@ const OpaqueVersion = z.string().min(1);
 export const Role = z.enum(["remaining", "completed", "excluded"]);
 export type Role = z.infer<typeof Role>;
 
+/**
+ * The role a status counts as until someone picks one. Shared so the server
+ * and the Statuses page agree on which rows depart from it (T-712).
+ */
+export function defaultInsightsRole(status: {
+  name: string;
+  category: string;
+}): Role {
+  if (status.name === "Invalid") return "excluded";
+  if (status.name === "Shipped" || status.name === "Done") return "completed";
+  return status.category === "closed" ? "completed" : "remaining";
+}
+
 export const Grain = z.enum(["auto", "1h", "6h", "12h", "1d", "1w"]);
 export type Grain = z.infer<typeof Grain>;
 
@@ -105,6 +118,9 @@ export const PutSettings = z.strictObject({
     .refine(hasUniqueStatusIds, "status_id values must be unique"),
 });
 export type PutSettings = z.infer<typeof PutSettings>;
+
+export const PutRoleInput = z.strictObject({ role: Role });
+export type PutRoleInput = z.infer<typeof PutRoleInput>;
 
 export const Measure = z
   .strictObject({
