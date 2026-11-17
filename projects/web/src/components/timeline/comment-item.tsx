@@ -33,6 +33,7 @@ import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { ActionItem } from "@/components/timeline/action-item.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
+import { useQuoteTarget } from "@/components/timeline/quote-reply.tsx";
 import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -162,6 +163,7 @@ function PlainCommentItem({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const quoteRef = useQuoteTarget(comment.body, bodyRef);
   const editor = useRef<MarkdownEditorHandle>(null);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
@@ -419,7 +421,7 @@ function PlainCommentItem({
             </div>
           </div>
         ) : (
-          <div ref={bodyRef}>
+          <div ref={quoteRef}>
             <MarkdownView
               slug={slug}
               issueNumber={issueNumber}

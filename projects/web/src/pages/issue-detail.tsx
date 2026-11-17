@@ -83,9 +83,13 @@ import {
   Composer,
   useCommentComposer,
 } from "@/components/timeline/composer.tsx";
-import { QuoteReplyProvider } from "@/components/timeline/quote-reply.tsx";
+import {
+  QuoteReplyProvider,
+  useQuoteTarget,
+} from "@/components/timeline/quote-reply.tsx";
 import { RevealAllEye } from "@/components/timeline/reveal-all-eye.tsx";
 import { RevealedRunsProvider } from "@/components/timeline/revealed-runs.tsx";
+import { SelectionQuote } from "@/components/timeline/selection-quote.tsx";
 import { Timeline } from "@/components/timeline/timeline.tsx";
 import { TimelineDivider } from "@/components/timeline/timeline-divider.tsx";
 import { Button } from "@/components/ui/button";
@@ -277,6 +281,7 @@ export function IssueDetailPage() {
               )}
             </div>
           </div>
+          <SelectionQuote />
         </QuoteReplyProvider>
       </RevealedRunsProvider>
       <Sidebar
@@ -469,6 +474,7 @@ export function BodyBlock({
   const [editing, setEditing] = useState(false);
   const editor = useRef<MarkdownEditorHandle>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const quoteRef = useQuoteTarget(issue.body, bodyRef);
   const opened = useOpenedEvent(slug, issue.number);
   const refCompletion = useRefCompletion(slug);
   const [uploading, setUploading] = useState(false);
@@ -658,7 +664,7 @@ export function BodyBlock({
             No description.
           </p>
         ) : (
-          <div ref={bodyRef}>
+          <div ref={quoteRef}>
             <MarkdownView
               slug={slug}
               issueNumber={issue.number}
