@@ -93,7 +93,8 @@ type Layout = { width: number; height: number; rest: number; panes: Pane[] };
  * width it has whatever the zoom or image asks for, and moves to its own once
  * it is cleared. Wheel, trackpad and − / + pause where the whole picture is as
  * large as the canvas can grow, where it fills that canvas, and at actual
- * pixels (T-780).
+ * pixels (T-780). While the canvas tweens to its size, the image holds still
+ * and the canvas only uncovers or closes in on it (T-781).
  */
 export function useZoomPan({
   natural,
@@ -157,6 +158,40 @@ export function useZoomPan({
     setView(next);
   }, []);
 
+  // The first pane of the largest canvas this window allows, measured on
+  // every use rather than kept, so a resized window leaves no stale size.
+  // Restored, that is the canvas at its CSS max-height, as wide as the
+  // dialog's min-width can stretch it (T-774); anything unparseable (no styles,
+  // as in happy-dom) measures as nothing.
+  const largestFor = useCallback(
+    (rest: number): { width: number; height: number } => {
+      const el = canvasRef.current;
+      const none = { width: Number.NaN, height: Number.NaN };
+      if (el === null) return none;
+      let width = el.clientWidth;
+      let height = el.clientHeight;
+      if (!maximized) {
+        height = Number.parseFloat(getComputedStyle(el).maxHeight);
+        if (dialog !== null) {
+          const root = document.documentElement;
+          const box = getComputedStyle(dialog);
+          width =
+            root.clientWidth -
+            2 * Number.parseFloat(getComputedStyle(root).fontSize) -
+            Number.parseFloat(box.paddingLeft) -
+            Number.parseFloat(box.paddingRight);
+        }
+      }
+      if (!(width > 0 && height > 0 && Number.isFinite(width + height)))
+        return none;
+      return layoutPanes(width, height, rest)[0];
+    },
+    [maximized, dialog, layoutPanes],
+  );
+  // Read by the measure, which does not run again when the hold changes.
+  const heldRef = useRef(held);
+  heldRef.current = held;
+
   useLayoutEffect(() => {
     const el = canvasRef.current;
     if (el === null || natural === null) return;
@@ -178,6 +213,10 @@ export function useZoomPan({
         ? width
         : Math.min(width, widening?.current.rest ?? width);
       const panes = layoutPanes(width, height, rest);
+      // Where the canvas will follow the zoom, the view is clamped against
+      // the size it is heading for, not the size of this frame (T-781).
+      const room =
+        maximized || heldRef.current !== null ? null : largestFor(rest);
       const next: Frame = {
         width: panes[0].width,
         height: panes[0].height,
@@ -185,6 +224,9 @@ export function useZoomPan({
         naturalHeight: natural.h,
         upscale: maximized,
         restWidth: layoutPanes(rest, height, rest)[0].width,
+        ...(room !== null && Number.isFinite(room.width + room.height)
+          ? { room: { width: room.width, height: room.height } }
+          : {}),
       };
       const { frame: prev, view: v } = live.current;
       lastHeight.current = maximized ? null : height;
@@ -201,7 +243,16 @@ export function useZoomPan({
     const ro = new ResizeObserver(() => flushSync(measure));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [natural, maximized, place, lastHeight, layoutPanes, dialog, widening]);
+  }, [
+    natural,
+    maximized,
+    place,
+    lastHeight,
+    layoutPanes,
+    dialog,
+    widening,
+    largestFor,
+  ]);
 
   // Canvas point → the point in the pane it is read in.
   const inPane = useCallback((p: Point, pane: number): Point => {
@@ -230,32 +281,13 @@ export function useZoomPan({
     [],
   );
 
-  // The first pane of the largest canvas this window allows, measured on
-  // every input rather than kept, so a resized window leaves no stale stop.
-  // Restored, that is the dialog at the widest its min-width can stretch it
-  // and the canvas at its CSS max-height; anything unparseable (no styles,
-  // as in happy-dom) measures as nothing and leaves the zoom without stops.
+  // Unmeasured, the zoom has no stops.
   const largestPane = useCallback((): { width: number; height: number } => {
-    const el = canvasRef.current;
     const rest = live.current.layout?.rest;
-    const none = { width: Number.NaN, height: Number.NaN };
-    if (el === null || rest === undefined) return none;
-    let width = el.clientWidth;
-    let height = el.clientHeight;
-    if (!maximized && dialog !== null) {
-      const root = document.documentElement;
-      const box = getComputedStyle(dialog);
-      width =
-        root.clientWidth -
-        2 * Number.parseFloat(getComputedStyle(root).fontSize) -
-        Number.parseFloat(box.paddingLeft) -
-        Number.parseFloat(box.paddingRight);
-      height = Number.parseFloat(getComputedStyle(el).maxHeight);
-    }
-    if (!(width > 0 && height > 0 && Number.isFinite(width + height)))
-      return none;
-    return layoutPanes(width, height, rest)[0];
-  }, [maximized, dialog, layoutPanes]);
+    return rest === undefined
+      ? { width: Number.NaN, height: Number.NaN }
+      : largestFor(rest);
+  }, [largestFor]);
 
   // Continuous input moves through the stops; what it lands on is written
   // back, so a zoom clamped at either end is read again next time.

@@ -17,6 +17,7 @@ import {
   maxScale,
   panBy,
   reframe,
+  settledPane,
   stepAt,
   toggleAt,
   travel,
@@ -217,6 +218,86 @@ describe("reframe", () => {
   it("moves the image down by half the growth, holding it still on screen", () => {
     const v = clampView(wide, { z: 2, x: -500, y: -500 });
     expect(reframe(wide, grown, v)).toEqual({ z: 2, x: -500, y: -250 });
+  });
+});
+
+describe("a canvas still tweening to its size (T-781)", () => {
+  // A 1600×400 picture at rest in a 992px canvas, which may grow to 1376×750.
+  const rest: Frame = {
+    width: 992,
+    height: 248,
+    naturalWidth: 1600,
+    naturalHeight: 400,
+    upscale: false,
+    restWidth: 992,
+    room: { width: 1376, height: 750 },
+  };
+  const sized = (width: number, height: number): Frame => ({
+    ...rest,
+    width,
+    height,
+  });
+  // Where the image's top-left sits on screen, relative to the canvas centre,
+  // which the tween leaves where it is.
+  const onScreen = (f: Frame, v: View) => ({
+    x: v.x - f.width / 2,
+    y: v.y - f.height / 2,
+  });
+  const expectStill = (frames: Frame[], start: View) => {
+    let v = start;
+    const at = onScreen(frames[0], v);
+    for (const [i, next] of frames.slice(1).entries()) {
+      v = reframe(frames[i], next, v);
+      expect(onScreen(next, v).x).toBeCloseTo(at.x, 9);
+      expect(onScreen(next, v).y).toBeCloseTo(at.y, 9);
+    }
+    return v;
+  };
+
+  it("settles where the zoom asks, capped by the room", () => {
+    const { room: _, ...free } = rest;
+    expect(settledPane(free, 1)).toEqual({ width: 992, height: 248 });
+    expect(settledPane(rest, 0.7)).toEqual({ width: 1120, height: 280 });
+    expect(settledPane(rest, 0.5)).toEqual({ width: 992, height: 248 });
+    expect(settledPane(rest, 2)).toEqual({ width: 1376, height: 750 });
+  });
+
+  it("holds the image still while the canvas grows", () => {
+    const zoomed = zoomAt(rest, fitView(rest), 1 / 0.62, 198, 74);
+    expect(zoomed.z).toBeCloseTo(1, 9);
+    const frames = [rest, sized(1100, 300), sized(1250, 360), sized(1376, 400)];
+    const landed = expectStill(frames, zoomed);
+    expect(landed).toEqual(clampView(frames[3], landed));
+  });
+
+  it("holds the image still while the canvas shrinks", () => {
+    const grown = sized(1376, 400);
+    const from = clampView(grown, { z: 1, x: -100, y: 0 });
+    const zoomed = zoomAt(grown, from, 0.7, 275, 120);
+    expect(zoomed.z).toBeCloseTo(0.7, 9);
+    const frames = [
+      grown,
+      sized(1250, 360),
+      sized(1180, 320),
+      sized(1120, 280),
+    ];
+    expectStill(frames, zoomed);
+  });
+
+  it("moves the image at once to where the grown canvas allows", () => {
+    // Its left edge meets the grown canvas's, half the growth to the left.
+    expect(zoomAt(rest, fitView(rest), 1 / 0.62, 198, 74).x).toBeCloseTo(
+      -192,
+      9,
+    );
+  });
+
+  it("clamps against the canvas it has where there is no room", () => {
+    const { room: _, ...free } = rest;
+    const before = fitView(free);
+    const zoomed = zoomAt(free, before, 1 / 0.62, 198, 74);
+    expect(pixelAt(zoomed, 198, 74).x).toBeCloseTo(pixelAt(before, 198, 74).x);
+    expect(zoomed).toEqual(clampView(free, zoomed));
   });
 });
 

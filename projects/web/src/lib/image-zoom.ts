@@ -18,6 +18,12 @@ export type Frame = {
    * back instead of settling on a wider fit that holds it open.
    */
   restWidth?: number;
+  /**
+   * The largest this pane can grow to while the canvas follows the zoom
+   * (T-781); absent where the canvas keeps its size: maximized, held, or
+   * not measurable.
+   */
+  room?: { width: number; height: number };
 };
 
 /** The width fit is measured against: the canvas at rest. */
@@ -83,12 +89,21 @@ function clampAxis(pos: number, size: number, room: number): number {
   return Math.min(0, Math.max(room - size, pos));
 }
 
+/**
+ * Clamped against the pane the canvas comes to rest at for this zoom, not
+ * the one it has mid-tween: the canvas grows and shrinks about its centre,
+ * so a view clamped there sits still on screen through every frame of the
+ * tween, and whatever the clamp moves, it moves at once (T-781).
+ */
 export function clampView(f: Frame, v: View): View {
   const z = Math.min(Math.max(v.z, minScale(f)), maxScale(f));
+  const settled = settledPane(f, z);
+  const dx = (settled.width - f.width) / 2;
+  const dy = (settled.height - f.height) / 2;
   return {
     z,
-    x: clampAxis(v.x, f.naturalWidth * z, f.width),
-    y: clampAxis(v.y, f.naturalHeight * z, f.height),
+    x: clampAxis(v.x + dx, f.naturalWidth * z, settled.width) - dx,
+    y: clampAxis(v.y + dy, f.naturalHeight * z, settled.height) - dy,
   };
 }
 
@@ -114,9 +129,26 @@ export function canvasWidth(f: Frame, z: number): number {
 }
 
 /**
+ * The pane a canvas with `room` comes to rest at for zoom `z`: what the
+ * zoom asks of it, capped where CSS caps it. Below the cap the request is at
+ * least the image's own size, so the image only centres in it.
+ */
+export function settledPane(
+  f: Frame,
+  z: number,
+): { width: number; height: number } {
+  if (f.room === undefined) return { width: f.width, height: f.height };
+  return {
+    width: Math.min(f.room.width, canvasWidth(f, z)),
+    height: Math.min(f.room.height, canvasHeight(f, z)),
+  };
+}
+
+/**
  * Carry a view across a canvas resize. A fitted view refits; any other keeps
- * whatever sat at the canvas centre there — the dialog is centred, so that
- * is also what keeps the image still on screen while the canvas grows.
+ * whatever sat at the canvas centre there. The dialog is centred, so that
+ * holds the image still on screen, and a view clamped against its settled
+ * pane stays clamped through the whole tween (T-781).
  */
 export function reframe(prev: Frame, next: Frame, v: View): View {
   if (isFitted(prev, v)) return fitView(next);

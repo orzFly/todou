@@ -4,8 +4,9 @@
  * fit / 100% / background / scaling menu (T-537), and the dialog growing
  * with the zoom up to its cap (T-548), tweened, and paging tweened too
  * (T-551), the height held while the pointer rests on ‹ › (T-556) and
- * for a moment after it leaves (T-559), and widening with the zoom up to
- * the viewport (T-774).
+ * for a moment after it leaves (T-559), widening with the zoom up to
+ * the viewport (T-774), and the image holding still while the dialog
+ * tweens (T-781).
  * Usage: node scripts/image-zoom-smoke.mjs [--keep] [--cpu-throttle=N] [--help]
  * Requires the same installed dependencies, Node 24+, flock and CHROMIUM
  * (default /usr/bin/chromium) as the other browser smokes.
@@ -325,6 +326,7 @@ async function startSampling(page) {
         h: dialog.getBoundingClientRect().height,
         canvas: img?.parentElement.getBoundingClientRect().height ?? null,
         imageMid: r ? r.y + r.height / 2 : null,
+        image: r ? { x: r.x, y: r.y, w: r.width } : null,
         t: Math.round(performance.now()),
       });
     });
@@ -1095,6 +1097,52 @@ async function growCases(page, { reduced = false } = {}) {
       near(d3.h, d0.h, 1),
     { h: s3.rect.h, h0: s0.rect.h, dialogH: d3.h, dialogH0: d0.h },
   );
+
+  // Zoomed about a point off the canvas centre, which the canvas does not
+  // grow about: the image takes its place on the input's own frame and holds
+  // it while the canvas tweens, however many steps arrive mid-tween (T-781).
+  const offX = s3.rect.x + s3.rect.w * 0.2;
+  const offY = s3.rect.y + s3.rect.h * 0.3;
+  const still = [];
+  const zooms = [s3.view.z];
+  for (const dy of [-20, 20]) {
+    await startSampling(page);
+    await io.wheel(offX, offY, dy, 20);
+    const { samples } = await stopSampling(page);
+    zooms.push((await io.state()).view.z);
+    for (const [i, b] of samples.slice(1).entries()) {
+      const a = samples[i];
+      if (a.image === null || b.image === null) continue;
+      if (!near(a.image.w, b.image.w, 0.05)) continue;
+      still.push({
+        dy,
+        tweening: !near(a.canvas, b.canvas, 0.05),
+        move: Math.max(
+          Math.abs(b.image.x - a.image.x),
+          Math.abs(b.image.y - a.image.y),
+        ),
+      });
+    }
+  }
+  // Reduced motion has no tween to hold still through, only the landing.
+  check(
+    reduced ? "zoom-off-centre-lands" : "image-still-while-frame-tweens",
+    zooms[1] > zooms[0] * 1.5 &&
+      zooms[2] < zooms[1] &&
+      (reduced ||
+        (still.every((x) => x.move <= 1) &&
+          [-20, 20].every((dy) =>
+            still.some((x) => x.dy === dy && x.tweening),
+          ))),
+    {
+      zooms,
+      worst: Math.max(0, ...still.map((x) => x.move)),
+      tweeningPairs: still.filter((x) => x.tweening).length,
+      moved: still.filter((x) => x.move > 1),
+    },
+  );
+  await io.key("0", "Digit0", 48);
+  await io.state();
 
   await io.wheel(px, py, -100, 3);
   const { s: s4 } = await sample();
