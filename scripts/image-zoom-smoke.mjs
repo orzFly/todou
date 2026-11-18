@@ -382,6 +382,41 @@ async function trackHoldRegion(page) {
 const readHoldRegion = (page) =>
   evaluate(page, () => window.__holdRegion.splice(0));
 
+/**
+ * Log, in page time, the canvas being handed a new height and the first key
+ * pressed. A commit is not a paint: a loaded headless Chromium paints one
+ * to three hundred milliseconds after it, so a release judged by its first
+ * painted frame cannot tell the key from the timer (T-779).
+ */
+async function trackHeightTarget(page) {
+  await evaluate(page, () => {
+    const canvas = document.querySelector(
+      "[role=dialog] [data-testid=image-canvas]",
+    );
+    const log = { key: null, heights: [] };
+    let last = canvas.style.height;
+    const mo = new MutationObserver(() => {
+      if (canvas.style.height === last) return;
+      last = canvas.style.height;
+      log.heights.push({ h: last, t: Math.round(performance.now()) });
+    });
+    mo.observe(canvas, { attributes: true, attributeFilter: ["style"] });
+    window.addEventListener(
+      "keydown",
+      () => {
+        log.key = Math.round(performance.now());
+      },
+      { capture: true, once: true },
+    );
+    window.__heightTarget = { mo, log };
+  });
+}
+const readHeightTarget = (page) =>
+  evaluate(page, () => {
+    window.__heightTarget.mo.disconnect();
+    return window.__heightTarget.log;
+  });
+
 /** When the dialog first left height `from`, relative to `since`, if it did. */
 function firstMove({ samples }, from, since) {
   const moved = samples.find((x) => !near(x.h, from, 0.5));
@@ -1143,21 +1178,30 @@ async function growCases(page, { reduced = false } = {}) {
   await trackHoldRegion(page);
   // Leaving for good: nothing moves for RELEASE_DELAY, then the tween.
   await startSampling(page);
+  await trackHeightTarget(page);
   await io.move(px, s7.rect.y + s7.rect.h / 2);
   await sleep(RELEASE_DELAY + 100);
   const grew = await stopSampling(page);
+  const grewTarget = await readHeightTarget(page);
   const [left] = await readHoldRegion(page);
   const { s: s8, d: d8 } = await sample();
   const grown = tweenVerdict(grew, dHeld.h, d8.h, reduced);
-  const after = left ? firstMove(grew, dHeld.h, left.t) : null;
+  const after =
+    left && grewTarget.heights.length > 0
+      ? grewTarget.heights[0].t - left.t
+      : null;
   check(
     "leave-waits-before-resizing",
     left?.type === "pointerleave" &&
       after !== null &&
       after >= RELEASE_DELAY &&
-      // A frame or two late on a slow headless frame, not a second hold.
-      after <= RELEASE_DELAY + 250,
-    { afterLeaveMs: after, delay: RELEASE_DELAY, frameGaps: grew.frameGaps },
+      // The timer running late under load, not a second hold.
+      after < 2 * RELEASE_DELAY,
+    {
+      resizedAfterLeaveMs: after,
+      paintedAfterLeaveMs: left ? firstMove(grew, dHeld.h, left.t) : null,
+      delay: RELEASE_DELAY,
+    },
   );
   check(
     reduced ? "pointer-leave-grows-at-once" : "pointer-leave-tweens-height",
@@ -1202,25 +1246,37 @@ async function growCases(page, { reduced = false } = {}) {
   await sleep(100);
   await readHoldRegion(page);
   const { d: d9 } = await sample();
-  await startSampling(page);
+  await trackHeightTarget(page);
   await io.move(px, d9.y + d9.h / 2);
   await io.key("0", "Digit0", 48);
-  const keyed = await stopSampling(page);
-  const [leftForKey] = await readHoldRegion(page);
   // Past the delay, so a broken release does not leak into the cases below.
   await sleep(RELEASE_DELAY);
+  const target = await readHeightTarget(page);
+  await settle(page);
+  const [leftForKey] = await readHoldRegion(page);
   const { s: sFit, d: dFit } = await sample();
-  const keyAfter = leftForKey ? firstMove(keyed, d9.h, leftForKey.t) : null;
+  const since = (t) =>
+    leftForKey && t !== null && t !== undefined ? t - leftForKey.t : null;
+  const keyAfter = since(target.key);
+  const resizedAfter = since(target.heights[0]?.t);
   check(
     "key-after-leaving-resizes-at-once",
     leftForKey?.type === "pointerleave" &&
       near(sFit.view.z, sFit.fit, 1e-4) &&
       sFit.rect.h < s9.rect.h - 100 &&
       keyAfter !== null &&
+      // A key that arrives once the delay is up proves nothing either way.
+      keyAfter < RELEASE_DELAY &&
+      resizedAfter !== null &&
       // The release fires RELEASE_DELAY after the leave at the earliest, so
-      // any move before then is the key's, however slow the frames (T-771).
-      keyAfter < RELEASE_DELAY,
-    { afterLeaveMs: keyAfter, delay: RELEASE_DELAY, canvasH: sFit.rect.h },
+      // a new height before then is the key's.
+      resizedAfter < RELEASE_DELAY,
+    {
+      keyAfterLeaveMs: keyAfter,
+      resizedAfterLeaveMs: resizedAfter,
+      delay: RELEASE_DELAY,
+      canvasH: sFit.rect.h,
+    },
   );
 
   // T-556: paging with the pointer resting on ‹ › holds the height the same
