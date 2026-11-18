@@ -219,7 +219,11 @@ function mountList(
   client.setQueryData(["project", "alpha"], project);
   client.setQueryData(["statuses", "alpha"], statuses);
   client.setQueryData(["labels", "alpha"], []);
-  client.setQueryData(["members", "alpha"], members);
+  // The Trash link reads admin off the member list, not off viewer_role.
+  client.setQueryData(
+    ["members", "alpha"],
+    members.map((m) => ({ ...m, role })),
+  );
 
   const rootRoute = createRootRoute({ component: () => <Outlet /> });
   const authedRoute = createRoute({
@@ -411,6 +415,24 @@ describe("selecting issues on the list (T-707)", () => {
 
     fireEvent.click(group("Todo"));
     expect(checked()).toEqual(["select #51", "select #52"]);
+  });
+
+  it("gives the toolbar row to the selection while anything is selected (T-778)", async () => {
+    mountList(statefulServer(), { role: "admin" });
+    await screen.findByText("card 22");
+    const projectActions = () => [
+      screen.queryByLabelText("Mark this project as read"),
+      screen.queryByLabelText("Mute alpha"),
+      screen.queryByRole("link", { name: "Trash" }),
+    ];
+    expect(projectActions().every(Boolean)).toBe(true);
+
+    fireEvent.click(box(21));
+    expect(projectActions()).toEqual([null, null, null]);
+    expect(screen.getByTestId("bulk-status-trigger")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Clear selection"));
+    expect(projectActions().every(Boolean)).toBe(true);
   });
 
   it("offers no selection below issue.triage", async () => {

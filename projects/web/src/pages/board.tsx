@@ -246,6 +246,7 @@ export function BoardPage() {
     return { numbers: [...statusOf.keys()], statusOf };
   }, [rowsKey]);
   const selection = useSelection(rows.numbers);
+  const selecting = selection.selected.length > 0;
   // Through a ref, so the callbacks keep their identity while the selection
   // changes under them, and the memoized columns skip what they need not see.
   const selectionRef = useRef(selection);
@@ -386,11 +387,15 @@ export function BoardPage() {
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         {/* The board has no filter toolbar to hang this off, so it gets a
             row of its own — project-scoped, like the list's copy, because
-            the endpoint sweeps a project and not a column (T-100). */}
+            the endpoint sweeps a project and not a column (T-100). While
+            anything is selected the row is the selection's alone (T-778):
+            none of the project actions serves a selection, and Mark all read
+            would sit beside the selection's Mark read looking the same with
+            a different scope. */}
         <div className="@container/bulk flex shrink-0 flex-wrap items-center justify-end gap-y-2">
-          <ProjectWatchersChip slug={slug} />
+          {!selecting && <ProjectWatchersChip slug={slug} />}
           <div className="me-auto flex items-center gap-2 ps-2">
-            {selection.selected.length > 0 && (
+            {selecting && (
               <>
                 <span className="text-sm text-muted-foreground tabular-nums">
                   {selection.selected.length} selected
@@ -413,8 +418,12 @@ export function BoardPage() {
               </>
             )}
           </div>
-          <MarkAllReadButton slug={slug} scopeName="this project" />
-          <ProjectMuteButton slug={slug} />
+          {!selecting && (
+            <>
+              <MarkAllReadButton slug={slug} scopeName="this project" />
+              <ProjectMuteButton slug={slug} />
+            </>
+          )}
         </div>
         {/* 240px is the floor a cramped window degrades against: this row
             bursts the canvas and overflows visibly, so the page scrolls
@@ -423,7 +432,7 @@ export function BoardPage() {
           ref={canvas}
           className="group/select flex min-h-60 flex-1 gap-4 overflow-x-auto"
           // Once anything is selected, every card shows its box (T-732).
-          data-selecting={selection.selected.length > 0 ? "" : undefined}
+          data-selecting={selecting ? "" : undefined}
           onPointerDownCapture={
             canTriage ? sweep.onPointerDownCapture : undefined
           }

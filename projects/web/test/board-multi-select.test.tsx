@@ -379,6 +379,23 @@ describe("selecting cards on the board (T-708)", () => {
     expect(canvas.hasAttribute("data-selecting")).toBe(false);
   });
 
+  it("gives the toolbar row to the selection while anything is selected (T-778)", async () => {
+    mountBoard(statefulServer());
+    await screen.findByText("card 61");
+    const projectActions = () => [
+      screen.queryByLabelText("Mark this project as read"),
+      screen.queryByLabelText("Mute alpha"),
+    ];
+    expect(projectActions().every(Boolean)).toBe(true);
+
+    fireEvent.click(box(21));
+    expect(projectActions()).toEqual([null, null]);
+    expect(screen.getByTestId("bulk-status-trigger")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Clear selection"));
+    expect(projectActions().every(Boolean)).toBe(true);
+  });
+
   it("offers no checkboxes to a reporter", async () => {
     mountBoard(statefulServer(), { role: "reporter" });
     await screen.findByText("card 61");

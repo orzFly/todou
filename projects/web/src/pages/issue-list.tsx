@@ -340,6 +340,7 @@ export function ProjectIssueListPage({
   // The server refuses a status change below `issue.triage`, and status is
   // the only thing a selection does here yet.
   const canSelect = useCanIfLoaded(slug, "issue.triage");
+  const selecting = canSelect && selection.selected.length > 0;
   const sweep = useSweepSelect({
     isSelected: selection.isSelected,
     paint: selection.paint,
@@ -391,7 +392,11 @@ export function ProjectIssueListPage({
             offset is measured, not hard-coded. */}
         {/* One full-width group, project watchers at its left end (T-540).
             Below `sm` the actions have about 35px to spare at 390px, so the
-            chip takes a line of its own above them. */}
+            chip takes a line of its own above them. While anything is
+            selected the row is the selection's alone (T-778): none of the
+            project actions serves a selection, their width is what pushed
+            its buttons down to icons, and Mark all read would sit beside the
+            selection's Mark read looking the same with a different scope. */}
         <div className="@container/bulk flex w-full flex-wrap items-center gap-2">
           {canSelect && shownNumbers.length > 0 && (
             <IssueSelectionBar
@@ -400,30 +405,35 @@ export function ProjectIssueListPage({
               selection={selection}
             />
           )}
-          <ProjectWatchersChip
-            slug={slug}
-            className="max-sm:order-first max-sm:basis-full"
-          />
-          <MarkAllReadButton
-            slug={slug}
-            scopeName="this project"
-            className="ml-auto"
-          />
-          <ProjectMuteButton slug={slug} />
-          {/* Admin-only, because only they see the whole project's trash. An
-              author with deleted cards of their own reaches the same view by
-              URL or through `todou issue list --deleted`. */}
-          {isAdmin && (
-            <Button variant="ghost" size="sm" asChild>
-              <Link
-                to="/projects/$slug"
-                params={{ slug }}
-                search={{ deleted: true }}
-              >
-                <Trash2Icon />
-                Trash
-              </Link>
-            </Button>
+          {!selecting && (
+            <>
+              <ProjectWatchersChip
+                slug={slug}
+                className="max-sm:order-first max-sm:basis-full"
+              />
+              <MarkAllReadButton
+                slug={slug}
+                scopeName="this project"
+                className="ml-auto"
+              />
+              <ProjectMuteButton slug={slug} />
+              {/* Admin-only, because only they see the whole project's
+                  trash. An author with deleted cards of their own reaches
+                  the same view by URL or through
+                  `todou issue list --deleted`. */}
+              {isAdmin && (
+                <Button variant="ghost" size="sm" asChild>
+                  <Link
+                    to="/projects/$slug"
+                    params={{ slug }}
+                    search={{ deleted: true }}
+                  >
+                    <Trash2Icon />
+                    Trash
+                  </Link>
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -439,9 +449,7 @@ export function ProjectIssueListPage({
             {/* Once anything is selected, every row shows its box (T-732). */}
             <div
               className="group/select"
-              data-selecting={
-                canSelect && selection.selected.length > 0 ? "" : undefined
-              }
+              data-selecting={selecting ? "" : undefined}
               onPointerDownCapture={
                 canSelect ? sweep.onPointerDownCapture : undefined
               }
