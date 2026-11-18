@@ -278,6 +278,68 @@ describe.skipIf(!PG_URL)("bulk mark-as-read on real postgres", () => {
     expect((await json(refused)).error.message).toBe(PROJECT_NOT_FOUND);
   });
 
+  it("reads just a selection, and keeps a position already ahead (T-775)", async () => {
+    // Three kinds of row in one multi-row upsert: an existing issue_reads
+    // row, a card riding the frontier with no row yet, and a row whose
+    // position is ahead of now() down to the microsecond.
+    const opened = await createIssue("selected, has a position");
+    const fresh = await createIssue("selected, rides the frontier");
+    const ahead = await createIssue("selected, read into the future");
+    const left = await createIssue("not selected");
+    for (const n of [opened, fresh, ahead, left]) {
+      await plant(n, [MS_BEFORE, MS_AFTER]);
+    }
+    for (const n of [opened, ahead]) {
+      const positioned = await t.app.request(
+        `/api/projects/${slug}/issues/${n}/read`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ up_to: EPOCH }),
+        },
+      );
+      expect(positioned.status).toBe(204);
+    }
+    const FUTURE = "2099-01-01 00:00:00.000123+00";
+    const db = t.ctx.router.system();
+    await db.execute(
+      sql`update issue_reads set last_seen_at = ${FUTURE}::timestamptz
+          where user_id = ${meId} and issue_id = (
+            select id from issues where number = ${ahead}
+              and project_id = (select id from projects where slug = ${slug}))`,
+    );
+    await backdateFrontier(EPOCH);
+    for (const n of [opened, fresh, left]) {
+      expect(await stateOf(n)).toEqual({ unread: true, count: 2 });
+    }
+
+    const res = await t.app.request(`/api/projects/${slug}/issues/read`, {
+      method: "PUT",
+      headers: headers(),
+      body: JSON.stringify({ numbers: [opened, fresh, ahead, 999_999] }),
+    });
+    expect(res.status).toBe(204);
+    for (const n of [opened, fresh, ahead]) {
+      expect(await stateOf(n)).toEqual({ unread: false, count: 0 });
+    }
+    expect(await stateOf(left)).toEqual({ unread: true, count: 2 });
+
+    // `greatest` against the stored value, not the batch's now(): the later
+    // position survives to the microsecond.
+    const kept = await db.execute(
+      sql`select to_char(last_seen_at at time zone 'UTC',
+                         'YYYY-MM-DD HH24:MI:SS.US') as at
+          from issue_reads
+          where user_id = ${meId} and issue_id = (
+            select id from issues where number = ${ahead}
+              and project_id = (select id from projects where slug = ${slug}))`,
+    );
+    const rows = Array.isArray(kept)
+      ? kept
+      : (kept as unknown as { rows: Record<string, unknown>[] }).rows;
+    expect(rows.map((r) => r.at)).toEqual(["2099-01-01 00:00:00.000123"]);
+  });
+
   it("clears a default sweep dated by the project database's own clock", async () => {
     const opened = await createIssue("opened, then swept");
     const untouched = await createIssue("never opened, then swept");
