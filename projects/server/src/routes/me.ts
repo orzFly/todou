@@ -4,6 +4,7 @@ import {
   AgentMemberships,
   BulkReadInput,
   IssueReadInput,
+  IssuesReadInput,
   Me,
   MePrefs,
   MePrefsPatch,
@@ -29,7 +30,11 @@ import {
 } from "../services/me-events.ts";
 import { readPrefs, updatePrefs } from "../services/prefs.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
-import { bulkMarkRead, markIssueRead } from "../services/reads.ts";
+import {
+  bulkMarkRead,
+  markIssueRead,
+  markIssuesRead,
+} from "../services/reads.ts";
 import { referenceDirectory } from "../services/reference-directory.ts";
 import { resolveRefLocator } from "../services/reference-resolve.ts";
 import {
@@ -185,6 +190,19 @@ const markIssueReadRoute = createRoute({
     body: { content: { "application/json": { schema: IssueReadInput } } },
   },
   responses: { 204: { description: "Position advanced" } },
+});
+
+const markIssuesReadRoute = createRoute({
+  method: "put",
+  path: "/projects/{slug}/issues/read",
+  summary:
+    "Advance my last-seen position on several issues to now (T-775; never " +
+    "regresses). Numbers naming no live issue are skipped, not refused",
+  request: {
+    params: z.object({ slug: ProjectRef }),
+    body: { content: { "application/json": { schema: IssuesReadInput } } },
+  },
+  responses: { 204: { description: "Positions advanced" } },
 });
 
 const bulkReadRoute = createRoute({
@@ -363,6 +381,17 @@ export function meRoutes() {
       number,
       originOf(c.req.header(ORIGIN_HEADER)),
     );
+    return c.body(null, 204);
+  });
+
+  app.openapi(markIssuesReadRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const user = c.get("user");
+    const { slug } = c.req.valid("param");
+    await markIssuesRead(ctx, user, slug, c.req.valid("json"));
+    // Several cards is a sweep as far as the caller's other tabs are
+    // concerned: they refetch the project's reads, as for Mark all read.
+    notifyReadsSwept(ctx, user, [slug], originOf(c.req.header(ORIGIN_HEADER)));
     return c.body(null, 204);
   });
 

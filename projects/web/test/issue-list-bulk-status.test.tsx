@@ -16,6 +16,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type {
+  IssueBulkCommand,
+  IssueBulkInput,
   IssueCounts,
   IssueListItem,
   IssueListPage,
@@ -26,10 +28,7 @@ import type {
   Status,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  issueSearchSchema,
-  useBulkIssueStatusMutation,
-} from "../src/api/issues.ts";
+import { issueSearchSchema, useBulkIssueMutation } from "../src/api/issues.ts";
 import { AppShell } from "../src/components/shell.tsx";
 import { ProjectIssueListPage } from "../src/pages/issue-list.tsx";
 import { testQueryClient } from "./render.tsx";
@@ -128,8 +127,8 @@ const json = (body: unknown, status = 200) =>
 
 /**
  * A project that remembers status moves, so the refetch after a bulk move
- * shows what the server actually did. `refuse` names cards whose PATCH is
- * answered 403.
+ * shows what the server actually did. `refuse` names cards the bulk endpoint
+ * cannot find, which fails the whole request, as the real one does.
  */
 function statefulServer(refuse: number[] = []) {
   const cards = new Map<number, Status>([
@@ -138,28 +137,39 @@ function statefulServer(refuse: number[] = []) {
     [21, todo],
     [22, todo],
   ]);
-  const patches: { number: number; status_id: number }[] = [];
+  const bulks: { numbers: number[]; commands: IssueBulkCommand[] }[] = [];
   const fetchImpl = (async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
     const url = new URL(String(input), "http://test");
-    const patch = url.pathname.match(/\/issues\/(\d+)$/);
-    if (patch && init?.method === "PATCH") {
-      const number = Number(patch[1]);
-      const body = JSON.parse(String(init.body)) as { status_id: number };
-      patches.push({ number, status_id: body.status_id });
-      if (refuse.includes(number)) {
+    if (url.pathname.endsWith("/issues/bulk") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as IssueBulkInput;
+      bulks.push(body);
+      const missing = body.numbers.filter((n) => refuse.includes(n));
+      if (missing.length > 0) {
         return json(
-          { error: { code: "forbidden", message: "not yours" } },
-          403,
+          {
+            error: {
+              code: "not_found",
+              message: `issues not found: ${missing.join(", ")}`,
+            },
+          },
+          404,
         );
       }
-      cards.set(
-        number,
-        statuses.find((s) => s.id === body.status_id) as Status,
-      );
-      return json(item(number, cards.get(number) as Status));
+      for (const command of body.commands) {
+        if (command.type !== "status") continue;
+        for (const n of body.numbers) {
+          cards.set(
+            n,
+            statuses.find((s) => s.id === command.status_id) as Status,
+          );
+        }
+      }
+      return json({
+        issues: body.numbers.map((n) => item(n, cards.get(n) as Status)),
+      });
     }
     if (url.pathname.endsWith("/issues/counts")) {
       const counts: IssueCounts = { open: 0, closed: 0, by_status: {} };
@@ -187,7 +197,7 @@ function statefulServer(refuse: number[] = []) {
     }
     return json({}, 404);
   }) as typeof fetch;
-  return { fetch: fetchImpl, patches, cards };
+  return { fetch: fetchImpl, bulks, cards };
 }
 
 function mountList(
@@ -311,10 +321,13 @@ describe("selecting issues on the list (T-707)", () => {
     fireEvent.click(box(21));
     await chooseStatus("Done");
 
+    // One request for the whole selection, in screen order.
     await waitFor(() =>
-      expect(server.patches.sort((a, b) => a.number - b.number)).toEqual([
-        { number: 21, status_id: done.id },
-        { number: 51, status_id: done.id },
+      expect(server.bulks).toEqual([
+        {
+          numbers: [51, 21],
+          commands: [{ type: "status", status_id: done.id }],
+        },
       ]),
     );
     await waitFor(() => expect(screen.queryByText("card 51")).toBeNull());
@@ -324,7 +337,7 @@ describe("selecting issues on the list (T-707)", () => {
     expect(checked()).toEqual([]);
   });
 
-  it("leaves a refused card where it was and says so", async () => {
+  it("leaves every card where it was when the batch is refused, and says so", async () => {
     const server = statefulServer([21]);
     mountList(server);
     await screen.findByText("card 22");
@@ -335,10 +348,10 @@ describe("selecting issues on the list (T-707)", () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Could not move 1 issue: not yours",
+        "Could not update issues: issues not found: 21",
       ),
     );
-    await waitFor(() => expect(screen.queryByText("card 51")).toBeNull());
+    await waitFor(() => expect(screen.getByText("card 51")).toBeTruthy());
     expect(screen.getByText("card 21")).toBeTruthy();
   });
 
@@ -409,8 +422,8 @@ describe("selecting issues on the list (T-707)", () => {
   });
 });
 
-describe("useBulkIssueStatusMutation", () => {
-  it("rolls back only the refused cards while the refetch is out", async () => {
+describe("useBulkIssueMutation", () => {
+  it("rolls the whole move back while the refetch is out", async () => {
     let releaseRefetch: () => void = () => {};
     const refetchHeld = new Promise<void>((resolve) => {
       releaseRefetch = resolve;
@@ -420,10 +433,11 @@ describe("useBulkIssueStatusMutation", () => {
       init?: RequestInit,
     ) => {
       const url = new URL(String(input), "http://test");
-      if (init?.method === "PATCH") {
-        return url.pathname.endsWith("/issues/21")
-          ? json({ error: { code: "forbidden", message: "not yours" } }, 403)
-          : json({});
+      if (url.pathname.endsWith("/issues/bulk") && init?.method === "POST") {
+        return json(
+          { error: { code: "not_found", message: "issues not found: 21" } },
+          404,
+        );
       }
       await refetchHeld;
       return json({}, 404);
@@ -443,7 +457,7 @@ describe("useBulkIssueStatusMutation", () => {
     });
     client.setQueryData(doneKey, { items: [], next_cursor: null });
 
-    const hook = renderHook(() => useBulkIssueStatusMutation(), {
+    const hook = renderHook(() => useBulkIssueMutation(), {
       wrapper: ({ children }) => (
         <QueryClientProvider client={client}>{children}</QueryClientProvider>
       ),
@@ -452,16 +466,16 @@ describe("useBulkIssueStatusMutation", () => {
       hook.result.current.mutate({
         slug: "alpha",
         issueNumbers: [51, 21],
-        status: done,
+        change: { kind: "status", status: done },
       }),
     );
     await waitFor(() => expect(hook.result.current.isError).toBe(true));
 
     const numbers = (key: unknown[]) =>
       client.getQueryData<IssueListPage>(key)?.items.map((i) => i.number);
-    expect(numbers(nextKey)).toEqual([52]);
+    expect(numbers(nextKey)).toEqual([51, 52]);
     expect(numbers(todoKey)).toEqual([21]);
-    expect(numbers(doneKey)).toEqual([51]);
+    expect(numbers(doneKey)).toEqual([]);
     releaseRefetch();
   });
 });

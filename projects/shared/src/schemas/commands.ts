@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id } from "./common.ts";
-import { Issue } from "./issue.ts";
+import { ISSUE_BULK_MAX_NUMBERS, Issue, IssueListItem } from "./issue.ts";
 import {
   COMMENT_HIDE_MAX_IDS,
   CommentKind,
@@ -15,12 +15,16 @@ import {
 // this is not `PATCH issue`, whose `label_ids` / `assignee_ids` replace the
 // whole set and would silently drop concurrent edits by someone else.
 
-export const CommandInput = z.discriminatedUnion("type", [
+const fieldCommands = [
   z.strictObject({ type: z.literal("status"), status_id: Id }),
   z.strictObject({ type: z.literal("label_add"), label_id: Id }),
   z.strictObject({ type: z.literal("label_remove"), label_id: Id }),
   z.strictObject({ type: z.literal("assign"), user_id: Id }),
   z.strictObject({ type: z.literal("unassign"), user_id: Id }),
+] as const;
+
+export const CommandInput = z.discriminatedUnion("type", [
+  ...fieldCommands,
   // `/hide-all` (T-307). Not a field change, and here for the reason the
   // rest are: the comment and the hide have to land together, all the more
   // so now that hiding may also decline somebody's question. The ids are
@@ -69,3 +73,24 @@ export const CommandSubmitResult = z.object({
     .optional(),
 });
 export type CommandSubmitResult = z.infer<typeof CommandSubmitResult>;
+
+/**
+ * What `POST …/issues/bulk` may apply (T-775): the field commands, without
+ * `comments_hide`, whose comment ids belong to one card.
+ */
+export const IssueBulkCommand = z.discriminatedUnion("type", [
+  ...fieldCommands,
+]);
+export type IssueBulkCommand = z.infer<typeof IssueBulkCommand>;
+
+export const IssueBulkInput = z.strictObject({
+  numbers: z.array(Id).min(1).max(ISSUE_BULK_MAX_NUMBERS),
+  commands: z.array(IssueBulkCommand).min(1).max(COMMAND_SUBMIT_MAX_COMMANDS),
+});
+export type IssueBulkInput = z.infer<typeof IssueBulkInput>;
+
+export const IssueBulkResult = z.object({
+  /** In the order of `numbers` with duplicates dropped, after the commands. */
+  issues: z.array(IssueListItem),
+});
+export type IssueBulkResult = z.infer<typeof IssueBulkResult>;

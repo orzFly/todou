@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { Label } from "@todou/shared";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, MinusIcon } from "lucide-react";
 import { type ReactNode, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api, useCan } from "@/api/queries.ts";
@@ -64,6 +64,9 @@ export function LabelPicker({
   onToggle,
   onCreate,
   trigger,
+  partialIds,
+  open: openProp,
+  onOpenChange,
   defaultOpen = false,
 }: {
   allLabels: Label[];
@@ -71,9 +74,22 @@ export function LabelPicker({
   onToggle: (label: Label) => void;
   onCreate?: (name: string) => Promise<Label>;
   trigger: ReactNode;
+  /** As on UserPicker: on some of a selection's cards but not all (T-775). */
+  partialIds?: number[];
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [innerOpen, setInnerOpen] = useState(defaultOpen);
+  const open = openProp ?? innerOpen;
+  // Cleared on the way out as well as in: a controlled open arrives without
+  // passing through here, and must not find the last visit's filter.
+  const setOpen = (next: boolean) => {
+    setInnerOpen(next);
+    onOpenChange?.(next);
+    setQuery("");
+    setHighlight(0);
+  };
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const [highlight, setHighlight] = useState(0);
@@ -84,7 +100,7 @@ export function LabelPicker({
   const matches = allLabels.filter((l) => l.name.toLowerCase().includes(q));
   const orderedMatches = usePickerOrder(
     matches,
-    selected.map((label) => label.id),
+    [...selected.map((label) => label.id), ...(partialIds ?? [])],
     (label) => label.id,
     open,
     query,
@@ -117,6 +133,7 @@ export function LabelPicker({
   }
 
   const isSelected = (label: Label) => selected.some((s) => s.id === label.id);
+  const isPartial = (label: Label) => partialIds?.includes(label.id) ?? false;
 
   async function pick(row: PickerRow) {
     if (creating) return;
@@ -164,16 +181,7 @@ export function LabelPicker({
   }
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next) {
-          setQuery("");
-          setHighlight(0);
-        }
-      }}
-    >
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent
         className="w-72 p-0"
@@ -236,6 +244,13 @@ export function LabelPicker({
               key={row.kind === "toggle" ? `l${row.label.id}` : `c${row.name}`}
               role="option"
               aria-selected={row.kind === "toggle" && isSelected(row.label)}
+              aria-checked={
+                partialIds === undefined || row.kind !== "toggle"
+                  ? undefined
+                  : isPartial(row.label)
+                    ? "mixed"
+                    : isSelected(row.label)
+              }
               className={cn(
                 "flex w-full cursor-pointer items-center rounded-sm text-left",
                 PICKER_ROW,
@@ -251,7 +266,11 @@ export function LabelPicker({
                     <LabelChip label={row.label} />
                   </span>
                   <span className="ml-auto w-4 shrink-0">
-                    {isSelected(row.label) && <CheckIcon className="size-4" />}
+                    {isSelected(row.label) ? (
+                      <CheckIcon className="size-4" />
+                    ) : (
+                      isPartial(row.label) && <MinusIcon className="size-4" />
+                    )}
                   </span>
                 </>
               ) : (

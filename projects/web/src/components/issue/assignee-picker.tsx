@@ -12,12 +12,18 @@ export function AssigneePicker({
   selectedIds,
   onToggle,
   trigger,
+  partialIds,
+  open,
+  onOpenChange,
   defaultOpen = false,
 }: {
   members: Member[];
   selectedIds: number[];
   onToggle: (userId: number) => void;
   trigger: ReactNode;
+  partialIds?: number[];
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   /** Test-only, as on LabelPicker. */
   defaultOpen?: boolean;
 }) {
@@ -25,6 +31,9 @@ export function AssigneePicker({
     <UserPicker
       users={members.map((member) => member.user)}
       selectedIds={selectedIds}
+      partialIds={partialIds}
+      open={open}
+      onOpenChange={onOpenChange}
       onPick={(user) => {
         if (user !== null) onToggle(user.id);
       }}

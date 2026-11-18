@@ -1,9 +1,13 @@
 import type { Status } from "@todou/shared";
-import { ChevronDownIcon } from "lucide-react";
-import { useBulkIssueStatusMutation } from "@/api/issues.ts";
+import { ChevronDownIcon, CircleDotIcon } from "lucide-react";
+import { useBulkIssueMutation } from "@/api/issues.ts";
+import {
+  BULK_CHEVRON,
+  BULK_TEXT,
+  BulkButton,
+} from "@/components/issue/bulk-button.tsx";
 import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,34 +35,58 @@ export function BulkStatusMenu({
   /** Called as the move is sent, which is when a selection is spent. */
   onMoved?: () => void;
 }) {
-  const move = useBulkIssueStatusMutation();
+  const move = useBulkIssueStatus(slug, issueNumbers, onMoved);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
+        <BulkButton
+          label="Set status"
+          icon={<CircleDotIcon />}
           disabled={issueNumbers.length === 0}
           data-testid="bulk-status-trigger"
         >
-          Set status
-          <ChevronDownIcon />
-        </Button>
+          <span className={BULK_TEXT}>Set status</span>
+          <ChevronDownIcon className={BULK_CHEVRON} />
+        </BulkButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-auto min-w-64">
-        {statuses.map((s) => (
-          <DropdownMenuItem
-            key={s.id}
-            className={cn(PICKER_ROW, "cursor-pointer")}
-            onSelect={() => {
-              move.mutate({ slug, issueNumbers: [...issueNumbers], status: s });
-              onMoved?.();
-            }}
-          >
-            <StatusPill status={s} />
-          </DropdownMenuItem>
-        ))}
+        <BulkStatusItems statuses={statuses} onPick={move} />
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+/** The status rows, shared with the overflow menu's submenu (T-775). */
+export function BulkStatusItems({
+  statuses,
+  onPick,
+}: {
+  statuses: readonly Status[];
+  onPick: (status: Status) => void;
+}) {
+  return statuses.map((s) => (
+    <DropdownMenuItem
+      key={s.id}
+      className={cn(PICKER_ROW, "cursor-pointer")}
+      onSelect={() => onPick(s)}
+    >
+      <StatusPill status={s} />
+    </DropdownMenuItem>
+  ));
+}
+
+export function useBulkIssueStatus(
+  slug: string,
+  issueNumbers: readonly number[],
+  onMoved?: () => void,
+): (status: Status) => void {
+  const { mutate } = useBulkIssueMutation();
+  return (status) => {
+    mutate({
+      slug,
+      issueNumbers: [...issueNumbers],
+      change: { kind: "status", status },
+    });
+    onMoved?.();
+  };
 }

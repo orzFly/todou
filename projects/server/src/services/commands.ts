@@ -1,14 +1,18 @@
 import type {
   AgentContext,
   ChangeEvent,
+  CommandInput,
   CommandSubmitInput,
   CommandSubmitResult,
+  IssueBulkInput,
+  IssueBulkResult,
   IssueListRow,
   TimelineComment,
 } from "@todou/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
+import type { Db } from "../db/driver.ts";
 import {
   comments,
   issueAssignees,
@@ -85,41 +89,15 @@ export async function executeCommands(
   // Validate and prefetch BEFORE the transaction opens: in shared placement
   // both tiers share one PGlite connection, so a system query issued inside
   // the project transaction would deadlock it (same rule as updateIssue).
-  const statusById = new Map(
-    (
-      await db.select().from(statuses).where(eq(statuses.projectId, project.id))
-    ).map((row) => [row.id, row]),
+  const { statusById, labelById, userIds } = await validateFieldCommands(
+    ctx,
+    db,
+    project.id,
+    input.commands,
   );
-  const labelById = new Map(
-    (
-      await db.select().from(labels).where(eq(labels.projectId, project.id))
-    ).map((row) => [row.id, row]),
+  const hideIds = input.commands.flatMap((command) =>
+    command.type === "comments_hide" ? command.comment_ids : [],
   );
-  const userIds = new Set<number>();
-  const hideIds: number[] = [];
-  for (const [i, command] of input.commands.entries()) {
-    const at = `command[${i}]`;
-    switch (command.type) {
-      case "status":
-        if (!statusById.has(command.status_id)) {
-          throw new ValidationFailedError(`${at}: unknown status_id`);
-        }
-        break;
-      case "label_add":
-      case "label_remove":
-        if (!labelById.has(command.label_id)) {
-          throw new ValidationFailedError(`${at}: unknown label_id`);
-        }
-        break;
-      case "assign":
-      case "unassign":
-        userIds.add(command.user_id);
-        break;
-      case "comments_hide":
-        hideIds.push(...command.comment_ids);
-        break;
-    }
-  }
   if (hideIds.length > 0) {
     // Validated here rather than left to the transaction so a stale id fails
     // the whole submission before the comment is written. The hide endpoint
@@ -148,32 +126,6 @@ export async function executeCommands(
       }
       await requireCapability(ctx, actor, slug, "comment.hide");
       await requireSettleCapabilities(ctx, actor, slug, db, issue.id, command);
-    }
-  }
-  if (userIds.size > 0) {
-    const members = new Set(
-      (
-        await ctx.router
-          .system()
-          .select({ userId: projectMembers.userId })
-          .from(projectMembers)
-          .where(
-            and(
-              eq(projectMembers.projectId, project.id),
-              inArray(projectMembers.userId, [...userIds]),
-            ),
-          )
-      ).map((row) => row.userId),
-    );
-    for (const [i, command] of input.commands.entries()) {
-      if (
-        (command.type === "assign" || command.type === "unassign") &&
-        !members.has(command.user_id)
-      ) {
-        throw new ValidationFailedError(
-          `command[${i}]: user_id must be a project member`,
-        );
-      }
     }
   }
   const currentAssignees = (
@@ -231,31 +183,6 @@ export async function executeCommands(
 
   const applied = await db.transaction(async (tx) => {
     let hide: HideInTxResult | null = null;
-    const addEvent = async (
-      type: (typeof issueEvents.$inferInsert)["type"],
-      payload: Record<string, unknown>,
-    ) => {
-      const inserted = await tx
-        .insert(issueEvents)
-        .values({
-          projectId: project.id,
-          issueId: issue.id,
-          actorId: actor.id,
-          type,
-          payload,
-          agentContext,
-        })
-        .returning({ id: issueEvents.id });
-      const id = inserted[0]?.id;
-      if (id !== undefined) {
-        commandEvents.push({
-          entity: "timeline",
-          id,
-          action: "created",
-          issue_number: issueNumber,
-        });
-      }
-    };
 
     let comment: CommentRow | null = null;
     if (resolved !== null) {
@@ -274,129 +201,41 @@ export async function executeCommands(
       events.push(...result.timeline);
     }
 
-    // Read the sets being mutated inside the transaction and diff against
-    // them as commands apply: the point of incremental semantics is that a
-    // concurrent edit by someone else survives this submission.
-    const rows = await tx
-      .select({ statusId: issues.statusId })
-      .from(issues)
-      .where(eq(issues.id, issue.id));
-    let statusId = rows[0]?.statusId;
-    if (statusId === undefined) throw new NotFoundError("issue not found");
-    const statusBefore = statusId;
-    const assigned = new Set(
-      (
-        await tx
-          .select({ userId: issueAssignees.userId })
-          .from(issueAssignees)
-          .where(eq(issueAssignees.issueId, issue.id))
-      ).map((row) => row.userId),
-    );
-    const labeled = new Set(
-      (
-        await tx
-          .select({ labelId: issueLabels.labelId })
-          .from(issueLabels)
-          .where(eq(issueLabels.issueId, issue.id))
-      ).map((row) => row.labelId),
-    );
-
+    const fields = await readFieldState(tx, issue.id);
+    const statusBefore = fields.statusId;
+    const target = {
+      tx,
+      projectId: project.id,
+      issue: { id: issue.id, number: issueNumber },
+      actorId: actor.id,
+      agentContext,
+      statusById,
+      labelById,
+      userRefs,
+      events: commandEvents,
+    };
     for (const command of input.commands) {
-      switch (command.type) {
-        case "status": {
-          if (command.status_id === statusId) break;
-          const to = statusById.get(command.status_id) as StatusRow;
-          const { type, payload } = statusEventOf(statusById.get(statusId), to);
-          await addEvent(type, payload);
-          statusId = command.status_id;
-          break;
-        }
-        case "label_add": {
-          if (labeled.has(command.label_id)) break;
-          await tx
-            .insert(issueLabels)
-            .values({ issueId: issue.id, labelId: command.label_id });
-          labeled.add(command.label_id);
-          const label = labelById.get(command.label_id);
-          await addEvent("label_added", {
-            label: label
-              ? { id: label.id, name: label.name, color: label.color }
-              : { id: command.label_id },
-          });
-          break;
-        }
-        case "label_remove": {
-          if (!labeled.has(command.label_id)) break;
-          await tx
-            .delete(issueLabels)
-            .where(
-              and(
-                eq(issueLabels.issueId, issue.id),
-                eq(issueLabels.labelId, command.label_id),
-              ),
-            );
-          labeled.delete(command.label_id);
-          const label = labelById.get(command.label_id);
-          await addEvent("label_removed", {
-            label: label
-              ? { id: label.id, name: label.name, color: label.color }
-              : { id: command.label_id },
-          });
-          break;
-        }
-        case "assign": {
-          if (assigned.has(command.user_id)) break;
-          await tx
-            .insert(issueAssignees)
-            .values({ issueId: issue.id, userId: command.user_id });
-          assigned.add(command.user_id);
-          await addEvent("assigned", {
-            user: {
-              id: command.user_id,
-              login: userRefs.get(command.user_id)?.login ?? "ghost",
-            },
-          });
-          break;
-        }
-        case "unassign": {
-          if (!assigned.has(command.user_id)) break;
-          await tx
-            .delete(issueAssignees)
-            .where(
-              and(
-                eq(issueAssignees.issueId, issue.id),
-                eq(issueAssignees.userId, command.user_id),
-              ),
-            );
-          assigned.delete(command.user_id);
-          await addEvent("unassigned", {
-            user: {
-              id: command.user_id,
-              login: userRefs.get(command.user_id)?.login ?? "ghost",
-            },
-          });
-          break;
-        }
-        case "comments_hide": {
-          const result = await hideCommentsInTx(tx, {
-            projectId: project.id,
-            issueId: issue.id,
-            issueNumber,
-            actorId: actor.id,
-            input: {
-              hidden: command.hidden,
-              comment_ids: command.comment_ids,
-            },
-            agentContext,
-          });
-          // Two of them in one submission apply in order, which is
-          // well-defined; the later one's answer is the one to report.
-          hide = result;
-          hideEvents.push(...result.events);
-          break;
-        }
+      if (command.type !== "comments_hide") {
+        await applyFieldCommand(target, fields, command);
+        continue;
       }
+      const result = await hideCommentsInTx(tx, {
+        projectId: project.id,
+        issueId: issue.id,
+        issueNumber,
+        actorId: actor.id,
+        input: {
+          hidden: command.hidden,
+          comment_ids: command.comment_ids,
+        },
+        agentContext,
+      });
+      // Two of them in one submission apply in order, which is
+      // well-defined; the later one's answer is the one to report.
+      hide = result;
+      hideEvents.push(...result.events);
     }
+    const { statusId, labeled, assigned } = fields;
 
     await tx
       .update(issues)
@@ -473,5 +312,364 @@ export async function executeCommands(
             ...(hide.settled === null ? {} : { settled: hide.settled }),
           },
         }),
+  };
+}
+
+type FieldCommand = Exclude<CommandInput, { type: "comments_hide" }>;
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
+ * Checks the ids the field commands name and loads what applying them needs.
+ * Run before the transaction opens: the membership lookup is a system query,
+ * which deadlocks a project transaction under shared placement.
+ */
+async function validateFieldCommands(
+  ctx: AppContext,
+  db: Db,
+  projectId: number,
+  commands: readonly CommandInput[],
+) {
+  const statusById = new Map(
+    (
+      await db.select().from(statuses).where(eq(statuses.projectId, projectId))
+    ).map((row) => [row.id, row]),
+  );
+  const labelById = new Map(
+    (await db.select().from(labels).where(eq(labels.projectId, projectId))).map(
+      (row) => [row.id, row],
+    ),
+  );
+  const userIds = new Set<number>();
+  for (const [i, command] of commands.entries()) {
+    const at = `command[${i}]`;
+    switch (command.type) {
+      case "status":
+        if (!statusById.has(command.status_id)) {
+          throw new ValidationFailedError(`${at}: unknown status_id`);
+        }
+        break;
+      case "label_add":
+      case "label_remove":
+        if (!labelById.has(command.label_id)) {
+          throw new ValidationFailedError(`${at}: unknown label_id`);
+        }
+        break;
+      case "assign":
+      case "unassign":
+        userIds.add(command.user_id);
+        break;
+      case "comments_hide":
+        break;
+    }
+  }
+  if (userIds.size > 0) {
+    const members = new Set(
+      (
+        await ctx.router
+          .system()
+          .select({ userId: projectMembers.userId })
+          .from(projectMembers)
+          .where(
+            and(
+              eq(projectMembers.projectId, projectId),
+              inArray(projectMembers.userId, [...userIds]),
+            ),
+          )
+      ).map((row) => row.userId),
+    );
+    for (const [i, command] of commands.entries()) {
+      if (
+        (command.type === "assign" || command.type === "unassign") &&
+        !members.has(command.user_id)
+      ) {
+        throw new ValidationFailedError(
+          `command[${i}]: user_id must be a project member`,
+        );
+      }
+    }
+  }
+  return { statusById, labelById, userIds };
+}
+
+type FieldState = {
+  statusId: number;
+  labeled: Set<number>;
+  assigned: Set<number>;
+};
+
+/**
+ * Read inside the transaction, and diffed against as commands apply: the
+ * point of incremental semantics is that a concurrent edit by someone else
+ * survives this submission.
+ */
+async function readFieldState(tx: Tx, issueId: number): Promise<FieldState> {
+  const rows = await tx
+    .select({ statusId: issues.statusId })
+    .from(issues)
+    .where(eq(issues.id, issueId));
+  const statusId = rows[0]?.statusId;
+  if (statusId === undefined) throw new NotFoundError("issue not found");
+  const assigned = new Set(
+    (
+      await tx
+        .select({ userId: issueAssignees.userId })
+        .from(issueAssignees)
+        .where(eq(issueAssignees.issueId, issueId))
+    ).map((row) => row.userId),
+  );
+  const labeled = new Set(
+    (
+      await tx
+        .select({ labelId: issueLabels.labelId })
+        .from(issueLabels)
+        .where(eq(issueLabels.issueId, issueId))
+    ).map((row) => row.labelId),
+  );
+  return { statusId, labeled, assigned };
+}
+
+type FieldTarget = {
+  tx: Tx;
+  projectId: number;
+  issue: { id: number; number: number };
+  actorId: number;
+  agentContext: AgentContext | null;
+  statusById: Map<number, StatusRow>;
+  labelById: Map<number, typeof labels.$inferSelect>;
+  userRefs: Map<number, { login: string }>;
+  /** Receives one timeline change event per event written. */
+  events: ChangeEvent[];
+};
+
+/** Applies one command to `state`; one whose effect already holds writes nothing. */
+async function applyFieldCommand(
+  target: FieldTarget,
+  state: FieldState,
+  command: FieldCommand,
+): Promise<void> {
+  const { tx, issue, labelById, userRefs } = target;
+  const addEvent = async (
+    type: (typeof issueEvents.$inferInsert)["type"],
+    payload: Record<string, unknown>,
+  ) => {
+    const inserted = await tx
+      .insert(issueEvents)
+      .values({
+        projectId: target.projectId,
+        issueId: issue.id,
+        actorId: target.actorId,
+        type,
+        payload,
+        agentContext: target.agentContext,
+      })
+      .returning({ id: issueEvents.id });
+    const id = inserted[0]?.id;
+    if (id !== undefined) {
+      target.events.push({
+        entity: "timeline",
+        id,
+        action: "created",
+        issue_number: issue.number,
+      });
+    }
+  };
+  const labelPayload = (labelId: number) => {
+    const label = labelById.get(labelId);
+    return {
+      label: label
+        ? { id: label.id, name: label.name, color: label.color }
+        : { id: labelId },
+    };
+  };
+  const userPayload = (userId: number) => ({
+    user: { id: userId, login: userRefs.get(userId)?.login ?? "ghost" },
+  });
+
+  switch (command.type) {
+    case "status": {
+      if (command.status_id === state.statusId) return;
+      const to = target.statusById.get(command.status_id) as StatusRow;
+      const { type, payload } = statusEventOf(
+        target.statusById.get(state.statusId),
+        to,
+      );
+      await addEvent(type, payload);
+      state.statusId = command.status_id;
+      return;
+    }
+    case "label_add": {
+      if (state.labeled.has(command.label_id)) return;
+      await tx
+        .insert(issueLabels)
+        .values({ issueId: issue.id, labelId: command.label_id });
+      state.labeled.add(command.label_id);
+      await addEvent("label_added", labelPayload(command.label_id));
+      return;
+    }
+    case "label_remove": {
+      if (!state.labeled.has(command.label_id)) return;
+      await tx
+        .delete(issueLabels)
+        .where(
+          and(
+            eq(issueLabels.issueId, issue.id),
+            eq(issueLabels.labelId, command.label_id),
+          ),
+        );
+      state.labeled.delete(command.label_id);
+      await addEvent("label_removed", labelPayload(command.label_id));
+      return;
+    }
+    case "assign": {
+      if (state.assigned.has(command.user_id)) return;
+      await tx
+        .insert(issueAssignees)
+        .values({ issueId: issue.id, userId: command.user_id });
+      state.assigned.add(command.user_id);
+      await addEvent("assigned", userPayload(command.user_id));
+      return;
+    }
+    case "unassign": {
+      if (!state.assigned.has(command.user_id)) return;
+      await tx
+        .delete(issueAssignees)
+        .where(
+          and(
+            eq(issueAssignees.issueId, issue.id),
+            eq(issueAssignees.userId, command.user_id),
+          ),
+        );
+      state.assigned.delete(command.user_id);
+      await addEvent("unassigned", userPayload(command.user_id));
+      return;
+    }
+  }
+}
+
+/**
+ * The same field commands on several cards (T-775), in one transaction:
+ * either every card takes them or none does. Behind `issue.triage`, so the
+ * only card a caller can be refused is one that is gone or in the trash —
+ * a stale selection, better refused whole and refetched than half-applied.
+ */
+export async function executeBulkCommands(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  input: IssueBulkInput,
+  agentContext: AgentContext | null = null,
+): Promise<IssueBulkResult> {
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.triage",
+  );
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const numbers = [...new Set(input.numbers)];
+  const rows = await db
+    .select({ ...gateColumns })
+    .from(issues)
+    .where(
+      and(eq(issues.projectId, project.id), inArray(issues.number, numbers)),
+    );
+  const byNumber = new Map(rows.map((row) => [row.number, row]));
+  const missing = numbers.filter((n) => !byNumber.has(n));
+  if (missing.length > 0) {
+    throw new NotFoundError(`issues not found: ${missing.join(", ")}`);
+  }
+  for (const row of rows) assertIssueWritable(row, actor, role);
+
+  const { statusById, labelById, userIds } = await validateFieldCommands(
+    ctx,
+    db,
+    project.id,
+    input.commands,
+  );
+  const userRefs = await getUserRefs(ctx.router.system(), [...userIds]);
+
+  // Ascending, so two bulk requests over overlapping cards take the row
+  // locks in one order and cannot deadlock each other on real postgres.
+  const ordered = [...rows].sort((a, b) => a.number - b.number);
+  const perCard: {
+    id: number;
+    number: number;
+    events: ChangeEvent[];
+    listRow: IssueListRow;
+  }[] = [];
+  const moved: number[] = [];
+  await db.transaction(async (tx) => {
+    const now = new Date();
+    for (const row of ordered) {
+      const state = await readFieldState(tx, row.id);
+      const statusBefore = state.statusId;
+      const events: ChangeEvent[] = [];
+      const target: FieldTarget = {
+        tx,
+        projectId: project.id,
+        issue: { id: row.id, number: row.number },
+        actorId: actor.id,
+        agentContext,
+        statusById,
+        labelById,
+        userRefs,
+        events,
+      };
+      for (const command of input.commands) {
+        await applyFieldCommand(target, state, command);
+      }
+      await tx
+        .update(issues)
+        .set({ statusId: state.statusId, updatedAt: now })
+        .where(eq(issues.id, row.id));
+      if (state.statusId !== statusBefore) moved.push(row.number);
+      perCard.push({
+        id: row.id,
+        number: row.number,
+        events,
+        listRow: {
+          kind: "fields",
+          status_id: state.statusId,
+          label_ids: [...state.labeled],
+          assignee_ids: [...state.assigned],
+        },
+      });
+    }
+  });
+
+  // Each card's events, then its row: the order `executeCommands` publishes.
+  for (const card of perCard) {
+    for (const e of card.events) ctx.bus.publish(project.id, e);
+    ctx.bus.publish(project.id, {
+      entity: "issue",
+      id: card.id,
+      action: "updated",
+      issue_number: card.number,
+      list_row: card.listRow,
+    });
+  }
+
+  if (moved.length > 0) {
+    const changes = await evaluateBlockerStatus(ctx, project, db, moved);
+    await announceBlockChanges(ctx, changes, actor.id, agentContext);
+  }
+
+  const after = await db
+    .select()
+    .from(issues)
+    .where(
+      and(eq(issues.projectId, project.id), inArray(issues.number, numbers)),
+    );
+  const bundles = await bundleIssues(ctx, db, [project.id], after, actor);
+  const byNumberAfter = new Map(
+    bundles.map((bundle) => [bundle.row.number, bundle]),
+  );
+  return {
+    issues: numbers.flatMap((n) => {
+      const bundle = byNumberAfter.get(n);
+      if (!bundle) return [];
+      const { body: _body, ...item } = toIssue(bundle);
+      return [item];
+    }),
   };
 }

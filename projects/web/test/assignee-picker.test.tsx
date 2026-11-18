@@ -380,3 +380,19 @@ describe("AssigneePicker ordering (T-479)", () => {
     expect(screen.queryByRole("option", { name: /Charlie/ })).toBeNull();
   });
 });
+
+describe("AssigneePicker for a selection (T-775)", () => {
+  it("marks people some of the cards carry as mixed, with a dash", () => {
+    open({ selectedIds: [1], partialIds: [2] });
+    const partial = rowFor(/Akira/);
+    expect(partial.getAttribute("aria-checked")).toBe("mixed");
+    expect(partial.querySelector(".lucide-minus")).not.toBeNull();
+    expect(rowFor(/Alice/).getAttribute("aria-checked")).toBe("true");
+    expect(rowFor(/Bot One/).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("says nothing about mixed outside a selection", () => {
+    open({ selectedIds: [1] });
+    expect(rowFor(/Alice/).getAttribute("aria-checked")).toBeNull();
+  });
+});

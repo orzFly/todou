@@ -199,6 +199,88 @@ describe.each(PLACEMENTS)("bulk mark-as-read T-100 (%s)", (placement) => {
     expect(await stateOf(PA, issue)).toEqual({ unread: false, count: 0 });
   });
 
+  async function readSome(
+    slug: string,
+    numbers: number[],
+    who: Record<string, string> = { cookie },
+  ): Promise<Response> {
+    await settle();
+    return t.app.request(`/api/projects/${slug}/issues/read`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...who },
+      body: JSON.stringify({ numbers }),
+    });
+  }
+
+  it("marks just the named cards read (T-775)", async () => {
+    const picked = [
+      await createIssue(PA, "picked one"),
+      await createIssue(PA, "picked two"),
+      await createIssue(PA, "picked three"),
+    ];
+    const left = await createIssue(PA, "not picked");
+    for (const n of [...picked, left]) await comment(PA, n, "noise");
+    for (const n of [...picked, left]) {
+      expect((await stateOf(PA, n)).unread).toBe(true);
+    }
+
+    expect((await readSome(PA, picked)).status).toBe(204);
+    for (const n of picked) {
+      expect(await stateOf(PA, n)).toEqual({ unread: false, count: 0 });
+    }
+    expect((await stateOf(PA, left)).unread).toBe(true);
+  });
+
+  it("skips numbers naming nothing live, and reads the rest", async () => {
+    const kept = await createIssue(PA, "kept");
+    const trashed = await createIssue(PA, "trashed");
+    await comment(PA, kept, "noise");
+    const del = await t.app.request(`/api/projects/${PA}/issues/${trashed}`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    expect(del.status).toBe(204);
+
+    expect((await readSome(PA, [kept, trashed, 99_999])).status).toBe(204);
+    expect((await stateOf(PA, kept)).unread).toBe(false);
+  });
+
+  it("does not pull back a position set further ahead", async () => {
+    const issue = await createIssue(PA, "read into the future");
+    await settle();
+    const ahead = await t.app.request(
+      `/api/projects/${PA}/issues/${issue}/read`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({
+          up_to: new Date(Date.now() + 3_600_000).toISOString(),
+        }),
+      },
+    );
+    expect(ahead.status).toBe(204);
+    expect((await readSome(PA, [issue])).status).toBe(204);
+    await settle();
+    // Still ahead of this comment only if the bulk call kept the later mark.
+    await comment(PA, issue, "lands before the future position");
+    expect((await stateOf(PA, issue)).unread).toBe(false);
+  });
+
+  it("is open to readers", async () => {
+    const reader = await addUserWithToken(t.ctx, `reader-${suffix}`);
+    const member = await t.app.request(
+      `/api/projects/${PA}/members/${reader.user.id}`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ role: "reader" }),
+      },
+    );
+    expect(member.status).toBe(204);
+    const issue = await createIssue(PA, "for the reader");
+    expect((await readSome(PA, [issue], reader.headers)).status).toBe(204);
+  });
+
   it("never invents unread history for a newcomer", async () => {
     const issue = await createIssue(PA, "history the newcomer missed");
     await comment(PA, issue, "said before they arrived");

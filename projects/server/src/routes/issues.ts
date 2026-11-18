@@ -12,6 +12,8 @@ import {
   CommentLocation,
   CommentUpdateInput,
   Issue,
+  IssueBulkInput,
+  IssueBulkResult,
   IssueCounts,
   IssueCountsQuery,
   IssueCreateInput,
@@ -35,7 +37,7 @@ import {
   TimelineQuery,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
-import { executeCommands } from "../services/commands.ts";
+import { executeBulkCommands, executeCommands } from "../services/commands.ts";
 import {
   createComment,
   deleteComment,
@@ -114,6 +116,29 @@ const createIssueRoute = createRoute({
     `labels or assignees with it needs ${minRoleOf("issue.triage")}`,
   request: { params: slugParam, body: jsonBody(IssueCreateInput) },
   responses: { 201: { description: "Created", ...jsonBody(Issue) } },
+});
+
+const bulkRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/bulk",
+  summary:
+    "Apply incremental field commands to several issues in one transaction " +
+    roleTag("issue.triage"),
+  description:
+    "The field commands of `…/commands` — `status`, `label_add`, " +
+    "`label_remove`, `assign`, `unassign` — applied to every issue in " +
+    "`numbers` (T-775). Incremental, so a concurrent edit by someone else " +
+    "survives; a command whose effect already holds on a card records no " +
+    "event there. All or nothing: a number that names no issue fails the " +
+    "request with 404 listing every such number, a card in the trash or " +
+    "moved away fails it as a write to that card would, an invalid id fails " +
+    "it with 422 — and nothing is written. Every card named moves its " +
+    "`updated_at`. `issues` comes back in the order of `numbers`, " +
+    "duplicates dropped, without bodies.",
+  request: { params: slugParam, body: jsonBody(IssueBulkInput) },
+  responses: {
+    200: { description: "Applied", ...jsonBody(IssueBulkResult) },
+  },
 });
 
 const getIssueRoute = createRoute({
@@ -592,6 +617,20 @@ export function issueRoutes() {
         c.get("agentContext"),
       ),
       201,
+    );
+  });
+
+  app.openapi(bulkRoute, async (c) => {
+    const { slug } = c.req.valid("param");
+    return c.json(
+      await executeBulkCommands(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      200,
     );
   });
 

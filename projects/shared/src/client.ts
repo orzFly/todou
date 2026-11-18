@@ -41,6 +41,8 @@ import type {
   DirectUploadTicket,
   InboxPage,
   Issue,
+  IssueBulkInput,
+  IssueBulkResult,
   IssueCounts,
   IssueCreateInput,
   IssueListPage,
@@ -51,6 +53,7 @@ import type {
   IssueQuestions,
   IssueReadInput,
   IssueReferences,
+  IssuesReadInput,
   IssueUpdateInput,
   IssueWatchMark,
   IssueWatchMarkInput,
@@ -950,6 +953,11 @@ export class TodouClient {
       json: input,
     });
 
+  markIssuesRead = (slug: string, input: IssuesReadInput) =>
+    this.request<void>("PUT", `/projects/${slug}/issues/read`, {
+      json: input,
+    });
+
   muteIssue = (slug: string, number: number, input: IssueMuteInput) =>
     this.request<void>("PUT", `/projects/${slug}/issues/${number}/mute`, {
       json: input,
@@ -1052,6 +1060,11 @@ export class TodouClient {
       `/projects/${slug}/issues/${number}/comments`,
       { json: { body: text, kind: "action" } },
     );
+  /** Incremental field commands on several cards, one transaction (T-775). */
+  bulkIssueCommands = (slug: string, input: IssueBulkInput) =>
+    this.request<IssueBulkResult>("POST", `/projects/${slug}/issues/bulk`, {
+      json: input,
+    });
   /** Comment plus incremental commands, one transaction (T-161). */
   submitCommands = (slug: string, number: number, input: CommandSubmitInput) =>
     this.request<CommandSubmitResult>(

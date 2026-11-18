@@ -390,3 +390,32 @@ describe("LabelPicker selected chips", () => {
     expect(document.activeElement).toBe(input());
   });
 });
+
+describe("LabelPicker for a selection (T-775)", () => {
+  it("marks labels some of the cards carry as mixed", () => {
+    open({ selected: [LABELS[0] as Label], partialIds: [3] });
+    expect(labelRow("kind:bug").getAttribute("aria-checked")).toBe("mixed");
+    expect(labelRow("area:web").getAttribute("aria-checked")).toBe("true");
+    expect(labelRow("area:cli").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("says nothing about mixed outside a selection", () => {
+    open({ selected: [LABELS[0] as Label] });
+    expect(labelRow("area:web").getAttribute("aria-checked")).toBeNull();
+  });
+
+  it("opens from outside its trigger", () => {
+    const { rerender } = open({ defaultOpen: false, open: false });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    rerender(
+      <LabelPicker
+        allLabels={LABELS}
+        selected={[]}
+        onToggle={() => {}}
+        trigger={<button type="button">Edit labels</button>}
+        open
+      />,
+    );
+    expect(screen.getByRole("listbox")).toBeTruthy();
+  });
+});

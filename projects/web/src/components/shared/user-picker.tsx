@@ -1,5 +1,5 @@
 import type { UserKind } from "@todou/shared";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, MinusIcon } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { PICKER_ROW, usePickerOrder } from "@/components/issue/picker-row.ts";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
@@ -149,6 +149,9 @@ export function UserPicker<U extends PickerUser>({
   busy = false,
   noun = "people",
   empty,
+  partialIds,
+  open: openProp,
+  onOpenChange,
   defaultOpen = false,
 }: {
   users: U[];
@@ -171,10 +174,19 @@ export function UserPicker<U extends PickerUser>({
   noun?: string;
   /** What to say when there are no candidates at all. */
   empty?: string;
+  /**
+   * Picked on some of a selection's cards but not all (T-775): a dash in the
+   * check slot. Only a bulk picker passes it.
+   */
+  partialIds?: number[];
+  /** Controlled open state, for opening it from somewhere other than `trigger`. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   /** Test-only, as on LabelPicker. */
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [innerOpen, setInnerOpen] = useState(defaultOpen);
+  const open = openProp ?? innerOpen;
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -183,7 +195,7 @@ export function UserPicker<U extends PickerUser>({
 
   const ordered = usePickerOrder(
     users.filter((user) => matchesUser(user, query)),
-    selectedIds,
+    partialIds === undefined ? selectedIds : [...selectedIds, ...partialIds],
     (user) => user.id,
     open,
     query,
@@ -210,7 +222,8 @@ export function UserPicker<U extends PickerUser>({
   }, [open, hl]);
 
   const reset = (next: boolean) => {
-    setOpen(next);
+    setInnerOpen(next);
+    onOpenChange?.(next);
     setQuery("");
     setHighlight(0);
   };
@@ -236,6 +249,8 @@ export function UserPicker<U extends PickerUser>({
     row.kind === "anyone"
       ? selectedIds.length === 0
       : selectedIds.includes(row.user.id);
+  const isPartial = (row: Row<U>) =>
+    row.kind === "user" && (partialIds?.includes(row.user.id) ?? false);
 
   return (
     <Popover open={open} onOpenChange={reset}>
@@ -298,6 +313,13 @@ export function UserPicker<U extends PickerUser>({
               disabled={busy}
               role="option"
               aria-selected={check && isPicked(row)}
+              aria-checked={
+                partialIds === undefined
+                  ? undefined
+                  : isPartial(row)
+                    ? "mixed"
+                    : isPicked(row)
+              }
               tabIndex={-1}
               className={cn(
                 "flex w-full cursor-pointer items-center rounded-sm text-left whitespace-nowrap",
@@ -324,7 +346,11 @@ export function UserPicker<U extends PickerUser>({
                   just clicked. */}
               {check && (
                 <span className="ml-auto w-4 shrink-0">
-                  {isPicked(row) && <CheckIcon className="size-4" />}
+                  {isPicked(row) ? (
+                    <CheckIcon className="size-4" />
+                  ) : (
+                    isPartial(row) && <MinusIcon className="size-4" />
+                  )}
                 </span>
               )}
             </button>

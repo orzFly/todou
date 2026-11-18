@@ -5,8 +5,11 @@ import {
   BlockClearedPayload,
   BlockEdgePayload,
   ChangeEvent,
+  ISSUE_BULK_MAX_NUMBERS,
+  IssueBulkInput,
   IssueCreateInput,
   IssueListQuery,
+  IssuesReadInput,
   Label,
   LabelName,
   LabelUpdateInput,
@@ -66,6 +69,53 @@ describe("IssueCreateInput", () => {
 
   it("rejects empty titles", () => {
     expect(IssueCreateInput.safeParse({ title: "" }).success).toBe(false);
+  });
+});
+
+describe("IssueBulkInput (T-775)", () => {
+  const label = { type: "label_add", label_id: 3 };
+
+  it("takes the field commands", () => {
+    expect(
+      IssueBulkInput.safeParse({
+        numbers: [1, 2],
+        commands: [label, { type: "status", status_id: 1 }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("refuses comments_hide, which names one card's comments", () => {
+    const parsed = IssueBulkInput.safeParse({
+      numbers: [1],
+      commands: [{ type: "comments_hide", hidden: true, comment_ids: [1] }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("needs at least one number and one command, and caps the numbers", () => {
+    expect(
+      IssueBulkInput.safeParse({ numbers: [], commands: [label] }).success,
+    ).toBe(false);
+    expect(
+      IssueBulkInput.safeParse({ numbers: [1], commands: [] }).success,
+    ).toBe(false);
+    const many = Array.from(
+      { length: ISSUE_BULK_MAX_NUMBERS + 1 },
+      (_, i) => i + 1,
+    );
+    expect(
+      IssueBulkInput.safeParse({ numbers: many, commands: [label] }).success,
+    ).toBe(false);
+  });
+
+  it("refuses unknown keys", () => {
+    expect(
+      IssueBulkInput.safeParse({ numbers: [1], commands: [label], body: "x" })
+        .success,
+    ).toBe(false);
+    expect(
+      IssuesReadInput.safeParse({ numbers: [1], up_to: "x" }).success,
+    ).toBe(false);
   });
 });
 

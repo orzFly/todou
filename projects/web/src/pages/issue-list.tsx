@@ -60,7 +60,7 @@ import {
   useCanIfLoaded,
   useIsProjectAdmin,
 } from "@/api/queries.ts";
-import { BulkStatusMenu } from "@/components/issue/bulk-status-menu.tsx";
+import { BulkActions } from "@/components/issue/bulk-actions.tsx";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import {
   ISSUE_LIST_ROW,
@@ -392,7 +392,7 @@ export function ProjectIssueListPage({
         {/* One full-width group, project watchers at its left end (T-540).
             Below `sm` the actions have about 35px to spare at 390px, so the
             chip takes a line of its own above them. */}
-        <div className="flex w-full flex-wrap items-center gap-2">
+        <div className="@container/bulk flex w-full flex-wrap items-center gap-2">
           {canSelect && shownNumbers.length > 0 && (
             <IssueSelectionBar
               slug={slug}
@@ -624,7 +624,7 @@ function IssueSelectionBar({
           <span className="text-sm text-muted-foreground tabular-nums">
             {count} selected
           </span>
-          <BulkStatusMenu
+          <BulkActions
             slug={slug}
             statuses={statuses}
             issueNumbers={selection.selected}

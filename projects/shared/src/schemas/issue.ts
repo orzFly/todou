@@ -182,6 +182,15 @@ export const IssueReadInput = z.strictObject({
 });
 export type IssueReadInput = z.infer<typeof IssueReadInput>;
 
+/** How many cards one bulk request may name (T-775). */
+export const ISSUE_BULK_MAX_NUMBERS = 500;
+
+/** Body of PUT /issues/read (T-775): mark several cards read up to now. */
+export const IssuesReadInput = z.strictObject({
+  numbers: z.array(Id).min(1).max(ISSUE_BULK_MAX_NUMBERS),
+});
+export type IssuesReadInput = z.infer<typeof IssuesReadInput>;
+
 const csvIds = z
   .string()
   .transform((s) => s.split(",").map((p) => Number(p)))

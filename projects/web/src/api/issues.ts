@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import type {
   InboxPage,
+  IssueBulkCommand,
   IssueCounts,
   IssueListFilter,
   IssueListItem,
@@ -14,7 +15,7 @@ import type {
   Status,
   UserRef,
 } from "@todou/shared";
-import { enumValue } from "@todou/shared";
+import { enumValue, ISSUE_BULK_MAX_NUMBERS } from "@todou/shared";
 import { toast } from "sonner";
 import { z } from "zod";
 import { inboxQuery } from "@/api/inbox.ts";
@@ -432,101 +433,140 @@ export function useIssueStatusMutation() {
   });
 }
 
-/**
- * Some cards of a bulk status move were refused. The rest went through, and
- * `moved` names them so their rows can stay where they landed.
- */
-export class BulkStatusError extends Error {
-  readonly moved: readonly number[];
-  readonly failures: readonly { issueNumber: number; reason: Error }[];
+/** One change applied to every card of a selection (T-707, T-775). */
+export type BulkChange =
+  | { kind: "status"; status: Status }
+  | { kind: "label"; label: Label; add: boolean }
+  | { kind: "assignee"; user: UserRef; add: boolean };
 
-  constructor(
-    moved: readonly number[],
-    failures: readonly { issueNumber: number; reason: Error }[],
-  ) {
-    super(
-      `Could not move ${failures.length === 1 ? "1 issue" : `${failures.length} issues`}: ${failures[0]?.reason.message ?? ""}`,
-    );
-    this.moved = moved;
-    this.failures = failures;
+function commandOf(change: BulkChange): IssueBulkCommand {
+  if (change.kind === "status") {
+    return { type: "status", status_id: change.status.id };
+  }
+  if (change.kind === "label") {
+    return change.add
+      ? { type: "label_add", label_id: change.label.id }
+      : { type: "label_remove", label_id: change.label.id };
+  }
+  return change.add
+    ? { type: "assign", user_id: change.user.id }
+    : { type: "unassign", user_id: change.user.id };
+}
+
+/** A row's labels or assignees after `change`, for the optimistic patch. */
+function rowPatchOf(
+  row: IssueListItem,
+  change: Exclude<BulkChange, { kind: "status" }>,
+): Partial<Pick<IssueListItem, "labels" | "assignees">> {
+  if (change.kind === "label") {
+    const rest = row.labels.filter((l) => l.id !== change.label.id);
+    return { labels: change.add ? [...rest, change.label] : rest };
+  }
+  const rest = row.assignees.filter((u) => u.id !== change.user.id);
+  return { assignees: change.add ? [...rest, change.user] : rest };
+}
+
+/**
+ * Writes one change into every list page holding each card, from the row as
+ * it stands in that page, so the set a burst of toggles builds on is the
+ * one already on screen.
+ */
+function applyRowChange(
+  queryClient: QueryClient,
+  slug: string,
+  issueNumbers: readonly number[],
+  change: Exclude<BulkChange, { kind: "status" }>,
+) {
+  const wanted = new Set(issueNumbers);
+  for (const [key, data] of queryClient.getQueriesData<
+    IssueListPage | IssueCounts
+  >({ queryKey: ["issues", slug] })) {
+    if (!data || !("items" in data)) continue;
+    if (!data.items.some((item) => wanted.has(item.number))) continue;
+    queryClient.setQueryData(key, {
+      ...data,
+      items: data.items.map((item) =>
+        wanted.has(item.number)
+          ? { ...item, ...rowPatchOf(item, change) }
+          : item,
+      ),
+    });
   }
 }
 
 /**
- * One status for several cards at once (T-707): the list's multi-select, and
- * the board's next. There is no bulk endpoint: each card is its own PATCH,
- * so each writes its own timeline event and is allowed or refused on its
- * own, and one refusal leaves the others moved.
+ * One change for several cards at once (T-707, T-775): the list's and the
+ * board's multi-select. One request per `ISSUE_BULK_MAX_NUMBERS` cards, and
+ * the server applies each all or nothing, so a failure has no half-moved
+ * cards to keep and the whole optimistic patch goes back.
+ *
+ * Shares the `issue-row` mutation key with the single-card pickers: the bulk
+ * pickers stay open across toggles too, and only the last write of a burst
+ * may refetch, or an earlier refetch paints a later toggle back out.
  */
-export function useBulkIssueStatusMutation() {
+export function useBulkIssueMutation() {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: ["issue-row", "bulk"],
     mutationFn: async (vars: {
       slug: string;
       issueNumbers: readonly number[];
-      status: Status;
+      change: BulkChange;
     }) => {
-      const results = await Promise.allSettled(
-        vars.issueNumbers.map((issueNumber) =>
-          api.updateIssue(vars.slug, issueNumber, {
-            status_id: vars.status.id,
-          }),
-        ),
-      );
-      const moved: number[] = [];
-      const failures: { issueNumber: number; reason: Error }[] = [];
-      results.forEach((result, i) => {
-        const issueNumber = vars.issueNumbers[i] as number;
-        if (result.status === "fulfilled") {
-          moved.push(issueNumber);
-        } else {
-          const reason =
-            result.reason instanceof Error
-              ? result.reason
-              : new Error(String(result.reason));
-          failures.push({ issueNumber, reason });
-        }
-      });
-      if (failures.length > 0) throw new BulkStatusError(moved, failures);
+      const command = commandOf(vars.change);
+      for (
+        let i = 0;
+        i < vars.issueNumbers.length;
+        i += ISSUE_BULK_MAX_NUMBERS
+      ) {
+        await api.bulkIssueCommands(vars.slug, {
+          numbers: vars.issueNumbers.slice(i, i + ISSUE_BULK_MAX_NUMBERS),
+          commands: [command],
+        });
+      }
     },
     onMutate: async (vars) => {
       const context = await snapshotStatusMove(queryClient, vars.slug);
-      for (const issueNumber of vars.issueNumbers) {
-        applyStatusMove(queryClient, vars.slug, issueNumber, vars.status);
+      const { change } = vars;
+      if (change.kind === "status") {
+        for (const issueNumber of vars.issueNumbers) {
+          applyStatusMove(queryClient, vars.slug, issueNumber, change.status);
+        }
+      } else {
+        applyRowChange(queryClient, vars.slug, vars.issueNumbers, change);
       }
       return context;
     },
-    onError: (error, vars, context) => {
-      // Back to before the click, then forward again for the cards the server
-      // took: rolling them back too would show them in their old place until
-      // the refetch lands, and then jump.
+    onError: (error, _vars, context) => {
       restoreStatusMove(queryClient, context);
-      if (error instanceof BulkStatusError) {
-        for (const issueNumber of error.moved) {
-          applyStatusMove(queryClient, vars.slug, issueNumber, vars.status);
-        }
-      }
-      toast.error(error.message);
+      toast.error(`Could not update issues: ${error.message}`);
     },
     onSettled: (_data, error, vars) => {
-      // The board drops several cards through here, and a whole-project
-      // refetch would re-read every one of its columns for it (T-708).
-      queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey });
-      invalidateAfterRowMoves(
-        queryClient,
-        vars.slug,
-        error
-          ? undefined
-          : vars.issueNumbers.map((number) => ({
-              number,
-              statusId: vars.status.id,
-            })),
-      );
       for (const issueNumber of vars.issueNumbers) {
         queryClient.invalidateQueries({
           queryKey: ["issue", vars.slug, issueNumber],
         });
       }
+      const { change } = vars;
+      if (change.kind === "status") {
+        // The board drops several cards through here, and a whole-project
+        // refetch would re-read every one of its columns for it (T-708).
+        queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey });
+        invalidateAfterRowMoves(
+          queryClient,
+          vars.slug,
+          error
+            ? undefined
+            : vars.issueNumbers.map((number) => ({
+                number,
+                statusId: change.status.id,
+              })),
+        );
+        return;
+      }
+      // Still counts itself while its own onSettled runs.
+      if (queryClient.isMutating({ mutationKey: ["issue-row"] }) > 1) return;
+      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
     },
   });
 }

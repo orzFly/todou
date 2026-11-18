@@ -1,4 +1,9 @@
-import type { BulkReadInput, IssueReadInput, MuteReason } from "@todou/shared";
+import type {
+  BulkReadInput,
+  IssueReadInput,
+  IssuesReadInput,
+  MuteReason,
+} from "@todou/shared";
 import { and, eq, gt, inArray, max, ne, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
@@ -414,6 +419,57 @@ export async function markIssueRead(
       userId: actor.id,
       lastSeenAt: upTo,
     })
+    .onConflictDoUpdate({
+      target: [issueReads.issueId, issueReads.userId],
+      set: {
+        lastSeenAt: sql`greatest(${issueReads.lastSeenAt}, excluded.last_seen_at)`,
+      },
+    });
+}
+
+/**
+ * markIssueRead for several cards of one project at once (T-775), to now.
+ * Numbers that name nothing live are skipped rather than refused: a card in
+ * the trash has nothing unread, and one somebody else just deleted should
+ * not fail the rest of the selection.
+ */
+export async function markIssuesRead(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  input: IssuesReadInput,
+): Promise<void> {
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.mark_read",
+  );
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const rows = await db
+    .select({ id: issues.id })
+    .from(issues)
+    .where(
+      and(
+        eq(issues.projectId, project.id),
+        inArray(issues.number, [...new Set(input.numbers)]),
+        live,
+      ),
+    );
+  if (rows.length === 0) return;
+  // Ascending, so two of these over overlapping cards take the row locks in
+  // one order and cannot deadlock each other on real postgres.
+  const ids = rows.map((row) => row.id).sort((a, b) => a - b);
+  await db
+    .insert(issueReads)
+    .values(
+      ids.map((issueId) => ({
+        projectId: project.id,
+        issueId,
+        userId: actor.id,
+        lastSeenAt: sql`now()`,
+      })),
+    )
     .onConflictDoUpdate({
       target: [issueReads.issueId, issueReads.userId],
       set: {

@@ -34,7 +34,7 @@ import {
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import {
   toggledById,
-  useBulkIssueStatusMutation,
+  useBulkIssueMutation,
   useIssueAssigneesMutation,
   useIssueLabelsMutation,
 } from "@/api/issues.ts";
@@ -53,7 +53,7 @@ import {
   QuestionBadge,
   SpecReviewBadge,
 } from "@/components/issue/attention-badge.tsx";
-import { BulkStatusMenu } from "@/components/issue/bulk-status-menu.tsx";
+import { BulkActions } from "@/components/issue/bulk-actions.tsx";
 import {
   AssigneesAndWatchers,
   MetaEditButton,
@@ -286,7 +286,7 @@ export function BoardPage() {
     };
   }, [canTriage, selectedKey, onSelect, onSelectColumn]);
   const move = useBoardMove();
-  const bulkMove = useBulkIssueStatusMutation();
+  const bulkMove = useBulkIssueMutation();
   const [drag, setDrag] = useState<{
     issue: IssueListItem;
     count: number;
@@ -355,7 +355,11 @@ export function BoardPage() {
         (issueNumber) => rows.statusOf.get(issueNumber) !== toStatus.id,
       );
       if (moving.length === 0) return;
-      bulkMove.mutate({ slug, issueNumbers: moving, status: toStatus });
+      bulkMove.mutate({
+        slug,
+        issueNumbers: moving,
+        change: { kind: "status", status: toStatus },
+      });
       selection.clear();
       return;
     }
@@ -383,7 +387,7 @@ export function BoardPage() {
         {/* The board has no filter toolbar to hang this off, so it gets a
             row of its own — project-scoped, like the list's copy, because
             the endpoint sweeps a project and not a column (T-100). */}
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-y-2">
+        <div className="@container/bulk flex shrink-0 flex-wrap items-center justify-end gap-y-2">
           <ProjectWatchersChip slug={slug} />
           <div className="me-auto flex items-center gap-2 ps-2">
             {selection.selected.length > 0 && (
@@ -391,7 +395,7 @@ export function BoardPage() {
                 <span className="text-sm text-muted-foreground tabular-nums">
                   {selection.selected.length} selected
                 </span>
-                <BulkStatusMenu
+                <BulkActions
                   slug={slug}
                   statuses={statuses.data}
                   issueNumbers={selection.selected}

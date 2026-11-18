@@ -498,6 +498,28 @@ describe("issue block edges T-377", () => {
     expect((await issue(PA, blocked)).blocked_by[0].cleared_at).not.toBeNull();
   });
 
+  it("clears through a bulk status move too (T-775)", async () => {
+    expect((await setClearLine(PA, "Shipped")).status).toBe(200);
+    const blocked = await createIssue(PA, "waiting on a bulk move");
+    const blocker = await createIssue(PA, "moved in bulk");
+    const bystander = await createIssue(PA, "moved alongside");
+    await block(PA, blocked, "blocked-by", `#${blocker}`);
+
+    const res = await t.app.request(`/api/projects/${PA}/issues/bulk`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        numbers: [bystander, blocker],
+        commands: [
+          { type: "status", status_id: await statusNamed(PA, "Shipped") },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect((await issue(PA, blocked)).blocked_by[0].cleared_at).not.toBeNull();
+    expect(await timelineTypes(PA, blocked)).toContain("block_cleared");
+  });
+
   it("re-decides every edge when the line moves", async () => {
     expect((await setClearLine(PA, "Shipped")).status).toBe(200);
     const blocked = await createIssue(PA, "line moves under it");

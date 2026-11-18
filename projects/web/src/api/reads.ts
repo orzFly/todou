@@ -146,6 +146,39 @@ export function useMarkAllReadAction() {
   });
 }
 
+/** A selection's mark-read (T-775): useMarkReadAction for several cards. */
+export function useMarkIssuesReadAction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { slug: string; numbers: readonly number[] }) =>
+      api.markIssuesRead(vars.slug, { numbers: [...vars.numbers] }),
+    onMutate: async (vars) => {
+      await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
+      const snapshot = queryClient.getQueriesData<IssueListPage>({
+        queryKey: ["issues", vars.slug],
+      });
+      for (const [key, data] of snapshot) {
+        if (!data || !("items" in data)) continue;
+        let page = data;
+        for (const number of vars.numbers) page = clearUnread(page, number);
+        queryClient.setQueryData(key, page);
+      }
+      return { snapshot };
+    },
+    onError: (error, _vars, context) => {
+      for (const [key, data] of context?.snapshot ?? []) {
+        queryClient.setQueryData(key, data);
+      }
+      toast.error(`Could not mark as read: ${error.message}`);
+    },
+    onSettled: (_data, _error, vars) => {
+      for (const queryKey of readInvalidations(vars.slug)) {
+        queryClient.invalidateQueries({ queryKey });
+      }
+    },
+  });
+}
+
 /** Pure cache patch, exported for tests. */
 export function clearUnread(
   page: IssueListPage,
