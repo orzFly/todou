@@ -710,6 +710,31 @@ function readDialog() {
     cap: innerHeight * 0.75,
   };
 }
+/**
+ * Where + pauses on the way in (T-780): the whole image as large as the
+ * canvas can grow (contain), the canvas filled (cover), and actual pixels.
+ * The largest canvas is the viewport less the dialog's 1rem margins and its
+ * p-4 padding, by the 75vh cap; a stop within 3% of fit or of another stop
+ * is dropped, actual pixels winning a merge.
+ */
+function zoomStops(natural, fit, d) {
+  const w = d.vw - 64;
+  const contain = Math.min(w / natural.w, d.cap / natural.h);
+  const cover = Math.max(w / natural.w, d.cap / natural.h);
+  const ceiling = Math.max(8, fit * 2);
+  const stops = [];
+  for (const z of [contain, cover, 1]
+    .filter((z) => z > fit * 1.03 && z < ceiling)
+    .sort((a, b) => a - b)) {
+    const last = stops.at(-1);
+    if (last === undefined || z / last >= 1.03) stops.push(z);
+    else if (z === 1) stops[stops.length - 1] = 1;
+  }
+  return stops;
+}
+/** One + from `z`: ×1.25, or the first stop that step would cross. */
+const plusFrom = (z, stops) =>
+  stops.find((s) => s > z * 1.001 && s <= z * 1.25) ?? z * 1.25;
 const sameBox = (a, b) =>
   a !== null &&
   b !== null &&
@@ -811,10 +836,12 @@ async function desktopCases(page, fixture) {
   const s6 = await io.state();
   await io.press("zoom in");
   const s7 = await io.state();
+  const stops = zoomStops(s6.natural, s6.fit, await evaluate(page, readDialog));
   check(
     "title-bar-buttons",
-    near(s6.view.z, s6.fit, 1e-4) && near(s7.view.z, s6.fit * 1.25, 1e-4),
-    { fit: s6.view.z, in: s7.view.z },
+    near(s6.view.z, s6.fit, 1e-4) &&
+      near(s7.view.z, plusFrom(s6.fit, stops), 1e-4),
+    { fit: s6.view.z, in: s7.view.z, stops },
   );
 
   await io.wheel(px, py, -8, 10, 2);
@@ -1150,21 +1177,27 @@ async function growCases(page, { reduced = false } = {}) {
     );
   const plusAt = () => centreOf("zoom in");
   const p0 = await plusAt();
+  const stops = zoomStops(s7.natural, s7.fit, d7);
   const clicks = [];
+  let want = s7.view.z;
   for (let i = 0; i < 6; i++) {
     await io.click(p0.x, p0.y);
     const s = await io.state();
-    clicks.push({ z: s.view.z, h: s.rect.h, plusY: (await plusAt()).y });
+    want = plusFrom(want, stops);
+    clicks.push({ z: s.view.z, want, h: s.rect.h, plusY: (await plusAt()).y });
   }
   check(
     "plus-clicks-land-while-hovering",
-    clicks.every(
-      (c, i) =>
-        near(c.z, s7.view.z * 1.25 ** (i + 1), 1e-3) &&
-        near(c.h, s7.rect.h, 0.5) &&
-        near(c.plusY, p0.y, 0.5),
-    ),
-    clicks,
+    // Six clicks from fit cross every stop the wide image has.
+    stops.length > 0 &&
+      stops.every((stop) => clicks.some((c) => near(c.z, stop, 1e-3))) &&
+      clicks.every(
+        (c) =>
+          near(c.z, c.want, 1e-3) &&
+          near(c.h, s7.rect.h, 0.5) &&
+          near(c.plusY, p0.y, 0.5),
+      ),
+    { stops, clicks },
   );
 
   const { d: dHeld } = await sample();
