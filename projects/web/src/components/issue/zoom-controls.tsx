@@ -1,5 +1,4 @@
 import { ChevronDownIcon, MinusIcon, PlusIcon } from "lucide-react";
-import { ZOOM_STEP } from "@/components/issue/use-zoom-pan.ts";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,23 +23,25 @@ import {
   isAtMax,
   isAtMin,
   type View,
-  zoomAt,
 } from "@/lib/image-zoom.ts";
 
 /**
  * − 100%▾ + for the viewer's title bar (T-537): the readout opens fit, 100%
- * and the background and scaling choices.
+ * and the background and scaling choices. − and + pause on the zoom stops
+ * they cross (T-780).
  */
 export function ZoomControls({
   frame,
   view,
   atCentre,
+  step,
   imageOptions = true,
 }: {
   /** Null while there is nothing to zoom, which disables every control. */
   frame: Frame | null;
   view: View | null;
   atCentre: (op: (f: Frame, v: View, cx: number, cy: number) => View) => void;
+  step: (dir: 1 | -1) => void;
   /** The background and scaling choices; a diagram has its own ground and is vector. */
   imageOptions?: boolean;
 }) {
@@ -56,9 +57,7 @@ export function ZoomControls({
         aria-label="zoom out"
         disabled={!ready || isAtMin(frame, view)}
         className="max-sm:hidden"
-        onClick={() =>
-          atCentre((f, v, x, y) => zoomAt(f, v, 1 / ZOOM_STEP, x, y))
-        }
+        onClick={() => step(-1)}
       >
         <MinusIcon />
       </Button>
@@ -135,7 +134,7 @@ export function ZoomControls({
         aria-label="zoom in"
         disabled={!ready || isAtMax(frame, view)}
         className="max-sm:hidden"
-        onClick={() => atCentre((f, v, x, y) => zoomAt(f, v, ZOOM_STEP, x, y))}
+        onClick={() => step(1)}
       >
         <PlusIcon />
       </Button>

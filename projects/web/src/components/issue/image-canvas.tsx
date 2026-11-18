@@ -56,6 +56,7 @@ export function ImageCanvas({
     dragging,
     height,
     atCentre,
+    step,
     handlers,
   } = useZoomPan({
     natural,
@@ -85,7 +86,12 @@ export function ImageCanvas({
     <>
       {toolbar !== null &&
         createPortal(
-          <ZoomControls frame={frame} view={view} atCentre={atCentre} />,
+          <ZoomControls
+            frame={frame}
+            view={view}
+            atCentre={atCentre}
+            step={step}
+          />,
           toolbar,
         )}
       <div

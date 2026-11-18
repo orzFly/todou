@@ -4,6 +4,9 @@ import {
   canvasHeight,
   canvasWidth,
   clampView,
+  DETENT,
+  detentU,
+  detentZ,
   type Frame,
   fitScale,
   fitView,
@@ -14,10 +17,13 @@ import {
   maxScale,
   panBy,
   reframe,
+  stepAt,
   toggleAt,
+  travel,
   type View,
   wheelFactor,
   zoomAt,
+  zoomStops,
 } from "@/lib/image-zoom.ts";
 
 const big: Frame = {
@@ -211,5 +217,225 @@ describe("reframe", () => {
   it("moves the image down by half the growth, holding it still on screen", () => {
     const v = clampView(wide, { z: 2, x: -500, y: -500 });
     expect(reframe(wide, grown, v)).toEqual({ z: 2, x: -500, y: -250 });
+  });
+});
+
+// A 1920×1080 screenshot in a 1280×800 window: the restored canvas rests at
+// 992 wide, and the largest the dialog can grow it to is 1216×600.
+const shot: Frame = {
+  width: 992,
+  height: 558,
+  naturalWidth: 1920,
+  naturalHeight: 1080,
+  upscale: false,
+  restWidth: 992,
+};
+const largest = { width: 1216, height: 600 };
+
+/** Contain has to show the whole picture with nothing to drag. */
+function expectContainFits(
+  f: Frame,
+  room: { width: number; height: number },
+  z: number,
+) {
+  expect(canvasWidth(f, z)).toBeLessThanOrEqual(room.width);
+  expect(canvasHeight(f, z)).toBeLessThanOrEqual(room.height);
+  // Grown to the largest it can be, still fitting against its resting width.
+  const grown: Frame = { ...f, ...room };
+  const v = clampView(grown, { z, x: -1e6, y: -1e6 });
+  expect(v.x).toBeCloseTo((room.width - f.naturalWidth * v.z) / 2, 9);
+  expect(v.y).toBeCloseTo((room.height - f.naturalHeight * v.z) / 2, 9);
+  expect(v.x).toBeGreaterThanOrEqual(0);
+  expect(v.y).toBeGreaterThanOrEqual(0);
+}
+
+describe("zoomStops (T-780)", () => {
+  it("stops at contain, cover and actual pixels past a restored fit", () => {
+    const stops = zoomStops(shot, largest);
+    expect(stops).toHaveLength(3);
+    expect(stops[0]).toBeCloseTo(600 / 1080, 6);
+    expect(stops[1]).toBeCloseTo(1216 / 1920, 6);
+    expect(stops[2]).toBe(1);
+    expectContainFits(shot, largest, stops[0]);
+  });
+
+  it("drops contain when maximized, where it is fit", () => {
+    const max: Frame = {
+      width: 1248,
+      height: 560,
+      naturalWidth: 1920,
+      naturalHeight: 1080,
+      upscale: true,
+      restWidth: 1248,
+    };
+    const stops = zoomStops(max, { width: 1248, height: 560 });
+    expect(stops).toHaveLength(2);
+    expect(stops[0]).toBeCloseTo(1248 / 1920, 6);
+    expect(stops[1]).toBe(1);
+  });
+
+  it("merges a cover within 3% of actual pixels into actual pixels", () => {
+    const room = { width: 1882, height: 900 };
+    const stops = zoomStops(shot, room);
+    expect(stops).toHaveLength(2);
+    expect(stops[0]).toBeCloseTo(900 / 1080, 6);
+    expect(stops[1]).toBe(1);
+    expectContainFits(shot, room, stops[0]);
+  });
+
+  it("enlarges a small image to contain and cover", () => {
+    const small: Frame = {
+      width: 992,
+      height: 300,
+      naturalWidth: 420,
+      naturalHeight: 300,
+      upscale: false,
+      restWidth: 992,
+    };
+    const stops = zoomStops(small, largest);
+    expect(stops).toHaveLength(2);
+    expect(stops[0]).toBeCloseTo(2, 6);
+    expect(stops[1]).toBeCloseTo(1216 / 420, 6);
+    expectContainFits(small, largest, stops[0]);
+  });
+
+  it("drops a stop at or past the deepest zoom", () => {
+    const strip: Frame = {
+      width: 992,
+      height: 558,
+      naturalWidth: 200,
+      naturalHeight: 100,
+      upscale: false,
+      restWidth: 992,
+    };
+    const room = { width: 1800, height: 600 };
+    const stops = zoomStops(strip, room);
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toBeCloseTo(6, 6);
+    expectContainFits(strip, room, stops[0]);
+  });
+
+  it("brings contain back inside a canvas it would overflow by a hair", () => {
+    // 1080 × (602 / 1080) is 602.0000000000001 in floating point.
+    const room = { width: 1216, height: 602 };
+    const [contain] = zoomStops(shot, room);
+    expect(1080 * contain).toBeLessThanOrEqual(602);
+    expectContainFits(shot, room, contain);
+  });
+
+  it("has none when the largest canvas could not be measured", () => {
+    expect(zoomStops(shot, { width: Number.NaN, height: 600 })).toEqual([]);
+    expect(zoomStops(shot, { width: 1216, height: 0 })).toEqual([]);
+  });
+});
+
+describe("detent (T-780)", () => {
+  const stops = [0.5556, 0.6333, 1];
+  const starts = stops.map((s, i) => Math.log(s) + i * DETENT);
+
+  it("follows the input without a jump, and never backs off", () => {
+    let prev = Math.log(detentZ(Math.log(0.4), stops));
+    for (let u = Math.log(0.4) + 0.001; u <= Math.log(2); u += 0.001) {
+      const next = Math.log(detentZ(u, stops));
+      expect(next).toBeGreaterThanOrEqual(prev);
+      expect(next - prev).toBeLessThanOrEqual(0.001 + 1e-12);
+      prev = next;
+    }
+  });
+
+  it("holds each stop for DETENT of input", () => {
+    starts.forEach((start, i) => {
+      for (const k of [0, 0.25, 0.5, 0.75, 1])
+        expect(detentZ(start + k * DETENT, stops)).toBeCloseTo(stops[i], 12);
+    });
+  });
+
+  it("reads a zoom back to the position that shows it", () => {
+    for (const z of [0.5, 0.6, 0.8, 1.5]) {
+      expect(detentZ(detentU(z, stops), stops)).toBeCloseTo(z, 12);
+    }
+    stops.forEach((s, i) => {
+      expect(detentU(s, stops)).toBeCloseTo(starts[i] + DETENT / 2, 12);
+    });
+  });
+
+  it("enters a stop on one notch of a mouse wheel and leaves on the next", () => {
+    const notch = Math.log(1.22);
+    for (const s of stops) {
+      const entered = travel(null, shot, s / 1.1, stops, notch);
+      expect(entered.z).toBeCloseTo(s, 12);
+      const left = travel(entered, shot, entered.z, stops, notch);
+      expect(left.z).toBeCloseTo(
+        s * Math.exp(2 * notch - Math.log(1.1) - DETENT),
+        12,
+      );
+    }
+  });
+
+  it("backs out of a stop the way it came in", () => {
+    const below = travel(null, shot, stops[1] / 1.1, stops, 0);
+    const into = travel(
+      below,
+      shot,
+      below.z,
+      stops,
+      starts[1] - below.u + 0.05,
+    );
+    expect(into.z).toBeCloseTo(stops[1], 12);
+    const back = travel(into, shot, into.z, stops, -0.06);
+    expect(back.z).toBeLessThan(stops[1]);
+  });
+
+  it("reads the position again when something else moved the zoom", () => {
+    const held = travel(null, shot, 0.7, stops, 0.01);
+    const clicked = travel(held, shot, 1.0333, stops, 0.01);
+    expect(clicked.z).toBeCloseTo(1.0333 * Math.exp(0.01), 12);
+    const moved = travel(held, shot, held.z, [0.6, 1], 0);
+    expect(moved.u).toBeCloseTo(detentU(held.z, [0.6, 1]), 12);
+    expect(moved.z).toBeCloseTo(held.z, 12);
+  });
+
+  it("stores nothing past either end", () => {
+    const top = travel(null, shot, maxScale(shot), stops, 5);
+    expect(top.z).toBeCloseTo(maxScale(shot), 9);
+    expect(travel(top, shot, top.z, stops, -0.1).z).toBeLessThan(
+      maxScale(shot),
+    );
+    const bottom = travel(null, shot, fitScale(shot), stops, -5);
+    expect(bottom.z).toBeCloseTo(fitScale(shot), 9);
+    expect(travel(bottom, shot, bottom.z, stops, 0.01).z).toBeGreaterThan(
+      fitScale(shot),
+    );
+  });
+});
+
+describe("stepAt (T-780)", () => {
+  const stops = [0.5556, 0.6333, 1];
+  const press = (factor: number, from: View, n: number) => {
+    const zs: number[] = [];
+    let v = from;
+    for (let i = 0; i < n; i++) {
+      v = stepAt(shot, v, factor, stops, shot.width / 2, shot.height / 2);
+      zs.push(v.z);
+    }
+    return zs;
+  };
+
+  it("stops on every stop it crosses on the way in", () => {
+    const zs = press(1.25, fitView(shot), 6);
+    const fit = 992 / 1920;
+    [0.5556, 0.6333, 0.6333 * 1.25, 0.6333 * 1.25 ** 2, 1, 1.25].forEach(
+      (z, i) => {
+        expect(zs[i]).toBeCloseTo(z, 9);
+      },
+    );
+    expect(fit).toBeCloseTo(fitScale(shot), 9);
+  });
+
+  it("stops on every stop it crosses on the way out", () => {
+    const zs = press(1 / 1.25, clampView(shot, { z: 1, x: 0, y: 0 }), 5);
+    [0.8, 0.64, 0.6333, 0.5556, 992 / 1920].forEach((z, i) => {
+      expect(zs[i]).toBeCloseTo(z, 9);
+    });
   });
 });

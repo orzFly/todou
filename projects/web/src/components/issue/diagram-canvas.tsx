@@ -38,6 +38,7 @@ export function DiagramCanvas({
     dragging,
     height,
     atCentre,
+    step,
     handlers,
   } = useZoomPan({
     natural,
@@ -56,6 +57,7 @@ export function DiagramCanvas({
             frame={frame}
             view={view}
             atCentre={atCentre}
+            step={step}
             imageOptions={false}
           />,
           toolbar,

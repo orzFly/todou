@@ -198,6 +198,7 @@ export function CompareCanvas({
             frame={failed ? null : frame}
             view={view}
             atCentre={zoom.atCentre}
+            step={zoom.step}
             imageOptions={!diagram}
           />,
           toolbar,
