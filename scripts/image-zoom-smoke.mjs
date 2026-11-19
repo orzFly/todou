@@ -1124,16 +1124,16 @@ async function growCases(page, { reduced = false } = {}) {
       });
     }
   }
-  // Reduced motion has no tween to hold still through, only the landing.
+  // Reduced motion has no tween to hold still through, but the canvas lands
+  // inside the measure's own commit, and the image must not sit a frame off
+  // at the zoom it lands on (T-782).
   check(
     reduced ? "zoom-off-centre-lands" : "image-still-while-frame-tweens",
     zooms[1] > zooms[0] * 1.5 &&
       zooms[2] < zooms[1] &&
+      still.every((x) => x.move <= 1) &&
       (reduced ||
-        (still.every((x) => x.move <= 1) &&
-          [-20, 20].every((dy) =>
-            still.some((x) => x.dy === dy && x.tweening),
-          ))),
+        [-20, 20].every((dy) => still.some((x) => x.dy === dy && x.tweening))),
     {
       zooms,
       worst: Math.max(0, ...still.map((x) => x.move)),

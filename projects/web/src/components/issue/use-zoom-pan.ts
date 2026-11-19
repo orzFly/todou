@@ -37,6 +37,8 @@ export const ZOOM_STEP = 1.25;
 const TWEEN = { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" };
 /** The id the dialog's width tween is told apart from its own animations by. */
 const WIDEN = "zoom-widen";
+/** Bounds re-measuring in one observer callback, should a layout never settle. */
+const SETTLE_PASSES = 3;
 
 /**
  * What a restored canvas has asked of its dialog's width (T-774), kept by the
@@ -235,12 +237,26 @@ export function useZoomPan({
         prev === null || v === null ? fitView(next) : reframe(prev, next, v),
         { width, height, rest, panes },
       );
+      return { width, height };
     };
     measure();
     // Committed before the frame paints: otherwise each frame of a tween
     // would show the canvas at its new height with the view placed for the
-    // old one, and the image would shake (T-551).
-    const ro = new ResizeObserver(() => flushSync(measure));
+    // old one, and the image would shake (T-551). The commit can carry a
+    // wheel step's zoom that had not rendered yet, and with no tween holding
+    // the height that resizes the canvas right here; the observer would not
+    // report it until the next frame, which paints the image a frame off,
+    // so it is measured again now (T-782).
+    const ro = new ResizeObserver(() => {
+      for (let i = 0; i < SETTLE_PASSES; i++) {
+        const measured = flushSync(measure);
+        if (
+          el.clientWidth === measured.width &&
+          el.clientHeight === measured.height
+        )
+          break;
+      }
+    });
     ro.observe(el);
     return () => ro.disconnect();
   }, [
