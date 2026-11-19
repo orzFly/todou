@@ -17,6 +17,7 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
+import { previewOf, previewSourceColumn } from "./body-preview.ts";
 import {
   crossRefVisibleCondition,
   type VisibleProjects,
@@ -344,6 +345,7 @@ export async function listMutes(
           mutedAt: issueMutes.mutedAt,
           number: issues.number,
           title: issues.title,
+          previewSource: previewSourceColumn(),
           projectId: issues.projectId,
         })
         .from(issueMutes)
@@ -379,6 +381,7 @@ export async function listMutes(
       project: { slug: project.slug, name: project.name },
       number: r.number,
       title: r.title,
+      body_preview: previewOf(r.title, r.previewSource),
       mode: r.mode,
       muted_at: r.mutedAt.toISOString(),
     });

@@ -600,6 +600,13 @@ export async function updateProject(
     const changes = await reevaluateProjectBlocks(ctx, project, db);
     await announceBlockChanges(ctx, changes, actor.id);
   }
+  if (input.require_title !== undefined) {
+    const db = await ctx.router.forProject(routeInfoOf(project));
+    await db
+      .update(projectMeta)
+      .set({ requireTitle: input.require_title })
+      .where(eq(projectMeta.projectId, project.id));
+  }
 
   const registryPatch = {
     ...(input.name === undefined ? {} : { name: input.name }),
@@ -640,26 +647,32 @@ export async function updateProject(
   ctx.bus.publish(row.id, { entity: "project", id: row.id, action: "updated" });
   return {
     ...toProject(row),
-    block_clear_status_id: await blockClearStatusOf(ctx, row),
+    ...(await projectMetaSettingsOf(ctx, row)),
   };
 }
 
 /**
- * The project's clear line (T-377). Read on demand rather than carried by
- * `toProject`, which works off the registry row: this one lives in the
- * project's own database, so a list of projects would pay a query per row —
- * the same reason `former_slugs` is only on the single-project GET.
+ * The project's clear line (T-377) and title rule (T-785). Read on demand
+ * rather than carried by `toProject`, which works off the registry row: these
+ * live in the project's own database, so a list of projects would pay a query
+ * per row — the same reason `former_slugs` is only on the single-project GET.
  */
-export async function blockClearStatusOf(
+export async function projectMetaSettingsOf(
   ctx: AppContext,
   project: ProjectRow,
-): Promise<number | null> {
+): Promise<{ block_clear_status_id: number | null; require_title: boolean }> {
   const db = await ctx.router.forProject(routeInfoOf(project));
   const rows = await db
-    .select({ id: projectMeta.blockClearStatusId })
+    .select({
+      id: projectMeta.blockClearStatusId,
+      requireTitle: projectMeta.requireTitle,
+    })
     .from(projectMeta)
     .where(eq(projectMeta.projectId, project.id));
-  return rows[0]?.id ?? null;
+  return {
+    block_clear_status_id: rows[0]?.id ?? null,
+    require_title: rows[0]?.requireTitle ?? false,
+  };
 }
 
 export async function deleteProject(

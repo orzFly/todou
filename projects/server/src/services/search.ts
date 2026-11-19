@@ -55,6 +55,7 @@ import {
 import { projectMembers, users } from "../db/system-schema.ts";
 import { ValidationFailedError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
+import { previewOf, previewSourceColumn } from "./body-preview.ts";
 import { issueFilterConditions } from "./issues.ts";
 import { toStatus } from "./statuses.ts";
 
@@ -743,6 +744,7 @@ export async function searchProject(
         issue: {
           number: row.number,
           title: row.title,
+          body_preview: previewOf(row.title, row.body),
           status: statusOf(row.statusId),
         },
         comment_id: null,
@@ -766,6 +768,7 @@ export async function searchProject(
         hiddenAt: comments.hiddenAt,
         number: issues.number,
         title: issues.title,
+        previewSource: previewSourceColumn(),
         statusId: issues.statusId,
       })
       .from(comments)
@@ -785,6 +788,7 @@ export async function searchProject(
         issue: {
           number: row.number,
           title: row.title,
+          body_preview: previewOf(row.title, row.previewSource),
           status: statusOf(row.statusId),
         },
         comment_id: row.id,
@@ -809,6 +813,7 @@ export async function searchProject(
         versionId: specVersions.id,
         number: issues.number,
         title: issues.title,
+        previewSource: previewSourceColumn(),
         statusId: issues.statusId,
       })
       .from(specVersionFiles)
@@ -837,6 +842,7 @@ export async function searchProject(
         issue: {
           number: row.number,
           title: row.title,
+          body_preview: previewOf(row.title, row.previewSource),
           status: statusOf(row.statusId),
         },
         comment_id: null,
