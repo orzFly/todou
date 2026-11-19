@@ -8,7 +8,9 @@
 
 export const BODY_PREVIEW_MAX = 160;
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+// Backticks in this file's regexes are spelled \x60: a literal one reads as
+// a template quote to the source scan in web's no-cjk-in-product test.
+const FENCE = /^ {0,3}(\x60{3,}|~{3,})/;
 const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const TABLE_DELIMITER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const BLOCK_MARKER =
@@ -29,7 +31,7 @@ const PARK = 0xe000;
 
 function stripInline(text: string): string {
   return text
-    .replace(/\\([!-/:-@[-`{-~])/g, (_, ch: string) =>
+    .replace(/\\([!-/:-@[-\x60{-~])/g, (_, ch: string) =>
       String.fromCharCode(PARK + ch.charCodeAt(0)),
     )
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
@@ -37,7 +39,7 @@ function stripInline(text: string): string {
     .replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1")
     .replace(/<((?:https?|mailto):[^>\s]+)>/g, "$1")
     .replace(/<\/?[A-Za-z][^>]*>/g, "")
-    .replace(/~~|[*`]/g, "")
+    .replace(/~~|[*\x60]/g, "")
     .replace(/(^|[^\p{L}\p{N}_])_+|_+(?=$|[^\p{L}\p{N}_])/gu, "$1")
     .replace(/\|/g, " ")
     .replace(/[\ue021-\ue07e]/g, (ch) =>
