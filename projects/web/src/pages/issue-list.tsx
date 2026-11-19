@@ -19,6 +19,7 @@ import type {
   Status,
   Watcher,
 } from "@todou/shared";
+import { displayTitle } from "@todou/shared";
 import { ArrowLeftIcon, Trash2Icon, XIcon } from "lucide-react";
 import {
   createContext,
@@ -864,7 +865,9 @@ export function narrowByTitle(
 ): IssueListItem[] {
   const needle = typed.trim().toLowerCase();
   if (needle === "") return items;
-  return items.filter((item) => item.title.toLowerCase().includes(needle));
+  return items.filter((item) =>
+    displayTitle(item).text.toLowerCase().includes(needle),
+  );
 }
 
 /**

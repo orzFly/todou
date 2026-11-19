@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import { issueTitleText } from "@/components/shared/issue-title.tsx";
 import {
   CompactIssueIdentity,
   IssueReturnLink,
@@ -125,7 +126,8 @@ export function IssueReturnRow({
           <CompactIssueIdentity
             slug={slug}
             number={issue.number}
-            title={issue.title}
+            title={issueTitleText(issue)}
+            untitled={issue.title === ""}
             className="flex-1"
           />
           {mirror !== undefined && <span className="shrink-0">{mirror}</span>}

@@ -17,6 +17,7 @@ const list = (mode: IssueMuteMode | null, projectMuted = false): MuteList => ({
             project: { slug: "p", name: "Project" },
             number: 7,
             title: "card",
+            body_preview: null,
             mode,
             muted_at: "2026-01-01T00:00:00Z",
           },

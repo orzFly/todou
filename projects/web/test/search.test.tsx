@@ -109,7 +109,7 @@ const status = {
 
 const hit = (over: Partial<SearchItem> = {}): SearchItem => ({
   kind: "issue",
-  issue: { number: 141, title: "全文搜索", status },
+  issue: { number: 141, title: "全文搜索", body_preview: null, status },
   comment_id: null,
   spec_path: null,
   field: "title",
@@ -123,6 +123,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   id: number,
   number,
   title,
+  body_preview: null,
   status,
   author: {
     id: 1,
@@ -221,7 +222,7 @@ describe("search results", () => {
         }),
         hit({
           kind: "spec",
-          issue: { number: 99, title: "另一张卡", status },
+          issue: { number: 99, title: "另一张卡", body_preview: null, status },
           spec_path: "design.md",
           field: "body",
           snippet: { text: "全文搜索的定稿", ranges: [[0, 4]] },
@@ -1004,10 +1005,10 @@ describe("the pinned results heading (T-454)", () => {
 describe("groupByIssue", () => {
   it("keeps a card where its best hit ranked", () => {
     const groups = groupByIssue([
-      hit({ issue: { number: 2, title: "b", status } }),
-      hit({ issue: { number: 1, title: "a", status } }),
+      hit({ issue: { number: 2, title: "b", body_preview: null, status } }),
+      hit({ issue: { number: 1, title: "a", body_preview: null, status } }),
       hit({
-        issue: { number: 2, title: "b", status },
+        issue: { number: 2, title: "b", body_preview: null, status },
         kind: "comment",
         comment_id: 5,
       }),
@@ -1367,7 +1368,12 @@ describe("the results page · saved data (T-415)", () => {
       diagnostics: [],
       items: [
         hit({
-          issue: { number: 142, title: "Fresh result", status },
+          issue: {
+            number: 142,
+            title: "Fresh result",
+            body_preview: null,
+            status,
+          },
           snippet: { text: "New matching text", ranges: [[0, 3]] },
         }),
       ],
@@ -2235,7 +2241,7 @@ describe("search hits · comment identity (T-434)", () => {
       }),
       hit({
         kind: "spec",
-        issue: { number: 99, title: "Other card", status },
+        issue: { number: 99, title: "Other card", body_preview: null, status },
         field: "body",
         snippet: { text: "Legacy spec", ranges: [] },
       }),

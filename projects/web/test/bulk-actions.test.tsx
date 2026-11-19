@@ -48,6 +48,7 @@ function item(
     id: number,
     number,
     title: `card ${number}`,
+    body_preview: null,
     status: todo,
     author: alice.user,
     assignees: [],

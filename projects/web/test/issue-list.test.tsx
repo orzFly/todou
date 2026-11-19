@@ -127,6 +127,7 @@ describe("patchIssueStatus (optimistic cache update)", () => {
         id: 10,
         number: 1,
         title: "a",
+        body_preview: null,
         status: status(1, "Todo"),
         author: {
           id: 1,
@@ -312,6 +313,7 @@ function flatPage(number: number, title: string): IssueListPage {
         id: number,
         number,
         title,
+        body_preview: null,
         status: flatStatus,
         author: {
           id: 1,

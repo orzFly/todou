@@ -2,6 +2,7 @@ import { type ComponentProps, useLayoutEffect, useRef, useState } from "react";
 import { REF_TITLE_CAP_EM } from "@/components/shared/rich-chip.ts";
 import { canvasMeasurer, pixels } from "@/lib/ref-text-metrics.ts";
 import { cutTitle, type TitleCut } from "@/lib/ref-title-cap.ts";
+import { cn } from "@/lib/utils.ts";
 
 /**
  * A reference chip's title inside a markdown body: inline text, so it breaks
@@ -15,8 +16,15 @@ import { cutTitle, type TitleCut } from "@/lib/ref-title-cap.ts";
 export function RefTitle({
   title,
   cap,
+  untitled = false,
+  className,
   ...props
-}: { title: string; cap: boolean } & Omit<ComponentProps<"span">, "title">) {
+}: {
+  title: string;
+  cap: boolean;
+  /** `title` is an untitled card's stand-in (T-785): muted. */
+  untitled?: boolean;
+} & Omit<ComponentProps<"span">, "title">) {
   const root = useRef<HTMLSpanElement>(null);
   const [cut, setCut] = useState<TitleCut | null>(null);
 
@@ -50,7 +58,13 @@ export function RefTitle({
   }, [title, cap]);
 
   return (
-    <span ref={root} data-ref-title-cap={cap || undefined} {...props}>
+    <span
+      ref={root}
+      data-ref-title-cap={cap || undefined}
+      data-untitled={untitled || undefined}
+      className={cn(className, untitled && "text-muted-foreground")}
+      {...props}
+    >
       {cut ? (
         <>
           {cut.head}

@@ -272,6 +272,7 @@ const CARD: Issue = {
   id: 11,
   number: 7,
   title: "Fix the potato",
+  body_preview: null,
   body: "the first draft",
   status: {
     id: 1,

@@ -26,6 +26,7 @@ const issue = (
   id: number,
   number,
   title,
+  body_preview: null,
   body: "",
   status: {
     id: 1,

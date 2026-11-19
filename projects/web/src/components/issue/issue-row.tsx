@@ -23,6 +23,7 @@ import { LabelPicker } from "@/components/issue/label-picker.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusMenu } from "@/components/issue/status-menu.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { IssueTitle, untitledLine } from "@/components/shared/issue-title.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -123,6 +124,7 @@ export type IssueRowIssue = Pick<IssueListItem, "id" | "number" | "title"> &
       | "unread"
       | "unread_comments"
       | "muted"
+      | "body_preview"
       | "open_questions"
       | "spec_version"
       | "spec_review_status"
@@ -245,9 +247,12 @@ export function IssueRow({
           to="/projects/$slug/issues/$number"
           params={{ slug, number: String(issue.number) }}
           state={returnState}
-          className="min-w-0 truncate font-medium hover:underline"
+          className={cn(
+            "min-w-0 truncate font-medium hover:underline",
+            untitledLine(issue),
+          )}
         >
-          {issue.title}
+          <IssueTitle item={issue} />
         </Link>
         {!refLeads && (
           /* Trailing, the ref loses its own column, so it defends its width

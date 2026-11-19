@@ -26,6 +26,7 @@ import {
   labelsQuery,
   membersQuery,
   meQuery,
+  projectQuery,
   projectWatchersQuery,
   statusesQuery,
 } from "@/api/queries.ts";
@@ -71,6 +72,7 @@ import {
   CommentHeaderLine,
   CommentHeaderMeta,
 } from "@/components/shared/comment-header-meta.tsx";
+import { NO_TITLE } from "@/components/shared/issue-title.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -365,6 +367,10 @@ export function TitleBlock({
   const refLeads = useRefPlacement("detail") === "before";
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(issue.title);
+  const requireTitle = useQuery(projectQuery(slug)).data?.require_title;
+  // The server refuses a card with neither title nor body (T-785).
+  const blankRefused =
+    title.trim() === "" && (requireTitle === true || issue.body.trim() === "");
   const queryClient = useQueryClient();
   const rename = useMutation({
     // The card is sealed in when the form is submitted, not read back off the
@@ -391,6 +397,17 @@ export function TitleBlock({
   // that has not landed.
   useDirtySource(() => rename.isPending);
 
+  // Not the body preview the rest of the app shows: the body is the next
+  // thing on this page, so its first line would be said twice.
+  const heading =
+    issue.title === "" ? (
+      <span data-untitled className="font-normal text-muted-foreground">
+        {NO_TITLE}
+      </span>
+    ) : (
+      issue.title
+    );
+
   if (editing) {
     return (
       <form
@@ -405,7 +422,12 @@ export function TitleBlock({
           onChange={(e) => setTitle(e.target.value)}
           className="text-lg font-semibold"
         />
-        <Button type="submit" size="icon-sm" aria-label="save title">
+        <Button
+          type="submit"
+          size="icon-sm"
+          aria-label="save title"
+          disabled={blankRefused}
+        >
           <CheckIcon className="size-4" />
         </Button>
         <Button
@@ -436,11 +458,11 @@ export function TitleBlock({
             <span className="font-normal text-muted-foreground">
               {formatRef(refPrefix, issue.number)}
             </span>{" "}
-            {issue.title}
+            {heading}
           </>
         ) : (
           <>
-            {issue.title}{" "}
+            {heading}{" "}
             <span className="font-normal text-muted-foreground">
               {formatRef(refPrefix, issue.number)}
             </span>

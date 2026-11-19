@@ -89,6 +89,7 @@ const card = (number: number, title: string, status: Status) => ({
   id: 100 + number,
   number,
   title,
+  body_preview: null,
   status,
   author: alice,
   assignees: [],

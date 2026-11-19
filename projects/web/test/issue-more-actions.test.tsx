@@ -16,6 +16,7 @@ const issue = {
   id: 16,
   number: 16,
   title: "the card the menu acts on",
+  body_preview: null,
   body: "",
   status: {
     id: 1,

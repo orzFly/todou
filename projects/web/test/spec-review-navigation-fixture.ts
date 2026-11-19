@@ -102,6 +102,7 @@ const ISSUE: IssueListItem = {
   id: 107,
   number: 7,
   title: ISSUE_TITLE,
+  body_preview: null,
   status: TODO,
   author: ALICE,
   assignees: [ALICE],

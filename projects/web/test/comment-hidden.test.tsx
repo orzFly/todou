@@ -59,6 +59,7 @@ const ISSUE: Issue = {
   id: 11,
   number: 7,
   title: "Fix the potato",
+  body_preview: null,
   body: "",
   status: {
     id: 1,

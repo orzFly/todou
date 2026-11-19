@@ -27,6 +27,7 @@ const issue = (assignees: UserRef[]): IssueListItem => ({
   id: 10,
   number: 4,
   title: "issue 4",
+  body_preview: null,
   status,
   author: HUMAN,
   assignees,

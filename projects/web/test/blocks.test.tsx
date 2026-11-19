@@ -35,6 +35,7 @@ const listItem = (over: Partial<IssueListItem> = {}): IssueListItem => ({
   id: 10,
   number: 1,
   title: "issue 1",
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

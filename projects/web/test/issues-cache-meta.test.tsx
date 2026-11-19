@@ -43,6 +43,7 @@ const item = (number: number, statusId: number): IssueListItem => ({
   id: number,
   number,
   title: `card ${number}`,
+  body_preview: null,
   status: STATUSES.find((s) => s.id === statusId) as Status,
   author: {
     id: 1,

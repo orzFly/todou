@@ -28,6 +28,7 @@ import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { JumpRowBody } from "@/components/search/jump-row.tsx";
 import { hasQualifier } from "@/components/search/suggestions.ts";
 import { SearchHighlight } from "@/components/search-highlight.tsx";
+import { IssueTitle } from "@/components/shared/issue-title.tsx";
 import {
   LoadFailure,
   RefreshFailure,
@@ -274,7 +275,7 @@ export function SearchResults({
                       {formatRef(prefix, group.issue.number)}
                     </span>
                     <span className="truncate font-medium">
-                      {group.issue.title}
+                      <IssueTitle item={group.issue} />
                     </span>
                     <span className="ml-auto flex">
                       <StatusPill status={group.issue.status} />
@@ -518,7 +519,7 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
                   : { commentId: row.commentId }),
               }}
               refClassName="text-muted-foreground"
-              text={row.item.title}
+              text={<IssueTitle item={row.item} />}
               textClassName="font-medium"
               author={row.commentBy}
               trailing={<StatusPill status={row.item.status} />}

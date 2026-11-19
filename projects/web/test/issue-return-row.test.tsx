@@ -57,6 +57,7 @@ const issue = {
   id: 16,
   number: 16,
   title: LONG_TITLE,
+  body_preview: null,
   body: "",
   status: {
     id: 1,

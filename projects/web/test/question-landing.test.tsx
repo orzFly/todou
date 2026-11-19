@@ -291,6 +291,7 @@ function issue(number: number, model: Card): Issue {
     id: number,
     number,
     title: `Card ${number}`,
+    body_preview: null,
     body: "",
     status,
     author: user,

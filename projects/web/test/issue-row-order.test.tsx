@@ -33,6 +33,7 @@ const issue: IssueListItem = {
   id: 10,
   number: 1,
   title: TITLE,
+  body_preview: null,
   status,
   author: {
     id: 1,

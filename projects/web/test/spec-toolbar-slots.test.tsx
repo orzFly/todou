@@ -92,6 +92,7 @@ const ISSUE = {
   id: 407,
   number: 1,
   title: TITLE,
+  body_preview: null,
   body: "",
   status: {
     id: 1,

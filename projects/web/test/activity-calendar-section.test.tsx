@@ -73,6 +73,7 @@ function card(id: number): ActivityCard {
     issue_id: id,
     number: id,
     title: `Card ${id}`,
+    body_preview: null,
     status: {
       id: 1,
       name: "Open",

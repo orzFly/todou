@@ -52,6 +52,7 @@ import {
   qualifierValueSource,
   type ValuePools,
 } from "@/components/search/suggestions.ts";
+import { IssueTitle } from "@/components/shared/issue-title.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
@@ -855,7 +856,7 @@ export function SearchBox({
                       // `accel/1` and `ACC-1` are both this row's token.
                       identity={null}
                       refClassName="text-muted-foreground"
-                      text={row.item.title}
+                      text={<IssueTitle item={row.item} />}
                       trailing={<StatusPill status={row.item.status} />}
                     />
                   </Link>
@@ -950,7 +951,7 @@ export function SearchBox({
                         : { commentId: row.commentId }),
                     }}
                     refClassName="text-muted-foreground"
-                    text={row.item.title}
+                    text={<IssueTitle item={row.item} />}
                     author={row.commentBy}
                     trailing={<StatusPill status={row.item.status} />}
                   />

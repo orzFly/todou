@@ -63,6 +63,7 @@ function card(issueId: number, projectId = 1): ActivityCard {
     issue_id: issueId,
     number: issueId,
     title: `Card ${issueId}`,
+    body_preview: null,
     status: {
       id: 1,
       name: "Open",

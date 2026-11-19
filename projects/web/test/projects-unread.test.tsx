@@ -63,6 +63,7 @@ function inboxItem(slug: string, number: number): InboxPage["items"][number] {
     id: number,
     number,
     title: `issue ${number}`,
+    body_preview: null,
     status: {
       id: 1,
       name: "Todo",

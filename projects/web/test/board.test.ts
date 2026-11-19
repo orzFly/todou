@@ -25,6 +25,7 @@ const page = (numbers: number[], s: Status): IssueListPage => ({
     id: n * 10,
     number: n,
     title: `issue ${n}`,
+    body_preview: null,
     status: s,
     author,
     assignees: [],

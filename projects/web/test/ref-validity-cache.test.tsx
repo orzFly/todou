@@ -51,6 +51,7 @@ const issue = (title: string): IssueListItem => ({
   id: 7,
   number: 7,
   title,
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

@@ -23,6 +23,7 @@ const issue = (labelCount: number): IssueListItem => ({
   id: 10,
   number: 1,
   title: "issue 1",
+  body_preview: null,
   status,
   author: {
     id: 1,

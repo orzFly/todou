@@ -8,6 +8,7 @@ import {
   useUnmuteProject,
 } from "@/api/mutes.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import { IssueTitle } from "@/components/shared/issue-title.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
@@ -153,7 +154,8 @@ export function MutedIssueRow({ issue }: { issue: MutedIssue }) {
           state={returnState}
           className="block truncate text-sm underline-offset-2 hover:underline"
         >
-          {issue.project.name} {formatRef(prefix, issue.number)} — {issue.title}
+          {issue.project.name} {formatRef(prefix, issue.number)} —{" "}
+          <IssueTitle item={issue} />
         </Link>
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <span>{muteLabelOf(issue.mode)}</span>

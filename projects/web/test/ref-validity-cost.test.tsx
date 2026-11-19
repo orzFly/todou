@@ -36,6 +36,7 @@ const issue = (number: number): IssueListItem => ({
   id: number,
   number,
   title: `Issue ${number}`,
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

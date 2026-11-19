@@ -15,6 +15,7 @@ function item(reviewStatus: SpecReviewStatus): InboxItem {
     id: 7,
     number: 7,
     title: "spec lifecycle",
+    body_preview: null,
     status: {
       id: 1,
       name: "Todo",

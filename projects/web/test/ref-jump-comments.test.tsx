@@ -54,6 +54,7 @@ const issue = (number = 12, title = "Confirmed parent"): IssueListItem => ({
   id: number,
   number,
   title,
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

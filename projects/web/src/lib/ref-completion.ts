@@ -1,5 +1,6 @@
 import {
   type AutolinkRule,
+  displayTitle,
   type IssueListItem,
   PREFIX_PATTERN,
   type PrefixDirectory,
@@ -181,7 +182,10 @@ export function rankCandidates(
   const numeric = /^[0-9]+$/.test(query);
   if (!numeric) {
     const lower = query.toLowerCase();
-    return items.filter((item) => item.title.toLowerCase().includes(lower));
+    // What the row shows, so an untitled card is found by its preview.
+    return items.filter((item) =>
+      displayTitle(item).text.toLowerCase().includes(lower),
+    );
   }
   const exact = Number(query);
   // The exact number is what the typist meant; prefix matches follow,

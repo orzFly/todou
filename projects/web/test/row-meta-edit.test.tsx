@@ -59,6 +59,7 @@ const issue: IssueListItem = {
   id: 10,
   number: 1,
   title: "issue 1",
+  body_preview: null,
   status,
   author: MEMBERS[0].user,
   assignees: [],

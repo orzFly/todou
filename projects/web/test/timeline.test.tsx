@@ -200,6 +200,13 @@ describe("renderEvent text mirror", () => {
     expect(textOf("title_changed", { from: "a", to: "b" })).toBe(
       'renamed "a" → "b"',
     );
+    // An empty side is untitled (T-785): bare, never `""`.
+    expect(textOf("title_changed", { from: "", to: "b" })).toBe(
+      'renamed (no title given) → "b"',
+    );
+    expect(textOf("title_changed", { from: "a", to: "" })).toBe(
+      'renamed "a" → (no title given)',
+    );
     expect(textOf("label_added", { label: { name: "bug" } })).toBe(
       "added label bug",
     );
@@ -665,6 +672,20 @@ describe("timeline entities render like the rest of the app (T-171)", () => {
     expect(before.className).toContain("line-through");
     expect((await findByText("new")).className).toContain("font-medium");
   });
+
+  it.each([
+    ["from", { from: "", to: "new" }, "new"],
+    ["to", { from: "old", to: "" }, "old"],
+  ])(
+    "puts a muted placeholder on an empty %s side (T-785)",
+    async (_side, payload, named) => {
+      const { findByText, container } = row("title_changed", payload);
+      const placeholder = await findByText("(no title given)");
+      expect(placeholder.className).toContain("text-muted-foreground");
+      expect(await findByText(named)).toBeTruthy();
+      expect(container.textContent).not.toContain('""');
+    },
+  );
 });
 
 describe("a run of spec resolutions on the page (T-406)", () => {

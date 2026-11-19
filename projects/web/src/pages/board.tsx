@@ -67,6 +67,7 @@ import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusHeading } from "@/components/issue/status-pill.tsx";
 import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
+import { IssueTitle, untitledLine } from "@/components/shared/issue-title.tsx";
 import { ProjectWatchersChip } from "@/components/shared/project-watchers.tsx";
 import {
   useRegisterReturnArea,
@@ -748,6 +749,7 @@ export const BoardCardContent = memo(function BoardCardContent({
           // mounted in the DragOverlay and could land in any shrink-to-fit
           // box, where `break-word` stops taking effect (T-303).
           "block wrap-anywhere text-sm font-medium hover:underline",
+          untitledLine(issue),
           // The 99+ badge is ~27px wide; the ring only needs the old dot gap.
           issue.unread_comments > 0 ? "pr-8" : issue.unread && "pr-4",
         )}
@@ -755,7 +757,7 @@ export const BoardCardContent = memo(function BoardCardContent({
         {placement === "before" && (
           <span className="font-normal text-muted-foreground">{ref} </span>
         )}
-        {issue.title}
+        <IssueTitle item={issue} />
       </Link>
       {/* Its own line sits outside the link: the ref reads as a caption under
           the title rather than as more of its click target. */}
