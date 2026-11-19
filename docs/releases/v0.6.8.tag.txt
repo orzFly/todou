@@ -1,0 +1,8 @@
+todou v0.6.8
+
+Multi-select actions, image and mermaid comparisons, framed code blocks,
+acting as your agents with your own token, and a security pass.
+
+Seven additive migrations; either side can upgrade first. Moving a card
+needs admin at both ends, and `todou spec review --approve` needs
+`--version`.
