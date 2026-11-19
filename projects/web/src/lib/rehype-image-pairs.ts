@@ -15,14 +15,24 @@ const ARROW = /^\s*(?:→|->)\s*$/;
 
 /**
  * The rule, hast side: a paragraph's children are exactly an image, an arrow
- * and an image. Its twin over the editor's syntax tree lives in
+ * and an image, ignoring whitespace and the line breaks a message makes of
+ * its single newlines (T-702). Those are the `<br>`s with no position:
+ * `remark-breaks` inserts them, while a hard break the author wrote keeps
+ * its source, still blocks a pair, and so agrees with the editor twin, which
+ * counts it. The twin over the editor's syntax tree lives in
  * `editor/image-pairs.ts`; the two share one table of cases in the tests.
  */
 export function imagePairOf(
   children: ElementContent[],
 ): { before: Element; after: Element } | null {
   const kids = children.filter(
-    (child) => !(child.type === "text" && child.value.trim() === ""),
+    (child) =>
+      !(child.type === "text" && child.value.trim() === "") &&
+      !(
+        child.type === "element" &&
+        child.tagName === "br" &&
+        child.position === undefined
+      ),
   );
   if (kids.length !== 3) return null;
   const [before, arrow, after] = kids;
@@ -49,7 +59,8 @@ const BLOCKS = new Set([
   "h6",
 ]);
 
-function inlineRunLength(li: Element): number {
+/** How many of a tight list item's children form its paragraph. */
+export function inlineRunLength(li: Element): number {
   const index = li.children.findIndex(
     (child) => child.type === "element" && BLOCKS.has(child.tagName),
   );

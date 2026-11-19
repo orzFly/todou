@@ -658,7 +658,7 @@ export const AnnotatedMarkdown = memo(function AnnotatedMarkdown({
   const pressTimerRef = useRef<number | null>(null);
   const pendingRef = useRef<PendingSelection | null>(null);
   const pointerFine = useMediaQuery(POINTER_FINE);
-  const remarkPlugins = useMarkdownRemarkPlugins(slug);
+  const remarkPlugins = useMarkdownRemarkPlugins(slug, { document: true });
 
   const index = useMemo(() => buildSegmentIndex(body), [body]);
   const baselineIndex = useMemo(
@@ -1047,6 +1047,7 @@ export const AnnotatedMarkdown = memo(function AnnotatedMarkdown({
             rehypePlugins={rehypePlugins}
             fenceBaselines={fenceBaselines}
             collapseLongFences={false}
+            document
             remarkPlugins={remarkPlugins}
           >
             {body}

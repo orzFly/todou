@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { Element } from "hast";
 import { type ComponentProps, memo, type ReactNode, useMemo } from "react";
 import Markdown from "react-markdown";
 import { projectsQuery } from "@/api/queries.ts";
@@ -28,8 +29,13 @@ import {
 } from "@/components/shared/pierre.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
+import { isEmbedImgNode, isSwapImgNode } from "@/lib/block-embeds.ts";
 import { FENCE_COLLAPSE_LINES, fenceTitle } from "@/lib/fence-meta.ts";
-import { MARKDOWN_SYNTAX_PLUGINS } from "@/lib/markdown-processor.ts";
+import {
+  MARKDOWN_SYNTAX_PLUGINS,
+  MESSAGE_SYNTAX_PLUGINS,
+} from "@/lib/markdown-processor.ts";
+import { rehypeBlockBreaks } from "@/lib/rehype-block-breaks.ts";
 import { SWAP_ALT_ATTR, SWAP_SRC_ATTR } from "@/lib/rehype-decorations.ts";
 import { rehypeDetails } from "@/lib/rehype-details.ts";
 import {
@@ -61,42 +67,10 @@ type HastNode = {
   type: string;
   tagName?: string;
   value?: string;
-  properties?: { className?: unknown; src?: unknown; dataSwapSrc?: unknown };
+  properties?: { className?: unknown };
   children?: HastNode[];
   data?: { meta?: unknown };
 };
-
-/**
- * True when this img node is one our override turns into a document card.
- *
- * Deliberately answers from the markdown alone — no slug test, no attachment
- * data. It decides between `<p>` and `<div>`, and an element type that
- * flipped when the attachments query arrived would unmount and rebuild the
- * whole paragraph, which is exactly what the T-60 note above warns about.
- * The cost of being generous is a paragraph rendered as
- * `div.markdown-paragraph` when the address turns out to resolve to nothing;
- * the two share their typography. Being strict instead would put a block
- * document card inside a `<p>`, which browsers split the paragraph over.
- */
-function isEmbedImgNode(child: HastNode): boolean {
-  if (child.type !== "element" || child.tagName !== "img") return false;
-  const src = child.properties?.src;
-  const ref = typeof src === "string" ? parseAttachmentHref(src) : null;
-  return ref !== null && isTextEmbedName(ref.name ?? "");
-}
-
-/**
- * True when this img node is a swapped image our override turns into an
- * image comparison (T-722), which is block content too. Answers from the
- * tree alone, for the reason `isEmbedImgNode` gives.
- */
-function isSwapImgNode(child: HastNode): boolean {
-  return (
-    child.type === "element" &&
-    child.tagName === "img" &&
-    typeof child.properties?.dataSwapSrc === "string"
-  );
-}
 
 /**
  * Pull the code text, fence tag and the info string after the tag out of a
@@ -268,6 +242,12 @@ type MarkdownViewProps = {
    */
   preview?: boolean;
   /**
+   * True when the text is a file — a spec document or an attached `.md` — in
+   * which a single newline stays a space, as on github.com. Everything else
+   * is a message, where it is a line break (T-702).
+   */
+  document?: boolean;
+  /**
    * Enables rich attachment references (download-URL links, embedded
    * images and document cards upgrade to preview-aware components); omit
    * outside an issue.
@@ -309,7 +289,7 @@ export type MarkdownRemarkPlugins = NonNullable<
  */
 export function useMarkdownRemarkPlugins(
   slug?: string,
-  preview = false,
+  { preview = false, document = false } = {},
 ): MarkdownRemarkPlugins {
   const refQuery = useQuery({
     ...referenceConfigQuery(slug ?? ""),
@@ -324,7 +304,8 @@ export function useMarkdownRemarkPlugins(
     enabled: slug !== undefined,
   });
   return useMemo(() => {
-    if (slug === undefined) return MARKDOWN_SYNTAX_PLUGINS;
+    const syntax = document ? MARKDOWN_SYNTAX_PLUGINS : MESSAGE_SYNTAX_PLUGINS;
+    if (slug === undefined) return syntax;
     const directory = directoryQuery.data;
     const readable = readableQuery.data;
     const config = {
@@ -338,18 +319,28 @@ export function useMarkdownRemarkPlugins(
       mentions: preview,
     };
     return [
-      ...MARKDOWN_SYNTAX_PLUGINS,
+      ...syntax,
       // Its position relative to frontmatter is not a constraint: issue refs
       // treat frontmatter as opaque regardless of this order.
       [remarkIssueRefs, config, { autolinksOnly: !preview }],
       // Count after tokenization, including the links it just created.
       remarkRefOccurrences,
     ] as MarkdownRemarkPlugins;
-  }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
+  }, [
+    slug,
+    preview,
+    document,
+    refQuery.data,
+    directoryQuery.data,
+    readableQuery.data,
+  ]);
 }
 
 export function MarkdownView(props: MarkdownViewProps) {
-  const remarkPlugins = useMarkdownRemarkPlugins(props.slug, props.preview);
+  const remarkPlugins = useMarkdownRemarkPlugins(props.slug, {
+    preview: props.preview,
+    document: props.document,
+  });
   return <MarkdownViewWithPlugins {...props} remarkPlugins={remarkPlugins} />;
 }
 
@@ -364,6 +355,7 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
   children,
   slug,
   issueNumber,
+  document = false,
   embedded = false,
   rehypePlugins,
   fenceBaselines,
@@ -405,12 +397,12 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
               children,
               ...props
             }: ComponentProps<"p"> & { node?: unknown }): ReactNode => {
-              const kids = (node as HastNode | undefined)?.children ?? [];
+              const kids = (node as Element | undefined)?.children ?? [];
               const carriesEmbed =
                 (issueNumber !== undefined &&
                   !embedded &&
-                  kids.some((child) => isEmbedImgNode(child))) ||
-                kids.some((child) => isSwapImgNode(child));
+                  kids.some(isEmbedImgNode)) ||
+                kids.some(isSwapImgNode);
               if (carriesEmbed) {
                 return (
                   // A decoration class on the paragraph (a wholly-new pair,
@@ -541,18 +533,21 @@ export const MarkdownViewWithPlugins = memo(function MarkdownViewWithPlugins({
   // the caller's stamp, decoration and fold passes included — walks the tree
   // the reader will get, rather than one where a fold is still a pair of raw
   // HTML strings or a pair still two images. Pairs only where a comparison
-  // can be drawn: without an issue they stay two images and an arrow. The
-  // memo is the array-identity rule this file opens with, applied to an array
-  // this component now owns.
+  // can be drawn: without an issue they stay two images and an arrow.
+  // `rehypeBlockBreaks` follows the pairs it has to see as blocks. The memo is
+  // the array-identity rule this file opens with, applied to an array this
+  // component now owns.
   const pairs = issueNumber !== undefined;
+  const textEmbeds = pairs && !embedded;
   const rehypePasses = useMemo(
     () =>
       [
         rehypeDetails,
         ...(pairs ? [rehypeImagePairs] : []),
+        ...(document ? [] : [[rehypeBlockBreaks, { textEmbeds }]]),
         ...(rehypePlugins ?? []),
       ] as ComponentProps<typeof Markdown>["rehypePlugins"],
-    [pairs, rehypePlugins],
+    [pairs, document, textEmbeds, rehypePlugins],
   );
 
   return (

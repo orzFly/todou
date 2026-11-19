@@ -164,7 +164,7 @@ function MarkdownDocument({
       />
     </>
   ) : (
-    <MarkdownView slug={slug} issueNumber={issueNumber} embedded>
+    <MarkdownView slug={slug} issueNumber={issueNumber} embedded document>
       {text}
     </MarkdownView>
   );

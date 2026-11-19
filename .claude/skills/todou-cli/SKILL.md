@@ -95,6 +95,7 @@ EOF2
 ## Markdown
 
 - GFM: tables, `- [ ]` task lists, `~~strike~~`
+- A single newline is a line break in issues, comments, questions and annotations; in spec documents and attached `.md` it is a space, as on GitHub.
 - Fences that render: ```` ```mermaid ```` → diagram; ```` ```diff ```` / ```` ```patch ```` → diff view. Other fences are highlighted.
 - `<details><summary>…</summary>…</details>` → fold (bare tags only)
 - leading `---` YAML frontmatter → table

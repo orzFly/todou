@@ -14,6 +14,7 @@ export const IMAGE_PAIR_CASES: ImagePairCase[] = [
   { name: "no spaces", markdown: `${A}→${B}\n`, pair: true },
   { name: "soft breaks around →", markdown: `${A}\n→\n${B}\n`, pair: true },
   { name: "soft break before ->", markdown: `${A}\n-> ${B}\n`, pair: true },
+  { name: "hard break before →", markdown: `${A}  \n→ ${B}\n`, pair: false },
   { name: "in a blockquote", markdown: `> ${A} → ${B}\n`, pair: true },
   {
     name: "in a blockquote across lines",

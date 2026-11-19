@@ -15,10 +15,13 @@ vi.mock("@pierre/diffs/react", () => ({
   MultiFileDiff: () => null,
 }));
 
-/** What the reader's page holds, which is the only judge of "it changed". */
+/**
+ * What the reader's page holds, which is the only judge of "it changed". A
+ * spec is a document, where a single newline is not a break (T-702).
+ */
 async function html(source: string): Promise<string> {
   const { container } = renderWithProviders(
-    <MarkdownView>{source}</MarkdownView>,
+    <MarkdownView document>{source}</MarkdownView>,
   );
   const body = await waitFor(() => {
     const el = container.querySelector(".markdown-body");

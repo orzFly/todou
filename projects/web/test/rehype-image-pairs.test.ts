@@ -1,16 +1,23 @@
 import type { Element, Root } from "hast";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
+import type { PluggableList } from "unified";
 import { unified } from "unified";
 import { describe, expect, it } from "vitest";
-import { MARKDOWN_SYNTAX_PLUGINS } from "../src/lib/markdown-processor.ts";
+import {
+  MARKDOWN_SYNTAX_PLUGINS,
+  MESSAGE_SYNTAX_PLUGINS,
+} from "../src/lib/markdown-processor.ts";
 import { pairLabel, rehypeImagePairs } from "../src/lib/rehype-image-pairs.ts";
 import { IMAGE_PAIR_CASES } from "./image-pair-cases.ts";
 
-function hast(markdown: string): Root {
+function hast(
+  markdown: string,
+  syntax: PluggableList = MARKDOWN_SYNTAX_PLUGINS,
+): Root {
   const processor = unified()
     .use(remarkParse)
-    .use(MARKDOWN_SYNTAX_PLUGINS)
+    .use(syntax)
     .use(remarkRehype)
     .use(rehypeImagePairs);
   return processor.runSync(processor.parse(markdown), markdown) as Root;
@@ -27,8 +34,16 @@ function images(node: Root | Element): Element[] {
 }
 
 describe("rehypeImagePairs", () => {
-  it.each(IMAGE_PAIR_CASES)("$name → pair: $pair", ({ markdown, pair }) => {
-    const paired = images(hast(markdown)).some(
+  // A message turns its single newlines into breaks (T-702); the pair rule
+  // gives both kinds of text one answer.
+  const SYNTAXES = [
+    { syntax: "document", plugins: MARKDOWN_SYNTAX_PLUGINS },
+    { syntax: "message", plugins: MESSAGE_SYNTAX_PLUGINS },
+  ];
+  it.each(
+    SYNTAXES.flatMap((s) => IMAGE_PAIR_CASES.map((c) => ({ ...s, ...c }))),
+  )("$syntax: $name → pair: $pair", ({ markdown, pair, plugins }) => {
+    const paired = images(hast(markdown, plugins)).some(
       (img) => img.properties.dataComparePair !== undefined,
     );
     expect(paired).toBe(pair);

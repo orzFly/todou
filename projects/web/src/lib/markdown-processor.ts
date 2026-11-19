@@ -1,4 +1,5 @@
 import type { Nodes } from "mdast";
+import remarkBreaks from "remark-breaks";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -27,6 +28,19 @@ export const MARKDOWN_SYNTAX_PLUGINS: PluggableList = [
   remarkRejectedUrlsAsText,
   [remarkFrontmatter, FRONTMATTER_FLAVOURS],
   remarkFrontmatterTable,
+];
+
+/**
+ * Syntax for text a person typed into the tracker — issue bodies, comments,
+ * questions, annotations — where a single newline is a line break, as on
+ * github.com (T-702). Documents keep `MARKDOWN_SYNTAX_PLUGINS`, where it stays
+ * a space. `remarkBreaks` goes last so that this is the document list plus
+ * one pass: every pass the two share sees the same tree in both, and a
+ * document never meets the breaks.
+ */
+export const MESSAGE_SYNTAX_PLUGINS: PluggableList = [
+  ...MARKDOWN_SYNTAX_PLUGINS,
+  remarkBreaks,
 ];
 const processor = unified().use(remarkParse).use(MARKDOWN_SYNTAX_PLUGINS);
 
