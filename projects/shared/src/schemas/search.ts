@@ -33,6 +33,11 @@ export type SearchSnippet = z.infer<typeof SearchSnippet>;
 export const SearchIssueRef = z.object({
   number: Id,
   title: z.string(),
+  /**
+   * Plain-text head of the body for a card with no title (T-785): null when
+   * the card has a title, and on servers predating it.
+   */
+  body_preview: z.string().nullable().default(null),
   status: Status,
 });
 export type SearchIssueRef = z.infer<typeof SearchIssueRef>;

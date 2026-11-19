@@ -56,6 +56,11 @@ export const Issue = z.object({
   id: Id,
   number: Id,
   title: z.string(),
+  /**
+   * Plain-text head of the body for a card with no title (T-785): null when
+   * the card has a title, and on servers predating it.
+   */
+  body_preview: z.string().nullable().default(null),
   body: z.string(),
   status: Status,
   author: UserRef,
@@ -158,7 +163,8 @@ export const IssueListPage = z.object({
 export type IssueListPage = z.infer<typeof IssueListPage>;
 
 export const IssueCreateInput = z.object({
-  title: z.string().min(1).max(300),
+  /** Empty = untitled (T-785); the server refuses a card with neither title nor body. */
+  title: z.string().max(300).default(""),
   body: z.string().max(65536).default(""),
   status_id: Id.optional(),
   assignee_ids: z.array(Id).default([]),
@@ -167,7 +173,7 @@ export const IssueCreateInput = z.object({
 export type IssueCreateInput = z.infer<typeof IssueCreateInput>;
 
 export const IssueUpdateInput = z.object({
-  title: z.string().min(1).max(300).optional(),
+  title: z.string().max(300).optional(),
   body: z.string().max(65536).optional(),
   status_id: Id.optional(),
   assignee_ids: z.array(Id).optional(),

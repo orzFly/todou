@@ -20,6 +20,11 @@ export const MutedIssue = z.object({
   project: z.object({ slug: ProjectSlug, name: z.string() }),
   number: Id,
   title: z.string(),
+  /**
+   * Plain-text head of the body for a card with no title (T-785): null when
+   * the card has a title, and on servers predating it.
+   */
+  body_preview: z.string().nullable().default(null),
   mode: IssueMuteMode,
   muted_at: Timestamp,
 });
