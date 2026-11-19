@@ -374,22 +374,41 @@ async function startSampling(page) {
 /**
  * Log, in page time, the pointer entering and leaving the controls whose
  * hover holds the height (− 100%▾ + ‹ ›).
+ *
+ * Each leave also starts a probe: a timer of the viewer's own delay, set in
+ * the same dispatch as the viewer's, so it queues behind the same tasks.
+ * A loaded page makes both late by the same amount, which the probe's
+ * firing time measures (T-786). Probes go in their own log because
+ * round-trip-over-image-holds-height expects only crossings in this one.
  */
 async function trackHoldRegion(page) {
-  await evaluate(page, () => {
-    const region = document.querySelector(
-      '[role=dialog] button[aria-label="previous attachment"]',
-    ).parentElement;
-    const log = [];
-    for (const type of ["pointerenter", "pointerleave"])
-      region.addEventListener(type, () =>
-        log.push({ type, t: Math.round(performance.now()) }),
-      );
-    window.__holdRegion = log;
-  });
+  await evaluate(
+    page,
+    (delay) => {
+      const region = document.querySelector(
+        '[role=dialog] button[aria-label="previous attachment"]',
+      ).parentElement;
+      const log = [];
+      const probes = [];
+      for (const type of ["pointerenter", "pointerleave"])
+        region.addEventListener(type, () => {
+          log.push({ type, t: Math.round(performance.now()) });
+          if (type === "pointerleave")
+            setTimeout(
+              () => probes.push({ t: Math.round(performance.now()) }),
+              delay,
+            );
+        });
+      window.__holdRegion = log;
+      window.__holdProbe = probes;
+    },
+    RELEASE_DELAY,
+  );
 }
 const readHoldRegion = (page) =>
   evaluate(page, () => window.__holdRegion.splice(0));
+const readHoldProbe = (page) =>
+  evaluate(page, () => window.__holdProbe.splice(0));
 
 /**
  * Log, in page time, the canvas being handed a new height and the first key
@@ -1301,21 +1320,27 @@ async function growCases(page, { reduced = false, widthLands = false } = {}) {
   const grew = await stopSampling(page);
   const grewTarget = await readHeightTarget(page);
   const [left] = await readHoldRegion(page);
+  const [probe] = await readHoldProbe(page);
   const { s: s8, d: d8 } = await sample();
   const grown = tweenVerdict(grew, dHeld.h, d8.h, reduced);
-  const after =
-    left && grewTarget.heights.length > 0
-      ? grewTarget.heights[0].t - left.t
-      : null;
+  const resized = grewTarget.heights[0]?.t;
+  const after = left && resized !== undefined ? resized - left.t : null;
+  const afterProbe = probe && resized !== undefined ? resized - probe.t : null;
   check(
     "leave-waits-before-resizing",
     left?.type === "pointerleave" &&
       after !== null &&
       after >= RELEASE_DELAY &&
-      // The timer running late under load, not a second hold.
-      after < 2 * RELEASE_DELAY,
+      afterProbe !== null &&
+      // Judged from the probe, not the leave: a loaded host makes the timer
+      // fire hundreds of milliseconds late, while a second hold commits a
+      // whole RELEASE_DELAY after it does. On a quick page a second hold
+      // commits after heights are read, and `after` is null instead.
+      afterProbe < RELEASE_DELAY / 2,
     {
       resizedAfterLeaveMs: after,
+      probeFiredAfterLeaveMs: left && probe ? probe.t - left.t : null,
+      resizedAfterProbeMs: afterProbe,
       paintedAfterLeaveMs: left ? firstMove(grew, dHeld.h, left.t) : null,
       delay: RELEASE_DELAY,
     },
