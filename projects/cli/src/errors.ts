@@ -75,7 +75,7 @@ function renderError(
     // not something this reader is told.
     const title = error.body.title;
     stderr.write(
-      `error: ${title === undefined ? "this issue" : `"${title}"`} moved to a project you cannot read\n`,
+      `error: ${title === undefined || title === "" ? "this issue" : `"${title}"`} moved to a project you cannot read\n`,
     );
   } else if (error instanceof MovedError) {
     stderr.write(
