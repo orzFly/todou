@@ -85,8 +85,13 @@ No `priority:*` and no `status:*` labels: the status column carries both and is 
 If the area is unclear, set `kind:` and leave `area:` off; a missing label is easy to spot and a wrong
 one is not.
 
+A card opened without a title gets one in the same pass, naming the symptom, never an inferred
+cause. Untitled is a state meant to be left by triage: lists and refs show only a cut of the body
+until someone names it.
+
 ```bash
 todou issue edit <N> -p <proj> --add-label 'area:<area>' --add-label 'kind:bug'
+todou issue edit <N> -p <proj> --title '<the symptom>'   # untitled cards only
 ```
 
 Triage produces labels, not comments. Do not post scheduling notes ("collides with those two cards"):
