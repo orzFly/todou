@@ -48,6 +48,7 @@ function item(id: number, title: string, status: Status): IssueListItem {
     id,
     number: id,
     title,
+    body_preview: null,
     status,
     author: {
       id: 1,

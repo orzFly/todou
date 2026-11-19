@@ -12,6 +12,7 @@ import { useRefPrefix } from "@/api/references.ts";
 import { MoveIssueDialog } from "@/components/issue/move-issue-dialog.tsx";
 import { IssueReferencesDialog } from "@/components/issue/references-dialog.tsx";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
+import { IssueTitle } from "@/components/shared/issue-title.tsx";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -128,7 +129,7 @@ export function IssueMoreActions({
         description={
           <>
             <strong>
-              {formatRef(refPrefix, issue.number)} {issue.title}
+              {formatRef(refPrefix, issue.number)} <IssueTitle item={issue} />
             </strong>{" "}
             disappears from lists, search and references, and every write to it
             is refused. Nothing is erased: you can restore it from the trash,

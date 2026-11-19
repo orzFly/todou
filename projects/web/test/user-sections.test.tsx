@@ -54,6 +54,7 @@ function makeItem(
     id: number * 1000 + slug.length,
     number,
     title: `issue ${slug} ${number}`,
+    body_preview: null,
     status: {
       id: 1,
       name: "Todo",

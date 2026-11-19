@@ -61,6 +61,7 @@ const ISSUE: Issue = {
   id: 11,
   number: 370,
   title: "The card",
+  body_preview: null,
   body: "the issue body\n\nwith two paragraphs",
   status: STATUSES[0] as Status,
   author,

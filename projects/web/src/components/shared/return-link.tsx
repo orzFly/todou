@@ -412,6 +412,7 @@ export function CompactIssueIdentity({
   slug,
   number,
   title,
+  untitled = false,
   slot,
   className,
   omitRef = false,
@@ -419,6 +420,8 @@ export function CompactIssueIdentity({
   slug: string;
   number: number;
   title?: string;
+  /** `title` is an untitled card's stand-in (T-785): muted. */
+  untitled?: boolean;
   slot?: string;
   className?: string;
   /**
@@ -442,7 +445,10 @@ export function CompactIssueIdentity({
     >
       {refLeads && reference}
       <span
-        className="min-w-0 truncate text-[0.9375rem] font-semibold"
+        className={cn(
+          "min-w-0 truncate text-[0.9375rem] font-semibold",
+          untitled && "text-muted-foreground",
+        )}
         title={title}
       >
         {title}

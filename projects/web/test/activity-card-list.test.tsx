@@ -61,6 +61,7 @@ const alpha: ActivityCard = {
   issue_id: 907,
   number: 42,
   title: "Repair the scheduler",
+  body_preview: null,
   project: {
     id: 61,
     slug: "alpha-engine",
@@ -82,6 +83,7 @@ const beta: ActivityCard = {
   issue_id: 907,
   number: 42,
   title: "Publish the package",
+  body_preview: null,
   project: {
     id: 73,
     slug: "beta-tools",

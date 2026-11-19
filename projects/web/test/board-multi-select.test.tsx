@@ -58,6 +58,7 @@ function item(number: number, s: Status): IssueListItem {
     id: number * 10,
     number,
     title: `card ${number}`,
+    body_preview: null,
     status: s,
     author,
     assignees: [],

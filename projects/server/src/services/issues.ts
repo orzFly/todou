@@ -76,6 +76,7 @@ import {
   evaluateBlockerStatus,
   markBlockerDeleted,
 } from "./blocks.ts";
+import { previewOf } from "./body-preview.ts";
 import {
   loadReferenceInputs,
   type VisibleProjects,
@@ -161,11 +162,38 @@ export type IssueBundle = {
   metadata?: IssueMetadataEntry[];
 };
 
+/**
+ * The two rules on an issue's title (T-785), checked against the card as it
+ * would stand after the write. `settingTitle` is false for an edit that leaves
+ * the title alone, so an untitled card from before `require_title` went on
+ * stays editable.
+ */
+async function assertTitleRules(
+  db: Pick<Db, "select">,
+  projectId: number,
+  title: string,
+  body: string,
+  settingTitle: boolean,
+): Promise<void> {
+  if (title === "" && body.trim() === "") {
+    throw new ValidationFailedError("an issue needs a title or a body");
+  }
+  if (!settingTitle || title !== "") return;
+  const meta = await db
+    .select({ requireTitle: projectMeta.requireTitle })
+    .from(projectMeta)
+    .where(eq(projectMeta.projectId, projectId));
+  if (meta[0]?.requireTitle) {
+    throw new ValidationFailedError("this project requires a title");
+  }
+}
+
 export function toIssue(bundle: IssueBundle): Issue {
   return {
     id: bundle.row.id,
     number: bundle.row.number,
     title: bundle.row.title,
+    body_preview: previewOf(bundle.row.title, bundle.row.body),
     body: bundle.row.body,
     status: bundle.status,
     author: bundle.author,
@@ -537,7 +565,10 @@ export async function createIssue(
     text: input.body,
     self: null,
   });
+  const title = input.title.trim();
   const row = await db.transaction(async (tx) => {
+    // Before the number bump, so a refused create burns no number.
+    await assertTitleRules(tx, project.id, title, input.body, true);
     const meta = await tx
       .update(projectMeta)
       .set({ nextIssueNumber: sql`${projectMeta.nextIssueNumber} + 1` })
@@ -560,7 +591,7 @@ export async function createIssue(
       .values({
         projectId: project.id,
         number,
-        title: input.title,
+        title,
         body: loose.text,
         statusId,
         authorId: actor.id,
@@ -1019,6 +1050,16 @@ export async function updateIssue(
   const before = await loadIssueRow(db, project.id, number);
   assertIssueWritable(before, actor, role);
   assertMayEditFields(input, before, actor, role);
+  const title = input.title?.trim();
+  if (title !== undefined || input.body !== undefined) {
+    await assertTitleRules(
+      db,
+      project.id,
+      title ?? before.title,
+      input.body ?? before.body,
+      title !== undefined,
+    );
+  }
 
   if (input.label_ids !== undefined) {
     await validateLabelIds(db, project.id, input.label_ids);
@@ -1111,10 +1152,10 @@ export async function updateIssue(
       pushTimeline(inserted[0]?.id);
     };
 
-    if (input.title !== undefined && input.title !== before.title) {
+    if (title !== undefined && title !== before.title) {
       await addEvent("title_changed", {
         from: before.title,
-        to: input.title,
+        to: title,
       });
     }
 
@@ -1206,7 +1247,7 @@ export async function updateIssue(
     const patch: Partial<typeof issues.$inferInsert> = {
       updatedAt: new Date(),
     };
-    if (input.title !== undefined) patch.title = input.title;
+    if (title !== undefined) patch.title = title;
     if (resolved !== null) patch.body = resolved.storedText;
     if (input.status_id !== undefined) patch.statusId = input.status_id;
     if (resolved !== null) {

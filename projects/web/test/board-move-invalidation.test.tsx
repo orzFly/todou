@@ -27,6 +27,7 @@ const card = (number: number, s: Status): IssueListItem => ({
   id: number * 10,
   number,
   title: `issue ${number}`,
+  body_preview: null,
   status: s,
   author: {
     id: 1,

@@ -27,7 +27,13 @@ import { readAnnotationsInput, resolveAnnotations } from "../annotations.ts";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
-import { makePainter, personName, plural, table } from "../format.ts";
+import {
+  makePainter,
+  personName,
+  plural,
+  table,
+  titleText,
+} from "../format.ts";
 import { drainPaged } from "../paginate.ts";
 import { parseChoice, parseCommentId, parseSeconds } from "../parse.ts";
 import { refFormat, withRef } from "../refs.ts";
@@ -891,7 +897,7 @@ export class SpecListCommand extends ProjectCommand {
         const body = table(
           specs.map((item) => [
             formatRef(refPrefix, item.number),
-            item.title,
+            titleText(item),
             item.status.name,
             `v${item.spec_version}`,
             specVerdict(item.spec_review_status),

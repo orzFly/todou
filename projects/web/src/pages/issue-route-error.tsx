@@ -206,7 +206,7 @@ function FollowMoveToSpec({ error }: { error: MovedError }) {
 function MovedAwayPage({ error }: { error: GoneError }) {
   return (
     <Empty>
-      {error.body.title === undefined ? null : (
+      {error.body.title === undefined || error.body.title === "" ? null : (
         <p className="font-medium">{error.body.title}</p>
       )}
       <p className="mt-1 text-muted-foreground">

@@ -20,6 +20,7 @@ import {
   api,
   labelsQuery,
   membersQuery,
+  projectQuery,
   statusesQuery,
   useCan,
 } from "@/api/queries.ts";
@@ -147,6 +148,8 @@ function NewIssueForm({
   // produce a 403 after the issue was already written.
   const canTriage = useCan(slug, "issue.triage");
   const canBlock = useCan(slug, "issue.block");
+  const requireTitle =
+    useSuspenseQuery(projectQuery(slug)).data.require_title === true;
   // Notifications needs no capability at all, but it does not bring the
   // sidebar out on its own: a reporter files the card and lands on it, where
   // the same control is one click away, and an aside holding one row is not
@@ -240,10 +243,15 @@ function NewIssueForm({
     [draft, registry, canTriage],
   );
   const broken = parsed?.invalid ?? [];
+  // The server refuses a card with neither (T-785), and a blank title
+  // outright where the project requires one.
+  const hasTitle = title.trim() !== "";
+  const hasBody = (parsed?.body ?? draft).trim() !== "";
+  const canSubmit = requireTitle ? hasTitle : hasTitle || hasBody;
 
   async function submit() {
     const trimmedTitle = title.trim();
-    if (submitting || trimmedTitle === "") return;
+    if (submitting || !canSubmit) return;
     // Re-parsed from the document rather than from the onChange mirror: the
     // text at submit time is what gets executed.
     const raw = editor.current?.getValue() ?? "";
@@ -385,7 +393,7 @@ function NewIssueForm({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Dig up the potatoes"
-            required
+            required={requireTitle}
             autoFocus
           />
         </div>
@@ -444,7 +452,7 @@ function NewIssueForm({
           </Button>
           <Button
             type="submit"
-            disabled={submitting || title.trim() === "" || broken.length > 0}
+            disabled={submitting || !canSubmit || broken.length > 0}
           >
             {newIssueSubmitLabel({
               submitting,

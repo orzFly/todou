@@ -229,6 +229,7 @@ const item = (
   number,
   id: number,
   title,
+  body_preview: null,
   status: {
     id: 1,
     name: category === "open" ? "Todo" : "Done",

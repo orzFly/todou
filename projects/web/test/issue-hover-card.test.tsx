@@ -41,6 +41,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   id: number,
   number,
   title,
+  body_preview: null,
   status: {
     id: 1,
     name: "In Progress",
@@ -189,6 +190,31 @@ const linkToSeven = (root: ParentNode) =>
   });
 
 describe("issue hover preview (T-408)", () => {
+  it("shows an untitled card's preview muted on one line (T-785)", async () => {
+    countingFetch();
+    const client = seeded();
+    const untitled: IssueListItem = {
+      ...refItem(7, ""),
+      body_preview: "first line of the body",
+    };
+    client.setQueryData(issueRefQuery("todou", 7).queryKey, untitled);
+    const view = renderWithProviders(
+      <MarkdownView slug="todou">{REF}</MarkdownView>,
+      client,
+    );
+    hover(await linkToSeven(view.container));
+    const card = await opened();
+    const shown = await waitFor(() => {
+      const el = card.querySelector("[data-untitled]");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(shown.textContent).toBe("(first line of the body)");
+    const line = shown.parentElement as HTMLElement;
+    expect(line.className).toContain("truncate");
+    expect(line.className).toContain("text-muted-foreground");
+  });
+
   it("asks for nothing until the reader stops on the link", async () => {
     const fetches = countingFetch();
     const view = renderWithProviders(

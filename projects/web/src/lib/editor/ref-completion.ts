@@ -23,6 +23,7 @@ import {
   referenceDirectoryQuery,
 } from "@/api/references.ts";
 import { searchIssueRefQuery as issueRefQuery } from "@/api/search-refs.ts";
+import { issueTitleText } from "@/components/shared/issue-title.tsx";
 import { inCodeContext } from "@/lib/editor/code-context.ts";
 import {
   applyWithSpace,
@@ -96,7 +97,7 @@ function toOption(anchor: string, item: IssueListItem): Completion {
   const spelling = `${anchor}${item.number}`;
   return {
     label: spelling,
-    detail: item.title,
+    detail: issueTitleText(item),
     type: enumLookup(
       { closed: "issue-closed", open: "issue-open" },
       item.status.category,

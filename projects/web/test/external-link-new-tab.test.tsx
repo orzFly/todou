@@ -42,6 +42,7 @@ const card: IssueListItem = {
   id: 7,
   number: 7,
   title: "Target card",
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

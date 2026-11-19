@@ -9,6 +9,7 @@ import {
   HoverDepth,
   OPEN_DELAY_MS,
 } from "@/components/shared/hover-preview.ts";
+import { IssueTitle, untitledLine } from "@/components/shared/issue-title.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import {
@@ -17,6 +18,7 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { cn } from "@/lib/utils.ts";
 
 /**
  * What a card is, for a reader who has not opened it: everything
@@ -66,7 +68,9 @@ export function IssueHoverCard({
             </div>
             {/* In full: the link's own title may have been cut to the chip's
               width cap, or dropped as a repeat. */}
-            <p className="mb-2 text-sm font-medium">{item.title}</p>
+            <p className={cn("mb-2 text-sm font-medium", untitledLine(item))}>
+              <IssueTitle item={item} />
+            </p>
             {item.labels.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1">
                 <LabelChips labels={item.labels} />

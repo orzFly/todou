@@ -11,6 +11,7 @@ const issue: IssueListItem = {
   id: 19,
   number: 19,
   title: "Confirmed spec parent",
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

@@ -150,6 +150,7 @@ function hit(overrides: Partial<SearchItem> = {}): SearchItem {
     issue: {
       number: 17,
       title: "Search fixture",
+      body_preview: null,
       status: {
         id: 1,
         name: "Open",

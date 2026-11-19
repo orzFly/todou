@@ -28,6 +28,10 @@ import { CommentHoverCard } from "@/components/shared/comment-hover-card.tsx";
 import { CommentReference } from "@/components/shared/comment-reference.tsx";
 import { useCanHoverPreview } from "@/components/shared/hover-preview.ts";
 import { IssueHoverCard } from "@/components/shared/issue-hover-card.tsx";
+import {
+  IssueTitle,
+  issueTitleText,
+} from "@/components/shared/issue-title.tsx";
 import { MentionLink } from "@/components/shared/mention-link.tsx";
 import { RefTitle } from "@/components/shared/ref-title.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
@@ -201,6 +205,8 @@ export function IssueLink({
   }
 
   const item = ref.data;
+  const shownTitle = issueTitleText(item);
+  const untitled = item.title === "";
   const confirmedNote = commentId === undefined ? null : comment.data;
   const isComment = confirmedNote != null;
   // The card being read keeps its ref — that is the identity the reader
@@ -238,7 +244,8 @@ export function IssueLink({
         key: "title",
         node: (
           <RefTitle
-            title={item.title}
+            title={shownTitle}
+            untitled={untitled}
             cap={capTitle}
             className={REF_CHIP_LABEL}
             data-ref-title
@@ -297,8 +304,8 @@ export function IssueLink({
       title={
         item
           ? refLeads
-            ? `${spelled} ${item.title} (${item.status.name})`
-            : `${item.title} ${spelled} (${item.status.name})`
+            ? `${spelled} ${shownTitle} (${item.status.name})`
+            : `${shownTitle} ${spelled} (${item.status.name})`
           : undefined
       }
     >
@@ -312,7 +319,7 @@ export function IssueLink({
               prefix={prefix}
               number={shownNumber}
               commentId={confirmedNote.at.commentId}
-              title={hideTitle ? null : item.title}
+              title={hideTitle ? null : shownTitle}
               refLeads={refLeads}
               inBody={inBody}
               capTitle={capTitle}
@@ -331,7 +338,7 @@ export function IssueLink({
               {spelled}{" "}
             </span>
           )}
-          {isComment || hideTitle || inBody ? null : item.title}
+          {isComment || hideTitle || inBody ? null : <IssueTitle item={item} />}
         </>
       )}
       {trailing !== "" && (

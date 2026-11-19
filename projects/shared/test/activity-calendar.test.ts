@@ -31,6 +31,7 @@ const card = {
   issue_id: 3,
   number: 7,
   title: "Example card",
+  body_preview: null,
   status: {
     id: 2,
     name: "Done",

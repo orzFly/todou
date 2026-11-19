@@ -1,4 +1,5 @@
 import { styleText } from "node:util";
+import { displayTitle } from "@todou/shared";
 import stringWidth from "string-width";
 
 type Style = Parameters<typeof styleText>[0];
@@ -15,6 +16,28 @@ export function makePainter(
   // re-validate process.stdout, which is not where commands write.
   return (style, text) =>
     enabled ? styleText(style, text, { validateStream: false }) : text;
+}
+
+/**
+ * What the CLI prints where an issue's title goes (T-785). Unlike the web it
+ * never falls back to the body: `issue view` prints the body right below, and
+ * a list row stays recognisable by its ref.
+ */
+export const NO_TITLE = "(no title given)";
+
+export function titleText(item: {
+  title: string;
+  body_preview?: string | null;
+}): string {
+  return displayTitle(item).untitled ? NO_TITLE : item.title;
+}
+
+/** `"title"`, or the bare placeholder so it can't be read as a literal title. */
+export function quotedTitle(item: {
+  title: string;
+  body_preview?: string | null;
+}): string {
+  return displayTitle(item).untitled ? NO_TITLE : `"${item.title}"`;
 }
 
 /**

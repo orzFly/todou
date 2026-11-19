@@ -66,6 +66,8 @@ export const projectMeta = pgTable("project_meta", {
   // is in this database — deciding whether a card has reached the line is
   // then one local comparison of positions.
   blockClearStatusId: bigint("block_clear_status_id", { mode: "number" }),
+  // Read inside the issue transaction that the rule guards (T-785).
+  requireTitle: boolean("require_title").notNull().default(false),
 });
 
 export const insightsSettings = pgTable(

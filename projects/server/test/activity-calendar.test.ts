@@ -261,7 +261,10 @@ describe.each(PLACEMENTS)(
       expect(JSON.stringify(raw)).not.toContain(R.slug);
       expect(JSON.stringify(raw)).not.toContain(R.name);
       for (const item of body.selection?.items ?? []) {
+        // body_preview is the one body-derived field, and it is null on
+        // every titled card (T-785).
         expect(Object.keys(item).sort()).toEqual([
+          "body_preview",
           "issue_id",
           "last_active_at",
           "number",

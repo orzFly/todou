@@ -1,0 +1,1 @@
+ALTER TABLE "project_meta" ADD COLUMN "require_title" boolean DEFAULT false NOT NULL;

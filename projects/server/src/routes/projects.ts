@@ -30,11 +30,11 @@ import {
   setProjectIcon,
 } from "../services/project-icon.ts";
 import {
-  blockClearStatusOf,
   createProject,
   deleteProject,
   formerSlugsOf,
   listProjects,
+  projectMetaSettingsOf,
   toProject,
   updateProject,
 } from "../services/projects.ts";
@@ -231,7 +231,7 @@ export function projectRoutes() {
       {
         ...toProject(project, role),
         former_slugs: await formerSlugsOf(ctx.router.system(), project),
-        block_clear_status_id: await blockClearStatusOf(ctx, project),
+        ...(await projectMetaSettingsOf(ctx, project)),
       },
       200,
     );

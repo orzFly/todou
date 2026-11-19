@@ -148,6 +148,11 @@ export const ActivityCard = z
     issue_id: Id,
     number: Id,
     title: z.string(),
+    /**
+     * Plain-text head of the body for a card with no title (T-785): null when
+     * the card has a title, and on servers predating it.
+     */
+    body_preview: z.string().nullable().default(null),
     status: Status,
     url: z.string(),
     last_active_at: Timestamp,

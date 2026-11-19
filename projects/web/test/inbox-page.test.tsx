@@ -41,6 +41,7 @@ function makeItem(
     id: number,
     number,
     title: `issue ${number}`,
+    body_preview: null,
     status: {
       id: 1,
       name: "Todo",
@@ -654,6 +655,7 @@ describe("InboxPage", () => {
       project: { slug: "p", name: "Project" },
       number: 7,
       title: "quiet",
+      body_preview: null,
       mode: "forever" as const,
       muted_at: "2026-01-01T00:00:00Z",
     };

@@ -23,6 +23,7 @@ import {
   personHandle,
   personName,
   plural,
+  quotedTitle,
   relativeTime,
   summarize,
 } from "./format.ts";
@@ -325,7 +326,7 @@ export function renderTimelineItem(
   if (item.event_type === "title_changed") {
     return paint(
       "dim",
-      `${personName(item.actor)}${agentSuffix(item.agent_context)} renamed "${String(item.payload.from)}" → "${String(item.payload.to)}" ${when}`,
+      `${personName(item.actor)}${agentSuffix(item.agent_context)} renamed ${renamed(item.payload)} ${when}`,
     );
   }
   const detail = eventDetail(item, ctx);
@@ -449,7 +450,7 @@ export function renderActivityLine(
     const detail = eventDetail(item, ctx);
     const head = `${ref} ${paint(
       "dim",
-      `${personHandle(item.actor)}${agentSuffix(item.agent_context)} opened "${opened.title}"${detail ? ` (${detail})` : ""} ${when}`,
+      `${personHandle(item.actor)}${agentSuffix(item.agent_context)} opened ${quotedTitle(opened)}${detail ? ` (${detail})` : ""} ${when}`,
     )}`;
     const body = opened.body === null ? "" : opened.body.trim();
     return body === "" ? head : `${head}: ${bodyBlock(body, ctx.summaryChars)}`;
@@ -475,6 +476,12 @@ function openedCard(
   if (item.type !== "event" || item.event_type !== "opened") return undefined;
   if (ctx.project === undefined) return undefined;
   return ctx.cardOf?.(ctx.project, ctx.issueNumber);
+}
+
+/** `"A" → "B"`, with an empty side spelled as the bare placeholder (T-785). */
+function renamed(payload: Record<string, unknown>): string {
+  const side = (value: unknown) => quotedTitle({ title: String(value ?? "") });
+  return `${side(payload.from)} → ${side(payload.to)}`;
 }
 
 /**
@@ -510,7 +517,7 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
     // here; the one-line renderer has no room for prose and needs the
     // parenthetical, so the titles live here rather than in a scalar dump.
     case "title_changed":
-      return `"${String(payload.from)}" → "${String(payload.to)}"`;
+      return renamed(payload);
     case "label_added":
     case "label_removed":
       return nested(payload.label, "name");
@@ -530,7 +537,7 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
         target.slug === null
           ? undefined
           : ctx.cardOf?.(target.slug, target.number);
-      const title = card === undefined ? "" : ` "${card.title}"`;
+      const title = card === undefined ? "" : ` ${quotedTitle(card)}`;
       // The comment the mention was written in, where the payload recorded
       // one: `comment view` takes this string as its argument (T-283).
       const where =

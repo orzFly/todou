@@ -43,6 +43,7 @@ const item = (
   id: number,
   number,
   title,
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

@@ -43,6 +43,7 @@ const issue: IssueListItem = {
   id: 7,
   number: 7,
   title: TITLE,
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

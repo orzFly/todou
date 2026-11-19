@@ -265,6 +265,7 @@ const issue = (number: number, body: string): Issue => ({
   id: 1,
   number,
   title: `Card ${number}`,
+  body_preview: null,
   body,
   status: {
     id: 1,

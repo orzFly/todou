@@ -15,6 +15,7 @@ function refItem(): IssueListItem {
     id: 7,
     number: 7,
     title: "Referenced card",
+    body_preview: null,
     status: {
       id: 1,
       name: "Workflow state",

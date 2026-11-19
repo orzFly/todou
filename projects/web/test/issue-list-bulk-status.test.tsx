@@ -97,6 +97,7 @@ function item(id: number, status: Status): IssueListItem {
     id,
     number: id,
     title: `card ${id}`,
+    body_preview: null,
     status,
     author: members[0].user,
     assignees: [],

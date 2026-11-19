@@ -16,6 +16,7 @@ import {
   requireCapability,
   routeInfoOf,
 } from "../access.ts";
+import { PREVIEW_SOURCE_CHARS, previewOf } from "../body-preview.ts";
 import { localDateBoundarySql, rowsFrom } from "../calendar.ts";
 import { currentPrefixes } from "../reference-directory.ts";
 import { microIso } from "../timeline.ts";
@@ -330,7 +331,8 @@ async function groupSnapshot(
           to_char(d.last_active_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as last_active_at,
           json_build_object('id', s.id, 'name', s.name, 'category', s.category,
             'color', s.color, 'position', s.position, 'is_default', s.is_default) as status,
-          i.project_id
+          i.project_id,
+          case when i.title = '' then left(i.body, ${sql.raw(String(PREVIEW_SOURCE_CHARS))}) end as preview_source
         from activity_card_days d join issues i on i.id = d.issue_id
         join statuses s on s.id = i.status_id and s.project_id = i.project_id
         where d.date = ${input.day}
@@ -352,6 +354,10 @@ async function groupSnapshot(
             issue_id: Number(row.issue_id),
             number: Number(row.number),
             title: String(row.title),
+            body_preview: previewOf(
+              String(row.title),
+              row.preview_source == null ? null : String(row.preview_source),
+            ),
             status: row.status as ActivityCard["status"],
             last_active_at: String(row.last_active_at),
             url: `/projects/${encodeURIComponent(project.slug)}/issues/${Number(row.number)}`,

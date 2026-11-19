@@ -50,6 +50,7 @@ import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
+import { NO_TITLE } from "@/components/shared/issue-title.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { SpecAnnotationHoverCard } from "@/components/shared/spec-annotation-hover-card.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -319,18 +320,29 @@ export function renderEvent(
     case "title_changed": {
       const from = String(payload.from);
       const to = String(payload.to);
+      // Either side may be empty (T-785); bare, so it is not read as a title.
+      const untitled = (
+        <span data-untitled className="text-muted-foreground">
+          {NO_TITLE}
+        </span>
+      );
+      const quoted = (t: string) => (t === "" ? NO_TITLE : `"${t}"`);
       return {
         node: (
           <>
             {"renamed "}
             <span className="text-muted-foreground/60 line-through">
-              {seg(from)}
+              {from === "" ? untitled : seg(from)}
             </span>{" "}
-            <span className={IN_SENTENCE}>{seg(to)}</span>
+            {to === "" ? (
+              untitled
+            ) : (
+              <span className={IN_SENTENCE}>{seg(to)}</span>
+            )}
           </>
         ),
         // The arrow carries in text what the strike-through carries visually.
-        text: `renamed "${from}" → "${to}"`,
+        text: `renamed ${quoted(from)} → ${quoted(to)}`,
       };
     }
     case "label_added":

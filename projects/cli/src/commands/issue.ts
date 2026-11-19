@@ -34,8 +34,10 @@ import {
   makePainter,
   type Painter,
   personName,
+  quotedTitle,
   relativeTime,
   table,
+  titleText,
 } from "../format.ts";
 import {
   type HarnessMessaging,
@@ -117,7 +119,7 @@ function issueRow(
   return [
     issue.unread ? (count > 0 ? `● (+${count})` : "●") : "",
     formatRef(refPrefix, issue.number),
-    issue.title,
+    titleText(issue),
     issue.status.name,
     issue.labels.map((l) => l.name).join(","),
     // Logins, not display names (T-149): comma-joined names containing
@@ -919,7 +921,7 @@ export class IssueRefsCommand extends ProjectCommand {
       const more = entry.more > 0 ? ` +${entry.more}` : "";
       return [
         `  ${ref}`,
-        ...(title === undefined ? [] : [title]),
+        ...(title === undefined ? [] : [titleText({ title })]),
         paint("dim", `(${place}${more})`),
         ...(both.has(keyOf(entry)) ? ["⇄"] : []),
       ].join("  ");
@@ -1689,10 +1691,10 @@ export class IssueCreateCommand extends ProjectCommand {
   static usage = Command.Usage({
     description: "Create an issue",
     details:
-      "gh's short flags work too (`-t`, `-b`, `-F`, `-l`, `-a`). A `--label` the project does not have yet is created on the spot, with a color derived from its name.\n\n`issue edit`'s `--add-label`/`--add-assignee` are accepted here as plain aliases of `--label`/`--assignee` — a new issue has no existing set, so adding and setting coincide. `--remove-label`/`--remove-assignee` are refused for the same reason: there is nothing yet to remove.",
+      "A body alone is enough: `--title` may be left out, unless the project requires one.\n\ngh's short flags work too (`-t`, `-b`, `-F`, `-l`, `-a`). A `--label` the project does not have yet is created on the spot, with a color derived from its name.\n\n`issue edit`'s `--add-label`/`--add-assignee` are accepted here as plain aliases of `--label`/`--assignee` — a new issue has no existing set, so adding and setting coincide. `--remove-label`/`--remove-assignee` are refused for the same reason: there is nothing yet to remove.",
   });
 
-  title = Option.String("-t,--title", { required: true });
+  title = Option.String("-t,--title");
   body = Option.String("-b,--body");
   bodyFile = Option.String("-F,--body-file", {
     description: "Body from a file, or - for stdin",
@@ -1742,7 +1744,7 @@ export class IssueCreateCommand extends ProjectCommand {
       note: (line) => this.note(line),
     });
     const issue = await client.createIssue(project, {
-      title: this.title,
+      title: this.title ?? "",
       body,
       status_id: this.status
         ? (await resolveStatus(client, project, this.status)).id
@@ -1759,7 +1761,7 @@ export class IssueCreateCommand extends ProjectCommand {
       ),
     });
     const created = withRef(issue, await fetchRefPrefix(client, project));
-    this.output(created, () => `${created.ref} created: ${created.title}`);
+    this.output(created, () => `${created.ref} created: ${titleText(created)}`);
     await this.reportDiagrams(
       [bodyDoc(body, this, `issue-${issue.number}.md`)],
       { kind: "issue", project, number: issue.number },
@@ -2216,7 +2218,7 @@ export class IssueDeleteCommand extends ProjectCommand {
       const ok = await confirm(
         this.context.stdin,
         this.context.stderr,
-        `Move ${issue.ref} "${issue.title}" to the trash?`,
+        `Move ${issue.ref} ${quotedTitle(issue)} to the trash?`,
       );
       if (!ok) {
         this.note("cancelled");
@@ -2520,7 +2522,7 @@ function renderIssue(
   sections: IssueSections,
 ): string {
   const lines: string[] = [];
-  lines.push(`${paint("bold", `${ref.spelled} ${issue.title}`)}`);
+  lines.push(`${paint("bold", `${ref.spelled} ${titleText(issue)}`)}`);
   lines.push(
     [
       `status: ${issue.status.name}`,

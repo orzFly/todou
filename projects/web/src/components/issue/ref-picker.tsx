@@ -10,6 +10,7 @@ import {
 import { useRefCandidates } from "@/api/ref-candidates.ts";
 import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { IssueTitle } from "@/components/shared/issue-title.tsx";
 import {
   Popover,
   PopoverContent,
@@ -227,7 +228,9 @@ export function RefPicker({
             <span className="shrink-0 font-mono text-xs text-muted-foreground">
               {row.ref}
             </span>
-            <span className="min-w-0 flex-1 truncate">{row.item.title}</span>
+            <span className="min-w-0 flex-1 truncate">
+              <IssueTitle item={row.item} />
+            </span>
             <StatusPill status={row.item.status} />
           </>
         ) : (

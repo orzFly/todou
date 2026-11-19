@@ -80,8 +80,9 @@ describe("IssueCreateInput", () => {
     expect(parsed.label_ids).toEqual([]);
   });
 
-  it("rejects empty titles", () => {
-    expect(IssueCreateInput.safeParse({ title: "" }).success).toBe(false);
+  it("takes an empty or absent title (T-785)", () => {
+    expect(IssueCreateInput.parse({ title: "", body: "x" }).title).toBe("");
+    expect(IssueCreateInput.parse({ body: "x" }).title).toBe("");
   });
 });
 

@@ -53,6 +53,7 @@ const refItem = (number: number): IssueListItem => ({
   id: number,
   number,
   title: TITLE,
+  body_preview: null,
   status: {
     id: 1,
     name: "Todo",

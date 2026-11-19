@@ -84,6 +84,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   id: number,
   number,
   title,
+  body_preview: null,
   status,
   author: {
     id: 1,

@@ -24,6 +24,7 @@ const full: MuteList = {
       project: { slug: "p", name: "Project" },
       number: 7,
       title: "noisy card",
+      body_preview: null,
       mode: "forever",
       muted_at: "2026-01-01T00:00:00Z",
     },

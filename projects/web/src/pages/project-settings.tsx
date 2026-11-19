@@ -72,6 +72,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -418,7 +419,35 @@ export function ProjectSection({ slug }: { slug: string }) {
           {save.isPending ? "Saving…" : "Save"}
         </Button>
       </form>
+      {mayEditIcon && <RequireTitleRow slug={slug} />}
     </section>
+  );
+}
+
+/** Saved on toggle, apart from the form above and its Save button (T-785). */
+function RequireTitleRow({ slug }: { slug: string }) {
+  const project = useSuspenseQuery(projectQuery(slug));
+  const queryClient = useQueryClient();
+  const toggle = useMutation({
+    mutationFn: (vars: { slug: string; require: boolean }) =>
+      api.updateProject(vars.slug, { require_title: vars.require }),
+    onSuccess: (_data, vars) =>
+      queryClient.invalidateQueries({ queryKey: ["project", vars.slug] }),
+    onError: (error) => toast.error(error.message),
+  });
+  const checked = toggle.isPending
+    ? toggle.variables.require
+    : project.data.require_title === true;
+  return (
+    <div className="flex max-w-xl items-center justify-between gap-4">
+      <Label htmlFor="project-settings-require-title">Require a title</Label>
+      <Switch
+        id="project-settings-require-title"
+        checked={checked}
+        disabled={toggle.isPending}
+        onCheckedChange={(require) => toggle.mutate({ slug, require })}
+      />
+    </div>
   );
 }
 

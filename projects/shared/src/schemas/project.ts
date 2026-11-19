@@ -96,6 +96,11 @@ export const Project = z.object({
    */
   block_clear_status_id: Id.nullable().optional(),
   /**
+   * Whether a card here must be opened with a title (T-785). Optional for the
+   * same reason as `block_clear_status_id`.
+   */
+  require_title: z.boolean().optional(),
+  /**
    * Versioned URL of the uploaded project icon; null = draw the fallback.
    * Optional for the same reason as `viewer_role`: a server predating it
    * omits the field, and a client reads that as "no icon".
@@ -137,6 +142,7 @@ export const ProjectUpdateInput = z.object({
   reclaim: z.boolean().optional(),
   /** Null clears the line and falls back to the closed category (T-377). */
   block_clear_status_id: Id.nullable().optional(),
+  require_title: z.boolean().optional(),
 });
 export type ProjectUpdateInput = z.infer<typeof ProjectUpdateInput>;
 

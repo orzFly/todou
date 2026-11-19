@@ -156,6 +156,7 @@ export function ActivityCardList({
                     id: card.issue_id,
                     number: card.number,
                     title: card.title,
+                    body_preview: card.body_preview,
                   }}
                   badges={false}
                   blocked={false}

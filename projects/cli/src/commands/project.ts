@@ -173,6 +173,10 @@ export class ProjectEditCommand extends ProjectCommand {
   reclaim = Option.Boolean("--reclaim", false, {
     description: "Take a slug that still redirects to another project",
   });
+  // No default: absent leaves the setting alone, `--no-require-title` turns it off.
+  requireTitle = Option.Boolean("--require-title", {
+    description: "Refuse new cards and renames that leave the title empty",
+  });
 
   protected async run(client: TodouClient): Promise<void> {
     const slug = this.targetProject();
@@ -182,14 +186,17 @@ export class ProjectEditCommand extends ProjectCommand {
     if (this.description !== undefined) input.description = this.description;
     if (this.newSlug !== undefined) input.slug = this.newSlug;
     if (this.reclaim) input.reclaim = true;
+    if (this.requireTitle !== undefined)
+      input.require_title = this.requireTitle;
     if (
       input.name === undefined &&
       input.description === undefined &&
-      input.slug === undefined
+      input.slug === undefined &&
+      input.require_title === undefined
     ) {
       throw new CliError(
         "nothing to change",
-        "pass --name, --description or --slug",
+        "pass --name, --description, --slug or --require-title",
       );
     }
 

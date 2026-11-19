@@ -164,6 +164,7 @@ describe("clearUnread", () => {
     id: number,
     number,
     title: `issue ${number}`,
+    body_preview: null,
     status: {
       id: 1,
       name: "Todo",
