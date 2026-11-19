@@ -4,7 +4,7 @@ import type {
   ReferenceConfig,
   RefFormatSetInput,
 } from "@todou/shared";
-import { refToken } from "@todou/shared";
+import { parseRefLocator, refToken } from "@todou/shared";
 import { and, asc, desc, eq } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -25,8 +25,10 @@ function overlaps(a: string, b: string): boolean {
  * `todou#` as an autolink prefix would claim exactly the tokens the
  * cross-project qualified form owns, and lose — qualified refs outrank
  * autolinks. Refused at configuration time rather than left to render as
- * a rule that silently never fires. Only this exact shape collides: any
- * other trailing character keeps the digits from lining up.
+ * a rule that silently never fires. Any prefix that becomes a qualified
+ * form once a number follows it collides — `todou/`, `todou/#` and
+ * `todou/T-` as much as `todou#` — so the grammar itself decides, and a
+ * spelling it grows later is covered without a second list here.
  *
  * Retired slugs shadow just as hard, because they still resolve (T-156).
  * The name returned is always the holder's current one, so the message
@@ -36,9 +38,9 @@ async function shadowedProjectSlug(
   ctx: AppContext,
   prefix: string,
 ): Promise<string | null> {
-  const match = /^([a-z0-9][a-z0-9-]*)#$/.exec(prefix);
-  const slug = match?.[1];
-  if (slug === undefined) return null;
+  const locator = parseRefLocator(`${prefix}1`);
+  if (locator?.kind !== "qualified") return null;
+  const slug = locator.slug;
   const system = ctx.router.system();
   const rows = await system
     .select({ slug: projects.slug })

@@ -217,6 +217,29 @@ describe("project slug rename", () => {
     expect((await json(shadowing)).error.message).toContain("shadow-a2");
   });
 
+  it("refuses a rename into a slug a slash-spelled autolink holds (T-784)", async () => {
+    await create("slash-a");
+    await create("slash-b");
+    const autolink = (prefix: string) =>
+      t.app.request("/api/projects/slash-b/references/autolinks", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          prefix,
+          url_template: "https://example.com/<num>",
+        }),
+      });
+    expect((await autolink("slash-x/")).status).toBe(201);
+    // Caught by the LIKE, cleared by the grammar: `y-` is no prefix shape.
+    expect((await autolink("slash-y/y-")).status).toBe(201);
+
+    const renamed = await patch("slash-a", { slug: "slash-x" });
+    expect(renamed.status).toBe(422);
+    expect((await json(renamed)).error.message).toContain('"slash-x/"');
+
+    expect((await patch("slash-a", { slug: "slash-y" })).status).toBe(200);
+  });
+
   it("serves attachments through the old slug", async () => {
     await create("attach-a");
     await addIssue("attach-a", "has a file");

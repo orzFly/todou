@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentCreateInput,
   AgentUpdateInput,
+  AutolinkPrefix,
   BlockClearedPayload,
   BlockEdgePayload,
   ChangeEvent,
@@ -30,6 +31,18 @@ describe("ProjectSlug", () => {
   it("rejects uppercase and leading dash", () => {
     expect(ProjectSlug.safeParse("Todou").success).toBe(false);
     expect(ProjectSlug.safeParse("-x").success).toBe(false);
+  });
+});
+
+describe("AutolinkPrefix (T-784)", () => {
+  it("accepts cross-repository and Gerrit shapes", () => {
+    expect(AutolinkPrefix.safeParse("owner/repo#").success).toBe(true);
+    expect(AutolinkPrefix.safeParse("+/").success).toBe(true);
+  });
+
+  it("rejects a space and a trailing number", () => {
+    expect(AutolinkPrefix.safeParse("a b").success).toBe(false);
+    expect(AutolinkPrefix.safeParse("x/1").success).toBe(false);
   });
 });
 

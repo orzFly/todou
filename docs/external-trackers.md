@@ -123,7 +123,30 @@ Autolinks outranking foreign prefixes is deliberate: a rule an
 administrator configured here beats another project happening to use the
 same prefix. The shadowed side is still reachable through the qualified
 form. Because a qualified form outranks everything, an autolink prefix
-that collides with one (`mirror#`) is rejected when you try to create it.
+that collides with one — `mirror#`, `mirror/`, `mirror/#` or `mirror/M-`
+— is rejected when you try to create it, and renaming a project into a
+slug such a prefix already names is refused the same way.
+
+A qualified form written straight after a `/` is part of a path, not a
+reference: `owner/repo#12`, `a/mirror/M-12` and the tail of
+`https://example.com/mirror#12` all stay plain text, whether or not a
+project with that slug exists.
+
+### Autolink prefixes
+
+A prefix may use letters, digits, `_`, `#`, `/`, `+` and `-`, and must not
+end with a digit. That covers the shapes other trackers write:
+
+| Prefix | URL template | Links |
+|---|---|---|
+| `owner/repo#` | `https://github.com/owner/repo/issues/<num>` | `owner/repo#9` |
+| `+/` | `https://gerrit.example/c/tools/+/<num>` | `+/33` |
+| `tools/+/` | `https://gerrit.example/c/tools/+/<num>` | `tools/+/33` |
+
+A prefix that starts with a symbol only needs a non-word character before
+it, as on GitHub: with just `+/` configured, `tools/+/33` links its `+/33`
+part. To send each Gerrit project to its own URL, configure one prefix per
+project instead.
 
 ### Who sees what
 

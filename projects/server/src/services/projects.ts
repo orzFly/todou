@@ -6,8 +6,8 @@ import type {
   ProjectCreateInput,
   ProjectUpdateInput,
 } from "@todou/shared";
-import { CANONICAL_STATUSES } from "@todou/shared";
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
+import { CANONICAL_STATUSES, parseRefLocator } from "@todou/shared";
+import { and, asc, desc, eq, inArray, like, ne, or } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import { uniqueViolation } from "../auth/provision.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -438,7 +438,8 @@ export async function listProjects(
 }
 
 /**
- * `todou#` autolinks and the slug `todou` claim the same tokens, and the
+ * `todou#` autolinks — and `todou/`, `todou/#`, `todou/T-` — claim the
+ * same tokens as the slug `todou`, and the
  * qualified form wins — so a rename into a slug some project already
  * autolinks would silently kill that rule. The mirror check lives in
  * reference-config.ts, which refuses the autolink when the slug exists
@@ -456,17 +457,26 @@ async function assertNoAutolinkShadow(
   ctx: AppContext,
   newSlug: string,
 ): Promise<void> {
-  const prefix = `${newSlug}#`;
   const rows = await ctx.router.system().select().from(projects);
   const verdicts = await ctx.router
     .perDatabase(rows, routeInfoOf, async (db, group) => {
       try {
         const hits = await db
-          .select({ id: autolinks.id })
+          .select({ prefix: autolinks.prefix })
           .from(autolinks)
           .where(
             and(
-              eq(autolinks.prefix, prefix),
+              or(
+                inArray(autolinks.prefix, [
+                  `${newSlug}#`,
+                  `${newSlug}/`,
+                  `${newSlug}/#`,
+                ]),
+                // A slug is `[a-z0-9-]` only, so nothing in it needs
+                // escaping. The LIKE is wider than the shape — `todou/x-`
+                // matches too — and the grammar below narrows it.
+                like(autolinks.prefix, `${newSlug}/%-`),
+              ),
               // Narrowing to the group's own projects is not redundant with
               // asking their database: `deleteProject` leaves autolinks
               // behind, and an orphan row must not block somebody else's
@@ -477,9 +487,12 @@ async function assertNoAutolinkShadow(
                 group.map((row) => row.id),
               ),
             ),
-          )
-          .limit(1);
-        return hits.length > 0;
+          );
+        const shadowed = hits.find((hit) => {
+          const locator = parseRefLocator(`${hit.prefix}1`);
+          return locator?.kind === "qualified" && locator.slug === newSlug;
+        });
+        return shadowed?.prefix ?? null;
       } catch (cause) {
         // With the default configuration a postgres project database that
         // cannot be reached does not fail in `openDb` — the pool is lazy —
@@ -490,7 +503,7 @@ async function assertNoAutolinkShadow(
           `autolink shadow check skipped for ${group.map((row) => row.slug).join(", ")}`,
           cause,
         );
-        return false;
+        return null;
       }
     })
     .catch((cause: unknown) => {
@@ -503,7 +516,8 @@ async function assertNoAutolinkShadow(
   // Outside both catches. Thrown from the callback it would be swallowed by
   // the one above; thrown inside the `.catch` chain it would be reported as
   // an unopenable database. Either way a real shadow would answer 200.
-  if (verdicts.some(Boolean)) {
+  const prefix = verdicts.find((hit): hit is string => hit !== null);
+  if (prefix !== undefined) {
     throw new ValidationFailedError(
       `slug "${newSlug}" would shadow the autolink prefix "${prefix}" ` +
         "configured in this deployment — remove that autolink first",

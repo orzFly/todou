@@ -9,7 +9,7 @@ export const AutolinkPrefix = z
   .string()
   .min(1)
   .max(20)
-  .regex(/^[A-Za-z0-9_#-]+$/, "letters, digits, and _ # -")
+  .regex(/^[A-Za-z0-9_#/+-]+$/, "letters, digits, and _ # / + -")
   .refine((p) => !/\d$/.test(p), "prefix must not end with a digit");
 export type AutolinkPrefix = z.infer<typeof AutolinkPrefix>;
 

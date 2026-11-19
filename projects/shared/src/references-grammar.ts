@@ -411,6 +411,12 @@ function claimAt(
   if (cross !== null) {
     const qualified = qualifiedRefAt(text, at);
     if (qualified !== null && boundaryOk(text, at, true)) {
+      // After a `/` the shape is a path tail — `owner/repo#9`, a URL — and
+      // it is swallowed whatever the slug, for the same reason as below:
+      // left unclaimed, `a/cpp/T-12` would leak this project's T-12 (T-784).
+      if (at > 0 && text[at - 1] === "/") {
+        return { token: null, end: qualified.end };
+      }
       // A shape naming an unknown project is consumed as literal text
       // rather than re-scanned: `nowhere/T-12` must not fall through and
       // ping this project's own T-12.

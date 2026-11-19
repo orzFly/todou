@@ -154,6 +154,74 @@ describe("qualified cross-project forms", () => {
     expect(refs("xtodou#12", crossConfig())).toEqual([]);
     expect(refs("SOME-todou#12", crossConfig())).toEqual([]);
   });
+
+  it("swallows a shape that follows a slash, known slug or not", () => {
+    const config = crossConfig({ internalPrefix: "T" });
+    for (const written of [
+      "owner/todou#12",
+      "a/todou/12",
+      "a/todou/#12",
+      "a/todou/T-12",
+      "https://example.com/todou#12",
+      "see /todou#12",
+    ]) {
+      expect(refs(written, config)).toEqual([]);
+      expect(rendered(written, config)).toBe(written);
+    }
+  });
+
+  it("lets an autolink claim a cross-repository shape", () => {
+    const config = crossConfig({
+      autolinks: [
+        {
+          prefix: "owner/todou#",
+          url_template: "https://example.com/owner/todou/issues/<num>",
+        },
+      ],
+    });
+    expect(scanReferenceTokens("owner/todou#12", config)).toEqual([
+      {
+        type: "autolink",
+        href: "https://example.com/owner/todou/issues/12",
+        start: 0,
+        end: 14,
+        text: "owner/todou#12",
+      },
+    ]);
+  });
+
+  it("matches a `+/` autolink on its own and inside a project path", () => {
+    const config = crossConfig({
+      autolinks: [
+        { prefix: "+/", url_template: "https://gerrit.example/c/+/<num>" },
+      ],
+    });
+    const matched = (text: string) =>
+      scanReferenceTokens(text, config).flatMap((token) =>
+        token.type === "autolink" ? [token.text] : [],
+      );
+    expect(matched("+/33")).toEqual(["+/33"]);
+    expect(matched("tools/+/33")).toEqual(["+/33"]);
+    expect(matched("a+/33")).toEqual([]);
+
+    const scoped = crossConfig({
+      autolinks: [
+        {
+          prefix: "tools/+/",
+          url_template: "https://gerrit.example/c/tools/+/<num>",
+        },
+      ],
+    });
+    expect(scanReferenceTokens("tools/+/33", scoped)).toEqual([
+      {
+        type: "autolink",
+        href: "https://gerrit.example/c/tools/+/33",
+        start: 0,
+        end: 10,
+        text: "tools/+/33",
+      },
+    ]);
+  });
 });
 
 describe("bare foreign prefixes", () => {

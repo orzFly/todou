@@ -244,6 +244,28 @@ describe("reference prefix directory T-150", () => {
     expect(ok.status).toBe(201);
   });
 
+  it("refuses every slash spelling of the qualified form too (T-784)", async () => {
+    const create = (prefix: string) =>
+      t.app.request(`/api/projects/${PA}/references/autolinks`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          prefix,
+          url_template: "https://tracker.example/<num>",
+        }),
+      });
+    for (const prefix of [`${PB}/`, `${PB}/#`, `${PB}/T-`]) {
+      const res = await create(prefix);
+      expect(res.status, prefix).toBe(422);
+      expect((await json(res)).error.message).toContain(PB);
+    }
+    // Neither becomes a qualified form once a number follows: `x-` is not
+    // a prefix's shape, and `owner/dir-b#` is a path tail.
+    for (const prefix of [`${PB}/x-`, `owner/${PB}#`]) {
+      expect((await create(prefix)).status, prefix).toBe(201);
+    }
+  });
+
   /** A project of this case's own, so the rows it plants contest nothing. */
   const newProject = async (slug: string): Promise<{ id: number }> => {
     const res = await t.app.request("/api/projects", {
