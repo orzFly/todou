@@ -645,7 +645,12 @@ export async function searchProject(
   slug: string,
   query: SearchQuery,
 ): Promise<SearchPage> {
-  const { project } = await requireCapability(ctx, actor, slug, "search.run");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "search.run",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const parts = parseSearchQuery(query.q);
@@ -690,11 +695,16 @@ export async function searchProject(
   // The same status/label/assignee narrowing the issue list applies, trash
   // exclusion included: a card in the trash takes its comments and its spec
   // out of the index with it.
-  const base = await issueFilterConditions(db, project.id, {
-    status: query.status,
-    label: query.label,
-    assignee: query.assignee,
-  });
+  const base = await issueFilterConditions(
+    db,
+    project.id,
+    {
+      status: query.status,
+      label: query.label,
+      assignee: query.assignee,
+    },
+    { actor, role },
+  );
   if (base === null) return { items: [], has_more: false, diagnostics };
   base.push(...plan.issue);
 

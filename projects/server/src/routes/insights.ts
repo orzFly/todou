@@ -54,7 +54,7 @@ const validationHook = (result: ValidationResult, c: Context<AppEnv>) => {
 const getSettingsRoute = createRoute({
   method: "get",
   path: "/{slug}/insights/settings",
-  summary: `Burn-chart status roles ${roleTag("status.list")}`,
+  summary: `Burn-chart status roles ${roleTag("insights.read")}`,
   request: { params },
   responses: {
     200: { description: "Effective insights settings", ...jsonBody(Settings) },
@@ -90,7 +90,7 @@ const putRoleRoute = createRoute({
 const getBurnRoute = createRoute({
   method: "get",
   path: "/{slug}/insights/burn",
-  summary: `Current-cohort burn chart ${roleTag("activity.read")}`,
+  summary: `Current-cohort burn chart ${roleTag("insights.read")}`,
   request: { params, query: BurnQuery },
   responses: {
     200: { description: "Burn chart buckets", ...jsonBody(BurnResponse) },
@@ -100,7 +100,7 @@ const getBurnRoute = createRoute({
 const getActivityRoute = createRoute({
   method: "get",
   path: "/{slug}/insights/activity",
-  summary: `Current-card activity calendar ${roleTag("activity.read")}`,
+  summary: `Current-card activity calendar ${roleTag("insights.read")}`,
   request: { params, query: ActivityCalendarQuery },
   responses: {
     200: {

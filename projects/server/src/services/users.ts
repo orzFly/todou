@@ -1,5 +1,5 @@
 import type { Me, PublicUser, UserProjects, UserRef } from "@todou/shared";
-import { ROLE_RANK } from "@todou/shared";
+import { cardScoped, ROLE_RANK } from "@todou/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -101,12 +101,19 @@ export async function resolveVisibleUser(
     // "Shares at least one project": two membership reads, no join needed —
     // the caller's set is small and the question is only whether the two
     // sets intersect at all.
+    // A card-scoped seat (T-788) does not count: that caller cannot list the
+    // project's members, so sharing it must not let them look one up.
     const mine = (
       await system
-        .select({ projectId: projectMembers.projectId })
+        .select({
+          projectId: projectMembers.projectId,
+          role: projectMembers.role,
+        })
         .from(projectMembers)
         .where(eq(projectMembers.userId, actor.id))
-    ).map((m) => m.projectId);
+    )
+      .filter((m) => !cardScoped(m.role))
+      .map((m) => m.projectId);
     const shared =
       mine.length === 0
         ? []

@@ -48,13 +48,22 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
-import { type VisibleProjects, visibleProjects } from "./cross-references.ts";
+import {
+  cardVisibleIn,
+  type VisibleProjects,
+  visibleProjects,
+} from "./cross-references.ts";
 import {
   currentPrefixes,
   globalPrefixDirectory,
 } from "./reference-directory.ts";
 import { type Address, currentAddressOf } from "./relocation.ts";
-import { assertIssueWritable, gateColumns, seesTrashed } from "./trash.ts";
+import {
+  assertIssueWritable,
+  cardInScope,
+  gateColumns,
+  seesTrashed,
+} from "./trash.ts";
 
 type BlockRow = typeof issueBlocks.$inferSelect;
 
@@ -132,7 +141,12 @@ export async function resolveBlockTarget(
       and(eq(issues.projectId, target.id), eq(issues.number, address.number)),
     );
   const row = rows[0];
-  if (row === undefined || row.movedAt !== null) {
+  // A card-scoped reader there (T-788) may only name a card it opened.
+  if (
+    row === undefined ||
+    !cardInScope(row, actor, role) ||
+    row.movedAt !== null
+  ) {
     throw new NotFoundError("issue not found");
   }
   if (row.deletedAt !== null && !seesTrashed(row, actor, role)) {
@@ -860,7 +874,7 @@ export async function blocksForIssues(
     );
   if (rows.length === 0) return out;
 
-  const visibleIds = (await visible()).ids;
+  const seen = await visible();
   const spelling = await spellingOf(
     system,
     new Set(rows.flatMap((r) => [r.blockerProjectId, r.blockedProjectId])),
@@ -883,7 +897,7 @@ export async function blocksForIssues(
           row,
           row.blockerProjectId,
           row.blockerNumber,
-          visibleIds,
+          seen,
           spelling,
         ),
       );
@@ -894,7 +908,7 @@ export async function blocksForIssues(
           row,
           row.blockedProjectId,
           row.blockedNumber,
-          visibleIds,
+          seen,
           spelling,
         ),
       );
@@ -958,11 +972,13 @@ function toBlockRef(
   row: BlockRow,
   otherProjectId: number,
   otherNumber: number,
-  visibleIds: Set<number>,
+  visible: VisibleProjects,
   spelling: Spelling,
 ): BlockRef {
   const named = spelling.get(otherProjectId);
-  const hidden = !visibleIds.has(otherProjectId);
+  // Per card: in a card-scoped project (T-788) the neighbour's card is
+  // hidden exactly the way a card in an unreadable project is.
+  const hidden = !cardVisibleIn(visible, otherProjectId, otherNumber);
   return {
     edge_id: row.id,
     project_id: hidden ? null : otherProjectId,

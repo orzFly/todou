@@ -6,7 +6,18 @@ import type {
   MePrefs,
   MuteReason,
 } from "@todou/shared";
-import { and, eq, gt, inArray, isNotNull, max, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  max,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -21,6 +32,7 @@ import {
   statuses,
 } from "../db/project-schema.ts";
 import {
+  type AccessibleProjectRow,
   accessibleProjectRows,
   type ProjectRow,
   requireCapabilities,
@@ -209,7 +221,7 @@ async function strongEventCounts(
 export async function groupInbox(
   ctx: AppContext,
   db: Db,
-  projects: ProjectRow[],
+  projects: AccessibleProjectRow[],
   actor: UserRow,
   limit: number,
   showWeakUnread: boolean,
@@ -296,7 +308,11 @@ export async function groupInbox(
           ne(issueEvents.actorId, userId),
           gt(issueEvents.createdAt, readFrontiers.frontierAt),
           sql`${issueEvents.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
-          crossRefVisibleCondition(visible.slugs, visible.ids),
+          crossRefVisibleCondition(
+            visible.slugs,
+            visible.ids,
+            visible.cardScoped,
+          ),
           onlyIssues === undefined
             ? undefined
             : inArray(issueEvents.issueId, onlyIssues),
@@ -373,10 +389,25 @@ export async function groupInbox(
   // separate scans, but every item the inbox emits is built from these rows,
   // so filtering here is what makes "deleted → out of everyone's inbox"
   // hold no matter which scan turned the card up.
+  //
+  // The same choke point for a card-scoped project (T-788): a mention on
+  // somebody else's card there must not surface the card.
+  const scoped = projects.filter((p) => p.cardScoped).map((p) => p.id);
   const rows = await db
     .select()
     .from(issues)
-    .where(and(inArray(issues.id, ids), live));
+    .where(
+      and(
+        inArray(issues.id, ids),
+        live,
+        scoped.length === 0
+          ? undefined
+          : or(
+              notInArray(issues.projectId, scoped),
+              eq(issues.authorId, userId),
+            ),
+      ),
+    );
   const bundles = await bundleIssues(ctx, db, projectIds, rows, actor);
   // The project half arrived from getInbox (one system-db read for all
   // groups); only the per-issue rows are this group's to fetch.
@@ -672,9 +703,9 @@ export async function getInbox(
   actor: UserRow,
   query: InboxQuery,
 ): Promise<InboxPage> {
-  let scope: ProjectRow[];
+  let scope: AccessibleProjectRow[];
   if (query.projects === undefined) {
-    scope = await accessibleProjectRows(ctx, actor);
+    scope = await accessibleProjectRows(ctx, actor, { cardScoped: "filter" });
   } else {
     scope = await requireCapabilities(ctx, actor, query.projects, "inbox.read");
   }

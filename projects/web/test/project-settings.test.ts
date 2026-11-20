@@ -5,7 +5,7 @@ import { PRESET_COLORS, ROLES } from "../src/pages/project-settings.tsx";
 
 describe("the member role picker", () => {
   it("offers every role, most privileged first", () => {
-    expect(ROLES).toEqual(["admin", "writer", "reporter", "reader"]);
+    expect(ROLES).toEqual(["admin", "writer", "reporter", "reader", "guest"]);
   });
 
   it("stays in step with the schema rather than keeping its own list", () => {

@@ -1,7 +1,11 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import type { Label, LabelUsage } from "@todou/shared";
+import type { Label, LabelUsage, Project } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { labelsQuery, labelUsageQuery } from "../src/api/queries.ts";
+import {
+  labelsQuery,
+  labelUsageQuery,
+  projectQuery,
+} from "../src/api/queries.ts";
 import { labelColorFor } from "../src/lib/labels.ts";
 import { LabelsSection } from "../src/pages/project-settings.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -171,5 +175,19 @@ describe("Labels settings (T-713)", () => {
       name: "upstream",
       color: "#8b5cf6",
     });
+  });
+});
+
+describe("Labels settings for a guest (T-788)", () => {
+  it("does not ask for usage the server would refuse", async () => {
+    const calls = stubFetch();
+    const client = testQueryClient();
+    client.setQueryData(labelsQuery("todou").queryKey, LABELS);
+    client.setQueryData(projectQuery("todou").queryKey, {
+      viewer_role: "guest",
+    } as Project);
+    renderWithProviders(<LabelsSection slug="todou" />, client);
+    await screen.findByLabelText("edit label area:web");
+    expect(calls.filter((c) => c.url.endsWith("/labels/usage"))).toEqual([]);
   });
 });

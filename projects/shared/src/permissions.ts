@@ -6,12 +6,20 @@ import type { MemberRole } from "./schemas/project.ts";
  * everything the one below it holds. `reporter` was added between reader and
  * writer because what it gains — opening issues, commenting, and fixing its
  * own — was already a subset of writer's, so nothing had to become a lattice.
+ *
+ * `guest` sits below reader although it can open issues, which reader cannot
+ * (T-788). It still fits the order because everything it holds reaches only
+ * the cards it authored: ranked lowest, every rank comparison — a machine's
+ * ceiling, an `ownerOnly` lift — treats it as holding less than anyone, and
+ * the handful of capabilities that let it in say so per entry with
+ * `guest: "own"` rather than through the rank.
  */
 export const ROLE_RANK: Record<MemberRole, number> = {
-  reader: 0,
-  reporter: 1,
-  writer: 2,
-  admin: 3,
+  guest: 0,
+  reader: 1,
+  reporter: 2,
+  writer: 3,
+  admin: 4,
 };
 
 /** Future roles have no rank: callers must refuse to compare them. */
@@ -43,6 +51,12 @@ type Capability = {
    * would read "writers may delete issues" where the code means "their own".
    */
   ownerOnly?: { until: MemberRole };
+  /**
+   * `guest` holds this, but only over cards it authored (T-788). Absent
+   * means `guest` does not hold it, whatever the rank says — so a capability
+   * added later stays closed to it until someone decides otherwise here.
+   */
+  guest?: "own";
 };
 
 /**
@@ -55,11 +69,26 @@ type Capability = {
  * may pass a role literal, and no `"gate"` entry may go unused.
  */
 export const CAPABILITIES = [
-  { id: "project.read", minRole: "reader", enforce: "gate" },
-  { id: "project.stream", minRole: "reader", enforce: "gate" },
+  {
+    id: "project.read",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
+  {
+    id: "project.stream",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
   { id: "project.update", minRole: "admin", enforce: "gate" },
   { id: "project.delete", minRole: "admin", enforce: "gate" },
-  { id: "project.mute", minRole: "reader", enforce: "gate" },
+  {
+    id: "project.mute",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
 
   { id: "member.list", minRole: "reader", enforce: "gate" },
   { id: "member.set", minRole: "admin", enforce: "gate" },
@@ -87,12 +116,42 @@ export const CAPABILITIES = [
   { id: "access_denial.set", minRole: "reader", enforce: "gate" },
   { id: "access_denial.remove", minRole: "reader", enforce: "gate" },
 
-  { id: "issue.list", minRole: "reader", enforce: "gate" },
-  { id: "issue.count", minRole: "reader", enforce: "gate" },
-  { id: "issue.read", minRole: "reader", enforce: "addressed" },
-  { id: "issue.mark_read", minRole: "reader", enforce: "gate" },
-  { id: "issue.mute", minRole: "reader", enforce: "gate" },
-  { id: "issue.create", minRole: "reporter", enforce: "gate" },
+  {
+    id: "issue.list",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
+  {
+    id: "issue.count",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
+  {
+    id: "issue.read",
+    minRole: "reader",
+    enforce: "addressed",
+    guest: "own",
+  },
+  {
+    id: "issue.mark_read",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
+  {
+    id: "issue.mute",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
+  {
+    id: "issue.create",
+    minRole: "reporter",
+    enforce: "gate",
+    guest: "own",
+  },
   // `PATCH issue` carries five fields behind one gate, so it takes two
   // entries: `issue.update` opens the endpoint, `issue.triage` is what the
   // three fields a reporter must not touch are checked against. Whoever may
@@ -104,6 +163,7 @@ export const CAPABILITIES = [
     minRole: "reporter",
     enforce: "gate",
     ownerOnly: { until: "writer" },
+    guest: "own",
   },
   { id: "issue.triage", minRole: "writer", enforce: "gate" },
   {
@@ -111,6 +171,7 @@ export const CAPABILITIES = [
     minRole: "reporter",
     enforce: "gate",
     ownerOnly: { until: "admin" },
+    guest: "own",
   },
   // Admin at both ends (T-626). A move carries everyone's comments along, and
   // whether you may rewrite someone else's comment is judged by your role
@@ -130,13 +191,24 @@ export const CAPABILITIES = [
   // that is the far end (T-663) — a far blocker only has to be readable.
   { id: "issue.block", minRole: "writer", enforce: "gate" },
 
-  { id: "comment.read", minRole: "reader", enforce: "addressed" },
-  { id: "comment.create", minRole: "reporter", enforce: "gate" },
+  {
+    id: "comment.read",
+    minRole: "reader",
+    enforce: "addressed",
+    guest: "own",
+  },
+  {
+    id: "comment.create",
+    minRole: "reporter",
+    enforce: "gate",
+    guest: "own",
+  },
   {
     id: "comment.modify",
     minRole: "reporter",
     enforce: "gate",
     ownerOnly: { until: "admin" },
+    guest: "own",
   },
   { id: "comment.commands", minRole: "writer", enforce: "gate" },
   // Hiding settled discussion (T-281). Deliberately not `ownerOnly`: tidying
@@ -145,7 +217,12 @@ export const CAPABILITIES = [
   // not be borrowed for it.
   { id: "comment.hide", minRole: "writer", enforce: "gate" },
 
-  { id: "question.read", minRole: "reader", enforce: "addressed" },
+  {
+    id: "question.read",
+    minRole: "reader",
+    enforce: "addressed",
+    guest: "own",
+  },
   { id: "question.answer", minRole: "writer", enforce: "gate" },
   // Withdrawing questions takes two entries, the way deleting an attachment
   // does: `question.withdraw` opens the endpoint to whoever asked, and
@@ -157,14 +234,30 @@ export const CAPABILITIES = [
     minRole: "reporter",
     enforce: "gate",
     ownerOnly: { until: "writer" },
+    guest: "own",
   },
   { id: "question.withdraw_any", minRole: "writer", enforce: "gate" },
 
-  { id: "revision.read", minRole: "reader", enforce: "addressed" },
+  {
+    id: "revision.read",
+    minRole: "reader",
+    enforce: "addressed",
+    guest: "own",
+  },
 
-  { id: "attachment.read", minRole: "reader", enforce: "addressed" },
+  {
+    id: "attachment.read",
+    minRole: "reader",
+    enforce: "addressed",
+    guest: "own",
+  },
   // A screenshot is part of the bug report, not a separate privilege.
-  { id: "attachment.upload", minRole: "reporter", enforce: "gate" },
+  {
+    id: "attachment.upload",
+    minRole: "reporter",
+    enforce: "gate",
+    guest: "own",
+  },
   // Deleting a file (T-567) takes two entries, the way `PATCH issue` does:
   // `attachment.delete` opens the endpoint to whoever uploaded the file, and
   // `attachment.delete_any` is what deleting someone else's is checked
@@ -175,10 +268,16 @@ export const CAPABILITIES = [
     minRole: "reporter",
     enforce: "gate",
     ownerOnly: { until: "admin" },
+    guest: "own",
   },
   { id: "attachment.delete_any", minRole: "writer", enforce: "gate" },
 
-  { id: "spec.read", minRole: "reader", enforce: "addressed" },
+  {
+    id: "spec.read",
+    minRole: "reader",
+    enforce: "addressed",
+    guest: "own",
+  },
   { id: "spec.push", minRole: "writer", enforce: "gate" },
   { id: "spec.withdraw", minRole: "writer", enforce: "gate" },
   { id: "spec.review", minRole: "writer", enforce: "gate" },
@@ -194,28 +293,70 @@ export const CAPABILITIES = [
   // web page shows all of it to whoever can see the card. Writing is a
   // writer's: an orchestrator is usually exactly a writer, and `ownerOnly`
   // would be plainly wrong — other people's cards are what it writes to.
-  { id: "metadata.read", minRole: "reader", enforce: "addressed" },
+  {
+    id: "metadata.read",
+    minRole: "reader",
+    enforce: "addressed",
+    guest: "own",
+  },
   { id: "metadata.write", minRole: "writer", enforce: "gate" },
 
-  { id: "label.list", minRole: "reader", enforce: "gate" },
+  {
+    id: "label.list",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
   // Putting a label on a card has always been a writer's to do; keeping the
   // catalog it draws from at admin only meant asking someone else to type
   // the name first.
+  // The whole project's counts, split off `label.list` so that a guest
+  // reading its own card's labels is not also handed them (T-788).
+  { id: "label.usage", minRole: "reader", enforce: "gate" },
   { id: "label.create", minRole: "writer", enforce: "gate" },
   { id: "label.update", minRole: "writer", enforce: "gate" },
   { id: "label.delete", minRole: "writer", enforce: "gate" },
 
-  { id: "status.list", minRole: "reader", enforce: "gate" },
+  {
+    id: "status.list",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
+  { id: "status.usage", minRole: "reader", enforce: "gate" },
   { id: "status.manage", minRole: "admin", enforce: "gate" },
 
-  { id: "reference.read", minRole: "reader", enforce: "gate" },
+  {
+    id: "reference.read",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
   { id: "reference.manage", minRole: "admin", enforce: "gate" },
 
   { id: "search.run", minRole: "reader", enforce: "gate" },
 
-  { id: "timeline.read", minRole: "reader", enforce: "addressed" },
-  { id: "activity.read", minRole: "reader", enforce: "gate" },
-  { id: "inbox.read", minRole: "reader", enforce: "gate" },
+  {
+    id: "timeline.read",
+    minRole: "reader",
+    enforce: "addressed",
+    guest: "own",
+  },
+  // Split off `activity.read` for the same reason as `label.usage`: a
+  // guest's activity is its own cards', insights summarise everyone's.
+  { id: "insights.read", minRole: "reader", enforce: "gate" },
+  {
+    id: "activity.read",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
+  {
+    id: "inbox.read",
+    minRole: "reader",
+    enforce: "gate",
+    guest: "own",
+  },
 ] as const satisfies readonly Capability[];
 
 export type CapabilityId = (typeof CAPABILITIES)[number]["id"];
@@ -236,8 +377,18 @@ export function minRoleOf(id: CapabilityId): MemberRole {
   return role;
 }
 
+/**
+ * Whether `role` sees a project only through the cards it authored (T-788).
+ * The server branches on this, never on the role's name, so that a second
+ * such role would be one line here.
+ */
+export function cardScoped(role: string | null): boolean {
+  return role === "guest";
+}
+
 /** Whether `role` holds `id` only over the rows it authored. */
 export function ownOnly(role: string | null, id: CapabilityId): boolean {
+  if (cardScoped(role)) return can(role, id);
   const scope = capabilityOf(id).ownerOnly;
   if (scope === undefined || !can(role, id)) return false;
   const until = roleRankOf(scope.until);
@@ -253,5 +404,6 @@ export function can(role: string | null, id: CapabilityId): boolean {
   if (role === null) return false;
   const rank = roleRankOf(role);
   const min = minRoleOf(id);
+  if (cardScoped(role)) return capabilityOf(id).guest === "own";
   return rank !== undefined && rank >= ROLE_RANK[min];
 }

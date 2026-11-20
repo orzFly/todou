@@ -1,9 +1,9 @@
 import { CompletionContext } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
 import { QueryClient } from "@tanstack/react-query";
-import type { Member } from "@todou/shared";
+import type { Member, Project } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
-import { membersQuery } from "../src/api/queries.ts";
+import { membersQuery, projectQuery } from "../src/api/queries.ts";
 import {
   mentionCompletionSource,
   mentionTriggerAt,
@@ -195,5 +195,25 @@ describe("mentionCompletionSource", () => {
     const spy = vi.spyOn(client, "fetchQuery");
     expect(await completeAt(client, "plain prose, no at sign")).toBeNull();
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  // The server leaves a guest's `@login` unresolved (T-788).
+  it("stays shut for a guest, without asking for the member list", async () => {
+    const client = seededClient();
+    client.setQueryData(projectQuery("a").queryKey, {
+      viewer_role: "guest",
+    } as Project);
+    const spy = vi.spyOn(client, "fetchQuery");
+    expect(await completeAt(client, "ping @al")).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("still offers members to a reader whose project is cached", async () => {
+    const client = seededClient();
+    client.setQueryData(projectQuery("a").queryKey, {
+      viewer_role: "reader",
+    } as Project);
+    const result = await completeAt(client, "ping @al");
+    expect(result?.options).toHaveLength(3);
   });
 });

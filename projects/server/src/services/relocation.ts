@@ -1,7 +1,8 @@
-import type { IssueMove } from "@todou/shared";
+import { cardScoped, type IssueMove } from "@todou/shared";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
+import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
@@ -502,7 +503,7 @@ export async function respondRelocation(
   // book has the row. A missing row means the card is simply not here.
   if (destination === null) throw new NotFoundError("not found");
 
-  if ((await projectRoleOf(ctx, destination.target, actor)) === null) {
+  if (!(await destinationReadable(ctx, destination, actor))) {
     // Neither end is theirs to read, so there is nothing to admit: a 410
     // would tell a stranger that this address once held something (T-242).
     if (!marker.sourceReadable) throw new NotFoundError("not found");
@@ -547,6 +548,34 @@ export async function respondRelocation(
   c.header("Location", asked ?? `/api${destination.path}`);
   if (destination.body === null) return c.body(null, 301);
   return c.json(destination.body, 301);
+}
+
+/**
+ * A role at the destination is enough, except a card-scoped one (T-788):
+ * that reader may follow only onto a card it authored, and a redirect onto
+ * anyone else's would hand out the number it now lives at. A blob marker
+ * names no card, so a card-scoped reader is never redirected by one.
+ */
+async function destinationReadable(
+  ctx: AppContext,
+  destination: Destination,
+  actor: UserRow,
+): Promise<boolean> {
+  const role = await projectRoleOf(ctx, destination.target, actor);
+  if (role === null) return false;
+  if (!cardScoped(role)) return true;
+  if (destination.movedTo === null) return false;
+  const db = await ctx.router.forProject(routeInfoOf(destination.target));
+  const rows = await db
+    .select({ authorId: issues.authorId })
+    .from(issues)
+    .where(
+      and(
+        eq(issues.projectId, destination.target.id),
+        eq(issues.number, destination.movedTo.number),
+      ),
+    );
+  return rows[0]?.authorId === actor.id;
 }
 
 /** Where the thing behind an old address lives now, as far as a marker knows. */

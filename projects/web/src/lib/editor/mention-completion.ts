@@ -6,8 +6,8 @@ import type {
 } from "@codemirror/autocomplete";
 import { syntaxTree } from "@codemirror/language";
 import type { QueryClient } from "@tanstack/react-query";
-import { enumLookup } from "@todou/shared";
-import { membersQuery } from "@/api/queries.ts";
+import { can, enumLookup } from "@todou/shared";
+import { membersQuery, projectQuery } from "@/api/queries.ts";
 import { inCodeContext } from "@/lib/editor/code-context.ts";
 import { applyWithSpace } from "@/lib/editor/completion-space.ts";
 import { withUser } from "@/lib/editor/user-completion.tsx";
@@ -83,6 +83,12 @@ export function mentionCompletionSource(
     const trigger = mentionTriggerAt(before);
     if (trigger === null) return null;
     if (inCodeContext(syntaxTree(context.state), context.pos)) return null;
+    // A guest's `@login` stays plain text on the server (T-788), so a panel
+    // offering members would only promise a link that never forms.
+    const role = queryClient.getQueryData(
+      projectQuery(slug).queryKey,
+    )?.viewer_role;
+    if (role !== undefined && !can(role, "member.list")) return null;
 
     const members = await queryClient
       .fetchQuery(membersQuery(slug))

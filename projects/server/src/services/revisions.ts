@@ -13,7 +13,7 @@ import { comments, issues, revisions } from "../db/project-schema.ts";
 import { NotFoundError } from "../errors.ts";
 import { projectForRead, routeInfoOf } from "./access.ts";
 import { throwIfCommentAliased } from "./relocation.ts";
-import { assertIssueReadable, gateColumns } from "./trash.ts";
+import { assertIssueReadable, gateColumns, mayFollowAlias } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 export type RevisionSubjectType =
@@ -185,7 +185,7 @@ export async function listCommentRevisions(
       ctx,
       project.id,
       commentId,
-      role !== null,
+      mayFollowAlias(role, issue, actor),
       issueNumber,
     );
   }
@@ -203,7 +203,7 @@ export async function listCommentRevisions(
       ctx,
       project.id,
       commentId,
-      role !== null,
+      mayFollowAlias(role, issue, actor),
       issueNumber,
     );
   if (!comment) throw new NotFoundError("comment not found");

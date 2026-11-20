@@ -170,7 +170,7 @@ export async function getInsightsBurn(
     ctx,
     actor,
     slug,
-    "activity.read",
+    "insights.read",
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const range = await resolveRange(db, query);

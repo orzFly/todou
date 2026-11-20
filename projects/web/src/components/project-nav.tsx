@@ -1,4 +1,5 @@
 import { Link, useMatchRoute } from "@tanstack/react-router";
+import { type CapabilityId, can, type MemberRole } from "@todou/shared";
 import { CheckIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,19 +23,35 @@ export const projectTabs = [
     label: "Insights",
     exact: false,
     behind: true,
+    cap: "insights.read",
   },
   {
+    // Gated on the member list because that is the page's reason to exist:
+    // a guest, who cannot see members, would find only catalogs it already
+    // meets on its own cards (T-788).
     to: "/projects/$slug/settings",
     label: "Settings",
     exact: false,
     behind: true,
+    cap: "member.list",
   },
-] as const;
+] as const satisfies readonly {
+  to: string;
+  label: string;
+  exact: boolean;
+  behind: boolean;
+  cap?: CapabilityId;
+}[];
 
 type ProjectTab = (typeof projectTabs)[number];
 
-const onTheRow = projectTabs.filter((tab) => !tab.behind);
-const behindMore = projectTabs.filter((tab) => tab.behind);
+/**
+ * `undefined` is "not known yet", which shows every tab: hiding them until
+ * the project answers would blink the row for everyone to spare a guest the
+ * reverse.
+ */
+const shows = (tab: ProjectTab, role: MemberRole | null | undefined) =>
+  !("cap" in tab) || role === undefined || can(role, tab.cap);
 
 /**
  * The row's shape, worn by the tabs and by the `···` alike. One padding at
@@ -114,11 +131,19 @@ function NavTab({
 export function ProjectNav({
   slug,
   className,
+  viewerRole,
 }: {
   slug: string;
   className?: string;
+  viewerRole?: MemberRole | null;
 }) {
   const matchRoute = useMatchRoute();
+  const onTheRow = projectTabs.filter(
+    (tab) => !tab.behind && shows(tab, viewerRole),
+  );
+  const behindMore = projectTabs.filter(
+    (tab) => tab.behind && shows(tab, viewerRole),
+  );
   // `fuzzy` is `exact` inverted, so the pulled-out tab and its menu twin
   // decide by the same rule the `Link`s below highlight by.
   const pulledOut = behindMore.find((tab) =>
@@ -135,39 +160,41 @@ export function ProjectNav({
       {pulledOut && (
         <NavTab tab={pulledOut} slug={slug} className={ON_THE_ROW} />
       )}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label="More"
-            className={cn(TAB, "flex", pulledOut && MARK_ON_MORE)}
-          >
-            <EllipsisIcon className="size-4" aria-hidden />
-          </button>
-        </DropdownMenuTrigger>
-        {/* The trigger is one glyph wide and the content takes the trigger's
+      {behindMore.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="More"
+              className={cn(TAB, "flex", pulledOut && MARK_ON_MORE)}
+            >
+              <EllipsisIcon className="size-4" aria-hidden />
+            </button>
+          </DropdownMenuTrigger>
+          {/* The trigger is one glyph wide and the content takes the trigger's
             width, so the floor is the whole measurement here. */}
-        <DropdownMenuContent align="start" className="min-w-36">
-          {behindMore.map((tab) => (
-            <DropdownMenuItem key={tab.label} asChild>
-              <Link
-                to={tab.to}
-                params={{ slug }}
-                activeOptions={{ exact: tab.exact, includeSearch: false }}
-                // Not the row's `bg-accent`: that is also what a menu item
-                // wears under the pointer, and two rows that look alike stop
-                // saying which one is the page you are on.
-                activeProps={{ className: "font-medium text-foreground" }}
-              >
-                {tab.label}
-                {tab === pulledOut && (
-                  <CheckIcon className="ml-auto" aria-hidden />
-                )}
-              </Link>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+          <DropdownMenuContent align="start" className="min-w-36">
+            {behindMore.map((tab) => (
+              <DropdownMenuItem key={tab.label} asChild>
+                <Link
+                  to={tab.to}
+                  params={{ slug }}
+                  activeOptions={{ exact: tab.exact, includeSearch: false }}
+                  // Not the row's `bg-accent`: that is also what a menu item
+                  // wears under the pointer, and two rows that look alike stop
+                  // saying which one is the page you are on.
+                  activeProps={{ className: "font-medium text-foreground" }}
+                >
+                  {tab.label}
+                  {tab === pulledOut && (
+                    <CheckIcon className="ml-auto" aria-hidden />
+                  )}
+                </Link>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </nav>
   );
 }

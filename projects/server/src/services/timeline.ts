@@ -13,6 +13,7 @@ import type {
 } from "@todou/shared";
 import {
   ActivityScope,
+  cardScoped,
   decodeMultiCursor,
   encodeMultiCursor,
   MalformedMultiCursorError,
@@ -42,15 +43,16 @@ import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import {
+  type AccessibleProjectRow,
   accessibleProjectRows,
   authorizeProjects,
-  type ProjectRow,
   projectForRead,
   requireCapabilities,
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
 import {
+  cardVisibleIn,
   crossRefVisibleCondition,
   type VisibleProjects,
   visibleProjects,
@@ -206,7 +208,12 @@ export function redactEventPayloads<T extends TimelineItem>(
   items: T[],
   visible: VisibleProjects,
 ): T[] {
-  const seen = (id: unknown) => typeof id === "number" && visible.ids.has(id);
+  // Judged per card, not per project: in a card-scoped project (T-788) the
+  // far end is readable only when it is one of the viewer's own cards.
+  const seen = (id: unknown, number: unknown) =>
+    typeof id === "number" &&
+    (visible.ids.has(id) ||
+      (typeof number === "number" && cardVisibleIn(visible, id, number)));
   const blank = (payload: Record<string, unknown>, keys: string[]) => {
     for (const key of keys) payload[key] = null;
   };
@@ -217,7 +224,7 @@ export function redactEventPayloads<T extends TimelineItem>(
     slugKey: string,
   ) => {
     const id = payload[idKey];
-    if (!seen(id)) {
+    if (!seen(id, payload[numberKey])) {
       blank(payload, [idKey, numberKey, slugKey]);
     } else {
       // Always override a stored slug: an old name may now belong to a
@@ -233,12 +240,12 @@ export function redactEventPayloads<T extends TimelineItem>(
       case "moved_in":
         delete payload.id_map;
         delete payload.activity_imported_max_ids;
-        if (!seen(payload.from_project_id)) {
+        if (!seen(payload.from_project_id, payload.from_number)) {
           blank(payload, ["from_project_id", "from_project", "from_number"]);
         }
         break;
       case "moved_out":
-        if (!seen(payload.to_project_id)) {
+        if (!seen(payload.to_project_id, payload.to_number)) {
           blank(payload, ["to_project_id", "to_project", "to_number"]);
         }
         break;
@@ -467,7 +474,7 @@ function filterConditions(
   );
   eventConditions.push(
     ...notSelfConditions(issueEvents.actorId, issueEvents.agentContext, query),
-    crossRefVisibleCondition(visible.slugs, visible.ids),
+    crossRefVisibleCondition(visible.slugs, visible.ids, visible.cardScoped),
   );
   const scoped = scopeConditions(query);
   if (scoped !== null) {
@@ -747,12 +754,19 @@ export async function getTimeline(
 /** `slot` is the index in the caller's `entries` that produced the row. */
 type RawWithIssue = Raw & { number: number; slot: number };
 
-/** One entry's window into one project's stream. */
-export type ActivityEntry = { projectId: number; cursor: Cursor | null };
+/**
+ * One entry's window into one project's stream. `author` narrows it to the
+ * cards that user opened, for a card-scoped reader (T-788).
+ */
+export type ActivityEntry = {
+  projectId: number;
+  cursor: Cursor | null;
+  author?: number;
+};
 
 /**
  * PostgreSQL binds at most 65535 parameters per statement and an entry
- * spends six of them, so an unsplit VALUES list turns into an opaque bind
+ * spends seven of them, so an unsplit VALUES list turns into an opaque bind
  * failure somewhere past ten thousand entries. Before this shape that scale
  * cost twenty thousand statements — slow, but it answered; trading slow for
  * "errors out" is not an acceptable exchange.
@@ -812,6 +826,10 @@ export async function fetchActivityRows(opts: {
     filterConditions(opts.filters, opts.visible);
   commentConditions.push(eq(comments.projectId, sql`"cur"."project_id"`));
   eventConditions.push(eq(issueEvents.projectId, sql`"cur"."project_id"`));
+  // In SQL rather than over the results, for the cursor reason `live` is.
+  const ownCards = sql`("cur"."author" is null or ${issues.authorId} = "cur"."author")`;
+  commentConditions.push(ownCards);
+  eventConditions.push(ownCards);
   // A card in the trash goes quiet everywhere except about the trashing
   // itself (T-145): an agent blocked on `todou watch` learns the card is
   // gone, by number, and its cursor keeps advancing over a continuous
@@ -877,10 +895,10 @@ export async function fetchActivityRows(opts: {
         // text and the comparisons against it never see a timestamp.
         const k = typeof b.k === "number" ? sql`${b.k}::int` : b.k;
         const i = typeof b.i === "number" ? sql`${b.i}::bigint` : b.i;
-        return sql`(${base + offset}::int, ${entry.projectId}::bigint, ${b.lo}, ${b.hi}, ${k}, ${i})`;
+        return sql`(${base + offset}::int, ${entry.projectId}::bigint, ${b.lo}, ${b.hi}, ${k}, ${i}, ${entry.author ?? null}::bigint)`;
       }),
       sql`, `,
-    )}) as "cur"("w", "project_id", "lo", "hi", "k", "i")`;
+    )}) as "cur"("w", "project_id", "lo", "hi", "k", "i", "author")`;
 
     if (wantComments) {
       const c = db
@@ -978,7 +996,7 @@ export async function getProjectActivity(
   slug: string,
   query: ActivityQuery,
 ): Promise<ActivityPage> {
-  const { project } = await requireCapability(
+  const { project, role } = await requireCapability(
     ctx,
     actor,
     slug,
@@ -994,7 +1012,13 @@ export async function getProjectActivity(
   // cross-project stream runs.
   const merged = await fetchActivityRows({
     db,
-    entries: [{ projectId: project.id, cursor }],
+    entries: [
+      {
+        projectId: project.id,
+        cursor,
+        ...(cardScoped(role) ? { author: actor.id } : {}),
+      },
+    ],
     filters: { ...query, viewer: actor.id },
     visible,
     backward,
@@ -1027,7 +1051,7 @@ type WatchedProject = {
    * cursor envelope, so it is not interchangeable with the project's slug.
    */
   ref: string;
-  project: ProjectRow;
+  project: AccessibleProjectRow;
   /** Opaque plain cursor to drain beyond; null = from the beginning. */
   position: string | null;
 };
@@ -1089,14 +1113,14 @@ export async function getCrossActivity(
   // every request so a long-running watch picks up projects created (or
   // shared) after it started.
   let watchedRefs: string[];
-  let rows: ProjectRow[];
+  let rows: AccessibleProjectRow[];
   if (explicit !== null) {
     watchedRefs = explicit;
     rows = await requireCapabilities(ctx, actor, explicit, "activity.read");
   } else {
-    rows = (await accessibleProjectRows(ctx, actor)).sort((a, b) =>
-      a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0,
-    );
+    rows = (
+      await accessibleProjectRows(ctx, actor, { cardScoped: "filter" })
+    ).sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
     watchedRefs = rows.map((row) => row.slug);
     // Never fails today — activity.read asks for reader and every row here
     // carries one — but dropping it would take this path out of the catalog.
@@ -1113,9 +1137,13 @@ export async function getCrossActivity(
   // one from up here is what the router's max_open bound cannot account for.
   const watched: WatchedProject[] = watchedRefs.map((ref, i) => ({
     ref,
-    project: rows[i] as ProjectRow,
+    project: rows[i] as AccessibleProjectRow,
     position: null,
   }));
+  const entryOf = (w: WatchedProject, cursor: Cursor | null): ActivityEntry =>
+    w.project.cardScoped
+      ? { projectId: w.project.id, cursor, author: actor.id }
+      : { projectId: w.project.id, cursor };
 
   /** Rows keyed back to the entry that asked for them. */
   const fanOut = async (
@@ -1155,12 +1183,7 @@ export async function getCrossActivity(
     // The newest row's position regardless of the request's filters: a
     // bootstrap marks "everything up to here is old", and filters only
     // decide what gets delivered, never where "here" is.
-    const newest = await fanOut(
-      (w) => ({ projectId: w.project.id, cursor: null }),
-      {},
-      true,
-      1,
-    );
+    const newest = await fanOut((w) => entryOf(w, null), {}, true, 1);
     // One row per table per entry comes back; the newer of the two is the
     // bootstrap position, which is what taking the tail of an ascending pair
     // used to mean.
@@ -1215,10 +1238,7 @@ export async function getCrossActivity(
   }
 
   const all = await fanOut(
-    (w) => ({
-      projectId: w.project.id,
-      cursor: w.position === null ? null : decodeCursor(w.position),
-    }),
+    (w) => entryOf(w, w.position === null ? null : decodeCursor(w.position)),
     { ...query, viewer: actor.id },
     false,
     query.limit + 1,

@@ -4,6 +4,7 @@ import {
   type CapabilityId,
   can,
   capabilityOf,
+  cardScoped,
   minRoleOf,
   ownOnly,
   ROLE_RANK,
@@ -211,9 +212,60 @@ describe("can", () => {
       const id: CapabilityId = cap.id;
       const min = minRoleOf(id);
       expect(can(min, id)).toBe(true);
-      for (const role of MEMBER_ROLES) {
+      // `guest` is let in by its own field, not the rank (T-788); the
+      // "guest" describe below holds it to that.
+      for (const role of MEMBER_ROLES.filter((r) => !cardScoped(r))) {
         expect(can(role, id)).toBe(ROLE_RANK[role] >= ROLE_RANK[min]);
       }
+    }
+  });
+});
+
+describe("guest", () => {
+  const OWN: readonly CapabilityId[] = CAPABILITIES.filter(
+    (cap) => (cap as { guest?: "own" }).guest === "own",
+  ).map((cap) => cap.id);
+
+  it("ranks below reader and is the only card-scoped role", () => {
+    expect(ROLE_RANK.guest).toBeLessThan(ROLE_RANK.reader);
+    expect(roleRankOf("guest")).toBe(ROLE_RANK.guest);
+    expect(cardScoped(null)).toBe(false);
+    for (const role of MEMBER_ROLES) {
+      expect(cardScoped(role), role).toBe(role === "guest");
+    }
+  });
+
+  it("holds exactly the entries marked own, and each only over its own cards", () => {
+    for (const cap of CAPABILITIES) {
+      const held = OWN.includes(cap.id);
+      expect(can("guest", cap.id), cap.id).toBe(held);
+      expect(ownOnly("guest", cap.id), cap.id).toBe(held);
+    }
+  });
+
+  it("opens issues and comments, but never searches, lists members or reads usage", () => {
+    expect(can("guest", "issue.create")).toBe(true);
+    expect(can("guest", "comment.create")).toBe(true);
+    for (const id of [
+      "search.run",
+      "member.list",
+      "issue.triage",
+      "label.usage",
+      "status.usage",
+      "insights.read",
+    ] as const) {
+      expect(can("guest", id), id).toBe(false);
+    }
+  });
+
+  it("leaves the usage and insights splits at reader for everyone else", () => {
+    for (const id of [
+      "label.usage",
+      "status.usage",
+      "insights.read",
+    ] as const) {
+      expect(minRoleOf(id)).toBe("reader");
+      expect(capabilityOf(id).enforce).toBe("gate");
     }
   });
 });

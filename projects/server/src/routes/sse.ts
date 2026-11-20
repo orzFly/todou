@@ -5,6 +5,7 @@ import {
   type ConnectionWatcherKind,
   ConnectionWatcherKind as ConnectionWatcherKindSchema,
   type CrossChangeEvent,
+  cardScoped,
   type InboxRowState,
   type MeEvent,
   MetadataNamespaceSelector,
@@ -13,11 +14,13 @@ import {
   SSE_ME_EVENT,
   SSE_PING_EVENT,
 } from "@todou/shared";
+import { and, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { AppEnv } from "../auth/middleware.ts";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
+import { issues as issueTable } from "../db/project-schema.ts";
 import { DomainError } from "../errors.ts";
 import {
   recheckStreamCredential,
@@ -26,6 +29,7 @@ import {
 } from "../events/stream-credential.ts";
 import type { WatcherHandle, WatcherScopes } from "../events/watchers.ts";
 import {
+  type AccessibleProjectRow,
   accessibleProjectRows,
   findProjectsByRefs,
   type ProjectRow,
@@ -81,7 +85,15 @@ const INBOX_ENTITIES = new Set<ChangeEntity>([
  * project the caller can read, the legacy per-project feed is the same
  * machinery pinned to a single project (T-122).
  */
-type Scope = { kind: "all" } | { kind: "project"; row: ProjectRow };
+type Scope = { kind: "all" } | { kind: "project"; row: AccessibleProjectRow };
+
+/**
+ * What a card-scoped reader (T-788) hears of its project beyond its own
+ * cards: the project shell it can read anyway. Everything else without a
+ * card number to check — a project-wide watcher list, someone else's
+ * membership — is somebody else's business.
+ */
+const CARD_SCOPED_SHELL = new Set<ChangeEntity>(["project", "label", "status"]);
 
 const inboxParam = z
   .literal("1")
@@ -280,14 +292,57 @@ function streamChanges(
     // stamped into the payload and the route to that project's database.
     // Loaded before subscribing so no event is ever checked against an
     // uninitialized set.
-    const visible = new Map<number, ProjectRow>();
+    const visible = new Map<number, AccessibleProjectRow>();
     if (scope.kind === "project") {
       visible.set(scope.row.id, scope.row);
     } else {
-      for (const row of await accessibleProjectRows(ctx, user)) {
+      for (const row of await accessibleProjectRows(ctx, user, {
+        cardScoped: "filter",
+      })) {
         visible.set(row.id, row);
       }
     }
+
+    // Who opened each card a card-scoped project's events name. An author
+    // never changes and a number is never reused, so an answer stays good
+    // for the life of the connection; a card moved in arrives on a number
+    // of its own.
+    const authors = new Map<string, number>();
+    const ownCard = async (projectId: number, number: number) => {
+      const key = `${projectId}:${number}`;
+      let author = authors.get(key);
+      if (author === undefined) {
+        const row = visible.get(projectId);
+        if (row === undefined) return false;
+        const db = await ctx.router.forProject(routeInfoOf(row));
+        const found = await db
+          .select({ authorId: issueTable.authorId })
+          .from(issueTable)
+          .where(
+            and(
+              eq(issueTable.projectId, projectId),
+              eq(issueTable.number, number),
+            ),
+          );
+        // Not cached when missing: nothing says the row cannot appear later.
+        if (found[0] === undefined) return false;
+        author = found[0].authorId;
+        authors.set(key, author);
+      }
+      return author === user.id;
+    };
+    /** Whether a card-scoped project's event is about something of the caller's. */
+    const inCardScope = async (
+      row: AccessibleProjectRow,
+      event: ChangeEvent,
+    ): Promise<boolean> => {
+      if (!row.cardScoped) return true;
+      if (event.issue_number !== undefined) {
+        return ownCard(row.id, event.issue_number);
+      }
+      if (event.entity === "member") return event.id === user.id;
+      return CARD_SCOPED_SHELL.has(event.entity);
+    };
 
     // Cross-reference visibility for the inbox judgement — the whole
     // readable set, which is wider than `visible` on a pinned stream.
@@ -505,7 +560,13 @@ function streamChanges(
       const pairs = new Map<string, [number, number]>();
       for (const [ref, number] of issues) {
         const id = idOf.get(ref);
-        if (id !== undefined) pairs.set(`${id}/${number}`, [id, number]);
+        if (id === undefined) continue;
+        // Somebody else's card is dropped like an unreadable project, so
+        // the declaration cannot list a watcher on it (T-788).
+        if (visible.get(id)?.cardScoped && !(await ownCard(id, number))) {
+          continue;
+        }
+        pairs.set(`${id}/${number}`, [id, number]);
       }
       resolved = { projects: [...projects], issues: [...pairs.values()] };
     };
@@ -547,7 +608,9 @@ function streamChanges(
     };
 
     const recompute = async () => {
-      const rows = await accessibleProjectRows(ctx, user);
+      const rows = await accessibleProjectRows(ctx, user, {
+        cardScoped: "filter",
+      });
       visible.clear();
       for (const row of rows) {
         if (scope.kind === "all" || row.id === scope.row.id) {
@@ -652,8 +715,22 @@ function streamChanges(
                 closed = true;
                 continue;
               }
-              // Role changes never drop below reader; fall through as an
-              // ordinary event.
+              // A role change keeps the project readable but may move it in
+              // or out of card scope (T-788), so the pinned row is refreshed
+              // before the event is judged against it.
+              if (projectId === scope.row.id) {
+                try {
+                  await recompute();
+                } catch {
+                  closed = true;
+                  continue;
+                }
+                if (!visible.has(scope.row.id)) {
+                  await send(scope.row, event);
+                  closed = true;
+                  continue;
+                }
+              }
             }
 
             if (
@@ -709,7 +786,9 @@ function streamChanges(
             }
 
             const row = visible.get(projectId);
-            if (row !== undefined) await send(row, event);
+            if (row !== undefined && (await inCardScope(row, event))) {
+              await send(row, event);
+            }
           } finally {
             if (reshapesVisible(event)) reshaping--;
           }
@@ -782,7 +861,7 @@ export function sseRoutes() {
   app.openapi(projectEventsRoute, async (c) => {
     const ctx = c.get("appCtx");
     const user = c.get("user");
-    const { project } = await requireCapability(
+    const { project, role } = await requireCapability(
       ctx,
       user,
       c.req.valid("param").slug,
@@ -793,7 +872,10 @@ export function sseRoutes() {
       ctx,
       user,
       streamCredentialOf(c),
-      { kind: "project", row: project },
+      {
+        kind: "project",
+        row: cardScoped(role) ? { ...project, cardScoped: true } : project,
+      },
       c.req.valid("query").inbox === "1",
       c.req.valid("query").metadata,
       c.req.valid("query").presence === "1",

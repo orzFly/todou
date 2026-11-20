@@ -6,7 +6,7 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
-import type { Me } from "@todou/shared";
+import { can, type Me } from "@todou/shared";
 import { type ReactNode, Suspense, useMemo } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { useUserEvents } from "@/api/useUserEvents.ts";
@@ -143,6 +143,10 @@ export function AppShell({
     [project.data],
   );
   const refs = useProjectRefs(one);
+  // Unknown until the project answers — and on a server predating the field —
+  // which shows everything rather than blinking it in for everyone.
+  const viewerRole = project.data?.viewer_role;
+  const maySearch = viewerRole === undefined || can(viewerRole, "search.run");
 
   return (
     <SpecReviewSessionProvider>
@@ -211,7 +215,11 @@ export function AppShell({
                       </span>
                     </Link>
                     <ProjectSwitcher slug={slug} />
-                    <ProjectNav slug={slug} className="ml-2 hidden sm:flex" />
+                    <ProjectNav
+                      slug={slug}
+                      viewerRole={viewerRole}
+                      className="ml-2 hidden sm:flex"
+                    />
                   </>
                 )}
               </div>
@@ -230,7 +238,7 @@ export function AppShell({
               0.09px inside its own text, ellipsised itself to `Tod…` across
               every width where the box was mid-shrink. At 99999 the residue
               rounds away to nothing. */}
-              {wide && slug != null && (
+              {wide && slug != null && maySearch && (
                 <SearchBox
                   slug={slug}
                   className="w-80 min-w-32 shrink-[99999]"
@@ -257,7 +265,7 @@ export function AppShell({
               to the search box it would take half of what T-454 gives the
               project name first. */}
               <div className="flex min-w-0 items-center gap-1">
-                {!wide && !hasProjectRow && slug != null && (
+                {!wide && !hasProjectRow && slug != null && maySearch && (
                   <SearchToggle slug={slug} />
                 )}
                 {slug != null && (
@@ -352,8 +360,12 @@ export function AppShell({
                     </span>
                   </div>
                 )}
-                <ProjectNav slug={slug} className="flex-1" />
-                {hasProjectRow && <SearchToggle slug={slug} />}
+                <ProjectNav
+                  slug={slug}
+                  viewerRole={viewerRole}
+                  className="flex-1"
+                />
+                {hasProjectRow && maySearch && <SearchToggle slug={slug} />}
                 <NewIssueButton slug={slug} />
               </div>
             )}

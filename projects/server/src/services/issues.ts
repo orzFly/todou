@@ -16,7 +16,7 @@ import type {
   Status,
   UserRef,
 } from "@todou/shared";
-import { can, minRoleOf } from "@todou/shared";
+import { can, cardScoped, minRoleOf } from "@todou/shared";
 import {
   and,
   asc,
@@ -103,6 +103,7 @@ import { microIso } from "./timeline.ts";
 import {
   assertIssueReadable,
   assertIssueWritable,
+  cardInScope,
   live,
   seesTrashed,
 } from "./trash.ts";
@@ -789,21 +790,23 @@ export function timeAdvance(
  * deleted cards, narrowed to the ones this viewer may see there. An author
  * with no deleted cards gets an empty page rather than an error — the trash
  * is a view, not a privilege one passes or fails.
+ *
+ * A card-scoped viewer (T-788) is narrowed to its own cards here, in SQL,
+ * for the same pagination reason `live` is.
  */
 export async function issueFilterConditions(
   db: Db,
   projectId: number,
   query: IssueCountsQuery,
-  trash?: { actor: UserRow; role: MemberRole },
+  viewer: { actor: UserRow; role: MemberRole; trash?: boolean },
 ): Promise<SQL[] | null> {
   const conditions: SQL[] = [eq(issues.projectId, projectId)];
-  if (trash === undefined) {
-    conditions.push(live);
-  } else {
-    conditions.push(isNotNull(issues.deletedAt));
-    if (trash.role !== "admin") {
-      conditions.push(eq(issues.authorId, trash.actor.id));
-    }
+  conditions.push(viewer.trash ? isNotNull(issues.deletedAt) : live);
+  if (
+    cardScoped(viewer.role) ||
+    (viewer.trash === true && viewer.role !== "admin")
+  ) {
+    conditions.push(eq(issues.authorId, viewer.actor.id));
   }
 
   if (query.status !== undefined) {
@@ -868,12 +871,11 @@ export async function listIssues(
   const direction = query.order === "asc" ? asc : desc;
   const beyond = query.order === "asc" ? gt : lt;
 
-  const conditions = await issueFilterConditions(
-    db,
-    project.id,
-    query,
-    query.deleted ? { actor, role } : undefined,
-  );
+  const conditions = await issueFilterConditions(db, project.id, query, {
+    actor,
+    role,
+    trash: query.deleted,
+  });
   if (conditions === null) return { items: [], next_cursor: null };
 
   if (query.numbers !== undefined) {
@@ -977,11 +979,19 @@ export async function countIssuesByCategory(
   slug: string,
   query: IssueCountsQuery,
 ): Promise<IssueCounts> {
-  const { project } = await requireCapability(ctx, actor, slug, "issue.count");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.count",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const counts: IssueCounts = { open: 0, closed: 0, by_status: {} };
-  const conditions = await issueFilterConditions(db, project.id, query);
+  const conditions = await issueFilterConditions(db, project.id, query, {
+    actor,
+    role,
+  });
   if (conditions === null) return counts;
 
   const rows = await db
@@ -1383,6 +1393,10 @@ async function setTrashed(
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const gate = (row: IssueRow) => {
+    // Ahead of the tombstone, as in `assertIssueWritable` (T-788).
+    if (!cardInScope(row, actor, role)) {
+      throw new NotFoundError("issue not found");
+    }
     // A card that moved, or is being copied, belongs to the move (T-666):
     // trashing it here would answer 204 while the copy lives on elsewhere.
     if (row.movedAt !== null) throw new IssueMovedError(row, true, true);

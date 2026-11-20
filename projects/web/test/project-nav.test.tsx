@@ -321,3 +321,23 @@ describe("AppShell off any project (T-104)", () => {
     expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
   });
 });
+
+describe("ProjectNav for a guest (T-788)", () => {
+  it("offers neither Insights nor Settings, nor an empty ···", async () => {
+    renderAt("/projects/x", (slug) => (
+      <ProjectNav slug={slug} viewerRole="guest" />
+    ));
+    await screen.findByRole("link", { name: "List" });
+    expect(rowLabels()).toEqual(["List", "Board"]);
+    expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+  });
+
+  it("keeps both for a reader", async () => {
+    renderAt("/projects/x", (slug) => (
+      <ProjectNav slug={slug} viewerRole="reader" />
+    ));
+    const more = await openMore();
+    expect(more.getByRole("menuitem", { name: "Insights" })).toBeTruthy();
+    expect(more.getByRole("menuitem", { name: "Settings" })).toBeTruthy();
+  });
+});

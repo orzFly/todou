@@ -1,6 +1,7 @@
 import {
   type CapabilityId,
   can,
+  cardScoped,
   MEMBER_ROLES,
   type MemberRole,
   minRoleOf,
@@ -60,6 +61,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Read",
+    label: "See the project's insights",
+    caps: ["insights.read"],
+  },
+  {
+    group: "Read",
     label: "Read comments, questions and edit history",
     caps: ["comment.read", "question.read", "revision.read"],
   },
@@ -75,14 +81,23 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Read",
-    label: "Search, and see labels, statuses, reference rules and members",
-    caps: [
-      "search.run",
-      "label.list",
-      "status.list",
-      "reference.read",
-      "member.list",
-    ],
+    label: "See labels, statuses and reference rules",
+    caps: ["label.list", "status.list", "reference.read"],
+  },
+  {
+    group: "Read",
+    label: "See how many issues use each label",
+    caps: ["label.usage"],
+  },
+  {
+    group: "Read",
+    label: "See how many issues use each status",
+    caps: ["status.usage"],
+  },
+  {
+    group: "Read",
+    label: "Search, and see members",
+    caps: ["search.run", "member.list"],
   },
 
   {
@@ -268,7 +283,9 @@ export function RolePermissionsTable() {
                 >
                   {grants(role, row) ? "✓" : "—"}
                   {grants(role, row) && ownerOnly(role, row) && (
-                    <span className="text-muted-foreground"> *</span>
+                    <span className="text-muted-foreground">
+                      {cardScoped(role) ? " †" : " *"}
+                    </span>
                   )}
                 </TableCell>
               ))}
@@ -295,11 +312,12 @@ export function RolePermissionsDialog() {
       </DialogTrigger>
       {/* The `sm:` variant, because DialogContent's own default is
           `sm:max-w-sm` and a plain `max-w-*` never outranks it. */}
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>What each role can do</DialogTitle>
           <DialogDescription>
-            ✓ * only reaches what you posted yourself.
+            ✓ * only reaches what you posted yourself. ✓ † only reaches the
+            issues you opened yourself.
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto">

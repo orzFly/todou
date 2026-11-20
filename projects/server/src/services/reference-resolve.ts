@@ -29,7 +29,7 @@ import {
 } from "./access.ts";
 import { globalPrefixDirectory } from "./reference-directory.ts";
 import { cardAddressFor } from "./resolve-pass.ts";
-import { live } from "./trash.ts";
+import { cardInScope, live } from "./trash.ts";
 
 export async function resolveRefLocator(
   ctx: AppContext,
@@ -62,7 +62,7 @@ export async function resolveRefLocator(
         (await findProjectByRef(ctx, String(id)))?.project ?? null,
       mayRead: async (project) =>
         (await projectRoleOf(ctx, project, actor)) !== null,
-      cardLive: (project, number) => cardLive(ctx, project, number),
+      cardLive: (project, number) => cardLive(ctx, actor, project, number),
     },
     named,
     locator.number,
@@ -79,18 +79,24 @@ export async function resolveRefLocator(
  * a card mid-move is readable — refusing it would be a rule this path
  * invented. The two predicates differ in nothing else, so the answers still
  * agree everywhere a new reference could have been written.
+ *
+ * A card-scoped reader there (T-788) is told only about its own cards, the
+ * same answer the resolve pass gives it.
  */
 async function cardLive(
   ctx: AppContext,
+  actor: UserRow,
   project: ProjectRow,
   number: number,
 ): Promise<boolean> {
   const db = await ctx.router.forProject(routeInfoOf(project));
   const rows = await db
-    .select({ id: issues.id })
+    .select({ authorId: issues.authorId })
     .from(issues)
     .where(
       and(eq(issues.projectId, project.id), eq(issues.number, number), live),
     );
-  return rows.length > 0;
+  const row = rows[0];
+  if (row === undefined) return false;
+  return cardInScope(row, actor, await projectRoleOf(ctx, project, actor));
 }

@@ -51,6 +51,7 @@ import {
   assertIssueReadable,
   assertIssueWritable,
   gateColumns,
+  mayFollowAlias,
 } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -311,7 +312,7 @@ export async function getComment(
       ctx,
       project.id,
       commentId,
-      role !== null,
+      mayFollowAlias(role, issue, actor),
       issueNumber,
     );
   }
@@ -327,7 +328,7 @@ export async function getComment(
       ctx,
       project.id,
       commentId,
-      role !== null,
+      mayFollowAlias(role, issue, actor),
       issueNumber,
     );
   if (!row) throw new NotFoundError("comment not found");
@@ -363,7 +364,7 @@ export async function locateComment(
       ctx,
       project.id,
       commentId,
-      role !== null,
+      mayFollowAlias(role, undefined, actor),
       null,
     );
   if (!row) throw new NotFoundError("comment not found");

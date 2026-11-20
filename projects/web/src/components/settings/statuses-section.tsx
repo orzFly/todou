@@ -105,7 +105,10 @@ export function StatusesSection({ slug }: { slug: string }) {
   const project = useSuspenseQuery(projectQuery(slug));
   const settings = useSuspenseQuery(insightsSettingsQuery(slug));
   // A heavier read than the list; the list does not wait for it.
-  const usage = useQuery(statusUsageQuery(slug));
+  const usage = useQuery({
+    ...statusUsageQuery(slug),
+    enabled: useCan(slug, "status.usage"),
+  });
   const canManage = useCan(slug, "status.manage");
   const queryClient = useQueryClient();
 

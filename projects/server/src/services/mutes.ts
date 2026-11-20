@@ -1,4 +1,4 @@
-import type { MuteList, MuteReason } from "@todou/shared";
+import type { MemberRole, MuteList, MuteReason } from "@todou/shared";
 import { and, eq, exists, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -24,7 +24,7 @@ import {
   visibleProjectsOf,
 } from "./cross-references.ts";
 import { projectIconUrlOf } from "./projects.ts";
-import { live } from "./trash.ts";
+import { cardInScope, live } from "./trash.ts";
 
 /** One stored issue mute; `mutedAt` is the `until_activity` boundary. */
 export type IssueMute = { mode: "forever" | "until_activity"; mutedAt: Date };
@@ -152,7 +152,11 @@ export async function endedSnoozes(
         eq(issueEvents.issueId, issueMutes.issueId),
         ne(issueEvents.actorId, userId),
         gt(issueEvents.createdAt, issueMutes.mutedAt),
-        crossRefVisibleCondition(visible.slugs, visible.ids),
+        crossRefVisibleCondition(
+          visible.slugs,
+          visible.ids,
+          visible.cardScoped,
+        ),
       ),
     );
   const rows = await db
@@ -194,15 +198,18 @@ export async function liveIssueId(
   db: Db,
   projectId: number,
   number: number,
+  viewer: { actor: UserRow; role: MemberRole },
 ): Promise<number> {
   const rows = await db
-    .select({ id: issues.id })
+    .select({ id: issues.id, authorId: issues.authorId })
     .from(issues)
     .where(
       and(eq(issues.projectId, projectId), eq(issues.number, number), live),
     );
   const row = rows[0];
-  if (!row) throw new NotFoundError("issue not found");
+  if (!row || !cardInScope(row, viewer.actor, viewer.role)) {
+    throw new NotFoundError("issue not found");
+  }
   return row.id;
 }
 
@@ -218,9 +225,14 @@ export async function setIssueMute(
   number: number,
   mode: "forever" | "until_activity",
 ): Promise<{ project: ProjectRow; issueId: number }> {
-  const { project } = await requireCapability(ctx, actor, slug, "issue.mute");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.mute",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const issueId = await liveIssueId(db, project.id, number);
+  const issueId = await liveIssueId(db, project.id, number, { actor, role });
   await db
     .insert(issueMutes)
     .values({
@@ -247,9 +259,14 @@ export async function clearIssueMute(
   slug: string,
   number: number,
 ): Promise<void> {
-  const { project } = await requireCapability(ctx, actor, slug, "issue.mute");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.mute",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const issueId = await liveIssueId(db, project.id, number);
+  const issueId = await liveIssueId(db, project.id, number, { actor, role });
   await db
     .delete(issueMutes)
     .where(
@@ -306,7 +323,9 @@ export async function listMutes(
   ctx: AppContext,
   actor: UserRow,
 ): Promise<MuteList> {
-  const scope = await accessibleProjectRows(ctx, actor);
+  const scope = await accessibleProjectRows(ctx, actor, {
+    cardScoped: "filter",
+  });
   const mutedProjects = await loadMutedProjects(
     ctx.router.system(),
     actor.id,
@@ -347,6 +366,7 @@ export async function listMutes(
           title: issues.title,
           previewSource: previewSourceColumn(),
           projectId: issues.projectId,
+          authorId: issues.authorId,
         })
         .from(issueMutes)
         .innerJoin(issues, eq(issueMutes.issueId, issues.id))
@@ -368,7 +388,7 @@ export async function listMutes(
         .filter((r) => r.mode === "until_activity")
         .map((r) => r.issueId);
       if (snoozed.length === 0) return rows;
-      visible ??= visibleProjectsOf(ctx, scope);
+      visible ??= visibleProjectsOf(ctx, scope, actor);
       const ended = await endedSnoozes(db, actor.id, snoozed, await visible);
       return rows.filter((r) => !ended.has(r.issueId));
     },
@@ -377,6 +397,9 @@ export async function listMutes(
   for (const r of groupRows.flat()) {
     const project = projectById.get(r.projectId);
     if (!project) continue;
+    // A mute set before the caller became card-scoped there survives in the
+    // table, but that card is no longer theirs to see.
+    if (project.cardScoped && r.authorId !== actor.id) continue;
     issueOut.push({
       project: { slug: project.slug, name: project.name },
       number: r.number,

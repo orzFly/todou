@@ -75,7 +75,7 @@ export function issueWatchRoutes() {
     const ctx = c.get("appCtx");
     const user = c.get("user");
     const { slug, number } = c.req.valid("param");
-    const { project } = await requireCapability(
+    const { project, role } = await requireCapability(
       ctx,
       user,
       slug,
@@ -84,7 +84,7 @@ export function issueWatchRoutes() {
     const agentContext = requireAgentContext(c);
     const ttl = c.req.valid("json")?.ttl_seconds ?? DEFAULT_TTL_SECONDS;
     const db = await ctx.router.forProject(routeInfoOf(project));
-    await liveIssueId(db, project.id, number);
+    await liveIssueId(db, project.id, number, { actor: user, role });
     const { since, expiresAt } = ctx.watchers.mark({
       userId: user.id,
       agentContext,

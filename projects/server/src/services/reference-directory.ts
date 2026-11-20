@@ -427,7 +427,10 @@ export async function referenceDirectory(
   const [holds, slugHolds, readable] = await Promise.all([
     currentHolds(ctx),
     allSlugHolds(ctx),
-    accessibleProjectRows(ctx, actor),
+    // A card-scoped project included (T-788): its prefix is what its own
+    // cards are spelled with, and the cards themselves are checked one by
+    // one wherever a ref resolves.
+    accessibleProjectRows(ctx, actor, { cardScoped: "filter" }),
   ]);
   const visible = new Set(readable.map((row) => row.slug));
   const visibleIds = new Set(readable.map((row) => row.id));

@@ -30,7 +30,7 @@ import {
   type VisibleProjects,
 } from "./cross-references.ts";
 import { endedSnoozes, type MuteContext, silenced } from "./mutes.ts";
-import { live } from "./trash.ts";
+import { cardInScope, live } from "./trash.ts";
 
 /**
  * The user's unread epoch in each of these projects, created lazily on first
@@ -270,7 +270,11 @@ export async function unreadIssueState(
         gt(issueEvents.createdAt, readFrontiers.frontierAt),
         // Same predicate the timeline reads under: an event the viewer
         // cannot see must never light the card that carries it.
-        crossRefVisibleCondition(visible.slugs, visible.ids),
+        crossRefVisibleCondition(
+          visible.slugs,
+          visible.ids,
+          visible.cardScoped,
+        ),
       ),
     )
     .groupBy(issueEvents.issueId, issueEvents.projectId);
@@ -388,7 +392,7 @@ export async function markIssueRead(
   number: number,
   input: IssueReadInput,
 ): Promise<void> {
-  const { project } = await requireCapability(
+  const { project, role } = await requireCapability(
     ctx,
     actor,
     slug,
@@ -396,7 +400,7 @@ export async function markIssueRead(
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issueRows = await db
-    .select({ id: issues.id })
+    .select({ id: issues.id, authorId: issues.authorId })
     .from(issues)
     .where(
       and(
@@ -408,7 +412,9 @@ export async function markIssueRead(
       ),
     );
   const issue = issueRows[0];
-  if (!issue) throw new NotFoundError("issue not found");
+  if (!issue || !cardInScope(issue, actor, role)) {
+    throw new NotFoundError("issue not found");
+  }
 
   const upTo = input.up_to === undefined ? new Date() : new Date(input.up_to);
   await db
@@ -439,23 +445,25 @@ export async function markIssuesRead(
   slug: string,
   input: IssuesReadInput,
 ): Promise<void> {
-  const { project } = await requireCapability(
+  const { project, role } = await requireCapability(
     ctx,
     actor,
     slug,
     "issue.mark_read",
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const rows = await db
-    .select({ id: issues.id })
-    .from(issues)
-    .where(
-      and(
-        eq(issues.projectId, project.id),
-        inArray(issues.number, [...new Set(input.numbers)]),
-        live,
-      ),
-    );
+  const rows = (
+    await db
+      .select({ id: issues.id, authorId: issues.authorId })
+      .from(issues)
+      .where(
+        and(
+          eq(issues.projectId, project.id),
+          inArray(issues.number, [...new Set(input.numbers)]),
+          live,
+        ),
+      )
+  ).filter((row) => cardInScope(row, actor, role));
   if (rows.length === 0) return;
   // Ascending, so two of these over overlapping cards take the row locks in
   // one order and cannot deadlock each other on real postgres.
@@ -502,7 +510,10 @@ export async function bulkMarkRead(
 ): Promise<void> {
   let scope: ProjectRow[];
   if (input.projects === undefined) {
-    scope = await accessibleProjectRows(ctx, actor);
+    // Card-scoped projects included (T-788) with no per-card filter: both
+    // writes below touch only the caller's own read positions, and on such
+    // a project those only ever exist for its own cards.
+    scope = await accessibleProjectRows(ctx, actor, { cardScoped: "filter" });
   } else {
     scope = await requireCapabilities(
       ctx,

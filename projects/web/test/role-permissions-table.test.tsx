@@ -1,5 +1,10 @@
 import { render, within } from "@testing-library/react";
-import { CAPABILITIES, type CapabilityId, MEMBER_ROLES } from "@todou/shared";
+import {
+  CAPABILITIES,
+  type CapabilityId,
+  can,
+  MEMBER_ROLES,
+} from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
   DISPLAY_ROWS,
@@ -28,6 +33,34 @@ describe("the display rows", () => {
     expect(new Set(covered).size, "a capability listed in two rows").toBe(
       covered.length,
     );
+  });
+
+  // A cell reads ✓ only when every cap in the row is held, so a mixed row
+  // would show a guest "—" while the server lets it use half the row (T-788).
+  it("are each granted to a guest wholly or not at all", () => {
+    const mixed = DISPLAY_ROWS.filter((row) => {
+      const held = row.caps.map((cap) => can("guest", cap));
+      return held.some(Boolean) && !held.every(Boolean);
+    }).map((row) => row.label);
+    expect(mixed).toEqual([]);
+  });
+});
+
+describe("the guest column", () => {
+  it("marks every granted cell as reaching only the guest's own issues", () => {
+    const { container } = render(<RolePermissionsTable />);
+    expect(cell(container, "Open a new issue", "guest")).toBe("✓ †");
+    expect(cell(container, "Post a comment", "guest")).toBe("✓ †");
+    expect(
+      cell(
+        container,
+        "Browse the project, its issues and their timelines",
+        "guest",
+      ),
+    ).toBe("✓ †");
+    expect(cell(container, "Search, and see members", "guest")).toBe("—");
+    expect(cell(container, "See the project's insights", "guest")).toBe("—");
+    expect(cell(container, "See the project's insights", "reader")).toBe("✓");
   });
 });
 

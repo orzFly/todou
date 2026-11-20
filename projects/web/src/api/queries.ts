@@ -10,6 +10,7 @@ import {
   ORIGIN_HEADER,
   ProjectWatchers,
   TodouClient,
+  TodouError,
   WatchersOverview,
 } from "@todou/shared";
 
@@ -150,7 +151,15 @@ export const labelUsageQuery = (slug: string) =>
 export const membersQuery = (slug: string) =>
   queryOptions({
     queryKey: ["members", slug],
-    queryFn: () => api.listMembers(slug),
+    // A guest is refused the list (T-788), and the list, board, card and
+    // new-issue pages all suspend on it to name assignees and authors. An
+    // empty list is the honest reading for that viewer: every page still
+    // renders, people fall back to the refs the payloads already carry.
+    queryFn: () =>
+      api.listMembers(slug).catch((err: unknown) => {
+        if (err instanceof TodouError && err.status === 403) return [];
+        throw err;
+      }),
     staleTime: METADATA_STALE_MS,
   });
 
@@ -186,6 +195,18 @@ export function useCan(slug: string, cap: CapabilityId): boolean {
 export function useCanIfLoaded(slug: string, cap: CapabilityId): boolean {
   const project = useQuery(projectQuery(slug));
   return can(project.data?.viewer_role ?? null, cap);
+}
+
+/**
+ * `useCan` for a read that should be sent unless the project has already
+ * said it would be refused — a guest's usage counts (T-788). Never fetches
+ * the project itself: where it is not cached yet, the request going out and
+ * failing costs less than holding it back for everyone.
+ */
+export function useNotRefused(slug: string, cap: CapabilityId): boolean {
+  const project = useQuery({ ...projectQuery(slug), enabled: false });
+  const role = project.data?.viewer_role;
+  return role === undefined || can(role, cap);
 }
 
 /**

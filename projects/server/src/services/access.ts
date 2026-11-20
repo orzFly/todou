@@ -1,5 +1,7 @@
 import {
   type CapabilityId,
+  can,
+  cardScoped,
   type MemberRole,
   minRoleOf,
   PROJECT_NOT_FOUND,
@@ -152,7 +154,14 @@ function enforceMinRole(
   if (minRank === undefined) {
     throw new TypeError(`Unknown minimum project role: ${minRole}`);
   }
-  if (rank === undefined || rank < minRank) {
+  // With a capability named, the catalog decides: `guest` is let in by its
+  // entry's own field, which no rank comparison can express (T-788). Without
+  // one, the rank alone — and `guest` passes no internal minimum at all.
+  const held =
+    cap === undefined
+      ? rank !== undefined && rank >= minRank && !cardScoped(role)
+      : can(role, cap);
+  if (!held) {
     // Naming the capability turns the 403 into the one line of the catalog
     // to go read, rather than a role the reader must then hunt for.
     const detail = cap === undefined ? "" : ` (${cap})`;
@@ -214,24 +223,51 @@ export async function projectForRead(
   return { project, role: await projectRoleOf(ctx, project, user) };
 }
 
+/** A project row from {@link accessibleProjectRows}. */
+export type AccessibleProjectRow = ProjectRow & {
+  /**
+   * The caller sees this project only through the cards it authored
+   * (T-788). Only present when the caller asked for such projects.
+   */
+  cardScoped?: true;
+};
+
 /**
  * Same visibility rule as listProjects, but keeping the raw rows so the
  * caller can route to each project's database — what every cross-project
  * `/me/*` endpoint needs (T-97's inbox, T-100's bulk read).
+ *
+ * A project where the caller is `guest` is left out unless asked for with
+ * `cardScoped: "filter"` (T-788): an aggregate that cannot narrow itself to
+ * the caller's own cards must not see the project at all, so leaving it out
+ * is the default a new caller gets without thinking about it. A caller that
+ * asks gets those rows marked, and owns filtering them card by card.
  */
 export async function accessibleProjectRows(
   ctx: AppContext,
   user: UserRow,
-): Promise<ProjectRow[]> {
+  opts: { cardScoped?: "filter" } = {},
+): Promise<AccessibleProjectRow[]> {
   const system = ctx.router.system();
   if (user.isInstanceAdmin) return system.select().from(projects);
   const memberships = await system
-    .select({ projectId: projectMembers.projectId })
+    .select({ projectId: projectMembers.projectId, role: projectMembers.role })
     .from(projectMembers)
     .where(eq(projectMembers.userId, user.id));
-  const ids = memberships.map((m) => m.projectId);
+  const scoped = new Set(
+    memberships.filter((m) => cardScoped(m.role)).map((m) => m.projectId),
+  );
+  const ids = memberships
+    .map((m) => m.projectId)
+    .filter((id) => opts.cardScoped === "filter" || !scoped.has(id));
   if (ids.length === 0) return [];
-  return system.select().from(projects).where(inArray(projects.id, ids));
+  const rows = await system
+    .select()
+    .from(projects)
+    .where(inArray(projects.id, ids));
+  return rows.map((row) =>
+    scoped.has(row.id) ? { ...row, cardScoped: true as const } : row,
+  );
 }
 
 export async function authorizeProjects(
@@ -257,7 +293,7 @@ export async function requireCapabilities(
   user: UserRow,
   refs: readonly string[],
   cap: CapabilityId,
-): Promise<ProjectRow[]> {
+): Promise<AccessibleProjectRow[]> {
   const found = await findProjectsByRefs(ctx, refs);
   const roles = await rolesByProject(
     ctx,
@@ -265,15 +301,25 @@ export async function requireCapabilities(
     [...found.values()].map((lookup) => lookup.project.id),
   );
   const minRole = minRoleOf(cap);
-  const out: ProjectRow[] = [];
+  const out: AccessibleProjectRow[] = [];
   for (const ref of refs) {
     // One pass, because the failure a caller sees has to be the first one in
     // their own ordering: resolving every ref up front would turn a 403 on
     // ref #1 into a 404 raised by ref #2.
     const lookup = found.get(ref);
     if (lookup === undefined) throw new NotFoundError(PROJECT_NOT_FOUND);
-    enforceMinRole(roles.get(lookup.project.id) ?? null, minRole, cap);
-    out.push(lookup.project);
+    const role = enforceMinRole(
+      roles.get(lookup.project.id) ?? null,
+      minRole,
+      cap,
+    );
+    // Marked the way `accessibleProjectRows` marks them, so a caller that
+    // takes either list filters a card-scoped project alike (T-788).
+    out.push(
+      cardScoped(role)
+        ? { ...lookup.project, cardScoped: true }
+        : lookup.project,
+    );
   }
   return out;
 }

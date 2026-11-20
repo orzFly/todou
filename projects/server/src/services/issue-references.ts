@@ -12,6 +12,7 @@ import { issueAddresses } from "../db/system-schema.ts";
 import { NotFoundError } from "../errors.ts";
 import { findProjectsByRefs, projectForRead, routeInfoOf } from "./access.ts";
 import {
+  cardVisibleIn,
   crossRefVisibleCondition,
   visibleProjects,
 } from "./cross-references.ts";
@@ -40,7 +41,7 @@ type Occurrence = {
 async function currentAddresses(
   system: Db,
   addresses: readonly Address[],
-  visibleIds: ReadonlySet<number>,
+  readable: (a: Address) => boolean,
 ): Promise<Map<string, Address>> {
   const wanted = new Map(addresses.map((a) => [keyOf(a), a]));
   const found = new Map<string, Address>();
@@ -67,11 +68,12 @@ async function currentAddresses(
         ),
       );
     for (const row of rows) {
-      if (!visibleIds.has(row.currentProjectId)) continue;
-      found.set(keyOf(row), {
+      const now = {
         projectId: row.currentProjectId,
         number: row.currentNumber,
-      });
+      };
+      if (!readable(now)) continue;
+      found.set(keyOf(row), now);
     }
   }
   for (const [key, a] of wanted) if (!found.has(key)) found.set(key, a);
@@ -149,7 +151,11 @@ export async function getIssueReferences(
       and(
         eq(issueEvents.issueId, issue.id),
         inArray(issueEvents.type, ["referenced", "cross_referenced"]),
-        crossRefVisibleCondition(visible.slugs, visible.ids),
+        crossRefVisibleCondition(
+          visible.slugs,
+          visible.ids,
+          visible.cardScoped,
+        ),
       ),
     )
     .orderBy(asc(issueEvents.createdAt), asc(issueEvents.id));
@@ -221,13 +227,22 @@ export async function getIssueReferences(
     }
   }
 
+  const readable = (a: Address) =>
+    cardVisibleIn(visible, a.projectId, a.number);
   const current = await currentAddresses(
     system,
     [...linkedFrom.map((o) => o.address), ...linksTo.map((o) => o.address)],
-    visible.ids,
+    readable,
   );
+  // Another card of a card-scoped project (T-788) is left out entirely,
+  // where one in an unreadable project stays as a bare address: the text
+  // names that project already, but must not confirm the card's existence.
+  const scoped = visible.cardScoped;
+  const shown = (entry: IssueReferenceEntry) =>
+    !scoped?.has(entry.project_id) ||
+    readable({ projectId: entry.project_id, number: entry.number });
   return {
-    linked_from: group(linkedFrom, current, self, false),
-    links_to: group(linksTo, current, self, true),
+    linked_from: group(linkedFrom, current, self, false).filter(shown),
+    links_to: group(linksTo, current, self, true).filter(shown),
   };
 }

@@ -38,7 +38,7 @@ export async function listLabelUsage(
   actor: UserRow,
   slug: string,
 ): Promise<LabelUsage[]> {
-  const { project } = await requireCapability(ctx, actor, slug, "label.list");
+  const { project } = await requireCapability(ctx, actor, slug, "label.usage");
   const db = await ctx.router.forProject(routeInfoOf(project));
   return db
     .select({

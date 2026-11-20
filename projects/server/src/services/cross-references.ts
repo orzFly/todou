@@ -1,11 +1,25 @@
 import type { AutolinkRule, PrefixDirectory, SlugClaim } from "@todou/shared";
-import { and, eq, inArray, ne, or, type SQL, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  inArray,
+  ne,
+  notInArray,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext, DbContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
-import { autolinks, issueEvents } from "../db/project-schema.ts";
+import { autolinks, issueEvents, issues } from "../db/project-schema.ts";
 import { projects, slugHistory } from "../db/system-schema.ts";
-import { accessibleProjectRows } from "./access.ts";
+import {
+  type AccessibleProjectRow,
+  accessibleProjectRows,
+  type ProjectRow,
+  routeInfoOf,
+} from "./access.ts";
 import {
   globalPrefixDirectory,
   globalSlugEntries,
@@ -38,20 +52,49 @@ import {
 export function crossRefVisibleCondition(
   visibleSlugs: string[],
   visibleIds: Iterable<number> = [],
+  /**
+   * Projects the viewer sees only through its own cards (T-788), each with
+   * the numbers of those cards. A reference written there is visible when
+   * the card it was written on is one of them.
+   */
+  cardScoped: CardScopedProjects = new Map(),
 ): SQL {
   const notReference = and(
     ne(issueEvents.type, "cross_referenced"),
     ne(issueEvents.type, "referenced"),
   ) as SQL;
-  const namesNoProject = sql`not (${issueEvents.payload} ?| array['by_project', 'by_project_id'])`;
+  const byIssue = sql`(${issueEvents.payload} ->> 'by_issue')::bigint`;
+  const byOwnCard = (numbers: ReadonlySet<number>): SQL =>
+    numbers.size === 0 ? sql`false` : inArray(byIssue, [...numbers]);
+  let namesNoProject: SQL = sql`not (${issueEvents.payload} ?| array['by_project', 'by_project_id'])`;
+  if (cardScoped.size > 0) {
+    // A pre-merge local reference names no project: it was written in the
+    // project the event lives in, which a card-scoped viewer still has to
+    // be asked about.
+    namesNoProject = and(
+      namesNoProject,
+      or(
+        notInArray(issueEvents.projectId, [...cardScoped.keys()]),
+        ...[...cardScoped].map(([projectId, numbers]) =>
+          and(eq(issueEvents.projectId, projectId), byOwnCard(numbers)),
+        ),
+      ),
+    ) as SQL;
+  }
   const ids = [...visibleIds];
-  if (visibleSlugs.length === 0 && ids.length === 0) {
+  if (visibleSlugs.length === 0 && ids.length === 0 && cardScoped.size === 0) {
     return or(notReference, namesNoProject) as SQL;
   }
   const bySlug = sql<string>`${issueEvents.payload} ->> 'by_project'`;
   const byId = sql<number>`(${issueEvents.payload} ->> 'by_project_id')::bigint`;
+  const byIdVisible = or(
+    ids.length === 0 ? sql`false` : inArray(byId, ids),
+    ...[...cardScoped].map(([projectId, numbers]) =>
+      and(eq(byId, projectId), byOwnCard(numbers)),
+    ),
+  );
   const source = sql`case when ${issueEvents.payload} ? 'by_project_id'
-      then ${ids.length === 0 ? sql`false` : inArray(byId, ids)}
+      then ${byIdVisible}
       else ${visibleSlugs.length === 0 ? sql`false` : inArray(bySlug, visibleSlugs)}
     end`;
   return or(notReference, namesNoProject, source) as SQL;
@@ -84,26 +127,60 @@ export async function visibleSlugsWithHistory(
  */
 export type VisibleProjects = {
   slugs: string[];
+  /**
+   * Projects whose every card the viewer may read. A card-scoped project
+   * (T-788) is deliberately absent, so that whatever asks only this set
+   * treats it as unreadable; `cardScoped` is the narrower answer.
+   */
   ids: Set<number>;
+  /** Every readable project's current slug, card-scoped ones included. */
   currentSlugs: Map<number, string>;
+  cardScoped?: CardScopedProjects;
 };
+
+/** Project id → numbers of the cards the viewer opened there. */
+export type CardScopedProjects = ReadonlyMap<number, ReadonlySet<number>>;
+
+/** Whether `visible` lets the viewer read card `number` of `projectId`. */
+export function cardVisibleIn(
+  visible: VisibleProjects,
+  projectId: number,
+  number: number,
+): boolean {
+  if (visible.ids.has(projectId)) return true;
+  return visible.cardScoped?.get(projectId)?.has(number) ?? false;
+}
 
 export async function visibleProjects(
   ctx: AppContext,
   user: UserRow,
 ): Promise<VisibleProjects> {
-  return visibleProjectsOf(ctx, await accessibleProjectRows(ctx, user));
+  return visibleProjectsOf(
+    ctx,
+    await accessibleProjectRows(ctx, user, { cardScoped: "filter" }),
+    user,
+  );
 }
 
 /** The same, for a caller already holding the `accessibleProjectRows` walk. */
 export async function visibleProjectsOf(
   ctx: AppContext,
-  rows: { id: number; slug: string }[],
+  rows: AccessibleProjectRow[],
+  user: UserRow,
 ): Promise<VisibleProjects> {
-  const ids = new Set(rows.map((row) => row.id));
+  const full = rows.filter((row) => !row.cardScoped);
+  const ids = new Set(full.map((row) => row.id));
   const currentSlugs = new Map(rows.map((row) => [row.id, row.slug]));
-  if (rows.length === 0) return { slugs: [], ids, currentSlugs };
-  const slugs = new Set(rows.map((row) => row.slug));
+  const cardScoped = await ownCardNumbers(
+    ctx,
+    rows.filter((row) => row.cardScoped),
+    user,
+  );
+  // Left off when empty, so that a viewer with no such project gets exactly
+  // the shape it always did.
+  const scoped = cardScoped.size === 0 ? {} : { cardScoped };
+  if (full.length === 0) return { slugs: [], ids, currentSlugs, ...scoped };
+  const slugs = new Set(full.map((row) => row.slug));
   const history = await ctx.router
     .system()
     .select({ slug: slugHistory.slug })
@@ -111,11 +188,41 @@ export async function visibleProjectsOf(
     .where(
       inArray(
         slugHistory.projectId,
-        rows.map((row) => row.id),
+        full.map((row) => row.id),
       ),
     );
   for (const row of history) slugs.add(row.slug);
-  return { slugs: [...slugs], ids, currentSlugs };
+  return { slugs: [...slugs], ids, currentSlugs, ...scoped };
+}
+
+async function ownCardNumbers(
+  ctx: AppContext,
+  rows: ProjectRow[],
+  user: UserRow,
+): Promise<Map<number, Set<number>>> {
+  const out = new Map<number, Set<number>>(
+    rows.map((row) => [row.id, new Set()]),
+  );
+  if (rows.length === 0) return out;
+  const found = await ctx.router.perDatabase(
+    rows,
+    routeInfoOf,
+    async (db, group) =>
+      db
+        .select({ projectId: issues.projectId, number: issues.number })
+        .from(issues)
+        .where(
+          and(
+            inArray(
+              issues.projectId,
+              group.map((row) => row.id),
+            ),
+            eq(issues.authorId, user.id),
+          ),
+        ),
+  );
+  for (const row of found.flat()) out.get(row.projectId)?.add(row.number);
+  return out;
 }
 
 /** Everything the grammar needs beyond the text itself, loaded once per write. */

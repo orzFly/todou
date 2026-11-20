@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi";
 import {
+  cardScoped,
   ProjectRef,
   ProjectWatchers,
   type Watcher,
@@ -15,6 +16,7 @@ import {
   accessibleProjectRows,
   requireCapability,
 } from "../services/access.ts";
+import { cardVisibility } from "../services/card-visibility.ts";
 import { toUserRef } from "../services/users.ts";
 
 const overviewRoute = createRoute({
@@ -120,14 +122,24 @@ export function watcherRoutes() {
 
   app.openapi(projectRoute, async (c) => {
     const ctx = c.get("appCtx");
-    const { project } = await requireCapability(
+    const user = c.get("user");
+    const { project, role } = await requireCapability(
       ctx,
-      c.get("user"),
+      user,
       c.req.valid("param").slug,
       "project.read",
     );
-    const level = ctx.watchers.projectWatchers(project.id);
-    const cards = ctx.watchers.issueWatchers(project.id);
+    // A card-scoped reader (T-788) sees who watches its own cards, and
+    // nothing about who is around the rest of the project.
+    const visible = await cardVisibility(ctx, user, role, project);
+    const level = cardScoped(role)
+      ? []
+      : ctx.watchers.projectWatchers(project.id);
+    const cards = new Map(
+      [...ctx.watchers.issueWatchers(project.id)].filter(([number]) =>
+        visible(number),
+      ),
+    );
     const convert = await toWatchers(ctx, [level, ...cards.values()]);
     const issues: Record<string, Watcher[]> = {};
     for (const [number, list] of cards) issues[String(number)] = convert(list);

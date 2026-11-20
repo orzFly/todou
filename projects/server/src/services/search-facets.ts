@@ -97,7 +97,11 @@ export async function searchFacets(
     const where = source.crossProject
       ? (and(
           visible(project.id),
-          crossRefVisibleCondition(readable.slugs, readable.ids),
+          crossRefVisibleCondition(
+            readable.slugs,
+            readable.ids,
+            readable.cardScoped,
+          ),
         ) as SQL)
       : visible(project.id);
 

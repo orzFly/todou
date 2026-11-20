@@ -128,7 +128,9 @@ export class ProjectMembersAddCommand extends ProjectCommand {
 
   login = Option.String();
   role = Option.String("--role", "reader", {
-    description: "admin, writer, reporter or reader (default: reader)",
+    description:
+      "admin, writer, reporter, reader or guest (default: reader); a guest " +
+      "sees only the issues it opened",
   });
 
   protected async run(client: TodouClient): Promise<void> {

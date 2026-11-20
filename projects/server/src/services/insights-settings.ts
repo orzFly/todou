@@ -85,7 +85,12 @@ export async function getInsightsSettings(
   actor: UserRow,
   slug: string,
 ): Promise<Settings> {
-  const { project } = await requireCapability(ctx, actor, slug, "status.list");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "insights.read",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const [rows, saved] = await Promise.all([
     statusRows(db, project.id),

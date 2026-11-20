@@ -65,7 +65,13 @@ export type InternalRefPrefix = z.infer<typeof InternalRefPrefix>;
  * Spelled as a tuple beside the schema because drizzle's `text({ enum })`
  * needs the literals, and `z.enum(...).options` widens them to `string`.
  */
-export const MEMBER_ROLES = ["admin", "writer", "reporter", "reader"] as const;
+export const MEMBER_ROLES = [
+  "admin",
+  "writer",
+  "reporter",
+  "reader",
+  "guest",
+] as const;
 export const MemberRole = z.enum(MEMBER_ROLES);
 export type MemberRole = z.infer<typeof MemberRole>;
 

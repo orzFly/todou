@@ -410,12 +410,12 @@ async function authorizedScope(
 ): Promise<ProjectRow[]> {
   if (scope.type === "project") {
     return [
-      (await requireCapability(ctx, viewer, String(scope.id), "activity.read"))
+      (await requireCapability(ctx, viewer, String(scope.id), "insights.read"))
         .project,
     ];
   }
   const rows = await accessibleProjectRows(ctx, viewer);
-  return (await authorizeProjects(ctx, viewer, rows, "activity.read")).sort(
+  return (await authorizeProjects(ctx, viewer, rows, "insights.read")).sort(
     (a, b) => a.id - b.id,
   );
 }
@@ -562,7 +562,7 @@ export async function getProjectActivityCalendar(
     ctx,
     viewer,
     ref,
-    "activity.read",
+    "insights.read",
   );
   return calendar(
     ctx,
