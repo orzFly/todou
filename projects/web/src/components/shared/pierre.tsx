@@ -487,6 +487,23 @@ export function fenceFilename(tag: string | undefined): string {
 }
 
 /**
+ * A number that moves whenever `value` stops being the one seen last render.
+ *
+ * A controlled CodeView reconciles items by id and redraws one only when its
+ * `version` differs from the last it saw — new contents under the same id and
+ * version are taken for the old ones. Without a version that tracks the
+ * contents, an edited comment kept drawing its fence's previous text until
+ * the page reloaded (T-787).
+ */
+function useGeneration(value: unknown): number {
+  const seen = useRef({ value, generation: 0 });
+  if (!Object.is(seen.current.value, value)) {
+    seen.current = { value, generation: seen.current.generation + 1 };
+  }
+  return seen.current.generation;
+}
+
+/**
  * Read-only code rendering through pierre CodeView: syntax highlighting
  * from the filename, dark/light theme in step with the revision diffs.
  * Until pierre renders its first line a plain <pre> shows the same text, so
@@ -529,17 +546,19 @@ export function CodeBlock({
   /** Caps the height for a long file: CodeView virtualizes against its box. */
   className?: string;
 }) {
+  const version = useGeneration(contents) * 2 + (plain ? 1 : 0);
   const items = useMemo(
     () => [
       {
         id: filename,
         type: "file" as const,
+        version,
         file: plain
           ? { name: filename, contents, lang: "text" as const }
           : { name: filename, contents },
       },
     ],
-    [filename, contents, plain],
+    [filename, contents, plain, version],
   );
   const syntaxTheme = useSyntaxTheme();
   const options = useMemo(
@@ -757,6 +776,7 @@ export function PatchFiles({
 }) {
   const syntaxTheme = useSyntaxTheme();
   const options = useMemo(() => patchOptions(syntaxTheme), [syntaxTheme]);
+  const generation = useGeneration(patches);
   const items = useMemo(() => {
     let position = 0;
     return patches.flatMap((patch, commit): CodeViewItem[] => {
@@ -767,8 +787,7 @@ export function PatchFiles({
           type: "diff",
           fileDiff,
           collapsed,
-          // CodeView only takes a changed item from a changed version.
-          version: collapsed ? 0 : 1,
+          version: generation * 2 + (collapsed ? 0 : 1),
         };
       });
       const parsed = commits[commit];
@@ -777,6 +796,7 @@ export function PatchFiles({
         {
           id: patchCommitId(commit),
           type: "file",
+          version: generation,
           // Only the header row when there is no message under the subject.
           collapsed: parsed.body === "",
           file: {
@@ -788,7 +808,7 @@ export function PatchFiles({
         ...files,
       ];
     });
-  }, [patches, commits, collapsedFiles]);
+  }, [patches, commits, collapsedFiles, generation]);
   const [degraded, setDegraded] = useState(false);
   const warned = useRef(false);
   const containerRef = useCallback((node: HTMLDivElement | null) => {
