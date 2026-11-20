@@ -18,6 +18,9 @@ description: How agents move work through a todou tracker — the status flow an
 
 - `issue edit <n> --status "In Progress" --add-assignee @me` — one write; then watch it, always
   (`/todou-cli`, "Waiting").
+- An issue shown as `(no title given)` gets its title in that same write (`--title`): a summary of
+  the body naming the symptom, never an inferred cause. Triage normally names it; a card reached
+  without triage is named by whoever takes it.
 - An assignee means held, never by whom (one machine account), and it is not a lock.
 - Open design details become questions on the issue, never guesses.
 - A need outside the issue you hold: file it at once rather than widening yours.
