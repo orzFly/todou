@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Build standalone `todou` CLI artifacts (T-22): four deno-compiled
-# executables plus one esbuild-bundled .cjs for users who bring their own
-# Node runtime. Everything lands in dist/, which is git-ignored.
+# Build standalone `todou` CLI artifacts (T-22): six single-file executables
+# on txiki.js (T-792) plus one esbuild-bundled .cjs for users who bring their
+# own Node runtime. Everything lands in dist/, which is git-ignored.
+#
+# The txiki.js runtimes come from $TODOU_TJS_RUNTIMES when it is set (the
+# docker image builds them in a stage of their own), and from
+# `nix build path:./.nix#tjs-runtimes` otherwise.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -23,15 +27,6 @@ case "$STAGE_MODE" in
   *) echo "build-cli.sh: --stage-mode must be git or copy" >&2; exit 2 ;;
 esac
 
-# Plain string pairs rather than `declare -A`: associative arrays need bash 4,
-# and macOS still ships bash 3.2.
-TARGETS="
-linux-amd64:x86_64-unknown-linux-gnu
-linux-arm64:aarch64-unknown-linux-gnu
-macos-arm64:aarch64-apple-darwin
-windows-amd64:x86_64-pc-windows-msvc
-"
-
 # Computed before anything else touches the tree; --dirty reflects the same
 # working-tree content `git ls-files` stages below, so the suffix is truthful
 # about what actually enters the artifacts. TODOU_BUILD_VERSION wins, for
@@ -43,7 +38,7 @@ fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
-trap 'rm -rf "$STAGE"' EXIT
+trap 'rm -rf "$STAGE" "$OUT/.tjs-runtimes"' EXIT
 
 # The scratch copy exists so the version injection below can overwrite a
 # tracked file without dirtying the developer's checkout; `--prod --filter`
@@ -67,59 +62,28 @@ else
 fi
 (cd "$STAGE" && CI=true pnpm install --prod --frozen-lockfile --filter '@todou/cli...')
 
-# The stage, never the working tree: bundle-cli.sh overwrites a tracked file to
-# inject the version, and a build must not dirty the developer's checkout. Every
-# other artifact is then compiled from this bundle.
+# The stage, never the working tree: bundle-cli.sh overwrites tracked files to
+# inject the version and the mermaid payload, and a build must not dirty the
+# developer's checkout. The executables below are bundled from the same stage.
 #
 # `pnpm exec` puts node_modules/.bin ahead of PATH, so the release artifacts are
 # bundled with the esbuild the lockfile pins.
 echo "==> bundling todou.cjs at version $VERSION (bring-your-own-Node)"
 pnpm exec scripts/bundle-cli.sh "$STAGE" "$VERSION" "$OUT/todou.cjs"
 
-# Compiling the bundle above, not the TS entry: the VFS snapshot `deno compile`
-# takes of a pnpm tree drops the links that live inside `.pnpm`, so a
-# transitive import compiles clean and fails at startup (T-204). A bundle has
-# no imports left to resolve, and every artifact then ships the same code.
-#
-# From a directory of its own, with every file in it at one fixed mtime:
-# deno embeds the files it packs together with their mtimes, so the same
-# bundle compiled in CI, in the docker stage and on a dev machine came out as
-# three different executables. `todou upgrade` trusts a server's build without
-# asking only when it is byte-identical to the GitHub release (T-570). The
-# package.json is deno's to find — it walks up to the nearest one and packs it
-# too — so it is supplied here rather than left to whatever is above.
-# `TZ=UTC touch -t` because `-t` reads local time, and `-d @epoch` is GNU-only.
-#
-# Not executable, for Windows hosts (T-572): deno packs a file's executable bit
-# only where it can read one, so a Unix host recorded `"x":true` for the bundle
-# and a Windows host never could. Nothing reads the bit unless the executable
-# self-extracts, which ours does not.
-echo "==> deno compile"
-COMPILE="$OUT/.compile"
-mkdir -p "$COMPILE"
-trap 'rm -rf "$STAGE" "$COMPILE"' EXIT
-cp "$OUT/todou.cjs" "$COMPILE/todou.cjs"
-chmod 644 "$COMPILE/todou.cjs"
-printf '{}\n' > "$COMPILE/package.json"
-TZ=UTC touch -t 200001010000 "$COMPILE/todou.cjs" "$COMPILE/package.json"
-while IFS=: read -r name target; do
-  [ -n "$name" ] || continue
-  out="$OUT/todou-$name"
-  case "$name" in windows-*) out="$out.exe" ;; esac
-  echo "  -> $name ($target)"
-  # --node-modules-dir=none: deno otherwise embeds the node_modules beside
-  # the nearest package.json, which takes the executable from 86 MB to 464.
-  deno compile --node-modules-dir=none --allow-all --target "$target" \
-    --output "$out" "$COMPILE/todou.cjs"
-done <<EOF
-$TARGETS
-EOF
-
-rm -rf "$STAGE" "$COMPILE"
-
-# A Mac or Windows host leaves one metadata byte different from the release
-# that Linux CI builds; a Linux host has nothing to change.
-node scripts/normalize-vfs-case.mjs "$OUT"/todou-*
+# Each executable is a txiki.js runtime with the CLI's QuickJS bytecode
+# appended, all six compiled on this host. They have to come out
+# byte-identical wherever this runs: `todou upgrade` trusts a server's build
+# without asking only when it matches the GitHub release (T-570).
+RUNTIMES="${TODOU_TJS_RUNTIMES:-}"
+if [ -z "$RUNTIMES" ]; then
+  echo "==> nix build path:./.nix#tjs-runtimes"
+  nix --extra-experimental-features 'nix-command flakes' build \
+    path:./.nix#tjs-runtimes --out-link "$OUT/.tjs-runtimes"
+  RUNTIMES="$OUT/.tjs-runtimes"
+fi
+pnpm exec scripts/build-cli-tjs.sh "$STAGE" "$VERSION" "$RUNTIMES" "$OUT"
+rm -rf "$STAGE" "$OUT/.tjs-runtimes"
 
 # sha256 proves the bytes, not that they start: T-204 shipped four executables
 # that compiled without a single warning and then died on every invocation.
@@ -142,13 +106,17 @@ smoke todou.cjs node "$OUT/todou.cjs"
 # linux.
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64) smoke todou-linux-amd64 "$OUT/todou-linux-amd64" ;;
-  Linux/aarch64) smoke todou-linux-arm64 "$OUT/todou-linux-arm64" ;;
+  Linux/aarch64 | Linux/arm64) smoke todou-linux-arm64 "$OUT/todou-linux-arm64" ;;
   Darwin/arm64) smoke todou-macos-arm64 "$OUT/todou-macos-arm64" ;;
+  Darwin/x86_64) smoke todou-macos-amd64 "$OUT/todou-macos-amd64" ;;
   MINGW64_NT-*/x86_64 | MSYS_NT-*/x86_64)
     smoke todou-windows-amd64 "$OUT/todou-windows-amd64.exe"
     ;;
+  MINGW64_NT-*/aarch64 | MSYS_NT-*/aarch64 | MINGW64_NT-*/arm64 | MSYS_NT-*/arm64)
+    smoke todou-windows-arm64 "$OUT/todou-windows-arm64.exe"
+    ;;
   *)
-    echo "  warn: no deno artifact runs on $(uname -s)/$(uname -m)" \
+    echo "  warn: no executable runs on $(uname -s)/$(uname -m)" \
       "— only todou.cjs smoked" >&2
     ;;
 esac

@@ -37,7 +37,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
-      - run: scripts/deno-pins-match.sh
       - run: pnpm typecheck
       - run: pnpm test
         env:
@@ -69,15 +68,23 @@ jobs:
         with:
           node-version: 26
           cache: pnpm
-      - uses: denoland/setup-deno@v2
+      # The txiki.js runtimes come from .nix/txiki.nix, six zig cross-builds
+      # that take minutes cold; the store is cached on that file's hash.
+      - uses: cachix/install-nix-action@v31
+      - uses: nix-community/cache-nix-action@v6
         with:
-          deno-version: v2.9.8
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('.nix/**') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:cli
       - run: node scripts/mermaid-bundle-smoke.mjs dist/todou.cjs
-      # A Linux build never takes the Mac-host path of the normalizer that
-      # build:cli just ran, so this one exercises it on a doctored copy.
-      - run: node scripts/normalize-vfs-case-check.mjs dist/todou-macos-arm64
+      - run: node scripts/mermaid-bundle-smoke.mjs dist/todou-linux-amd64
+      # The shims under the executables against Node's own modules: the same
+      # cases also run in projects/cli/test/tjs-conformance.test.ts.
+      - run: >-
+          pnpm exec node scripts/tjs-conformance.mjs
+          "$(nix build path:./.nix#tjs --no-link --print-out-paths)/bin/tjs"
+      - run: node scripts/tjs-differential-smoke.mjs dist/todou.cjs dist/todou-linux-amd64
       - uses: actions/upload-artifact@v7
         with:
           name: todou-cli

@@ -29,23 +29,35 @@ RUN [ -z "$TODOU_BUILD_VERSION" ] || printf \
 # from a stage that could chown it (distroless nonroot = uid 65532).
 RUN mkdir -p /data && chown 65532:65532 /data
 
+# The txiki.js runtimes the CLI executables are assembled on (T-792), built
+# from the same .nix/txiki.nix as the release CI and the nix package, so the
+# executables /api/cli serves match the GitHub release byte for byte (T-570).
+# This stage sees nothing but .nix/, which keeps its layer cached until the
+# runtimes themselves change. The image is a multi-arch index pinned by
+# digest; each builder pulls its own platform, and all six targets are
+# cross-built from there.
+FROM docker.io/nixos/nix:2.36.0@sha256:746280551ddc1c72177d1a597c05eacac86dfaa18d5d649bf86411278bcd5470 AS tjs-runtimes
+COPY .nix/ /src/.nix/
+RUN nix --extra-experimental-features 'nix-command flakes' build \
+      path:/src/.nix#tjs-runtimes --out-link /src/result \
+ && cp -rL /src/result /tjs-runtimes
+
 # The CLI builds the image hands out over /api/cli (T-146). Both arch runners
 # build the whole set — the artifacts a deployment serves have nothing to do
 # with the platform it runs on, and a deployment that could only serve its own
 # platform would be useless to everyone else's laptop.
 FROM node:26-trixie-slim AS cli-build
 RUN npm install -g pnpm@11
-# deno publishes a multi-arch bin image, so this resolves to the builder's own
-# platform; the four compile targets are cross-built from there.
-COPY --from=docker.io/denoland/deno:bin-2.9.8 /deno /usr/local/bin/deno
+COPY --from=tjs-runtimes /tjs-runtimes /tjs-runtimes
+ENV TODOU_TJS_RUNTIMES=/tjs-runtimes
 RUN apt-get update \
  && apt-get install -y --no-install-recommends zstd ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
-# Dev dependencies included, unlike server-deps: build-cli.sh bundles
-# todou.cjs with the root esbuild. The prod-only tree `deno compile` needs is
-# staged separately by the script, so no dev package reaches an artifact.
+# Dev dependencies included, unlike server-deps: build-cli.sh bundles with the
+# root esbuild. The prod-only tree the bundles are made from is staged
+# separately by the script, so no dev package reaches an artifact.
 RUN CI=true pnpm install --frozen-lockfile --filter '@todou/cli...'
 # Read by build-cli.sh, which injects it into build-info.ts in its own staged
 # copy — same mechanism, same file as the server stage's printf above.

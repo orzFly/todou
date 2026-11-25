@@ -5,7 +5,6 @@
 # its own directory: `.nix/flake.nix` cannot read `../nix/`.
 { pkgs }:
 {
-  deno = pkgs.callPackage ./deno.nix { };
   nodejs = pkgs.nodejs_26;
 
   # `pkgs.pnpm` is an alias. package.json's devEngines.packageManager asks for

@@ -1,48 +1,38 @@
-# The supported install: deno interpreting the bundle, with the environment
-# variables from nix/deno-env.nix cleared.
+# The supported install: the same single-file executable the releases ship
+# (T-792), assembled from the txiki.js runtime for this host and the CLI's
+# QuickJS bytecode. The bytecode comes from the tjs bundle that todou-cli-cjs
+# builds alongside todou.cjs, so both packages carry one build of the code.
 { lib
 , runCommand
-, makeWrapper
 , common
 , version
 , todou-cli-cjs
 }:
 
 let
-  denoEnv = import ./deno-env.nix;
   tests = import ./tests.nix { inherit lib runCommand common version; };
-
-  unsetFlags = lib.concatMapStringsSep " " (name: "--unset ${name}") denoEnv.unset;
-  setFlags = lib.concatStringsSep " "
-    (lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}")
-      denoEnv.set);
 
   self = runCommand "todou-cli-${version}"
     {
-      nativeBuildInputs = [ makeWrapper ];
-
-      passthru.tests = tests.cli {
-        inherit denoEnv todou-cli-cjs;
-        todou-cli = self;
-      };
+      passthru.tests = tests.cli { todou-cli = self; };
 
       meta = {
-        description = "todou CLI, run by deno";
+        description = "todou CLI, a single-file txiki.js executable";
         homepage = "https://github.com/orzFly/todou";
         license = lib.licenses.bsd3;
         mainProgram = "todou";
-        platforms = lib.platforms.all;
+        platforms = common.txiki.host.meta.platforms;
       };
     }
-    # --allow-all matches the permissions build-cli.sh gives `deno compile`: the
-    # CLI reads and writes config files, spawns subprocesses and opens network
-    # connections. The usage text hardcodes the program name rather than reading
-    # argv[0], so the wrapper has no argv0 to fix up.
+    # TJS_HOME: `tjs run` is the tjs CLI, which creates its home on start,
+    # and the build sandbox's HOME is not writable.
     ''
-      makeWrapper ${common.deno}/bin/deno "$out/bin/todou" \
-        --add-flags "run --allow-all ${todou-cli-cjs}/lib/todou/todou.cjs" \
-        ${setFlags} \
-        ${unsetFlags}
+      export TJS_HOME="$TMPDIR/tjs-home"
+      mkdir -p "$out/bin"
+      ${common.txiki.host}/bin/tjs run \
+        ${todou-cli-cjs.src}/projects/cli/tjs/compile.js \
+        ${todou-cli-cjs}/lib/todou/todou.tjs.mjs \
+        ${common.txiki.host}/bin/tjs "$out/bin/todou"
     '';
 in
 self

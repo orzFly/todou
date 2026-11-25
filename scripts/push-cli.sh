@@ -4,8 +4,9 @@
 # deployment's /api/cli keeps advertising whatever version it was last packed
 # at — never the one deploy.sh has just pulled.
 #
-# The build belongs on a dev machine: the host runs the server and has neither
-# deno nor zstd, and installing them would turn a runtime into a build machine.
+# The build belongs on a dev machine: the host runs the server, not a build
+# toolchain (nix, zstd), and installing one would turn a runtime into a build
+# machine.
 #
 # The same goes for the checking. A non-interactive ssh lands on a PATH like
 # /usr/local/bin:/usr/bin:/bin:/usr/games, and a per-user toolchain — mise,
@@ -96,7 +97,7 @@ run() {
   [ "$DRY_RUN" = 1 ] || "$@"
 }
 
-for tool in git pnpm deno zstd node ssh scp; do
+for tool in git pnpm nix zstd node ssh scp; do
   command -v "$tool" >/dev/null \
     || { echo "error: $tool is not on PATH — build on a dev machine" >&2; exit 1; }
 done

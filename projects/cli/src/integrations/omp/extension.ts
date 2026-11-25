@@ -2,7 +2,7 @@
  * The todou extension omp loads, installed by `todou integration install omp`
  * (T-308). It is the source of truth for what gets written; the byte-for-byte
  * copy in `extension.generated.ts` is what the shipped CLI carries, because a
- * single-file bundle and four `deno compile` executables can take no resource
+ * single-file bundle and six single-file executables can take no resource
  * file along beside them.
  * Native Pi bundles this same machinery with its schema and host profile from
  * `../pi/extension.ts`; omp keeps the default profile and verbatim asset.

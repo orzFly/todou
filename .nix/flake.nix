@@ -35,7 +35,6 @@
           imports = [{
             name = "devshell";
             packages = [
-              common.deno
               common.nodejs
               common.txiki.host
               common.pnpm

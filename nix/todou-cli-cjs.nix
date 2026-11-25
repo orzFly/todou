@@ -1,5 +1,7 @@
 # The esbuild bundle on its own, for callers who bring their own node-compatible
-# runtime. nix/todou-cli.nix wraps this same file with deno.
+# runtime. The same build also bundles the CLI for txiki.js, at
+# $out/lib/todou/todou.tjs.mjs, which nix/todou-cli.nix compiles into the
+# single-file executable (T-792).
 { lib
 , stdenvNoCC
 , runCommand
@@ -36,27 +38,33 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   # nixpkgs' esbuild is 0.27.2 against the lock file's 0.28.2. The two bundles
   # differ by 52 bytes — 0.28 wraps its own __commonJS helper in a try/catch —
-  # and both run under node and deno. Taking the lock file's copy instead would
+  # and both run under node. Taking the lock file's copy instead would
   # grow the pnpm fixed-output derivation from 29 MB to 1.6 GB, because
   # fetchPnpmDeps installs with --force and would pull esbuild's and biome's
   # binaries for every platform. Release artifacts are unaffected: build-cli.sh
   # still bundles with the lock file's esbuild.
   #
   # node runs projects/cli/build/embed-mermaid.mjs, which bundle-cli.sh calls to
-  # compress the mermaid sub-bundle into the CLI.
+  # compress the mermaid sub-bundle into the CLI; tjs compiles the same
+  # sub-bundle to bytecode for the tjs bundle.
   nativeBuildInputs = [ common.pnpm pnpmConfigHook common.esbuild common.nodejs ];
 
   # Invoked through bash rather than its shebang: the build sandbox has /bin/sh
   # but no /usr/bin/env.
+  # TJS_HOME: `tjs run` is the tjs CLI, which creates its home on start, and
+  # the build sandbox's HOME is not writable.
   buildPhase = ''
     runHook preBuild
     bash scripts/bundle-cli.sh . "${version}" todou.cjs
+    TJS=${common.txiki.host}/bin/tjs TJS_HOME="$TMPDIR/tjs-home" \
+      bash scripts/bundle-cli.sh --runtime tjs . "${version}" todou.tjs.mjs
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
     install -Dm755 todou.cjs "$out/lib/todou/todou.cjs"
+    install -Dm644 todou.tjs.mjs "$out/lib/todou/todou.tjs.mjs"
     runHook postInstall
   '';
 

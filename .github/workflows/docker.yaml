@@ -78,9 +78,41 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  merge:
+  # Each architecture's image builds its own set of CLI executables, and
+  # `todou upgrade` takes a server's build without asking only when it is
+  # byte-identical to the GitHub release (T-570). Two images that disagree
+  # cannot both match it, so neither is tagged.
+  cli-dist-match:
     runs-on: ubuntu-24.04
     needs: build
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve image ref
+        run: echo "REGISTRY_IMAGE=$(scripts/docker-image-ref.sh)" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compare the CLI artifacts both images serve
+        run: |
+          for pair in linux-amd64 linux-arm64; do
+            digest="$(ls "/tmp/digests/digests-$pair")"
+            id="$(docker create --platform "${pair/-//}" "$REGISTRY_IMAGE@sha256:$digest")"
+            docker cp "$id:/app/cli-dist/manifest.json" "/tmp/manifest-$pair.json"
+            docker rm "$id" > /dev/null
+            jq -r '.artifacts[] | "\(.name) \(.sha256)"' "/tmp/manifest-$pair.json" \
+              | tee "/tmp/sha256-$pair.txt"
+          done
+          diff -u /tmp/sha256-linux-amd64.txt /tmp/sha256-linux-arm64.txt
+
+  merge:
+    runs-on: ubuntu-24.04
+    needs: [build, cli-dist-match]
     steps:
       - uses: actions/checkout@v7
       - name: Resolve image ref
