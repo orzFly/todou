@@ -498,7 +498,7 @@ export class ConfigShowCommand extends Command<CliContext> {
       const report = await buildConfigReport({
         // One version string across `--version` and this report; a bug
         // report quoting two different builds helps nobody.
-        version: this.cli.binaryVersion ?? resolveVersion(),
+        version: this.cli.binaryVersion ?? (await resolveVersion()),
         config,
         files,
         ctx,

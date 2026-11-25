@@ -105,7 +105,9 @@ export class UpgradeCommand extends Command<CliContext> {
       }
       const install = this.seam.install ?? (await currentInstall());
       const current =
-        this.seam.currentVersion ?? this.cli.binaryVersion ?? resolveVersion();
+        this.seam.currentVersion ??
+        this.cli.binaryVersion ??
+        (await resolveVersion());
 
       if (!this.check) {
         if (install.kind === "refused") {

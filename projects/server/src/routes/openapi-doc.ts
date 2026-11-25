@@ -10,16 +10,21 @@ type DocumentConfig = Parameters<OpenAPIHono["getOpenAPI31Document"]>[0];
  * than running here because routes registered after this call still belong
  * in the document; nothing registers once the app is serving, so the first
  * build is final.
+ *
+ * `config` may be a function for the parts only known asynchronously, the
+ * server's version among them; it is called with that first build.
  */
 export function serveOpenAPIDocument(
   // biome-ignore lint/suspicious/noExplicitAny: accepts any env / basePath
   api: OpenAPIHono<any, any, any>,
   path: string,
-  config: DocumentConfig,
+  config: DocumentConfig | (() => Promise<DocumentConfig>),
 ): void {
   let document: ReturnType<typeof api.getOpenAPI31Document> | undefined;
-  api.get(path, (c) => {
-    document ??= api.getOpenAPI31Document(config);
+  api.get(path, async (c) => {
+    document ??= api.getOpenAPI31Document(
+      typeof config === "function" ? await config() : config,
+    );
     return c.json(document);
   });
 }

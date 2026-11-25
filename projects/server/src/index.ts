@@ -3,7 +3,7 @@ import { resolveVersion } from "@todou/shared/version";
 import { Builtins, Cli, Command, Option } from "clipanion";
 import { createApp } from "./app.ts";
 import { bootstrap, makeStorage } from "./bootstrap.ts";
-import { loadConfig, resolveS3Settings } from "./config.ts";
+import { loadConfig, readConfigDocument, resolveS3Settings } from "./config.ts";
 import { DbRouter } from "./db/router.ts";
 import { projects } from "./db/system-schema.ts";
 import { describeTrustedProxies } from "./http/proxy.ts";
@@ -36,8 +36,8 @@ abstract class ConfiguredCommand extends Command {
     description: "Path to todou.toml (default: ./todou.toml)",
   });
 
-  loadConfig() {
-    return loadConfig({ configPath: this.configPath });
+  async loadConfig() {
+    return loadConfig({ document: await readConfigDocument(this.configPath) });
   }
 }
 
@@ -61,7 +61,7 @@ class ServeCommand extends ConfiguredCommand {
   });
 
   async execute(): Promise<number | undefined> {
-    const config = this.loadConfig();
+    const config = await this.loadConfig();
     // Before bootstrap: the line must be out even when a bad database or
     // storage backend kills startup — it is the one diagnostic that does
     // not require logging into the host.
@@ -114,7 +114,7 @@ class MigrateCommand extends ConfiguredCommand {
   });
 
   async execute(): Promise<number | undefined> {
-    const config = this.loadConfig();
+    const config = await this.loadConfig();
     const router = await DbRouter.open(config);
     try {
       await router.systemHandle().migrate("system");
@@ -174,7 +174,7 @@ class StorageMigrateCommand extends ConfiguredCommand {
       this.context.stderr.write('--to must be "s3" or "fs"\n');
       return 1;
     }
-    const config = this.loadConfig();
+    const config = await this.loadConfig();
     const fsEnd = new FsStorage(config.storage.path);
     // Resolve the s3 end regardless of which backend currently serves.
     const credentials = config.s3Credentials ?? resolveS3Settings(config);
@@ -234,7 +234,7 @@ class StorageGcCommand extends ConfiguredCommand {
       this.context.stderr.write("--min-age must be a non-negative number\n");
       return 1;
     }
-    const config = this.loadConfig();
+    const config = await this.loadConfig();
     const storage = await makeStorage(config);
     const router = await DbRouter.open(config);
     const log = (line: string) => this.context.stdout.write(`${line}\n`);
@@ -323,7 +323,7 @@ class StorageOrphansCommand extends ConfiguredCommand {
       this.context.stderr.write("--min-age must be a non-negative number\n");
       return 1;
     }
-    const config = this.loadConfig();
+    const config = await this.loadConfig();
     const storage = await makeStorage(config);
     const router = await DbRouter.open(config);
     const out = (line: string) => this.context.stdout.write(`${line}\n`);
@@ -383,7 +383,7 @@ class AttachmentsRelabelCommand extends ConfiguredCommand {
   });
 
   async execute(): Promise<number | undefined> {
-    const config = this.loadConfig();
+    const config = await this.loadConfig();
     const router = await DbRouter.open(config);
     try {
       const report = await relabelAttachments(
@@ -414,7 +414,7 @@ abstract class UserAdminCommand extends ConfiguredCommand {
   async withSystemDb(
     fn: (db: ReturnType<DbRouter["system"]>) => Promise<number | undefined>,
   ): Promise<number | undefined> {
-    const config = this.loadConfig();
+    const config = await this.loadConfig();
     const router = await DbRouter.open(config);
     try {
       return await fn(router.system());
@@ -627,7 +627,7 @@ class UserDemoteCommand extends UserAdminBitCommand {
 const cli = new Cli({
   binaryLabel: "todou server",
   binaryName: "todou-server",
-  binaryVersion: resolveVersion(),
+  binaryVersion: await resolveVersion(),
 });
 
 cli.register(ServeCommand);

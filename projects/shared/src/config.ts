@@ -1,8 +1,7 @@
 // Node-only: exported as `@todou/shared/config`, deliberately kept out of
-// the browser-facing "." export because it reads the filesystem. Only the
-// asynchronous read lives here: the CLI imports this module, and the CLI's
-// single-file build runs on a runtime with no synchronous file API (T-792).
-// The server's synchronous loader is `@todou/shared/config-file`.
+// the browser-facing "." export because it reads the filesystem. Every read
+// is asynchronous: the CLI imports this module, and the CLI's single-file
+// build runs on a runtime with no synchronous file API (T-792).
 import { readFile } from "node:fs/promises";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
@@ -111,4 +110,52 @@ export function deepMergeDocs(
     (merged, doc) => mergeAt([], merged, doc) as Record<string, unknown>,
     {},
   );
+}
+
+/**
+ * A config file's document for `loadTomlConfig`. A file that cannot be read
+ * or parsed names itself in a ConfigError, unless it is `optional`, in which
+ * case it reads as an empty document.
+ */
+export async function readTomlDocument(
+  path: string,
+  optional = false,
+): Promise<Record<string, unknown>> {
+  try {
+    return parseToml(await readFile(path, "utf8")) as Record<string, unknown>;
+  } catch (cause) {
+    if (optional) return {};
+    throw new ConfigError(`cannot read config ${path}: ${String(cause)}`);
+  }
+}
+
+export function loadTomlConfig<S extends z.ZodType>(options: {
+  schema: S;
+  /** A document read by `readTomlDocument`, used when `tomlSource` is absent. */
+  document?: Record<string, unknown>;
+  /** Parse this string instead. */
+  tomlSource?: string;
+  /** ENV names → config paths. ENV always wins over TOML. */
+  envMap?: Array<[string, string[]]>;
+  env?: Record<string, string | undefined>;
+}): z.infer<S> {
+  const env = options.env ?? process.env;
+
+  const raw: Record<string, unknown> =
+    options.tomlSource !== undefined
+      ? (parseToml(options.tomlSource) as Record<string, unknown>)
+      : { ...options.document };
+
+  for (const [name, path] of options.envMap ?? []) {
+    const value = env[name];
+    if (value !== undefined && value !== "") {
+      setPath(raw, path, value);
+    }
+  }
+
+  const parsed = options.schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ConfigError(`invalid config: ${parsed.error.message}`);
+  }
+  return parsed.data as z.infer<S>;
 }

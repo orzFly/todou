@@ -160,11 +160,11 @@ export function createApp(ctx: AppContext) {
     "/",
     batchRoutes(() => app),
   );
-  serveOpenAPIDocument(api, "/openapi.json", {
+  serveOpenAPIDocument(api, "/openapi.json", async () => ({
     openapi: "3.1.0",
     info: {
       title: "todou",
-      version: resolveVersion(),
+      version: await resolveVersion(),
       description:
         "A to-do system where projects behave like GitHub-Issues-style " +
         "boards and agents are first-class machine users. A human's token " +
@@ -174,7 +174,7 @@ export function createApp(ctx: AppContext) {
         "an agent that does not exist yet is created on first use, owned " +
         "by the token's holder.",
     },
-  });
+  }));
   // Calendar responses are private even when authentication or canonical
   // project lookup fails before their route handlers can run.
   for (const path of [

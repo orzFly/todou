@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
-import { ConfigError, flexibleBool } from "@todou/shared/config";
-import { loadTomlConfig } from "@todou/shared/config-file";
+import {
+  ConfigError,
+  flexibleBool,
+  loadTomlConfig,
+  readTomlDocument,
+} from "@todou/shared/config";
 import { z } from "zod";
 import { compileTrustedProxies, type TrustedPeerCheck } from "./http/proxy.ts";
 
@@ -375,17 +379,28 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_STORAGE_S3_RETRIES", ["storage", "s3", "retries"]],
 ];
 
+/**
+ * The config file as a document for `loadConfig`: `--config`'s file, which
+ * has to be readable, or else ./todou.toml, which need not exist.
+ */
+export function readConfigDocument(
+  configPath?: string,
+): Promise<Record<string, unknown>> {
+  return readTomlDocument(
+    configPath ?? "./todou.toml",
+    configPath === undefined,
+  );
+}
+
 export function loadConfig(options?: {
-  configPath?: string;
+  document?: Record<string, unknown>;
   env?: Record<string, string | undefined>;
   tomlSource?: string;
 }): Config {
   const config = loadTomlConfig({
     schema: ConfigSchema,
+    document: options?.document,
     tomlSource: options?.tomlSource,
-    path: options?.configPath ?? "./todou.toml",
-    // The default path is optional; an explicitly requested file is not.
-    optional: options?.configPath === undefined,
     envMap: ENV_MAP,
     env: options?.env,
   });

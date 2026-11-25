@@ -22,5 +22,7 @@ export async function main(argv: string[]): Promise<number> {
     process.stderr.write(`${guard.join("\n")}\n`);
     return 1;
   }
-  return createCli(resolveVersion()).run(argv, { cwd: process.cwd() });
+  return createCli(await resolveVersion()).run(argv, {
+    cwd: process.cwd(),
+  });
 }

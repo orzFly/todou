@@ -126,7 +126,7 @@ export class AgentDoctorCommand extends Command<CliContext> {
           cwd: this.context.cwd,
           home: this.context.home ?? homedir(),
           processTree: this.context.processTree,
-          version: this.cli.binaryVersion ?? resolveVersion(),
+          version: this.cli.binaryVersion ?? (await resolveVersion()),
           script: process.argv[1],
           advice,
           messaging,
