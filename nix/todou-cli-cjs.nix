@@ -31,7 +31,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     # Highest version currently supported; 1 and 2 are slated for removal in
     # 26.11.
     fetcherVersion = 4;
-    hash = "sha256-4ga/Cuw8R9xgwUh0K557cl0gShocVhvSR20IBtl4gp8=";
+    hash = "sha256-q61I9FLLpmMannHmS7ntj3Qgp/ai6TPHlul2uvaSzyo=";
   };
 
   # nixpkgs' esbuild is 0.27.2 against the lock file's 0.28.2. The two bundles

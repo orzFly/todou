@@ -325,6 +325,7 @@ export async function openPeerPush<T>(
   let failures = 0;
   let discarded = 0;
   let unbounced = 0;
+  const bouncing = new Set<Promise<void>>();
   let closed = false;
   let announce: () => void = () => {};
   const whenRejected = new Promise<void>((resolve) => {
@@ -401,14 +402,18 @@ export async function openPeerPush<T>(
     // Fire and forget, and its failure stays here: `socket.on("data")` is
     // synchronous, so a rejection settling later has nowhere left to be
     // caught, and `failures` must not move — a peer's unreachable socket
-    // says nothing about whether our own session is still listening.
-    void (async () => {
+    // says nothing about whether our own session is still listening. It is
+    // still kept until it settles, for `close` to wait on: the single-file
+    // build ends the process as soon as the command returns (T-792).
+    const sending = (async () => {
       try {
         await dial(target, payload);
       } catch {
         unbounced += 1;
       }
     })();
+    bouncing.add(sending);
+    void sending.finally(() => bouncing.delete(sending));
   };
 
   /** A control frame is never replied to, so a bounce provokes no bounce. */
@@ -515,6 +520,7 @@ export async function openPeerPush<T>(
     if (closed) return;
     shutDown();
     if (!isWindows) await rm(self, { force: true });
+    await Promise.all(bouncing);
   }
   // Registered after the bind rather than before it: an open that fails on
   // `listen` throws with nothing on `process` to take off again. Both are

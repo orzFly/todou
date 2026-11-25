@@ -115,11 +115,47 @@ describe("detectInstall", () => {
     }
   });
 
-  it("names the artifacts build-cli.sh builds, and nothing it does not", () => {
+  it("a tjs executable replaces its own file, named by platform and arch", async () => {
+    const tjs = (platform: NodeJS.Platform, arch: string) =>
+      detectInstall({
+        deno: undefined,
+        tjs: { exePath: "/opt/todou/todou" },
+        buildVersion: "v0.7.0",
+        script: "/opt/todou/todou",
+        execPath: "/opt/todou/todou",
+        platform,
+        arch,
+        realpath: id,
+      });
+    expect(await tjs("linux", "x64")).toEqual({
+      kind: "binary",
+      path: "/opt/todou/todou",
+      artifact: "todou-linux-amd64",
+      platform: "linux",
+    });
+    expect(await tjs("darwin", "arm64")).toMatchObject({
+      kind: "binary",
+      artifact: "todou-macos-arm64",
+    });
+    expect(await tjs("win32", "x64")).toMatchObject({
+      kind: "binary",
+      artifact: "todou-windows-amd64.exe",
+    });
+    expect(await tjs("freebsd", "x64")).toMatchObject({
+      kind: "binary",
+      artifact: null,
+    });
+  });
+
+  it("names the artifacts build-cli-tjs.sh builds, and nothing it does not", () => {
     expect(binaryArtifact("linux", "x86_64")).toBe("todou-linux-amd64");
+    expect(binaryArtifact("linux", "arm64")).toBe("todou-linux-arm64");
     expect(binaryArtifact("darwin", "aarch64")).toBe("todou-macos-arm64");
+    expect(binaryArtifact("darwin", "x86_64")).toBe("todou-macos-amd64");
+    expect(binaryArtifact("darwin", "x64")).toBe("todou-macos-amd64");
     expect(binaryArtifact("windows", "x86_64")).toBe("todou-windows-amd64.exe");
-    expect(binaryArtifact("darwin", "x86_64")).toBeNull();
+    expect(binaryArtifact("win32", "arm64")).toBe("todou-windows-arm64.exe");
+    expect(binaryArtifact("linux", "ia32")).toBeNull();
     expect(binaryArtifact("linux", "constructor")).toBeNull();
   });
 });

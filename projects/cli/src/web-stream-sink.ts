@@ -54,8 +54,10 @@ export async function pipeWebStream(
   }
 }
 
+// `stat` rather than `fd`: the single-file build's FileHandle has no
+// descriptor to show, and no writable stream has a `stat`.
 function isFileHandle(sink: ChunkWriter | FileHandle): sink is FileHandle {
-  return typeof (sink as FileHandle).fd === "number";
+  return typeof (sink as FileHandle).stat === "function";
 }
 
 function writeChunk(sink: ChunkWriter, chunk: Uint8Array): Promise<void> {

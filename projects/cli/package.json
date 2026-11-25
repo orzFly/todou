@@ -10,24 +10,28 @@
   },
   "imports": {
     "#mermaid-loader": {
+      "tjs": "./tjs/mermaid-loader.ts",
       "default": "./src/mermaid/node-loader.ts"
     }
   },
   "scripts": {
     "start": "node src/index.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tjs",
     "test": "vitest run"
   },
   "dependencies": {
     "@decimalturn/toml-patch": "^3.3.1",
     "@todou/shared": "workspace:*",
+    "buffer": "^6.0.3",
     "clipanion": "4.0.0-rc.4",
     "mermaid": "^12.2.0",
     "smol-toml": "^1.7.1",
     "string-width": "^8.2.2",
+    "unicode-segmenter": "^0.17.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@txikijs/types": "26.11.0",
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",

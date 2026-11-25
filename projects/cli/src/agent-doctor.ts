@@ -423,6 +423,17 @@ function tildeAll(text: string, env: Env): string {
   return text.replaceAll(`${base}/`, "~/");
 }
 
+/**
+ * Which runtime this is: node for the source run and todou.cjs, txiki.js for
+ * the single-file executables (T-792), whose `process` has no `version`.
+ */
+function runtimeLabel(): string {
+  const { node, tjs } = process.versions;
+  return node === undefined && tjs !== undefined
+    ? `txiki.js v${tjs}`
+    : `node ${process.version}`;
+}
+
 /** The report `todou agent doctor` prints, as one string ending in a newline. */
 export async function doctorReport(input: DoctorInput): Promise<string> {
   const { harness } = input.advice;
@@ -435,10 +446,7 @@ export async function doctorReport(input: DoctorInput): Promise<string> {
     );
   }
   const lines = [
-    row(
-      "todou",
-      `${input.version} · node ${process.version} · ${process.platform}`,
-    ),
+    row("todou", `${input.version} · ${runtimeLabel()} · ${process.platform}`),
     ...(await binaries(input)),
     "",
     ...(await harnessLines(input, mask)),
