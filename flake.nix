@@ -66,10 +66,15 @@
 
           packages.default = config.packages.todou-cli;
 
+          packages.tjs = common.txiki.host;
+          packages.tjs-runtimes = common.txiki.runtimes;
+
           checks = pkgs.lib.mapAttrs' (name: pkgs.lib.nameValuePair "cjs-${name}")
             config.packages.todou-cli-cjs.passthru.tests
           // pkgs.lib.mapAttrs' (name: pkgs.lib.nameValuePair "cli-${name}")
-            config.packages.todou-cli.passthru.tests;
+            config.packages.todou-cli.passthru.tests
+          // pkgs.lib.mapAttrs' (name: pkgs.lib.nameValuePair "tjs-${name}")
+            common.txiki.tests;
         };
     };
 }

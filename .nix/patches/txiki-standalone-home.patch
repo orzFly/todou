@@ -1,0 +1,62 @@
+Stop txiki.js standalone executables from creating ~/.tjs (T-792).
+
+run-main creates TJS_HOME on every start, before it knows whether it is the
+tjs CLI or a program compiled with `tjs compile`. todou's executables are the
+latter and never use that directory, so every todou invocation would leave an
+empty ~/.tjs in the user's home. This moves the mkdir to the two paths that do
+use it: a TPK app and the tjs CLI itself.
+
+Delete this patch, together with the run-main regeneration in .nix/txiki.nix
+that exists only to carry it, once a txiki.js release stops creating TJS_HOME
+for bytecode standalone executables: compile a program with that release's
+`tjs compile`, run it with an empty HOME, and check that HOME stays empty.
+
+diff --git a/src/js/run-main/index.js b/src/js/run-main/index.js
+index de3d94a..7709a7a 100644
+--- a/src/js/run-main/index.js
++++ b/src/js/run-main/index.js
+@@ -13,17 +13,20 @@ import { TpkTrailer, runTpk, appInit, appPack, appCompile } from './tpk.js';
+ 
+ 
+ /**
+- * Before we do anything else, create our "home" directory,
+- * so other parts of the code which need it can find it.
+- * Also set the cookie jar path, since it's needed when
+- * initializing lws.
++ * The "home" directory is created only where it is used: TPK apps and the
++ * tjs CLI itself. A bytecode standalone executable is somebody else's
++ * program and must not leave ~/.tjs behind on every run. The cookie jar
++ * path is still set up front, since it's needed when initializing lws;
++ * setting it creates nothing.
+  */
+ const TJS_HOME = getTjsHome();
+ 
+-try {
+-    mkdirSync(TJS_HOME, { recursive: true });
+-} catch (_) {
+-    // Ignore.
++function ensureTjsHome() {
++    try {
++        mkdirSync(TJS_HOME, { recursive: true });
++    } catch (_) {
++        // Ignore.
++    }
+ }
+ 
+ core.setCookieJarPath(path.join(TJS_HOME, 'cookies.txt'));
+@@ -167,6 +170,7 @@ const isBundled = await (async () => {
+     await exef.read(tpkMagicBuf, exeSize - TpkTrailer.MagicSize);
+ 
+     if (decoder.decode(tpkMagicBuf) === TpkTrailer.Magic) {
++        ensureTjsHome();
+         await runTpk(exef, exeSize);
+ 
+         return true;
+@@ -199,6 +203,7 @@ const isBundled = await (async () => {
+ })();
+ 
+ if (!isBundled) {
++    ensureTjsHome();
+     const options = getopts(tjs.args.slice(1), {
+         alias: {
+             eval: 'e',
