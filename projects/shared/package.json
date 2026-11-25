@@ -11,6 +11,12 @@
     "./version": "./src/version.ts",
     "./spec-remap": "./src/spec-remap.ts"
   },
+  "imports": {
+    "#git-describe": {
+      "tjs": "./src/git-describe-unavailable.ts",
+      "default": "./src/git-describe.ts"
+    }
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

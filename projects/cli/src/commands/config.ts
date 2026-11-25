@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { resolveVersion } from "@todou/shared/version";
 import { Command, Option } from "clipanion";
 import type { CliContext } from "../api-command.ts";
@@ -96,9 +96,9 @@ export type ConfigReport = {
   };
 };
 
-function fileExists(path: string): boolean {
+async function fileExists(path: string): Promise<boolean> {
   try {
-    return statSync(path).isFile();
+    return (await stat(path)).isFile();
   } catch {
     return false;
   }
@@ -109,15 +109,16 @@ function fileExists(path: string): boolean {
  * the merge-order document set behind `config` — the whole basis for
  * binding source attribution, so the report never rebuilds it.
  */
-export function buildConfigReport(input: {
+export async function buildConfigReport(input: {
   version: string;
   config: CliConfig;
   files: Array<{ path: string; doc: Record<string, unknown> }>;
   ctx: ResolvedContext;
   env: Env;
-}): ConfigReport {
+}): Promise<ConfigReport> {
   const { version, config, files, ctx, env } = input;
   const path = configPath(env);
+  const configExists = await fileExists(path);
   // Which file a merged binding came from: the last document (merge
   // order, later wins) carrying that exact binding — the whole row, not
   // the remote, or two files' rows for one remote would all claim the
@@ -151,7 +152,7 @@ export function buildConfigReport(input: {
   return {
     version,
     config_path: path,
-    config_exists: fileExists(path),
+    config_exists: configExists,
     config_files: files.map((f) => f.path),
     dir_config: ctx.dirConfig
       ? {
@@ -484,20 +485,20 @@ export class ConfigShowCommand extends Command<CliContext> {
   async execute(): Promise<number | undefined> {
     try {
       const env = this.context.env;
-      const { config, files } = loadCliConfigSet(env);
+      const { config, files } = await loadCliConfigSet(env);
       // No -p flag on purpose: echoing back a project the caller just typed
       // carries no information, and every other input is read from disk.
-      const ctx = resolveContext({
+      const ctx = await resolveContext({
         flags: { server: this.serverFlag, profile: this.profile },
         env,
         config,
-        remoteUrl: gitRemoteUrl(this.context.cwd),
-        dirConfig: discoverDirConfig(this.context.cwd, env),
+        remoteUrl: await gitRemoteUrl(this.context.cwd),
+        dirConfig: await discoverDirConfig(this.context.cwd, env),
       });
-      const report = buildConfigReport({
+      const report = await buildConfigReport({
         // One version string across `--version` and this report; a bug
         // report quoting two different builds helps nobody.
-        version: this.cli.binaryVersion ?? resolveVersion(),
+        version: this.cli.binaryVersion ?? (await resolveVersion()),
         config,
         files,
         ctx,

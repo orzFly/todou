@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { type CodexTarget, codexTarget } from "../codex-push.ts";
 import type { Env } from "../config.ts";
 import { detectHarnessId } from "./index.ts";
@@ -46,22 +46,22 @@ export type NativeWatchOwner = {
   token: string;
 };
 
-export function ownedStateAttempt(
+export async function ownedStateAttempt(
   peer: "omp" | "pi",
   env: Env,
   io?: Partial<ProcessTreeIo>,
-): { state?: OmpState; unreadable?: string; brokered?: true } {
+): Promise<{ state?: OmpState; unreadable?: string; brokered?: true }> {
   const ctx = {
     env,
-    host: () => {
-      const chain = readAncestors(io);
+    host: async () => {
+      const chain = await readAncestors(io);
       if (peer === "pi") return piHostAncestor(chain);
       const host = ompHostAncestor(chain);
       return host && { ...host, brokered: behindOmpBroker(chain, host) };
     },
     ancestorPids: () => ancestorPids(io),
   };
-  return peer === "omp" ? ompStateAttempt(ctx) : { state: piState(ctx) };
+  return peer === "omp" ? ompStateAttempt(ctx) : { state: await piState(ctx) };
 }
 
 /**
@@ -69,20 +69,22 @@ export function ownedStateAttempt(
  * Supplying an empty process-tree seam bypasses the command-level ancestry
  * cache: a long-running watch must observe its host disappearing.
  */
-export function nativeWatchOwner(
+export async function nativeWatchOwner(
   env: Env,
   io: Partial<ProcessTreeIo> = {},
-): NativeWatchOwner | undefined {
-  const peer = detectHarnessId(env, io);
+): Promise<NativeWatchOwner | undefined> {
+  const peer = await detectHarnessId(env, io);
   if (peer !== "omp" && peer !== "pi") return undefined;
-  const { state, brokered } = ownedStateAttempt(peer, env, io);
+  const { state, brokered } = await ownedStateAttempt(peer, env, io);
   if (state?.socket === undefined || state.token === undefined)
     return undefined;
   // Messaging keeps compatibility with explicit paths outside a visible
   // process tree. A lifetime guard requires positive ancestry as well —
   // except behind omp's broker, where the asking session is never an
   // ancestor and the record's session id stands in for that proof.
-  if (!brokered && !ancestorPids(io).includes(state.pid)) return undefined;
+  if (!brokered && !(await ancestorPids(io)).includes(state.pid)) {
+    return undefined;
+  }
   return {
     peer,
     pid: state.pid,
@@ -131,22 +133,22 @@ function toolsFromEnv(env: { TODOU_OMP_TOOLS?: string }): {
  * session's markers, and the socket in its environment is the session that
  * really is waiting on it.
  */
-export function harnessMessaging(
+export async function harnessMessaging(
   env: Env,
   io?: Partial<ProcessTreeIo>,
-): HarnessMessaging {
+): Promise<HarnessMessaging> {
   // omp sets `CLAUDECODE=1` alongside its own marker on purpose, so both
   // predicates match every omp shell and the process tree is what tells the
   // nested cases apart. The seam is threaded from the command for the same
   // reason the other probes take one: an answer that depends on the real
   // /proc is one a test cannot state.
-  switch (detectHarnessId(env, io)) {
+  switch (await detectHarnessId(env, io)) {
     case "omp":
       return nativeMessaging("omp", env, io);
     case "pi":
       return nativeMessaging("pi", env, io);
     case "codex": {
-      const target = codexTarget(env);
+      const target = await codexTarget(env);
       return target ? { codex: target } : {};
     }
     case "claude-code":
@@ -163,12 +165,12 @@ export function harnessMessaging(
   }
 }
 
-function nativeMessaging(
+async function nativeMessaging(
   peer: "omp" | "pi",
   env: Env,
   io?: Partial<ProcessTreeIo>,
-): HarnessMessaging {
-  const { state, unreadable } = ownedStateAttempt(peer, env, io);
+): Promise<HarnessMessaging> {
+  const { state, unreadable } = await ownedStateAttempt(peer, env, io);
   if (state?.socket !== undefined) {
     return {
       socket: state.socket,
@@ -184,7 +186,7 @@ function nativeMessaging(
   let legacyState = false;
   if (peer === "omp" && state) {
     try {
-      const record = JSON.parse(readFileSync(state.path, "utf8"));
+      const record = JSON.parse(await readFile(state.path, "utf8"));
       legacyState =
         record?.v === 1 &&
         record.pid === state.pid &&
@@ -203,7 +205,7 @@ function nativeMessaging(
     env.TODOU_MESSAGING_SOCKET &&
     (legacyState || (!state && !env.TODOU_OMP_STATE && !env.TODOU_PI_STATE))
   ) {
-    const host = ompHostAncestor(readAncestors(io));
+    const host = ompHostAncestor(await readAncestors(io));
     if (
       !host?.env.TODOU_MESSAGING_SOCKET &&
       (legacyState ||

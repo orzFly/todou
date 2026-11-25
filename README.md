@@ -73,7 +73,7 @@ pnpm build      # build the web app to projects/web/dist
 ```
 
 Nix and direnv are optional but supported: `.envrc` loads the devshell in
-`.nix/`, which carries node, deno, pnpm and `fix-hash`. The root `flake.nix`
+`.nix/`, which carries node, pnpm, `tjs` (txiki.js) and `fix-hash`. The root `flake.nix`
 builds the packages described under [Nix](#nix) and follows `.nix/`'s pin, so
 the devshell and the package build can never land on different toolchain
 versions.
@@ -226,33 +226,36 @@ repo):
 
 | File | Runtime needed | Size |
 | --- | --- | --- |
-| `todou-linux-amd64` / `todou-linux-arm64` | none (glibc) | ~108–109 MB |
-| `todou-macos-arm64` | none | ~70 MB |
-| `todou-windows-amd64.exe` | none | ~81 MB |
-| `todou.cjs` | Node ≥ 20.12 on `PATH` | ~750 KB |
+| `todou-linux-amd64` / `todou-linux-arm64` | none (static, musl) | ~11 MB |
+| `todou-macos-arm64` / `todou-macos-amd64` | none | ~11 MB |
+| `todou-windows-amd64.exe` / `todou-windows-arm64.exe` | none | ~11 MB |
+| `todou.cjs` | Node ≥ 20.12 on `PATH` | ~3.2 MB |
 
-The four executables are built with `deno compile`, cross-compiled from a
-single Linux machine — `deno` and `pnpm` are the only build prerequisites,
-and the CLI sources need no adaptation to stay compilable. `todou.cjs` is an
-esbuild bundle for size-sensitive users who already have Node: copy that one
-file anywhere and run it, either as `node todou.cjs …` or directly
+Each executable is a [txiki.js](https://github.com/saghul/txiki.js) runtime
+with the CLI appended as QuickJS bytecode. All six are cross-compiled from a
+single Linux machine: the runtimes come from `nix build .#tjs-runtimes`,
+which builds them with zig, so `nix` and `pnpm` are the only build
+prerequisites. `todou.cjs` is an esbuild bundle for users who already have
+Node: copy that one file anywhere and run it, either as `node todou.cjs …` or
+directly
 (`./todou.cjs`, it carries a shebang and the executable bit). Node 20.12 is
 a hard floor (`util.styleText`), and older versions fail deceptively: piped
 and `--json` output work fine, then interactive TTY use crashes. The `.cjs`
 extension is deliberate — a `.js` bundle would be read as ESM and crash
 inside any project whose `package.json` sets `"type": "module"`.
 
-The Linux executables are dynamically linked against glibc, so they do not
-run on musl-based images (Alpine). Deno publishes no musl target; use a
-glibc base image (`debian-slim`, `ubuntu`, `*-slim` Node images) or ship
-`todou.cjs` there instead.
+The Linux executables are statically linked, so they run on musl-based
+images (Alpine) as well as glibc ones.
+
+`todou-macos-amd64` and `todou-windows-arm64.exe` are built and
+format-checked but have not been run on real hardware yet.
 
 macOS executables are only ad-hoc signed (not notarized): a `curl`/CI
 download runs fine, but a browser download gets Gatekeeper-quarantined — run
 `xattr -d com.apple.quarantine todou-macos-arm64` once before executing it.
 
-The build never mutates the workspace: the prod-only dependency tree that
-`deno compile` needs is staged in a scratch copy under `dist/.stage`, so
+The build never mutates the workspace: the prod-only dependency tree the
+bundles are made from is staged in a scratch copy under `dist/.stage`, so
 your `node_modules` keeps its devDependencies throughout.
 
 Tagging `v*` runs the same script on a Linux runner and attaches `dist/*`
@@ -263,7 +266,7 @@ plus a `SHA256SUMS` file to the GitHub release
 Releases are not the only source: every deployment hands out the builds it
 was made from, over `GET /api/cli`, so a machine can fetch a CLI that matches
 its server exactly — including `edge` and per-commit builds, which have no
-release to download. The docker image carries all five; a checkout deployment
+release to download. The docker image carries all seven; a checkout deployment
 opts in with `scripts/pack-cli.sh`. See
 [docs/deploy.md](docs/deploy.md#serving-the-cli).
 
@@ -274,12 +277,9 @@ nix profile install github:orzFly/todou       # installs todou-cli
 nix run github:orzFly/todou -- --help         # runs it without installing
 ```
 
-`todou-cli` is the supported package: `bin/todou` is a wrapper that has deno
-interpret the same esbuild bundle described above, with the environment
-variables that would change how the program behaves cleared. The classification
-and the reason for each name are in
-[`nix/deno-env.nix`](nix/deno-env.nix); `TODOU_*`, `HOME`, `XDG_CONFIG_HOME`,
-the proxy variables and the colour variables all pass through.
+`todou-cli` is the supported package: `bin/todou` is a single-file
+executable like the release ones, assembled from the txiki.js runtime built
+for your system and the CLI's bytecode.
 
 `todou-cli-cjs` is the bundle alone, at `$out/lib/todou/todou.cjs`. It has no
 `bin/`, and the caller supplies a node-compatible runtime — the behaviour of

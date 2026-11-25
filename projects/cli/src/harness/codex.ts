@@ -1,7 +1,7 @@
-import { globSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
+import { anyName, findPath } from "./find-path.ts";
 import { findInJsonlTail } from "./jsonl-tail.ts";
 import type { Harness } from "./types.ts";
 
@@ -21,12 +21,14 @@ import type { Harness } from "./types.ts";
 export const codex = {
   id: "codex",
   matches: (env) => Boolean(env.CODEX_THREAD_ID),
-  context({ env, home }) {
+  async context({ env, home }) {
     const context: AgentContext = { agent: "codex" };
     const threadId = env.CODEX_THREAD_ID;
     if (threadId) context.session_id = threadId;
-    const rollout = rolloutFile(env, threadId, home);
-    const model = rollout ? findInJsonlTail(rollout, modelFromLine) : undefined;
+    const rollout = await rolloutFile(env, threadId, home);
+    const model = rollout
+      ? await findInJsonlTail(rollout, modelFromLine)
+      : undefined;
     if (model) context.model = model;
     return context;
   },
@@ -37,28 +39,31 @@ export const codex = {
  * appears: codex publishes no model variable, and both the session header and
  * `config.toml` keep reporting the model the thread started with.
  */
-function rolloutFile(
+async function rolloutFile(
   env: Env,
   threadId: string | undefined,
   home: string,
-): string | undefined {
+): Promise<string | undefined> {
   if (!threadId) return undefined;
   // The id comes from the environment: refuse anything path-shaped.
   if (!/^[0-9a-zA-Z-]+$/.test(threadId)) return undefined;
   // `||`, not `??`: a shell that exports CODEX_HOME empty would otherwise
-  // count as having chosen a home, and the glob would run from the filesystem
-  // root instead of the real default (T-120).
+  // count as having chosen a home, and the search would run from the
+  // filesystem root instead of the real default (T-120).
   const codexHome = env.CODEX_HOME || join(home, ".codex");
-  try {
-    // Rollouts are filed under sessions/YYYY/MM/DD/, one per thread — a
-    // resumed thread appends to its file rather than opening a new one.
-    return globSync(
-      join(codexHome, "sessions", "*", "*", "*", `rollout-*-${threadId}.jsonl`),
-    )[0];
-  } catch {
-    // An unreadable sessions tree is never an error.
-    return undefined;
-  }
+  const suffix = `-${threadId}.jsonl`;
+  // Rollouts are filed under sessions/YYYY/MM/DD/, one per thread — a
+  // resumed thread appends to its file rather than opening a new one. An
+  // unreadable sessions tree is never an error: it finds nothing.
+  return findPath(join(codexHome, "sessions"), [
+    anyName,
+    anyName,
+    anyName,
+    (name) =>
+      name.startsWith("rollout-") &&
+      name.endsWith(suffix) &&
+      name.length >= "rollout-".length + suffix.length,
+  ]);
 }
 
 /**

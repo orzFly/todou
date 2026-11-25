@@ -20,34 +20,34 @@ function makeRepo(name: string, remotes: Array<[string, string]>): string {
 }
 
 describe("gitRemoteUrl", () => {
-  it("prefers origin", () => {
+  it("prefers origin", async () => {
     const repo = makeRepo("origin-repo", [
       ["upstream", "git@example.com:up/stream.git"],
       ["origin", "git@example.com:me/repo.git"],
     ]);
-    expect(gitRemoteUrl(repo)).toBe("git@example.com:me/repo.git");
+    expect(await gitRemoteUrl(repo)).toBe("git@example.com:me/repo.git");
   });
 
-  it("uses the sole remote when origin is absent", () => {
+  it("uses the sole remote when origin is absent", async () => {
     const repo = makeRepo("sole-repo", [
       ["fork", "git@example.com:me/fork.git"],
     ]);
-    expect(gitRemoteUrl(repo)).toBe("git@example.com:me/fork.git");
+    expect(await gitRemoteUrl(repo)).toBe("git@example.com:me/fork.git");
   });
 
-  it("returns null for several remotes without origin", () => {
+  it("returns null for several remotes without origin", async () => {
     const repo = makeRepo("multi-repo", [
       ["a", "git@example.com:a/a.git"],
       ["b", "git@example.com:b/b.git"],
     ]);
-    expect(gitRemoteUrl(repo)).toBeNull();
+    expect(await gitRemoteUrl(repo)).toBeNull();
   });
 
-  it("returns null without remotes or outside a repository", () => {
-    expect(gitRemoteUrl(makeRepo("bare-repo", []))).toBeNull();
+  it("returns null without remotes or outside a repository", async () => {
+    expect(await gitRemoteUrl(makeRepo("bare-repo", []))).toBeNull();
     const plain = join(dir, "not-a-repo");
     mkdirSync(plain);
-    expect(gitRemoteUrl(plain)).toBeNull();
+    expect(await gitRemoteUrl(plain)).toBeNull();
   });
 });
 
@@ -75,8 +75,8 @@ const config: CliConfig = {
 };
 
 describe("resolveContext", () => {
-  it("binding supplies server, token, and project", () => {
-    const ctx = resolveContext({
+  it("binding supplies server, token, and project", async () => {
+    const ctx = await resolveContext({
       flags: {},
       env: {},
       config,
@@ -97,8 +97,8 @@ describe("resolveContext", () => {
     });
   });
 
-  it("flags beat env, env beats binding", () => {
-    const ctx = resolveContext({
+  it("flags beat env, env beats binding", async () => {
+    const ctx = await resolveContext({
       flags: { server: "https://flag.example/", project: "flagged" },
       env: {
         TODOU_SERVER: "https://env.example",
@@ -115,8 +115,8 @@ describe("resolveContext", () => {
     expect(ctx.token).toBe("todou_pat_env");
   });
 
-  it("bound project does not leak onto a different server", () => {
-    const ctx = resolveContext({
+  it("bound project does not leak onto a different server", async () => {
+    const ctx = await resolveContext({
       flags: { server: "https://fallback.example" },
       env: {},
       config,
@@ -128,8 +128,8 @@ describe("resolveContext", () => {
     expect(ctx.token).toBe("todou_pat_fallback");
   });
 
-  it("falls back to default_server with its token", () => {
-    const ctx = resolveContext({
+  it("falls back to default_server with its token", async () => {
+    const ctx = await resolveContext({
       flags: {},
       env: {},
       config,
@@ -141,8 +141,8 @@ describe("resolveContext", () => {
     expect(ctx.project).toBeUndefined();
   });
 
-  it("yields nothing when unconfigured", () => {
-    const ctx = resolveContext({
+  it("yields nothing when unconfigured", async () => {
+    const ctx = await resolveContext({
       flags: {},
       env: {},
       config: { servers: {}, bindings: [] },
@@ -156,29 +156,33 @@ describe("resolveContext", () => {
 });
 
 describe("serverSource", () => {
-  const source = (input: {
+  const source = async (input: {
     flags?: { server?: string };
     env?: Record<string, string>;
     remoteUrl?: string | null;
     dirConfig?: { path: string; project: string; server?: string } | null;
   }) =>
-    resolveContext({
-      flags: input.flags ?? {},
-      env: input.env ?? {},
-      config,
-      remoteUrl: input.remoteUrl ?? null,
-      dirConfig: input.dirConfig ?? null,
-    }).serverSource;
+    (
+      await resolveContext({
+        flags: input.flags ?? {},
+        env: input.env ?? {},
+        config,
+        remoteUrl: input.remoteUrl ?? null,
+        dirConfig: input.dirConfig ?? null,
+      })
+    ).serverSource;
 
   const remote = "git@example.com:me/repo.git";
 
-  it("names each step of the chain that won", () => {
-    expect(source({ flags: { server: "https://flag.example" } })).toBe("flag");
-    expect(source({ env: { TODOU_SERVER: "https://env.example" } })).toBe(
+  it("names each step of the chain that won", async () => {
+    expect(await source({ flags: { server: "https://flag.example" } })).toBe(
+      "flag",
+    );
+    expect(await source({ env: { TODOU_SERVER: "https://env.example" } })).toBe(
       "env",
     );
     expect(
-      source({
+      await source({
         dirConfig: {
           path: "/work/scratch/.todou.toml",
           project: "dirproj",
@@ -186,25 +190,25 @@ describe("serverSource", () => {
         },
       }),
     ).toBe("dir-config");
-    expect(source({ remoteUrl: remote })).toBe("binding");
-    expect(source({})).toBe("default_server");
+    expect(await source({ remoteUrl: remote })).toBe("binding");
+    expect(await source({})).toBe("default_server");
   });
 
-  it("says default_server for a directory config with no server key", () => {
+  it("says default_server for a directory config with no server key", async () => {
     // The file replaces the binding outright, so the binding is not the
     // source even though it exists and matched this remote.
     expect(
-      source({
+      await source({
         remoteUrl: remote,
         dirConfig: { path: "/work/scratch/.todou.toml", project: "dirproj" },
       }),
     ).toBe("default_server");
   });
 
-  it("never says binding without a binding to point at", () => {
+  it("never says binding without a binding to point at", async () => {
     // "binding" is what the human output turns into `git binding <remote>`,
     // so it may only appear when there is a remote that matched one.
-    const ctx = resolveContext({
+    const ctx = await resolveContext({
       flags: {},
       env: {},
       config,
@@ -246,29 +250,31 @@ describe("resolveContext through an alias (T-311)", () => {
       dirConfig: over.dirConfig ?? null,
     });
 
-  it("resolves --server <alias> to the real base and names the alias", () => {
-    const ctx = resolve({ flags: { server: "https://todou.example" } });
+  it("resolves --server <alias> to the real base and names the alias", async () => {
+    const ctx = await resolve({ flags: { server: "https://todou.example" } });
     expect(ctx.server).toBe("http://gateway.test/todou");
     expect(ctx.serverSource).toBe("flag");
     expect(ctx.serverInsteadOf).toBe("https://todou.example");
   });
 
-  it("does the same for TODOU_SERVER", () => {
-    const ctx = resolve({ env: { TODOU_SERVER: "https://todou.example" } });
+  it("does the same for TODOU_SERVER", async () => {
+    const ctx = await resolve({
+      env: { TODOU_SERVER: "https://todou.example" },
+    });
     expect(ctx.server).toBe("http://gateway.test/todou");
     expect(ctx.serverSource).toBe("env");
     expect(ctx.serverInsteadOf).toBe("https://todou.example");
   });
 
-  it("does the same for default_server", () => {
-    const ctx = resolve({});
+  it("does the same for default_server", async () => {
+    const ctx = await resolve({});
     expect(ctx.server).toBe("http://gateway.test/todou");
     expect(ctx.serverSource).toBe("default_server");
     expect(ctx.serverInsteadOf).toBe("https://todou.example");
   });
 
-  it("does the same for a directory config", () => {
-    const ctx = resolve({
+  it("does the same for a directory config", async () => {
+    const ctx = await resolve({
       dirConfig: {
         path: "/work/scratch/.todou.toml",
         project: "dirproj",
@@ -280,7 +286,7 @@ describe("resolveContext through an alias (T-311)", () => {
     expect(ctx.serverInsteadOf).toBe("https://todou.example");
   });
 
-  it("does the same for a binding", () => {
+  it("does the same for a binding", async () => {
     const config: CliConfig = {
       ...aliased,
       bindings: [
@@ -291,7 +297,7 @@ describe("resolveContext through an alias (T-311)", () => {
         },
       ],
     };
-    const ctx = resolve({
+    const ctx = await resolve({
       config,
       remoteUrl: "git@example.com:me/repo.git",
     });
@@ -300,20 +306,20 @@ describe("resolveContext through an alias (T-311)", () => {
     expect(ctx.serverInsteadOf).toBe("https://todou.example");
   });
 
-  it("picks the token stored on the entry the alias names", () => {
+  it("picks the token stored on the entry the alias names", async () => {
     // The whole reason the rewrite runs before the chain picks: the entry
     // holding the token is keyed by the base, not by the alias.
-    const ctx = resolve({ flags: { server: "https://todou.example" } });
+    const ctx = await resolve({ flags: { server: "https://todou.example" } });
     expect(ctx.token).toBe("todou_pat_proxy");
     expect(ctx.tokenSource).toBe("default");
   });
 
-  it("keeps a directory config's project when its server is an alias", () => {
+  it("keeps a directory config's project when its server is an alias", async () => {
     // Today the project is dropped here, because the file says the public
     // address and the active base is the proxy's — one deployment, two
     // spellings, and a `.todou.toml` committed to a repo naming the public
     // one had its `project` silently ignored.
-    const ctx = resolve({
+    const ctx = await resolve({
       flags: { server: "https://todou.example" },
       dirConfig: {
         path: "/work/scratch/.todou.toml",
@@ -325,7 +331,7 @@ describe("resolveContext through an alias (T-311)", () => {
     expect(ctx.projectSource).toBe("dir-config");
   });
 
-  it("keeps a binding's project when its server is an alias", () => {
+  it("keeps a binding's project when its server is an alias", async () => {
     const config: CliConfig = {
       ...aliased,
       bindings: [
@@ -336,7 +342,7 @@ describe("resolveContext through an alias (T-311)", () => {
         },
       ],
     };
-    const ctx = resolve({
+    const ctx = await resolve({
       flags: { server: "https://todou.example" },
       config,
       remoteUrl: "git@example.com:me/repo.git",
@@ -345,8 +351,8 @@ describe("resolveContext through an alias (T-311)", () => {
     expect(ctx.projectSource).toBe("binding");
   });
 
-  it("still drops a local project pinned elsewhere", () => {
-    const ctx = resolve({
+  it("still drops a local project pinned elsewhere", async () => {
+    const ctx = await resolve({
       flags: { server: "https://elsewhere.test" },
       dirConfig: {
         path: "/work/scratch/.todou.toml",
@@ -358,8 +364,8 @@ describe("resolveContext through an alias (T-311)", () => {
     expect(ctx.projectSource).toBeNull();
   });
 
-  it("changes nothing when no entry has instead_of", () => {
-    const ctx = resolve({ flags: { server: "https://elsewhere.test" } });
+  it("changes nothing when no entry has instead_of", async () => {
+    const ctx = await resolve({ flags: { server: "https://elsewhere.test" } });
     expect(ctx.server).toBe("https://elsewhere.test");
     expect(ctx.serverInsteadOf).toBeUndefined();
     expect(ctx.token).toBeUndefined();
@@ -373,8 +379,8 @@ describe("resolveContext with a directory config", () => {
     server: "https://todou.example",
   };
 
-  it("beats the binding for both server and project", () => {
-    const ctx = resolveContext({
+  it("beats the binding for both server and project", async () => {
+    const ctx = await resolveContext({
       flags: {},
       env: {},
       config,
@@ -386,8 +392,8 @@ describe("resolveContext with a directory config", () => {
     expect(ctx.projectSource).toBe("dir-config");
   });
 
-  it("replaces the binding outright: no server key means default_server", () => {
-    const ctx = resolveContext({
+  it("replaces the binding outright: no server key means default_server", async () => {
+    const ctx = await resolveContext({
       flags: {},
       env: {},
       config,
@@ -400,8 +406,8 @@ describe("resolveContext with a directory config", () => {
     expect(ctx.projectSource).toBe("dir-config");
   });
 
-  it("is beaten by TODOU_PROJECT", () => {
-    const ctx = resolveContext({
+  it("is beaten by TODOU_PROJECT", async () => {
+    const ctx = await resolveContext({
       flags: {},
       env: { TODOU_PROJECT: "enved" },
       config,
@@ -412,8 +418,8 @@ describe("resolveContext with a directory config", () => {
     expect(ctx.projectSource).toBe("env");
   });
 
-  it("does not leak its project onto a different server", () => {
-    const ctx = resolveContext({
+  it("does not leak its project onto a different server", async () => {
+    const ctx = await resolveContext({
       flags: { server: "https://fallback.example" },
       env: {},
       config,
@@ -424,8 +430,8 @@ describe("resolveContext with a directory config", () => {
     expect(ctx.projectSource).toBeNull();
   });
 
-  it("floats a server-less project onto the active server", () => {
-    const ctx = resolveContext({
+  it("floats a server-less project onto the active server", async () => {
+    const ctx = await resolveContext({
       flags: { server: "https://todou.example" },
       env: {},
       config,
@@ -472,8 +478,8 @@ describe("resolveContext with names (T-366)", () => {
       dirConfig: over.dirConfig ?? null,
     });
 
-  it("takes a name from --server, token picked from the named entry", () => {
-    const ctx = resolve({ flags: { server: "work" } });
+  it("takes a name from --server, token picked from the named entry", async () => {
+    const ctx = await resolve({ flags: { server: "work" } });
     expect(ctx.server).toBe("http://gateway.test/todou");
     expect(ctx.serverName).toBe("work");
     expect(ctx.serverSource).toBe("flag");
@@ -481,30 +487,30 @@ describe("resolveContext with names (T-366)", () => {
     expect(ctx.serverUnknownName).toBe(false);
   });
 
-  it("takes a name from TODOU_SERVER", () => {
-    const ctx = resolve({ env: { TODOU_SERVER: "work" } });
+  it("takes a name from TODOU_SERVER", async () => {
+    const ctx = await resolve({ env: { TODOU_SERVER: "work" } });
     expect(ctx.server).toBe("http://gateway.test/todou");
     expect(ctx.serverName).toBe("work");
     expect(ctx.serverSource).toBe("env");
   });
 
-  it("takes a name from default_server", () => {
-    const ctx = resolve({});
+  it("takes a name from default_server", async () => {
+    const ctx = await resolve({});
     expect(ctx.server).toBe("http://gateway.test/todou");
     expect(ctx.serverSource).toBe("default_server");
     expect(ctx.serverName).toBe("work");
   });
 
-  it("takes a name from a binding", () => {
-    const ctx = resolve({ remoteUrl: "git@example.com:me/repo.git" });
+  it("takes a name from a binding", async () => {
+    const ctx = await resolve({ remoteUrl: "git@example.com:me/repo.git" });
     expect(ctx.server).toBe("http://gateway.test/todou");
     expect(ctx.serverSource).toBe("binding");
     expect(ctx.project).toBe("todou");
     expect(ctx.projectSource).toBe("binding");
   });
 
-  it("takes a name from a directory config", () => {
-    const ctx = resolve({
+  it("takes a name from a directory config", async () => {
+    const ctx = await resolve({
       dirConfig: {
         path: "/work/scratch/.todou.toml",
         project: "dirproj",
@@ -516,24 +522,24 @@ describe("resolveContext with names (T-366)", () => {
     expect(ctx.project).toBe("dirproj");
   });
 
-  it("a name resolving through an URL alias keeps both clauses", () => {
+  it("a name resolving through an URL alias keeps both clauses", async () => {
     // "work" names the proxy base; the alias reports the public address
     // the input spelled. Both facts belong to the winning input.
-    const ctx = resolve({ flags: { server: "https://todou.example" } });
+    const ctx = await resolve({ flags: { server: "https://todou.example" } });
     expect(ctx.server).toBe("http://gateway.test/todou");
     expect(ctx.serverInsteadOf).toBe("https://todou.example");
     expect(ctx.serverName).toBeUndefined();
   });
 
-  it("flags an unknown name without throwing", () => {
-    const ctx = resolve({ flags: { server: "wrok" } });
+  it("flags an unknown name without throwing", async () => {
+    const ctx = await resolve({ flags: { server: "wrok" } });
     expect(ctx.server).toBe("wrok");
     expect(ctx.serverUnknownName).toBe(true);
     expect(ctx.serverSource).toBe("flag");
   });
 
-  it("a binding naming a deleted server is a miss, not an error", () => {
-    const ctx = resolve({
+  it("a binding naming a deleted server is a miss, not an error", async () => {
+    const ctx = await resolve({
       flags: { server: "https://elsewhere.example" },
       remoteUrl: "git@example.com:me/repo.git",
     });
@@ -542,7 +548,7 @@ describe("resolveContext with names (T-366)", () => {
     expect(ctx.projectSource).toBeNull();
   });
 
-  it("binding lookup takes the last match for a remote", () => {
+  it("binding lookup takes the last match for a remote", async () => {
     const config: CliConfig = {
       ...named,
       bindings: [
@@ -558,7 +564,7 @@ describe("resolveContext with names (T-366)", () => {
         },
       ],
     };
-    const ctx = resolve({
+    const ctx = await resolve({
       config,
       remoteUrl: "git@example.com:me/repo.git",
     });
@@ -566,7 +572,7 @@ describe("resolveContext with names (T-366)", () => {
     expect(ctx.project).toBe("new");
   });
 
-  it("a duplicated name fails only the command that uses it", () => {
+  it("a duplicated name fails only the command that uses it", async () => {
     const dup: CliConfig = {
       ...named,
       servers: {
@@ -579,12 +585,12 @@ describe("resolveContext with names (T-366)", () => {
       },
       default_server: "http://gateway.test/todou",
     };
-    expect(() => resolve({ flags: { server: "work" }, config: dup })).toThrow(
-      /one name, one server/,
-    );
+    await expect(
+      resolve({ flags: { server: "work" }, config: dup }),
+    ).rejects.toThrow(/one name, one server/);
     // default_server spells an origin here, so the duplicate in the file
     // does not fail a command that never typed the name.
-    const ctx = resolve({ config: dup });
+    const ctx = await resolve({ config: dup });
     expect(ctx.server).toBe("http://gateway.test/todou");
   });
 });

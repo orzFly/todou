@@ -60,40 +60,46 @@ function hermesHome(rows?: {
 }
 
 describe("hermes-agent detection", () => {
-  it("returns null without hermes signals — a knob alone is not one", () => {
-    expect(detectAgentContext({}, home)).toBeNull();
-    expect(detectAgentContext({ HERMES_HOME: "/somewhere" }, home)).toBeNull();
-    expect(detectAgentContext({ HERMES_INTERACTIVE: "1" }, home)).toBeNull();
+  it("returns null without hermes signals — a knob alone is not one", async () => {
+    expect(await detectAgentContext({}, home)).toBeNull();
+    expect(
+      await detectAgentContext({ HERMES_HOME: "/somewhere" }, home),
+    ).toBeNull();
+    expect(
+      await detectAgentContext({ HERMES_INTERACTIVE: "1" }, home),
+    ).toBeNull();
   });
 
-  it("detects a turn carrying no session variable at all (T-125)", () => {
+  it("detects a turn carrying no session variable at all (T-125)", async () => {
     // A terminal CLI turn, over ssh or not: hermes strips the session vars
     // from a subprocess it cannot attribute to one session, leaving the
     // subprocess-home marker as the only thing that says hermes spawned us.
-    expect(detectAgentContext({ HERMES_REAL_HOME: home }, home)).toEqual({
+    expect(await detectAgentContext({ HERMES_REAL_HOME: home }, home)).toEqual({
       agent: "hermes-agent",
     });
   });
 
-  it("detects a gateway turn by session key", () => {
-    expect(detectAgentContext({ HERMES_SESSION_KEY: KEY }, home)).toEqual({
+  it("detects a gateway turn by session key", async () => {
+    expect(await detectAgentContext({ HERMES_SESSION_KEY: KEY }, home)).toEqual(
+      {
+        agent: "hermes-agent",
+        session_id: KEY,
+      },
+    );
+  });
+
+  it("detects a keyless gateway process by _HERMES_GATEWAY", async () => {
+    expect(await detectAgentContext({ _HERMES_GATEWAY: "1" }, home)).toEqual({
       agent: "hermes-agent",
-      session_id: KEY,
     });
   });
 
-  it("detects a keyless gateway process by _HERMES_GATEWAY", () => {
-    expect(detectAgentContext({ _HERMES_GATEWAY: "1" }, home)).toEqual({
-      agent: "hermes-agent",
-    });
-  });
-
-  it("falls back to the registry order with no readable process tree", () => {
+  it("falls back to the registry order with no readable process tree", async () => {
     // hermes stamps its marker on every child, including a claude code it
     // launched, so the environment alone cannot say which is the direct host.
     // The process tree resolves it when readable (process-tree.test.ts).
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", HERMES_SESSION_KEY: KEY },
         home,
         undefined,
@@ -101,7 +107,7 @@ describe("hermes-agent detection", () => {
       ),
     ).toEqual({ agent: "claude-code" });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", HERMES_REAL_HOME: home },
         home,
         undefined,
@@ -110,10 +116,10 @@ describe("hermes-agent detection", () => {
     ).toEqual({ agent: "claude-code" });
   });
 
-  it("reports the durable session id and its model", () => {
+  it("reports the durable session id and its model", async () => {
     const dir = hermesHome({ sessions: [[SID, "hermes-test-model"]] });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         {
           HERMES_REAL_HOME: home,
           HERMES_SESSION_ID: SID,
@@ -128,7 +134,7 @@ describe("hermes-agent detection", () => {
     });
   });
 
-  it("resolves the session id through gateway_routing, newest row first", () => {
+  it("resolves the session id through gateway_routing, newest row first", async () => {
     const dir = hermesHome({
       sessions: [
         ["20250101_000000_00000000", "hermes-stale-model"],
@@ -140,7 +146,10 @@ describe("hermes-agent detection", () => {
       ],
     });
     expect(
-      detectAgentContext({ HERMES_SESSION_KEY: KEY, HERMES_HOME: dir }, home),
+      await detectAgentContext(
+        { HERMES_SESSION_KEY: KEY, HERMES_HOME: dir },
+        home,
+      ),
     ).toEqual({
       agent: "hermes-agent",
       session_id: SID,
@@ -148,7 +157,7 @@ describe("hermes-agent detection", () => {
     });
   });
 
-  it("falls back to routing when HERMES_SESSION_ID is bridged empty", () => {
+  it("falls back to routing when HERMES_SESSION_ID is bridged empty", async () => {
     // What a real gateway turn looks like: the gateway binds the session-id
     // context var to "" and hermes exports that empty string verbatim (T-120).
     const dir = hermesHome({
@@ -156,7 +165,7 @@ describe("hermes-agent detection", () => {
       routing: [[KEY, JSON.stringify({ session_id: SID }), 1]],
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { HERMES_SESSION_KEY: KEY, HERMES_SESSION_ID: "", HERMES_HOME: dir },
         home,
       ),
@@ -167,13 +176,16 @@ describe("hermes-agent detection", () => {
     });
   });
 
-  it("keeps the durable id when the model column is empty", () => {
+  it("keeps the durable id when the model column is empty", async () => {
     const dir = hermesHome({
       sessions: [[SID, ""]],
       routing: [[KEY, JSON.stringify({ session_id: SID }), 1]],
     });
     expect(
-      detectAgentContext({ HERMES_SESSION_KEY: KEY, HERMES_HOME: dir }, home),
+      await detectAgentContext(
+        { HERMES_SESSION_KEY: KEY, HERMES_HOME: dir },
+        home,
+      ),
     ).toEqual({ agent: "hermes-agent", session_id: SID });
   });
 
@@ -185,16 +197,19 @@ describe("hermes-agent detection", () => {
       "malformed entry_json",
       () => hermesHome({ routing: [[KEY, "not json", 1]] }),
     ],
-  ])("falls back to the session key on %s", (_name, make) => {
+  ])("falls back to the session key on %s", async (_name, make) => {
     const dir = make();
     expect(
-      detectAgentContext({ HERMES_SESSION_KEY: KEY, HERMES_HOME: dir }, home),
+      await detectAgentContext(
+        { HERMES_SESSION_KEY: KEY, HERMES_HOME: dir },
+        home,
+      ),
     ).toEqual({ agent: "hermes-agent", session_id: KEY });
   });
 
-  it("keeps the environment's session id when the database is unreadable", () => {
+  it("keeps the environment's session id when the database is unreadable", async () => {
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { HERMES_REAL_HOME: home, HERMES_SESSION_ID: SID },
         home,
       ),

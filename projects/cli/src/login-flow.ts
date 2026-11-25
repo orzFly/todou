@@ -6,7 +6,7 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
-import { type Readable, Writable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { type TodouClient, TodouError } from "@todou/shared";
 import { type Clock, systemClock } from "./clock.ts";
 import { CliError } from "./errors.ts";
@@ -225,10 +225,12 @@ export function promptHidden(
   prompt: string,
 ): Promise<string> {
   stderr.write(prompt);
-  const muted = new Writable({ write: (_c, _e, cb) => cb() });
+  // No output stream at all is what keeps the token off the screen: on a
+  // terminal readline echoes typed characters only to `output`, and guards
+  // every write to it. A muted Writable did the same, but node:stream is not
+  // among the modules the single-file build provides (T-792).
   const rl = createInterface({
     input: stdin,
-    output: muted,
     terminal: Boolean((stdin as { isTTY?: boolean }).isTTY),
   });
   return new Promise((resolve) => {

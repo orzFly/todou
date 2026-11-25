@@ -1,4 +1,4 @@
-import { realpathSync, statSync } from "node:fs";
+import { realpath as realpathOf, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import type { HarnessId } from "@todou/shared";
 import {
@@ -103,18 +103,18 @@ function row(label: string, value: string): string {
   return `${label.padEnd(12)} ${value}`;
 }
 
-function realpath(path: string): string {
+async function realpath(path: string): Promise<string> {
   try {
-    return realpathSync(path);
+    return await realpathOf(path);
   } catch {
     return path;
   }
 }
 
-function executable(path: string): boolean {
+async function executable(path: string): Promise<boolean> {
   try {
-    const stat = statSync(path);
-    return stat.isFile() && (stat.mode & 0o111) !== 0;
+    const info = await stat(path);
+    return info.isFile() && (info.mode & 0o111) !== 0;
   } catch {
     return false;
   }
@@ -125,8 +125,8 @@ function executable(path: string): boolean {
  * T-564's named service ran an older install because omp had reset its PATH,
  * and nothing in the output it produced said so.
  */
-function binaries(input: DoctorInput): string[] {
-  const running = input.script ? realpath(input.script) : undefined;
+async function binaries(input: DoctorInput): Promise<string[]> {
+  const running = input.script ? await realpath(input.script) : undefined;
   const lines = [
     row(
       "running",
@@ -137,18 +137,19 @@ function binaries(input: DoctorInput): string[] {
           : `${input.script} → ${running}`,
     ),
   ];
-  const found = (input.env.PATH ?? "")
-    .split(delimiter)
-    .filter((dir) => dir !== "")
-    .map((dir) => join(dir, "todou"))
-    .filter(executable);
+  const found: string[] = [];
+  for (const dir of (input.env.PATH ?? "").split(delimiter)) {
+    if (dir === "") continue;
+    const path = join(dir, "todou");
+    if (await executable(path)) found.push(path);
+  }
   if (found.length === 0) {
     lines.push(row("on PATH", "no todou on PATH"));
   }
-  found.forEach((path, i) => {
+  for (const [i, path] of found.entries()) {
     const notes = [
       ...(i === 0 ? ["first"] : []),
-      ...(realpath(path) === running ? ["this one"] : []),
+      ...((await realpath(path)) === running ? ["this one"] : []),
     ];
     lines.push(
       row(
@@ -156,7 +157,7 @@ function binaries(input: DoctorInput): string[] {
         notes.length === 0 ? path : `${path}  ← ${notes.join(", ")}`,
       ),
     );
-  });
+  }
   lines.push(row("PATH", input.env.PATH ?? "(unset)"));
   lines.push(row("cwd", input.cwd));
   return lines;
@@ -199,13 +200,16 @@ export function harnessRoute(
   }
 }
 
-function harnessLines(
+async function harnessLines(
   input: DoctorInput,
   mask: (text: string) => string,
-): string[] {
-  const { id, trace, hostPid } = explainHarness(input.env, input.processTree);
-  const chain = readAncestors(input.processTree);
-  const published = new Set(publishedStatePids(input.env));
+): Promise<string[]> {
+  const { id, trace, hostPid } = await explainHarness(
+    input.env,
+    input.processTree,
+  );
+  const chain = await readAncestors(input.processTree);
+  const published = new Set(await publishedStatePids(input.env));
   const lines = [
     row("harness", harnessRoute(id, trace)),
     row(
@@ -263,17 +267,17 @@ function environmentLines(env: Env): string[] {
  * question T-564's `todou_watch` got wrong. The same resolution `config show`
  * prints, so the two reports cannot disagree.
  */
-function accountLines(input: DoctorInput): string[] {
+async function accountLines(input: DoctorInput): Promise<string[]> {
   try {
-    const { config, files } = loadCliConfigSet(input.env);
-    const ctx = resolveContext({
+    const { config, files } = await loadCliConfigSet(input.env);
+    const ctx = await resolveContext({
       flags: {},
       env: input.env,
       config,
-      remoteUrl: gitRemoteUrl(input.cwd),
-      dirConfig: discoverDirConfig(input.cwd, input.env),
+      remoteUrl: await gitRemoteUrl(input.cwd),
+      dirConfig: await discoverDirConfig(input.cwd, input.env),
     });
-    const report = buildConfigReport({
+    const report = await buildConfigReport({
       version: input.version,
       config,
       files,
@@ -302,15 +306,18 @@ function accountLines(input: DoctorInput): string[] {
   }
 }
 
-function socketState(path: string): string {
+async function socketState(path: string): Promise<string> {
   try {
-    return statSync(path).isSocket() ? "exists" : "exists, not a socket";
+    return (await stat(path)).isSocket() ? "exists" : "exists, not a socket";
   } catch {
     return "missing";
   }
 }
 
-function pushLines(input: DoctorInput, harness: string | null): string[] {
+async function pushLines(
+  input: DoctorInput,
+  harness: string | null,
+): Promise<string[]> {
   const m = input.messaging;
   const lines: string[] = [];
   if (m.codex) {
@@ -324,14 +331,18 @@ function pushLines(input: DoctorInput, harness: string | null): string[] {
     lines.push(
       row(
         "push",
-        `${m.peer ?? "unknown peer"} · socket ${m.socket} (${socketState(m.socket)}) · token ${m.token ? "present" : "absent"} · tools ${m.tools?.join(", ") || "none"}`,
+        `${m.peer ?? "unknown peer"} · socket ${m.socket} (${await socketState(m.socket)}) · token ${m.token ? "present" : "absent"} · tools ${m.tools?.join(", ") || "none"}`,
       ),
     );
   } else {
     lines.push(row("push", "none found"));
   }
   if (harness === "omp" || harness === "pi") {
-    const attempt = ownedStateAttempt(harness, input.env, input.processTree);
+    const attempt = await ownedStateAttempt(
+      harness,
+      input.env,
+      input.processTree,
+    );
     lines.push(
       row(
         "record",
@@ -343,7 +354,7 @@ function pushLines(input: DoctorInput, harness: string | null): string[] {
       ),
     );
   }
-  const pids = publishedStatePids(input.env);
+  const pids = await publishedStatePids(input.env);
   lines.push(
     row(
       "published",
@@ -365,14 +376,14 @@ function pushLines(input: DoctorInput, harness: string | null): string[] {
  * pi, is the published record's token. Collected before anything is rendered, because the argv masking
  * below has to know all of them before it cuts a line short.
  */
-function secretsOf(input: DoctorInput): string[] {
+async function secretsOf(input: DoctorInput): Promise<string[]> {
   const secrets = VARIABLES.filter((v) => v.secret)
     .map((v) => input.env[v.name])
     .filter((v): v is string => v !== undefined);
   if (input.messaging.token) secrets.push(input.messaging.token);
   try {
     for (const entry of Object.values(
-      loadCliConfigSet(input.env).config.servers,
+      (await loadCliConfigSet(input.env)).config.servers,
     )) {
       if (entry.token) secrets.push(entry.token);
       for (const profile of Object.values(entry.tokens)) {
@@ -412,27 +423,39 @@ function tildeAll(text: string, env: Env): string {
   return text.replaceAll(`${base}/`, "~/");
 }
 
+/**
+ * Which runtime this is: node for the source run and todou.cjs, txiki.js for
+ * the single-file executables (T-792), whose `process` has no `version`.
+ */
+function runtimeLabel(): string {
+  const { node, tjs } = process.versions;
+  return node === undefined && tjs !== undefined
+    ? `txiki.js v${tjs}`
+    : `node ${process.version}`;
+}
+
 /** The report `todou agent doctor` prints, as one string ending in a newline. */
-export function doctorReport(input: DoctorInput): string {
+export async function doctorReport(input: DoctorInput): Promise<string> {
   const { harness } = input.advice;
-  const mask = masker(secretsOf(input));
+  const mask = masker(await secretsOf(input));
   const home = input.home;
+  const integrations: string[] = [];
+  for (const entry of INTEGRATIONS) {
+    integrations.push(
+      `  ${(await integrationStatus(entry, input.env, home)).line}`,
+    );
+  }
   const lines = [
-    row(
-      "todou",
-      `${input.version} · node ${process.version} · ${process.platform}`,
-    ),
-    ...binaries(input),
+    row("todou", `${input.version} · ${runtimeLabel()} · ${process.platform}`),
+    ...(await binaries(input)),
     "",
-    ...harnessLines(input, mask),
+    ...(await harnessLines(input, mask)),
     ...environmentLines(input.env),
     "",
-    ...accountLines(input),
-    ...pushLines(input, harness),
+    ...(await accountLines(input)),
+    ...(await pushLines(input, harness)),
     "integrations",
-    ...INTEGRATIONS.map(
-      (entry) => `  ${integrationStatus(entry, input.env, home).line}`,
-    ),
+    ...integrations,
     row(
       "config",
       `${configPath(input.env)} · follow_uds ${input.optedOut ? "opted out" : "advised"}`,

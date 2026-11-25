@@ -1,26 +1,8 @@
-import { resolveVersion } from "@todou/shared/version";
-import { createCli } from "./cli.ts";
-import { commands } from "./commands/index.ts";
-import {
-  commandTable,
-  guardDashLeadingValue,
-  guardUnknownCommand,
-} from "./suggest.ts";
+import { main } from "./main.ts";
 
-const argv = process.argv.slice(2);
-
-// Ahead of clipanion, whose answer to an unknown command is every usage line
-// it can reach (T-187), and whose answer to a `--`-leading option value names
-// no way to pass one (T-198). Plain text and exit 1, matching `reportError`.
-const guard =
-  guardUnknownCommand(argv, commandTable(commands)) ??
-  guardDashLeadingValue(argv);
-
-if (guard) {
-  process.stderr.write(`${guard.join("\n")}\n`);
-  // Not process.exit(1): stderr to a pipe is asynchronous, and exiting
-  // outright can drop the very lines this branch exists to print.
-  process.exitCode = 1;
-} else {
-  createCli(resolveVersion()).runExit(argv, { cwd: process.cwd() });
-}
+// An exit code rather than process.exit: stderr to a pipe is asynchronous, and
+// exiting outright can drop the very lines a failing run exists to print. A
+// `.then` rather than a top-level await, which the CommonJS bundle cannot hold.
+void main(process.argv.slice(2)).then((code) => {
+  process.exitCode = code;
+});

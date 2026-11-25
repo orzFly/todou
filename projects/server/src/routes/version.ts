@@ -19,14 +19,14 @@ const versionRoute = createRoute({
 
 export function versionRoutes() {
   const app = new OpenAPIHono<AppEnv>();
-  app.openapi(versionRoute, (c) => {
+  app.openapi(versionRoute, async (c) => {
     // Left out rather than sent as null when unconfigured, so a client can
     // tell "this deployment has no public address" from "this server is old
     // enough not to know the field" — both being cases to fall back on.
     const publicOrigin = c.get("appCtx").config.http.public_origin;
     return c.json(
       {
-        version: resolveVersion(),
+        version: await resolveVersion(),
         ...(publicOrigin === undefined ? {} : { public_origin: publicOrigin }),
       },
       200,

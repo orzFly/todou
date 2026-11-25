@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { Command, Option } from "clipanion";
@@ -17,9 +17,9 @@ import {
 type Outcome = { line: string; failed?: true };
 
 /** Reads the installed file, or null when there is nothing at that path. */
-function installed(path: string): string | null {
+async function installed(path: string): Promise<string | null> {
   try {
-    return readFileSync(path, "utf8");
+    return await readFile(path, "utf8");
   } catch {
     return null;
   }
@@ -40,15 +40,15 @@ function foreign(text: string | null, entry: Integration): boolean {
   return text !== null && !text.includes(marker(entry.id));
 }
 
-function install(
+async function install(
   entry: Integration,
   env: Env,
   home: string,
   dryRun: boolean,
-): Outcome {
+): Promise<Outcome> {
   const path = entry.targetPath(env, home);
   const shown = tildePath(path, env);
-  const existing = installed(path);
+  const existing = await installed(path);
   if (foreign(existing, entry)) {
     return {
       line: `${entry.id}: refused — ${shown} was not written by todou; move it aside first`,
@@ -64,8 +64,8 @@ function install(
         : `replace v${was ?? "?"} with v${entry.version}`;
   if (dryRun) return { line: `${entry.id}: would ${what} at ${shown}` };
   try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, render(entry));
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, render(entry));
   } catch (error) {
     return {
       line: `${entry.id}: failed to write ${shown} — ${(error as Error).message}`,
@@ -80,15 +80,15 @@ function install(
   };
 }
 
-function uninstall(
+async function uninstall(
   entry: Integration,
   env: Env,
   home: string,
   dryRun: boolean,
-): Outcome {
+): Promise<Outcome> {
   const path = entry.targetPath(env, home);
   const shown = tildePath(path, env);
-  const existing = installed(path);
+  const existing = await installed(path);
   if (existing === null) return { line: `${entry.id}: nothing at ${shown}` };
   if (foreign(existing, entry)) {
     return {
@@ -98,7 +98,7 @@ function uninstall(
   }
   if (dryRun) return { line: `${entry.id}: would remove ${shown}` };
   try {
-    rmSync(path, { force: true });
+    await rm(path, { force: true });
   } catch (error) {
     return {
       line: `${entry.id}: failed to remove ${shown} — ${(error as Error).message}`,
@@ -108,15 +108,15 @@ function uninstall(
   return { line: `${entry.id}: removed ${shown}` };
 }
 
-export function integrationStatus(
+export async function integrationStatus(
   entry: Integration,
   env: Env,
   home: string,
-): Outcome {
+): Promise<Outcome> {
   const path = entry.targetPath(env, home);
   const shown = tildePath(path, env);
-  const existing = installed(path);
-  const present = entry.tracesOnThisMachine(env, home)
+  const existing = await installed(path);
+  const present = (await entry.tracesOnThisMachine(env, home))
     ? ""
     : " (no sign of this agent on this machine)";
   if (existing === null) {
@@ -155,7 +155,12 @@ function selected(ids: readonly string[]): Integration[] {
  * outcome separately and the user acts on the ones that did not.
  */
 abstract class IntegrationCommand extends Command<CliContext> {
-  protected report(outcomes: Outcome[]): number {
+  protected async report(
+    entries: readonly Integration[],
+    action: (entry: Integration) => Promise<Outcome>,
+  ): Promise<number> {
+    const outcomes: Outcome[] = [];
+    for (const entry of entries) outcomes.push(await action(entry));
     for (const outcome of outcomes) {
       this.context.stdout.write(`${outcome.line}\n`);
     }
@@ -167,10 +172,14 @@ abstract class IntegrationCommand extends Command<CliContext> {
   }
 
   /** Every agent this machine shows a sign of, for the `-all` commands. */
-  protected traced(): Integration[] {
-    return INTEGRATIONS.filter((entry) =>
-      entry.tracesOnThisMachine(this.context.env, this.home),
-    );
+  protected async traced(): Promise<Integration[]> {
+    const found: Integration[] = [];
+    for (const entry of INTEGRATIONS) {
+      if (await entry.tracesOnThisMachine(this.context.env, this.home)) {
+        found.push(entry);
+      }
+    }
+    return found;
   }
 }
 
@@ -206,10 +215,8 @@ export class IntegrationInstallCommand extends IntegrationCommand {
   async execute(): Promise<number | undefined> {
     try {
       const entries = selected(this.agents);
-      return this.report(
-        entries.map((entry) =>
-          install(entry, this.context.env, this.home, this.dryRun),
-        ),
+      return await this.report(entries, (entry) =>
+        install(entry, this.context.env, this.home, this.dryRun),
       );
     } catch (error) {
       return reportError(error, this.context.stderr);
@@ -234,10 +241,8 @@ export class IntegrationUninstallCommand extends IntegrationCommand {
   async execute(): Promise<number | undefined> {
     try {
       const entries = selected(this.agents);
-      return this.report(
-        entries.map((entry) =>
-          uninstall(entry, this.context.env, this.home, this.dryRun),
-        ),
+      return await this.report(entries, (entry) =>
+        uninstall(entry, this.context.env, this.home, this.dryRun),
       );
     } catch (error) {
       return reportError(error, this.context.stderr);
@@ -265,10 +270,8 @@ export class IntegrationStatusCommand extends IntegrationCommand {
     try {
       const entries =
         this.agents.length === 0 ? [...INTEGRATIONS] : selected(this.agents);
-      return this.report(
-        entries.map((entry) =>
-          integrationStatus(entry, this.context.env, this.home),
-        ),
+      return await this.report(entries, (entry) =>
+        integrationStatus(entry, this.context.env, this.home),
       );
     } catch (error) {
       return reportError(error, this.context.stderr);
@@ -294,15 +297,13 @@ export class IntegrationInstallAllCommand extends IntegrationCommand {
 
   async execute(): Promise<number | undefined> {
     try {
-      const entries = this.traced();
+      const entries = await this.traced();
       if (entries.length === 0) {
         this.context.stdout.write("no agent found on this machine\n");
         return 0;
       }
-      return this.report(
-        entries.map((entry) =>
-          install(entry, this.context.env, this.home, this.dryRun),
-        ),
+      return await this.report(entries, (entry) =>
+        install(entry, this.context.env, this.home, this.dryRun),
       );
     } catch (error) {
       return reportError(error, this.context.stderr);
@@ -325,15 +326,13 @@ export class IntegrationUninstallAllCommand extends IntegrationCommand {
 
   async execute(): Promise<number | undefined> {
     try {
-      const entries = this.traced();
+      const entries = await this.traced();
       if (entries.length === 0) {
         this.context.stdout.write("no agent found on this machine\n");
         return 0;
       }
-      return this.report(
-        entries.map((entry) =>
-          uninstall(entry, this.context.env, this.home, this.dryRun),
-        ),
+      return await this.report(entries, (entry) =>
+        uninstall(entry, this.context.env, this.home, this.dryRun),
       );
     } catch (error) {
       return reportError(error, this.context.stderr);

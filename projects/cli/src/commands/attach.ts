@@ -1,7 +1,6 @@
-import { createWriteStream, existsSync, openAsBlob, statSync } from "node:fs";
+import { openAsBlob } from "node:fs";
+import { access, open, stat } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import type {
   Attachment,
   AttachmentReference,
@@ -12,6 +11,7 @@ import { ProjectCommand } from "../api-command.ts";
 import { CliError } from "../errors.ts";
 import { formatBytes, makePainter, table } from "../format.ts";
 import { confirm } from "../prompt.ts";
+import { pipeWebStream } from "../web-stream-sink.ts";
 
 // openAsBlob never fills in a type, and the server stores whatever it gets —
 // without this, every upload lands as application/octet-stream and the web
@@ -274,6 +274,15 @@ function referenceLabel(ref: AttachmentReference): string {
     : `${ref.issue_ref}#comment-${ref.comment_id}`;
 }
 
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isTTY(stream: unknown): boolean {
   return Boolean((stream as { isTTY?: boolean })?.isTTY);
 }
@@ -326,32 +335,33 @@ export class AttachDownloadCommand extends ProjectCommand {
       await client.listAttachments(project, number),
       this.target,
     );
-    const path = this.destination === "-" ? null : this.pathFor(attachment);
+    const path =
+      this.destination === "-" ? null : await this.pathFor(attachment);
 
     const res = await client.requestRaw(
       "GET",
       `/projects/${project}/attachments/${attachment.id}/download`,
     );
-    const bytes =
-      res.body === null
-        ? Readable.from([])
-        : Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
     const summary = `${attachment.filename} (${formatBytes(attachment.size)})`;
 
     if (path === null) {
-      // `end: false`: stdout belongs to the process, not to this pipeline.
-      await pipeline(bytes, this.context.stdout, { end: false });
+      if (res.body !== null) await pipeWebStream(res.body, this.context.stdout);
       this.note(summary);
       return;
     }
-    await pipeline(bytes, createWriteStream(path));
+    const file = await open(path, "w");
+    try {
+      if (res.body !== null) await pipeWebStream(res.body, file);
+    } finally {
+      await file.close();
+    }
     this.output(
       { ...attachment, saved_to: path },
       () => `${summary} → ${path}`,
     );
   }
 
-  private pathFor(attachment: Attachment): string {
+  private async pathFor(attachment: Attachment): Promise<string> {
     // basename() over a name the server already sanitized: one stale server
     // must not be enough to write outside the directory the user picked.
     const filename = basename(attachment.filename);
@@ -359,7 +369,7 @@ export class AttachDownloadCommand extends ProjectCommand {
       return this.unoccupied(resolve(this.context.cwd, filename));
     }
     const given = resolve(this.context.cwd, this.destination);
-    if (existsSync(given) && statSync(given).isDirectory()) {
+    if ((await stat(given).catch(() => null))?.isDirectory()) {
       return this.unoccupied(join(given, filename));
     }
     // A path the user typed is a target they chose, so it may be
@@ -367,8 +377,8 @@ export class AttachDownloadCommand extends ProjectCommand {
     return given;
   }
 
-  private unoccupied(path: string): string {
-    if (existsSync(path)) {
+  private async unoccupied(path: string): Promise<string> {
+    if (await exists(path)) {
       throw new CliError(
         `${path} already exists`,
         "pass -o <path> to write somewhere else",

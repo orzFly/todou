@@ -218,7 +218,7 @@ describe("todou login --manual", () => {
     >;
     expect(headers.authorization).toBe("Bearer todou_pat_pasted");
 
-    const config = loadCliConfig(env);
+    const config = await loadCliConfig(env);
     expect(config.default_server).toBe("http://stub.test");
     expect(config.servers["http://stub.test"]?.token).toBe("todou_pat_pasted");
   });
@@ -239,7 +239,7 @@ describe("todou login --manual", () => {
     // The public address is for people to open; the next command still has
     // to send its API requests to the address the user typed.
     expect(result.stderr).toContain("logged in to http://stub.test as claude");
-    const config = loadCliConfig(env);
+    const config = await loadCliConfig(env);
     expect(config.default_server).toBe("http://stub.test");
     expect(JSON.stringify(config)).not.toContain("public.test");
   });
@@ -304,7 +304,7 @@ describe("todou login --manual", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unauthorized");
-    expect(loadCliConfig(env).servers).toEqual({});
+    expect((await loadCliConfig(env)).servers).toEqual({});
   });
 
   it("requires a server when no default exists", async () => {
@@ -331,7 +331,7 @@ describe("todou login --manual", () => {
     // "not logged in to http://stub.test".
     const { fetchImpl } = fakeFetch([["GET", "/api/me", me], bareVersion]);
     const env = { XDG_CONFIG_HOME: join(dir, "alias") };
-    saveCliConfig(
+    await saveCliConfig(
       {
         default_server: "https://todou.example",
         servers: {
@@ -352,7 +352,7 @@ describe("todou login --manual", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain("logged in to http://stub.test as claude");
 
-    const config = loadCliConfig(env);
+    const config = await loadCliConfig(env);
     expect(Object.keys(config.servers)).toEqual(["http://stub.test"]);
     expect(config.servers["http://stub.test"]?.token).toBe("todou_pat_alias");
     expect(config.servers["http://stub.test"]?.instead_of).toEqual([
@@ -461,7 +461,7 @@ describe("todou login --no-browser (device flow)", () => {
     const createBody = callTo(calls, "/api/auth/cli/requests")?.init.body;
     const name = JSON.parse(String(createBody)).name;
     expect(name.startsWith("cli @ ")).toBe(true);
-    expect(loadCliConfig(env).servers["http://stub.test"]?.token).toBe(
+    expect((await loadCliConfig(env)).servers["http://stub.test"]?.token).toBe(
       "todou_pat_device",
     );
   });
@@ -598,7 +598,7 @@ describe("todou login with names and fragments (T-366)", () => {
     expect(written).toContain("todou_pat_new");
     expect(written).not.toContain("todou_pat_frag_cc");
     expect(written).not.toContain('name = "work"');
-    const loaded = loadCliConfig(env);
+    const loaded = await loadCliConfig(env);
     expect(loaded.servers["http://stub.test"]?.tokens).toEqual({
       "claude-code": "todou_pat_frag_cc",
     });
@@ -706,7 +706,9 @@ describe("todou login fragment-token note (T-366 review)", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("http(s) origin");
-    expect(loadCliConfig(env).servers["internal-name"]?.token).toBeUndefined();
+    expect(
+      (await loadCliConfig(env)).servers["internal-name"]?.token,
+    ).toBeUndefined();
   });
 });
 

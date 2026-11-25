@@ -25,12 +25,18 @@
         common = import ./common.nix { inherit pkgs; };
       in
       {
+        # Exported here as well as from the root flake so that a build context
+        # holding only `.nix/`, as the docker image's runtime stage does, can
+        # build them.
+        packages.tjs = common.txiki.host;
+        packages.tjs-runtimes = common.txiki.runtimes;
+
         devShell = pkgs.devshell.mkShell {
           imports = [{
             name = "devshell";
             packages = [
-              common.deno
               common.nodejs
+              common.txiki.host
               common.pnpm
               inputs.fix-hash.packages."${system}".default
               pkgs.nixpkgs-fmt

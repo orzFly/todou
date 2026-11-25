@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { BUILD_VERSION } from "@todou/shared/version";
 
@@ -30,34 +30,50 @@ type DenoGlobal = {
   build: { os: string; arch: string; standalone?: boolean };
 };
 
+/** The single-file executables' runtime, txiki.js (T-792). */
+type TjsGlobal = { exePath: string };
+
 export type InstallProbe = {
   deno: DenoGlobal | undefined;
+  tjs?: TjsGlobal | undefined;
   buildVersion: string | null;
   /** process.argv[1]: the script a runtime was handed. */
   script: string | undefined;
   execPath: string;
   platform: NodeJS.Platform;
-  realpath?: (path: string) => string;
+  /** process.arch; only a tjs executable needs it to name its artifact. */
+  arch?: string;
+  realpath?: (path: string) => Promise<string>;
 };
 
-/** Names as scripts/build-cli.sh writes them; null where it builds nothing. */
+/**
+ * Names as scripts/build-cli-tjs.sh writes them; null where it builds
+ * nothing. `os` and `arch` are given the way deno spells them (`windows`,
+ * `x86_64`) or the way Node does (`win32`, `x64`).
+ */
 export function binaryArtifact(os: string, arch: string): string | null {
-  const a = arch === "x86_64" ? "amd64" : arch === "aarch64" ? "arm64" : null;
+  const a =
+    arch === "x86_64" || arch === "x64"
+      ? "amd64"
+      : arch === "aarch64" || arch === "arm64"
+        ? "arm64"
+        : null;
   if (a === null) return null;
   switch (os) {
     case "linux":
       return `todou-linux-${a}`;
     case "darwin":
-      return a === "arm64" ? "todou-macos-arm64" : null;
+      return `todou-macos-${a}`;
     case "windows":
-      return a === "amd64" ? "todou-windows-amd64.exe" : null;
+    case "win32":
+      return `todou-windows-${a}.exe`;
     default:
       return null;
   }
 }
 
-export function detectInstall(probe: InstallProbe): InstallForm {
-  const real = probe.realpath ?? realpathSync;
+export async function detectInstall(probe: InstallProbe): Promise<InstallForm> {
+  const real = probe.realpath ?? realpath;
   if (probe.buildVersion === null) {
     return {
       kind: "refused",
@@ -67,15 +83,22 @@ export function detectInstall(probe: InstallProbe): InstallForm {
   }
 
   let form: InstallForm;
-  if (probe.deno?.build.standalone) {
+  if (probe.tjs !== undefined) {
     form = {
       kind: "binary",
-      path: real(probe.deno.execPath()),
+      path: await real(probe.tjs.exePath),
+      artifact: binaryArtifact(probe.platform, probe.arch ?? ""),
+      platform: probe.platform,
+    };
+  } else if (probe.deno?.build.standalone) {
+    form = {
+      kind: "binary",
+      path: await real(probe.deno.execPath()),
       artifact: binaryArtifact(probe.deno.build.os, probe.deno.build.arch),
       platform: probe.platform,
     };
   } else if (probe.script !== undefined) {
-    const path = real(resolve(probe.script));
+    const path = await real(resolve(probe.script));
     form = {
       kind: "script",
       path,
@@ -107,12 +130,14 @@ export function detectInstall(probe: InstallProbe): InstallForm {
   return form;
 }
 
-export function currentInstall(): InstallForm {
+export function currentInstall(): Promise<InstallForm> {
   return detectInstall({
     deno: (globalThis as { Deno?: DenoGlobal }).Deno,
+    tjs: (globalThis as { tjs?: TjsGlobal }).tjs,
     buildVersion: BUILD_VERSION,
     script: process.argv[1],
     execPath: process.execPath,
     platform: process.platform,
+    arch: process.arch,
   });
 }

@@ -37,34 +37,37 @@ function writeProjectionCache(root: string, records: Record<string, unknown>) {
 }
 
 describe("dsh", () => {
-  it("returns null outside DSH", () => {
-    expect(detectAgentContext({}, home)).toBeNull();
+  it("returns null outside DSH", async () => {
+    expect(await detectAgentContext({}, home)).toBeNull();
   });
 
-  it("degrades to agent and session when no cache is readable", () => {
-    expect(detectAgentContext({ DSH_SESSION_ID: SID }, home)).toEqual({
+  it("degrades to agent and session when no cache is readable", async () => {
+    expect(await detectAgentContext({ DSH_SESSION_ID: SID }, home)).toEqual({
       agent: "dsh",
       session_id: SID,
     });
   });
 
-  it("reads the current model from the session projection cache", () => {
+  it("reads the current model from the session projection cache", async () => {
     writeProjectionCache(join(home, ".dsh"), {
       [SID]: cacheWithModel("deepseek-flash"),
     });
-    expect(detectAgentContext({ DSH_SESSION_ID: SID }, home)).toEqual({
+    expect(await detectAgentContext({ DSH_SESSION_ID: SID }, home)).toEqual({
       agent: "dsh",
       session_id: SID,
       model: "deepseek-flash",
     });
   });
 
-  it("honours DSH_HOME", () => {
+  it("honours DSH_HOME", async () => {
     const dshHome = mkdtempSync(join(tmpdir(), "todou-dsh-alt-"));
     try {
       writeProjectionCache(dshHome, { [SID]: cacheWithModel("deepseek-pro") });
       expect(
-        detectAgentContext({ DSH_SESSION_ID: SID, DSH_HOME: dshHome }, home),
+        await detectAgentContext(
+          { DSH_SESSION_ID: SID, DSH_HOME: dshHome },
+          home,
+        ),
       ).toEqual({
         agent: "dsh",
         session_id: SID,
@@ -75,24 +78,26 @@ describe("dsh", () => {
     }
   });
 
-  it("never follows a path-shaped session id", () => {
+  it("never follows a path-shaped session id", async () => {
     // Plant a readable cache where the traversal lands, so only the id guard
     // stands between the lookup and a model.
     writeProjectionCache(join(home, ".dsh"), {
       "../../evil": cacheWithModel("deepseek-evil"),
     });
-    expect(detectAgentContext({ DSH_SESSION_ID: "../../evil" }, home)).toEqual({
+    expect(
+      await detectAgentContext({ DSH_SESSION_ID: "../../evil" }, home),
+    ).toEqual({
       agent: "dsh",
       session_id: "../../evil",
     });
   });
 
-  it("survives a malformed cache", () => {
+  it("survives a malformed cache", async () => {
     const dir = join(home, ".dsh", "storages", "session_projcache", "sessions");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, `${SID}.json`), "{not json");
-    expect(detectAgentContext({ DSH_SESSION_ID: SID }, home)?.model).toBe(
-      undefined,
-    );
+    expect(
+      (await detectAgentContext({ DSH_SESSION_ID: SID }, home))?.model,
+    ).toBe(undefined);
   });
 });

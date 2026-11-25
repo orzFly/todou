@@ -25,7 +25,7 @@ Git tags are the single source of truth. The five `package.json` versions are
 time and CI refuses a tag they disagree with — nothing else reads them for
 display.
 
-Packaged artifacts (the deno-compiled binaries, `todou.cjs`, the Docker
+Packaged artifacts (the single-file executables, `todou.cjs`, the Docker
 image) get the string baked in at build time and never shell out to git.
 Source runs — the dev CLI, a checkout deployment — resolve it at runtime
 against their own checkout. The short sha in an everyday version matches the

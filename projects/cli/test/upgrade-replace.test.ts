@@ -19,11 +19,11 @@ describe("detectInstall", () => {
     execPath: () => "/opt/todou/todou",
     build: { os, arch, standalone },
   });
-  const id = (p: string) => p;
+  const id = async (p: string) => p;
 
-  it("a compiled binary replaces its own executable, with the matching artifact", () => {
+  it("a compiled binary replaces its own executable, with the matching artifact", async () => {
     expect(
-      detectInstall({
+      await detectInstall({
         deno: deno("linux", "aarch64", true),
         buildVersion: "v0.7.0",
         script: "/opt/todou/todou",
@@ -39,8 +39,8 @@ describe("detectInstall", () => {
     });
   });
 
-  it("todou.cjs replaces the script, run again by the runtime running it", () => {
-    const node = detectInstall({
+  it("todou.cjs replaces the script, run again by the runtime running it", async () => {
+    const node = await detectInstall({
       deno: undefined,
       buildVersion: "v0.7.0",
       script: "/home/todou/bin/todou.cjs",
@@ -53,7 +53,7 @@ describe("detectInstall", () => {
       path: "/home/todou/bin/todou.cjs",
       runner: ["/usr/bin/node"],
     });
-    const underDeno = detectInstall({
+    const underDeno = await detectInstall({
       deno: deno("linux", "x86_64", false),
       buildVersion: "v0.7.0",
       script: "/home/todou/bin/todou.cjs",
@@ -67,9 +67,9 @@ describe("detectInstall", () => {
     });
   });
 
-  it("nix (deno running a store path) and a source checkout are refused", () => {
+  it("nix (deno running a store path) and a source checkout are refused", async () => {
     expect(
-      detectInstall({
+      await detectInstall({
         deno: deno("linux", "x86_64", false),
         buildVersion: "0.6.5-g2cc59bb",
         script: "/nix/store/abc-todou-cli-cjs/lib/todou/todou.cjs",
@@ -79,7 +79,7 @@ describe("detectInstall", () => {
       }),
     ).toMatchObject({ kind: "refused", hint: "upgrade it through nix" });
     expect(
-      detectInstall({
+      await detectInstall({
         deno: undefined,
         buildVersion: null,
         script: "/src/todou/projects/cli/src/index.ts",
@@ -93,7 +93,7 @@ describe("detectInstall", () => {
     });
   });
 
-  it("a symlinked install replaces the file the link points at", () => {
+  it("a symlinked install replaces the file the link points at", async () => {
     // Resolved up front: `detectInstall` reports the real path, and on macOS
     // the default TMPDIR sits behind the `/var` -> `/private/var` link.
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "todou-install-")));
@@ -102,7 +102,7 @@ describe("detectInstall", () => {
       writeFileSync(join(dir, "opt", "todou.cjs"), "x");
       mkdirSync(join(dir, "bin"));
       symlinkSync(join(dir, "opt", "todou.cjs"), join(dir, "bin", "todou"));
-      const form = detectInstall({
+      const form = await detectInstall({
         deno: undefined,
         buildVersion: "v0.7.0",
         script: join(dir, "bin", "todou"),
@@ -115,11 +115,47 @@ describe("detectInstall", () => {
     }
   });
 
-  it("names the artifacts build-cli.sh builds, and nothing it does not", () => {
+  it("a tjs executable replaces its own file, named by platform and arch", async () => {
+    const tjs = (platform: NodeJS.Platform, arch: string) =>
+      detectInstall({
+        deno: undefined,
+        tjs: { exePath: "/opt/todou/todou" },
+        buildVersion: "v0.7.0",
+        script: "/opt/todou/todou",
+        execPath: "/opt/todou/todou",
+        platform,
+        arch,
+        realpath: id,
+      });
+    expect(await tjs("linux", "x64")).toEqual({
+      kind: "binary",
+      path: "/opt/todou/todou",
+      artifact: "todou-linux-amd64",
+      platform: "linux",
+    });
+    expect(await tjs("darwin", "arm64")).toMatchObject({
+      kind: "binary",
+      artifact: "todou-macos-arm64",
+    });
+    expect(await tjs("win32", "x64")).toMatchObject({
+      kind: "binary",
+      artifact: "todou-windows-amd64.exe",
+    });
+    expect(await tjs("freebsd", "x64")).toMatchObject({
+      kind: "binary",
+      artifact: null,
+    });
+  });
+
+  it("names the artifacts build-cli-tjs.sh builds, and nothing it does not", () => {
     expect(binaryArtifact("linux", "x86_64")).toBe("todou-linux-amd64");
+    expect(binaryArtifact("linux", "arm64")).toBe("todou-linux-arm64");
     expect(binaryArtifact("darwin", "aarch64")).toBe("todou-macos-arm64");
+    expect(binaryArtifact("darwin", "x86_64")).toBe("todou-macos-amd64");
+    expect(binaryArtifact("darwin", "x64")).toBe("todou-macos-amd64");
     expect(binaryArtifact("windows", "x86_64")).toBe("todou-windows-amd64.exe");
-    expect(binaryArtifact("darwin", "x86_64")).toBeNull();
+    expect(binaryArtifact("win32", "arm64")).toBe("todou-windows-arm64.exe");
+    expect(binaryArtifact("linux", "ia32")).toBeNull();
     expect(binaryArtifact("linux", "constructor")).toBeNull();
   });
 });

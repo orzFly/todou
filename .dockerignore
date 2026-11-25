@@ -9,7 +9,6 @@
 .research
 .tmp
 .direnv
-.nix
 .envrc
 .env
 .env.*

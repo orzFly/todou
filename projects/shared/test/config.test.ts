@@ -16,6 +16,7 @@ import {
   flexibleBool,
   loadTomlConfig,
   loadTomlDocs,
+  readTomlDocument,
   setPath,
 } from "../src/config.ts";
 
@@ -44,10 +45,13 @@ describe("loadTomlConfig", () => {
     });
   });
 
-  it("reads a TOML file from disk", () => {
+  it("reads a TOML file from disk", async () => {
     const path = join(dir, "ok.toml");
     writeFileSync(path, 'name = "from-file"\n');
-    const config = loadTomlConfig({ schema: Schema, path });
+    const config = loadTomlConfig({
+      schema: Schema,
+      document: await readTomlDocument(path),
+    });
     expect(config.name).toBe("from-file");
   });
 
@@ -74,19 +78,18 @@ describe("loadTomlConfig", () => {
     expect(config.http.port).toBe(9000);
   });
 
-  it("missing optional path yields pure defaults", () => {
+  it("missing optional path yields pure defaults", async () => {
     const config = loadTomlConfig({
       schema: Schema,
-      path: join(dir, "does-not-exist.toml"),
-      optional: true,
+      document: await readTomlDocument(join(dir, "does-not-exist.toml"), true),
     });
     expect(config.name).toBe("todou");
   });
 
-  it("missing required path throws ConfigError", () => {
-    expect(() =>
-      loadTomlConfig({ schema: Schema, path: join(dir, "nope.toml") }),
-    ).toThrow(ConfigError);
+  it("missing required path throws ConfigError", async () => {
+    await expect(readTomlDocument(join(dir, "nope.toml"))).rejects.toThrow(
+      ConfigError,
+    );
   });
 
   it("schema violations throw ConfigError", () => {
@@ -146,44 +149,46 @@ describe("deepMergeDocs", () => {
 });
 
 describe("loadTomlDocs", () => {
-  it("returns documents in the order given", () => {
+  it("returns documents in the order given", async () => {
     const a = join(dir, "order-a.toml");
     const b = join(dir, "order-b.toml");
     writeFileSync(a, 'name = "a"\n');
     writeFileSync(b, 'name = "b"\n');
-    const docs = loadTomlDocs({ paths: [b, a] });
+    const docs = await loadTomlDocs({ paths: [b, a] });
     expect(docs.map((d) => d.path)).toEqual([b, a]);
   });
 
-  it("skips a file that does not exist", () => {
+  it("skips a file that does not exist", async () => {
     const path = join(dir, "absent.toml");
-    expect(loadTomlDocs({ paths: [path] })).toEqual([]);
+    expect(await loadTomlDocs({ paths: [path] })).toEqual([]);
   });
 
-  it("throws ConfigError naming the file on bad TOML", () => {
+  it("throws ConfigError naming the file on bad TOML", async () => {
     const path = join(dir, "broken.toml");
     writeFileSync(path, "name = [broken\n");
-    expect(() => loadTomlDocs({ paths: [path] })).toThrow(
+    await expect(loadTomlDocs({ paths: [path] })).rejects.toThrow(
       new RegExp(path.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
-    expect(() => loadTomlDocs({ paths: [path] })).toThrow(ConfigError);
+    await expect(loadTomlDocs({ paths: [path] })).rejects.toThrow(ConfigError);
   });
 
-  it("throws ConfigError on a file it cannot read", () => {
+  it("throws ConfigError on a file it cannot read", async () => {
     const path = join(dir, "unreadable.toml");
     writeFileSync(path, 'name = "x"\n');
     chmodSync(path, 0o000);
     try {
-      expect(() => loadTomlDocs({ paths: [path] })).toThrow(ConfigError);
+      await expect(loadTomlDocs({ paths: [path] })).rejects.toThrow(
+        ConfigError,
+      );
     } finally {
       chmodSync(path, 0o644);
     }
   });
 
-  it("throws ConfigError on a directory", () => {
+  it("throws ConfigError on a directory", async () => {
     const path = join(dir, "a-directory.toml");
     mkdirSync(path);
-    expect(() => loadTomlDocs({ paths: [path] })).toThrow(ConfigError);
+    await expect(loadTomlDocs({ paths: [path] })).rejects.toThrow(ConfigError);
   });
 });
 

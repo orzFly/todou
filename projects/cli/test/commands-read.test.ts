@@ -655,7 +655,7 @@ describe("issue view", () => {
   it("resolves a URL at a configured alias, and requests the real base", async () => {
     const dir = mkdtempSync(join(tmpdir(), "todou-alias-"));
     const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
-    saveCliConfig(
+    await saveCliConfig(
       {
         default_server: "http://stub.test",
         servers: {
@@ -769,7 +769,7 @@ describe("issue view", () => {
   it("points --server at a URL belonging to another configured server", async () => {
     const dir = mkdtempSync(join(tmpdir(), "todou-configured-"));
     const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
-    saveCliConfig(
+    await saveCliConfig(
       {
         default_server: "http://stub.test",
         servers: {
@@ -801,7 +801,7 @@ describe("issue view", () => {
     // active server. Belonging is a question of coverage.
     const dir = mkdtempSync(join(tmpdir(), "todou-prefixed-server-"));
     const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
-    saveCliConfig(
+    await saveCliConfig(
       {
         default_server: "http://stub.test",
         servers: {
@@ -836,7 +836,7 @@ describe("issue view", () => {
   it("names the longest covering base when two could answer", async () => {
     const dir = mkdtempSync(join(tmpdir(), "todou-longest-server-"));
     const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
-    saveCliConfig(
+    await saveCliConfig(
       {
         default_server: "http://stub.test",
         servers: {
@@ -886,7 +886,7 @@ describe("issue view", () => {
   it("reads a comment through a permalink at an alias", async () => {
     const dir = mkdtempSync(join(tmpdir(), "todou-alias-comment-"));
     const env = { ...loggedInEnv("todou"), XDG_CONFIG_HOME: dir };
-    saveCliConfig(
+    await saveCliConfig(
       {
         default_server: "http://stub.test",
         servers: {
@@ -2854,7 +2854,7 @@ describe("project link/unlink", () => {
       cwd: repo,
     });
     expect(linked.exitCode).toBe(0);
-    expect(loadCliConfig(env).bindings).toEqual([
+    expect((await loadCliConfig(env)).bindings).toEqual([
       {
         remote: "git@example.com:me/potato.git",
         server: "http://stub.test",
@@ -2864,11 +2864,14 @@ describe("project link/unlink", () => {
 
     const unlinked = await runCli(["project", "unlink"], { env, cwd: repo });
     expect(unlinked.exitCode).toBe(0);
-    expect(loadCliConfig(env).bindings).toEqual([]);
+    expect((await loadCliConfig(env)).bindings).toEqual([]);
   });
 
   it("unlink reports when there is nothing to remove", async () => {
-    saveCliConfig({ servers: {}, bindings: [] }, { XDG_CONFIG_HOME: dir });
+    await saveCliConfig(
+      { servers: {}, bindings: [] },
+      { XDG_CONFIG_HOME: dir },
+    );
     const empty = join(dir, "empty");
     mkdirSync(empty);
     const result = await runCli(["project", "unlink"], {
@@ -2877,7 +2880,9 @@ describe("project link/unlink", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("nothing to unlink here");
-    expect(loadCliConfig({ XDG_CONFIG_HOME: dir }).bindings).toEqual([]);
+    expect((await loadCliConfig({ XDG_CONFIG_HOME: dir })).bindings).toEqual(
+      [],
+    );
   });
 });
 

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import type { Env } from "../config.ts";
@@ -82,7 +82,7 @@ export function isSessionId(value: string): boolean {
  * doubt returns undefined. The caller falls back to the scan, which is what
  * every environment without the extension does anyway.
  */
-export function readOmpState(env: Env): OmpState | undefined {
+export async function readOmpState(env: Env): Promise<OmpState | undefined> {
   const path = env.TODOU_OMP_STATE;
   if (!path) return undefined;
   return readOmpStateAt(path);
@@ -98,7 +98,9 @@ export function readOmpState(env: Env): OmpState | undefined {
  * nothing — which was T-312, an omp session reporting no session at all for as
  * long as it took the first turn to create the log.
  */
-export function readOmpStateAt(path: string): OmpState | undefined {
+export async function readOmpStateAt(
+  path: string,
+): Promise<OmpState | undefined> {
   let record: {
     v?: unknown;
     pid?: unknown;
@@ -110,7 +112,7 @@ export function readOmpStateAt(path: string): OmpState | undefined {
     token?: unknown;
   };
   try {
-    record = JSON.parse(readFileSync(path, "utf8"));
+    record = JSON.parse(await readFile(path, "utf8"));
   } catch {
     // Absent, half-written, or unreadable: the scan still stands on its own.
     return undefined;
@@ -228,10 +230,10 @@ export function ompStateDir(env: Env): string {
  * installed the extension answers with one failed `readdir` and no process
  * tree walked at all.
  */
-export function publishedStatePids(env: Env): readonly number[] {
+export async function publishedStatePids(env: Env): Promise<readonly number[]> {
   let names: string[];
   try {
-    names = readdirSync(ompStateDir(env));
+    names = await readdir(ompStateDir(env));
   } catch {
     return []; // No extension has ever published here.
   }
@@ -259,11 +261,11 @@ export function publishedStatePids(env: Env): readonly number[] {
  * whole thing out before a process tree is walked — on macOS that walk costs a
  * `ps` spawn.
  */
-export function publishedState(
+export async function publishedState(
   env: Env,
-  ancestors: () => readonly number[],
-): OmpState | undefined {
-  return publishedStateAttempt(env, ancestors).state;
+  ancestors: () => Promise<readonly number[]>,
+): Promise<OmpState | undefined> {
+  return (await publishedStateAttempt(env, ancestors)).state;
 }
 
 /**
@@ -272,19 +274,19 @@ export function publishedState(
  * that difference: falling back quietly there restores the startup snapshot it
  * exists to replace (T-289), so the failure has to be reportable.
  */
-export function publishedStateAttempt(
+export async function publishedStateAttempt(
   env: Env,
-  ancestors: () => readonly number[],
-): { state?: OmpState; unreadable?: string } {
-  const published = publishedStatePids(env);
+  ancestors: () => Promise<readonly number[]>,
+): Promise<{ state?: OmpState; unreadable?: string }> {
+  const published = await publishedStatePids(env);
   if (published.length === 0) return {};
   const dir = ompStateDir(env);
   const known = new Set(published);
   let unreadable: string | undefined;
-  for (const pid of ancestors()) {
+  for (const pid of await ancestors()) {
     if (!known.has(pid)) continue;
     const path = join(dir, `${pid}.json`);
-    const state = readOmpStateAt(path);
+    const state = await readOmpStateAt(path);
     if (state) return { state };
     // Named but not believed. Kept rather than returned, because a nearer
     // ancestor's unusable record must not hide a further one's good record —

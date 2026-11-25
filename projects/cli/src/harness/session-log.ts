@@ -1,4 +1,4 @@
-import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { open, readdir, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 /** Enough for the opening entries of a session file; anything longer is not one. */
@@ -50,7 +50,7 @@ export type SessionHeader = { id: string; cwd: string };
  * live session from this project's archive when the harness is writing no log
  * at all. The descriptor settles the first; `MAX_AGE_MS` bounds the second.
  */
-export function currentSessionFile(opts: {
+export async function currentSessionFile(opts: {
   /** Where this harness could be keeping this project's sessions. */
   dirs: readonly string[];
   /** Our own cwd, resolved. */
@@ -65,13 +65,13 @@ export function currentSessionFile(opts: {
    * opt-in — see the call sites.
    */
   openLogs?: readonly string[];
-}): { id: string; path: string } | undefined {
+}): Promise<{ id: string; path: string } | undefined> {
   const held = opts.openLogs?.[0];
   if (opts.openLogs?.length === 1 && held !== undefined) {
     // The descriptor outranks everything below, `explicit` included: argv says
     // what the harness was started with, the descriptor what it is appending
     // to now, and `/resume` is exactly where those two part company.
-    const header = sessionHeader(held);
+    const header = await sessionHeader(held);
     return header ? { id: header.id, path: held } : undefined;
   }
   // Readable, and naming no log at all: this harness is writing no session.
@@ -88,7 +88,7 @@ export function currentSessionFile(opts: {
   for (const dir of opts.dirs) {
     let names: string[];
     try {
-      names = readdirSync(dir);
+      names = await readdir(dir);
     } catch {
       continue; // No session has ever been recorded for this directory.
     }
@@ -96,7 +96,7 @@ export function currentSessionFile(opts: {
       if (!name.endsWith(".jsonl")) continue;
       const path = join(dir, name);
       try {
-        const mtime = statSync(path).mtimeMs;
+        const mtime = (await stat(path)).mtimeMs;
         if (mtime >= cutoff) scanned.push({ path, mtime });
       } catch {
         // Raced with a session being deleted; simply not a candidate.
@@ -111,7 +111,11 @@ export function currentSessionFile(opts: {
   if (opts.explicit) {
     try {
       const path = resolve(opts.explicit);
-      candidates.push({ path, mtime: statSync(path).mtimeMs, explicit: true });
+      candidates.push({
+        path,
+        mtime: (await stat(path)).mtimeMs,
+        explicit: true,
+      });
     } catch {
       // Named a file we cannot stat; the scan still stands on its own.
     }
@@ -119,7 +123,7 @@ export function currentSessionFile(opts: {
   }
 
   for (const { path, explicit } of candidates) {
-    const header = sessionHeader(path);
+    const header = await sessionHeader(path);
     if (!header) continue;
     // A session whose cwd does not contain ours belongs to another project:
     // the only filter available under a flat session directory, where every
@@ -168,12 +172,17 @@ export function contains(parent: string, child: string): boolean {
  * rather than just the first, and a file that has not declared itself within
  * the first few hundred bytes is not one we can claim.
  */
-function sessionHeader(path: string): SessionHeader | undefined {
+async function sessionHeader(path: string): Promise<SessionHeader | undefined> {
   try {
-    const fd = openSync(path, "r");
+    const handle = await open(path, "r");
     try {
       const buffer = Buffer.alloc(HEADER_BYTES);
-      const filled = readSync(fd, buffer, 0, HEADER_BYTES, 0);
+      const { bytesRead: filled } = await handle.read(
+        buffer,
+        0,
+        HEADER_BYTES,
+        0,
+      );
       const text = buffer.toString("utf8", 0, filled);
       // The last element is a fragment unless the read ended on a newline;
       // a truncated line simply fails to parse.
@@ -182,7 +191,7 @@ function sessionHeader(path: string): SessionHeader | undefined {
         if (header) return header;
       }
     } finally {
-      closeSync(fd);
+      await handle.close();
     }
   } catch {
     // Unreadable or foreign file: not a session we can claim.

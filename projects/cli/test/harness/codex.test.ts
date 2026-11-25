@@ -63,26 +63,29 @@ function codexHome(
 }
 
 describe("codex detection", () => {
-  it("returns null without a thread id, and when it is bound empty", () => {
-    expect(detectAgentContext({}, home)).toBeNull();
-    expect(detectAgentContext({ CODEX_THREAD_ID: "" }, home)).toBeNull();
+  it("returns null without a thread id, and when it is bound empty", async () => {
+    expect(await detectAgentContext({}, home)).toBeNull();
+    expect(await detectAgentContext({ CODEX_THREAD_ID: "" }, home)).toBeNull();
     // Neither of these accompanies every codex shell, so neither is a signal.
     expect(
-      detectAgentContext({ CODEX_PERMISSION_PROFILE: ":workspace" }, home),
+      await detectAgentContext(
+        { CODEX_PERMISSION_PROFILE: ":workspace" },
+        home,
+      ),
     ).toBeNull();
     expect(
-      detectAgentContext({ CODEX_SANDBOX_NETWORK_DISABLED: "1" }, home),
+      await detectAgentContext({ CODEX_SANDBOX_NETWORK_DISABLED: "1" }, home),
     ).toBeNull();
   });
 
-  it("degrades to agent and thread id when no rollout is readable", () => {
-    expect(detectAgentContext({ CODEX_THREAD_ID: TID }, home)).toEqual({
+  it("degrades to agent and thread id when no rollout is readable", async () => {
+    expect(await detectAgentContext({ CODEX_THREAD_ID: TID }, home)).toEqual({
       agent: "codex",
       session_id: TID,
     });
   });
 
-  it("reads the model from the newest turn_context", () => {
+  it("reads the model from the newest turn_context", async () => {
     const dir = codexHome([
       sessionMetaLine,
       turnContextLine("gpt-test-old"),
@@ -91,7 +94,7 @@ describe("codex detection", () => {
       responseLine,
     ]);
     expect(
-      detectAgentContext({ CODEX_THREAD_ID: TID, CODEX_HOME: dir }, home),
+      await detectAgentContext({ CODEX_THREAD_ID: TID, CODEX_HOME: dir }, home),
     ).toEqual({
       agent: "codex",
       session_id: TID,
@@ -99,18 +102,19 @@ describe("codex detection", () => {
     });
   });
 
-  it("falls back to ~/.codex when CODEX_HOME is bound empty", () => {
+  it("falls back to ~/.codex when CODEX_HOME is bound empty", async () => {
     // `??` would take that empty string for a chosen home and glob from the
     // filesystem root, so the model would never resolve (T-120).
     const own = mkdtempSync(join(tmpdir(), "todou-codex-ownhome-"));
     codexHome([turnContextLine("gpt-test-model")], join(own, ".codex"));
     expect(
-      detectAgentContext({ CODEX_THREAD_ID: TID, CODEX_HOME: "" }, own)?.model,
+      (await detectAgentContext({ CODEX_THREAD_ID: TID, CODEX_HOME: "" }, own))
+        ?.model,
     ).toBe("gpt-test-model");
     rmSync(own, { recursive: true, force: true });
   });
 
-  it("skips foreign, unparseable and half-written lines", () => {
+  it("skips foreign, unparseable and half-written lines", async () => {
     const dir = codexHome([
       turnContextLine("gpt-test-model"),
       JSON.stringify({ type: "event_msg", payload: { turn_context: "junk" } }),
@@ -118,8 +122,12 @@ describe("codex detection", () => {
       '{"type":"turn_context","payload":{"model":',
     ]);
     expect(
-      detectAgentContext({ CODEX_THREAD_ID: TID, CODEX_HOME: dir }, home)
-        ?.model,
+      (
+        await detectAgentContext(
+          { CODEX_THREAD_ID: TID, CODEX_HOME: dir },
+          home,
+        )
+      )?.model,
     ).toBe("gpt-test-model");
   });
 
@@ -131,29 +139,29 @@ describe("codex detection", () => {
       "a turn_context whose model is not a string",
       [JSON.stringify({ type: "turn_context", payload: { model: 5 } })],
     ],
-  ])("degrades to no model on %s", (_name, lines) => {
+  ])("degrades to no model on %s", async (_name, lines) => {
     const dir = codexHome(lines);
     expect(
-      detectAgentContext({ CODEX_THREAD_ID: TID, CODEX_HOME: dir }, home),
+      await detectAgentContext({ CODEX_THREAD_ID: TID, CODEX_HOME: dir }, home),
     ).toEqual({ agent: "codex", session_id: TID });
   });
 
-  it("rejects path-shaped thread ids but still reports them", () => {
+  it("rejects path-shaped thread ids but still reports them", async () => {
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CODEX_THREAD_ID: "../../etc/passwd", CODEX_HOME: codexHome() },
         home,
       ),
     ).toEqual({ agent: "codex", session_id: "../../etc/passwd" });
   });
 
-  it("falls back to the registry order with no readable process tree", () => {
+  it("falls back to the registry order with no readable process tree", async () => {
     // codex inherits CLAUDECODE from a claude code shell exactly as claude
     // code inherits CODEX_THREAD_ID from a codex one, so this env is
     // ambiguous. The process tree resolves it when it can be read (see
     // process-tree.test.ts); this pins what is left when it cannot.
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", CODEX_THREAD_ID: TID },
         home,
         undefined,
@@ -162,9 +170,9 @@ describe("codex detection", () => {
     ).toEqual({ agent: "claude-code" });
   });
 
-  it("codex wins over the hermes gateway, tree or no tree", () => {
+  it("codex wins over the hermes gateway, tree or no tree", async () => {
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         {
           CODEX_THREAD_ID: TID,
           CODEX_HOME: codexHome(),

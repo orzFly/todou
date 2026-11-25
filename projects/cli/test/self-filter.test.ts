@@ -27,9 +27,9 @@ const me = {
 const RETRY: RetryOptions = { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 };
 
 /** A reader handing out `answers` in order, repeating the last one. */
-function reader(answers: LiveSession[]): () => LiveSession {
+function reader(answers: LiveSession[]): () => Promise<LiveSession> {
   let i = 0;
-  return () => answers[Math.min(i++, answers.length - 1)] as LiveSession;
+  return async () => answers[Math.min(i++, answers.length - 1)] as LiveSession;
 }
 
 function source(
@@ -57,11 +57,11 @@ describe("resolveSelfFilter as a source (T-289)", () => {
       source([{ id: "first" }, { id: "second" }]),
     );
 
-    expect(self.params()).toEqual({
+    expect(await self.params()).toEqual({
       excludeActor: 2,
       excludeAgentSession: "first",
     });
-    expect(self.params()).toEqual({
+    expect(await self.params()).toEqual({
       excludeActor: 2,
       excludeAgentSession: "second",
     });
@@ -70,14 +70,14 @@ describe("resolveSelfFilter as a source (T-289)", () => {
     ]);
     // The third call sees the same id as the second: a rotation is reported
     // per new value, not per drain.
-    self.params();
+    await self.params();
     expect(notes).toHaveLength(1);
   });
 
   it("says nothing at all while the id holds still", async () => {
     const { self, notes } = await build(source([{ id: "steady" }]));
     for (let i = 0; i < 4; i++) {
-      expect(self.params().excludeAgentSession).toBe("steady");
+      expect((await self.params()).excludeAgentSession).toBe("steady");
     }
     // Including on the first call, where the live value and the environment
     // are expected to agree.
@@ -91,12 +91,12 @@ describe("resolveSelfFilter as a source (T-289)", () => {
     // Falling back to the startup value is today's behaviour and the bug
     // being fixed, so the fallback may not be silent: without this line a
     // lookup that never succeeds leaves the card looking closed.
-    expect(self.params()).toEqual({
+    expect(await self.params()).toEqual({
       excludeActor: 2,
       excludeAgentSession: "startup-id",
     });
-    self.params();
-    self.params();
+    await self.params();
+    await self.params();
     expect(notes).toEqual([
       `could not read ${path}: the self-filter stays on the session id this ` +
         "process started with, and will not follow a /clear",
@@ -105,21 +105,21 @@ describe("resolveSelfFilter as a source (T-289)", () => {
 
   it("prefers the live id but never an empty one", async () => {
     const { self } = await build(source([{ id: "live" }], "startup-id"));
-    expect(self.params().excludeAgentSession).toBe("live");
+    expect((await self.params()).excludeAgentSession).toBe("live");
 
     // A harness may report an empty session id, which names nothing and the
     // server rejects as a query param.
     const empty = await build(source([{}], ""));
-    expect(empty.self.params()).toEqual({
+    expect(await empty.self.params()).toEqual({
       excludeActor: 2,
       excludeAgentSession: undefined,
     });
   });
 
   it("leaves --any-actor and --exclude-actor alone", async () => {
-    expect(fixedSelfFilter({}).params()).toEqual({});
+    expect(await fixedSelfFilter({}).params()).toEqual({});
     const named = fixedSelfFilter({ excludeActor: 7 });
-    expect(named.params()).toEqual({ excludeActor: 7 });
-    expect(named.params()).toEqual({ excludeActor: 7 });
+    expect(await named.params()).toEqual({ excludeActor: 7 });
+    expect(await named.params()).toEqual({ excludeActor: 7 });
   });
 });

@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { type FileHandle, open, stat } from "node:fs/promises";
 
 const CHUNK_BYTES = 256 * 1024;
 // In Claude Code a single image Read appends a ~400 KB base64 tool_result
@@ -18,14 +18,14 @@ const MAX_SCAN_BYTES = 16 * 1024 * 1024;
  * undefined, never a throw, and lines below the scan floor are simply never
  * offered to `pick`.
  */
-export function findInJsonlTail<T>(
+export async function findInJsonlTail<T>(
   file: string,
   pick: (line: string) => T | undefined,
-): T | undefined {
+): Promise<T | undefined> {
   try {
-    const size = statSync(file).size;
+    const size = (await stat(file)).size;
     const floor = Math.max(0, size - MAX_SCAN_BYTES);
-    const fd = openSync(file, "r");
+    const handle = await open(file, "r");
     try {
       let end = size;
       // Head fragment of a line that continues past the chunk boundary.
@@ -34,7 +34,7 @@ export function findInJsonlTail<T>(
       let carry: Buffer = Buffer.alloc(0);
       while (end > floor) {
         const start = Math.max(floor, end - CHUNK_BYTES);
-        const chunk = readAt(fd, start, end - start);
+        const chunk = await readAt(handle, start, end - start);
         const window = carry.length ? Buffer.concat([chunk, carry]) : chunk;
         const firstNewline = window.indexOf(0x0a);
         if (firstNewline === -1) {
@@ -54,7 +54,7 @@ export function findInJsonlTail<T>(
       // complete line; below the scan floor its beginning is missing.
       if (floor === 0) return pick(carry.toString("utf8"));
     } finally {
-      closeSync(fd);
+      await handle.close();
     }
   } catch {
     // Unreadable transcript is never an error.
@@ -62,11 +62,20 @@ export function findInJsonlTail<T>(
   return undefined;
 }
 
-function readAt(fd: number, position: number, length: number): Buffer {
+async function readAt(
+  handle: FileHandle,
+  position: number,
+  length: number,
+): Promise<Buffer> {
   const buffer = Buffer.alloc(length);
   let filled = 0;
   while (filled < length) {
-    const n = readSync(fd, buffer, filled, length - filled, position + filled);
+    const { bytesRead: n } = await handle.read(
+      buffer,
+      filled,
+      length - filled,
+      position + filled,
+    );
     if (n === 0) break; // the file shrank underneath us
     filled += n;
   }

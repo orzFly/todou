@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// Usage: mermaid-bundle-smoke.mjs <todou.cjs>
+// Usage: mermaid-bundle-smoke.mjs <todou.cjs | todou executable>
 //
 // Proves on the built artifact that the embedded mermaid works (T-769): the
 // sub-bundle, the compression, the payload injection and the main bundle's
 // external are four separate steps, and only running the result shows that
 // they connect. Run from source, the CLI takes a different loading path
-// entirely, so no unit test can stand in for this.
+// entirely, so no unit test can stand in for this. A `.cjs` runs under this
+// node; anything else is a single-file executable and runs itself (T-792),
+// with its own loader for the same payload.
 //
 // The CLI talks to a stub server on 127.0.0.1 that answers the one route a
 // `comment add` needs. Anything else is answered 500 and named on stderr, so
@@ -18,9 +20,14 @@ import { join } from "node:path";
 
 const bundle = process.argv[2];
 if (bundle === undefined) {
-  console.error("usage: mermaid-bundle-smoke.mjs <todou.cjs>");
+  console.error(
+    "usage: mermaid-bundle-smoke.mjs <todou.cjs | todou executable>",
+  );
   process.exit(2);
 }
+const [command, prefix] = bundle.endsWith(".cjs")
+  ? [process.execPath, [bundle]]
+  : [bundle, []];
 
 // From mermaid's own source; the CLI's code never spells it, and inside the
 // compressed payload it cannot appear in clear.
@@ -74,8 +81,8 @@ try {
     writeFileSync(file, body);
     return new Promise((resolve) => {
       execFile(
-        process.execPath,
-        [bundle, "comment", "add", "7", "-p", "todou", "--body-file", file],
+        command,
+        [...prefix, "comment", "add", "7", "-p", "todou", "--body-file", file],
         {
           env: {
             PATH: process.env.PATH,

@@ -69,7 +69,7 @@ export function fakePeerPush(
     };
     return {
       send: async (items, since, cursor) => {
-        const mode = claudeCode?.fromMode?.();
+        const mode = await claudeCode?.fromMode?.();
         pushes.push({
           body: o.render(items, since, cursor),
           since,
@@ -107,7 +107,7 @@ export function fakePeerPush(
       },
       replies: () => opts.replies ?? { discarded: 0, unbounced: 0 },
       whenRejected,
-      close: () => {
+      close: async () => {
         closed = true;
       },
     };

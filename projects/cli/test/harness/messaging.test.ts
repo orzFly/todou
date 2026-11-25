@@ -29,9 +29,9 @@ const read = (env: Record<string, string>) =>
   harnessMessaging({ HOME: "/nonexistent-todou-home", ...env }, NO_TREE);
 
 describe("harnessMessaging", () => {
-  it("reads Claude Code's pair under Claude Code, named as its receiver", () => {
+  it("reads Claude Code's pair under Claude Code, named as its receiver", async () => {
     expect(
-      read({
+      await read({
         CLAUDECODE: "1",
         CLAUDE_CODE_MESSAGING_SOCKET: CC,
         CLAUDE_CODE_MESSAGING_TOKEN: "cc-token",
@@ -39,19 +39,19 @@ describe("harnessMessaging", () => {
     ).toEqual({ socket: CC, token: "cc-token", peer: "claude-code" });
   });
 
-  it("keeps reading them with no harness detected at all", () => {
+  it("keeps reading them with no harness detected at all", async () => {
     // Every supervisor and wrapper that runs todou from inside a session
     // without carrying its markers, which is how this has always behaved.
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: CC })).toEqual({
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: CC })).toEqual({
       socket: CC,
       token: undefined,
       peer: "claude-code",
     });
   });
 
-  it("reads todou's own pair under omp, named as its receiver", () => {
+  it("reads todou's own pair under omp, named as its receiver", async () => {
     expect(
-      read({
+      await read({
         OMPCODE: "1",
         CLAUDECODE: "1",
         TODOU_MESSAGING_SOCKET: OMP,
@@ -67,9 +67,9 @@ describe("harnessMessaging", () => {
    * a card's activity to an agent that never asked while the one that ran the
    * watch waits for a batch that already went somewhere else.
    */
-  it("never pushes an omp session's batches at the Claude Code above it", () => {
+  it("never pushes an omp session's batches at the Claude Code above it", async () => {
     expect(
-      read({
+      await read({
         OMPCODE: "1",
         CLAUDECODE: "1",
         CLAUDE_CODE_MESSAGING_SOCKET: CC,
@@ -78,11 +78,11 @@ describe("harnessMessaging", () => {
     ).toEqual({ socket: undefined, token: undefined });
   });
 
-  it("gives a channel-less harness no endpoint, inherited or not", () => {
+  it("gives a channel-less harness no endpoint, inherited or not", async () => {
     // A standalone Codex has no App Server socket, and the one inherited from
     // the Claude Code that started it addresses that session, not this agent.
     expect(
-      read({ CODEX_THREAD_ID: "t1", CLAUDE_CODE_MESSAGING_SOCKET: CC }),
+      await read({ CODEX_THREAD_ID: "t1", CLAUDE_CODE_MESSAGING_SOCKET: CC }),
     ).toEqual({});
   });
 });
@@ -115,9 +115,9 @@ describe("pi messaging", () => {
     };
   }
 
-  it("finds pi's published channel and tool by ancestry", () => {
+  it("finds pi's published channel and tool by ancestry", async () => {
     const { env, io } = environment("pi");
-    expect(harnessMessaging(env, io)).toEqual({
+    expect(await harnessMessaging(env, io)).toEqual({
       socket: "/run/todou/pi.sock",
       token: "pi-token",
       peer: "pi",
@@ -125,10 +125,10 @@ describe("pi messaging", () => {
     });
   });
 
-  it("rejects inherited omp and Claude Code endpoints", () => {
+  it("rejects inherited omp and Claude Code endpoints", async () => {
     const { env, io } = environment("omp");
     expect(
-      harnessMessaging(
+      await harnessMessaging(
         {
           ...env,
           TODOU_MESSAGING_SOCKET: OMP,
@@ -141,14 +141,14 @@ describe("pi messaging", () => {
     ).toEqual({});
   });
 
-  it("rejects incomplete published channel pairs", () => {
+  it("rejects incomplete published channel pairs", async () => {
     const { env, io } = environment("pi", { token: "" });
-    expect(harnessMessaging(env, io)).toEqual({});
+    expect(await harnessMessaging(env, io)).toEqual({});
   });
 
   it.each(["pi", "omp"])(
     "does not route an unextended inner %s to its pi parent",
-    (inner) => {
+    async (inner) => {
       const { env } = environment("pi");
       const inherited = {
         ...env,
@@ -174,11 +174,11 @@ describe("pi messaging", () => {
         },
         { pid: process.pid, ppid: 1, argv: ["pi"] },
       ]);
-      expect(harnessMessaging(child, io)).toEqual({});
+      expect(await harnessMessaging(child, io)).toEqual({});
     },
   );
 
-  it("keeps an omp-owned channel when pi state is also inherited", () => {
+  it("keeps an omp-owned channel when pi state is also inherited", async () => {
     const { env } = environment("omp", { socket: OMP, token: "own-token" });
     const own = join(env.XDG_RUNTIME_DIR, "todou-omp", `${process.pid}.json`);
     const child = {
@@ -199,7 +199,7 @@ describe("pi messaging", () => {
         argv: ["omp"],
       },
     ]);
-    expect(harnessMessaging(child, io)).toEqual({
+    expect(await harnessMessaging(child, io)).toEqual({
       socket: OMP,
       token: "own-token",
       peer: "omp",
@@ -267,35 +267,35 @@ describe("harnessMessaging under omp, with nothing in the environment", () => {
     peer: "omp",
   } as const;
 
-  it("takes the channel an ancestor published", () => {
+  it("takes the channel an ancestor published", async () => {
     const { env, io } = environment({
       [process.pid]: record(process.pid, channel),
     });
-    expect(harnessMessaging(env, io)).toEqual(channel);
+    expect(await harnessMessaging(env, io)).toEqual(channel);
   });
 
-  it("reports no channel for an extension too old to publish one", () => {
+  it("reports no channel for an extension too old to publish one", async () => {
     // Installed on real machines right now, and the record it writes still
     // carries a session id — so this must be "no channel", not "no record".
     const { env, io } = environment({ [process.pid]: record(process.pid) });
-    expect(harnessMessaging(env, io)).toEqual({});
+    expect(await harnessMessaging(env, io)).toEqual({});
   });
 
-  it("takes the nearer publisher when omp is running inside omp", () => {
+  it("takes the nearer publisher when omp is running inside omp", async () => {
     const far = "/run/user/1000/todou-omp/far.sock";
     const { env, io } = environment({
       [process.pid]: record(process.pid, channel),
       [FAR]: record(FAR, { socket: far, token: "far-token" }),
     });
-    expect(harnessMessaging(env, io)).toEqual(channel);
+    expect(await harnessMessaging(env, io)).toEqual(channel);
   });
 
-  it("prefers the current manifest over stale exported credentials", () => {
+  it("prefers the current manifest over stale exported credentials", async () => {
     const { env, io } = environment({
       [process.pid]: record(process.pid, channel),
     });
     expect(
-      harnessMessaging(
+      await harnessMessaging(
         { ...env, TODOU_MESSAGING_SOCKET: OMP, TODOU_MESSAGING_TOKEN: "env" },
         io,
       ),
@@ -307,27 +307,31 @@ describe("harnessMessaging reads the extension's tools (T-357)", () => {
   const read = (env: Record<string, string>) =>
     harnessMessaging({ HOME: "/nonexistent-todou-home", ...env }, NO_TREE);
 
-  it("takes them from the variable the bash tool carries", () => {
+  it("takes them from the variable the bash tool carries", async () => {
     expect(
-      read({
-        OMPCODE: "1",
-        CLAUDECODE: "1",
-        TODOU_MESSAGING_SOCKET: OMP,
-        TODOU_OMP_TOOLS: "todou_watch",
-      }).tools,
+      (
+        await read({
+          OMPCODE: "1",
+          CLAUDECODE: "1",
+          TODOU_MESSAGING_SOCKET: OMP,
+          TODOU_OMP_TOOLS: "todou_watch",
+        })
+      ).tools,
     ).toEqual(["todou_watch"]);
     // A comma list is the one shape `claim()` writes and this must split.
     expect(
-      read({
-        OMPCODE: "1",
-        CLAUDECODE: "1",
-        TODOU_MESSAGING_SOCKET: OMP,
-        TODOU_OMP_TOOLS: "a,b",
-      }).tools,
+      (
+        await read({
+          OMPCODE: "1",
+          CLAUDECODE: "1",
+          TODOU_MESSAGING_SOCKET: OMP,
+          TODOU_OMP_TOOLS: "a,b",
+        })
+      ).tools,
     ).toEqual(["a", "b"]);
   });
 
-  it("takes them from a record an ancestor published", () => {
+  it("takes them from a record an ancestor published", async () => {
     const runtime = scratchDir("todou-msg-tools-");
     const dir = join(runtime, "todou-omp");
     mkdirSync(dir, { recursive: true });
@@ -345,20 +349,24 @@ describe("harnessMessaging reads the extension's tools (T-357)", () => {
       }),
     );
     expect(
-      harnessMessaging(
-        { OMPCODE: "1", CLAUDECODE: "1", XDG_RUNTIME_DIR: runtime },
-        procTree([{ pid: process.pid, ppid: 1, argv: ["omp"] }]),
+      (
+        await harnessMessaging(
+          { OMPCODE: "1", CLAUDECODE: "1", XDG_RUNTIME_DIR: runtime },
+          procTree([{ pid: process.pid, ppid: 1, argv: ["omp"] }]),
+        )
       ).tools,
     ).toEqual(["todou_watch"]);
   });
 
-  it("reads no tools where the record or variable named none", () => {
+  it("reads no tools where the record or variable named none", async () => {
     expect(
-      read({
-        OMPCODE: "1",
-        CLAUDECODE: "1",
-        TODOU_MESSAGING_SOCKET: OMP,
-      }).tools,
+      (
+        await read({
+          OMPCODE: "1",
+          CLAUDECODE: "1",
+          TODOU_MESSAGING_SOCKET: OMP,
+        })
+      ).tools,
     ).toBeUndefined();
   });
 });
@@ -397,9 +405,9 @@ describe("native messaging ownership", () => {
 
   it.each(["omp", "pi"] as const)(
     "%s rereads the complete owner and channel after token/session rotation",
-    (peer) => {
+    async (peer) => {
       const { env, io, path, record } = environment(peer);
-      expect(nativeWatchOwner(env, io)).toEqual({
+      expect(await nativeWatchOwner(env, io)).toEqual({
         peer,
         pid: process.pid,
         path,
@@ -415,7 +423,7 @@ describe("native messaging ownership", () => {
         tools: ["todou_watch", "todou_unwatch"],
       };
       writeFileSync(path, JSON.stringify(rotated));
-      expect(nativeWatchOwner(env, io)).toEqual({
+      expect(await nativeWatchOwner(env, io)).toEqual({
         peer,
         pid: process.pid,
         path,
@@ -423,7 +431,7 @@ describe("native messaging ownership", () => {
         socket: rotated.socket,
         token: rotated.token,
       });
-      expect(harnessMessaging(env, io)).toEqual({
+      expect(await harnessMessaging(env, io)).toEqual({
         peer,
         socket: rotated.socket,
         token: rotated.token,
@@ -434,23 +442,23 @@ describe("native messaging ownership", () => {
 
   it.each(["omp", "pi"] as const)(
     "%s loses its owner when its manifest disappears",
-    (peer) => {
+    async (peer) => {
       const { env, io, path } = environment(peer);
-      expect(nativeWatchOwner(env, io)).toBeDefined();
+      expect(await nativeWatchOwner(env, io)).toBeDefined();
       unlinkSync(path);
-      expect(nativeWatchOwner(env, io)).toBeUndefined();
-      expect(harnessMessaging(env, io)).toEqual({});
+      expect(await nativeWatchOwner(env, io)).toBeUndefined();
+      expect(await harnessMessaging(env, io)).toEqual({});
     },
   );
 
   it.each(["{", "null", "[]", "42", '""', "{}"])(
     "treats malformed manifest %s as absent, without reviving stale env",
-    (body) => {
+    async (body) => {
       for (const peer of ["omp", "pi"] as const) {
         const { env, io, path } = environment(peer);
         writeFileSync(path, body);
-        expect(nativeWatchOwner(env, io)).toBeUndefined();
-        expect(harnessMessaging(env, io)).toEqual({});
+        expect(await nativeWatchOwner(env, io)).toBeUndefined();
+        expect(await harnessMessaging(env, io)).toEqual({});
       }
     },
   );
@@ -466,11 +474,11 @@ describe("native messaging ownership", () => {
         await once(child, "spawn");
         if (child.pid === undefined) throw new Error("Missing publisher PID");
         const { env, io } = environment(peer, child.pid);
-        expect(nativeWatchOwner(env, io)).toBeDefined();
+        expect(await nativeWatchOwner(env, io)).toBeDefined();
         child.kill("SIGTERM");
         await exited;
-        expect(nativeWatchOwner(env, io)).toBeUndefined();
-        expect(harnessMessaging(env, io)).toEqual({});
+        expect(await nativeWatchOwner(env, io)).toBeUndefined();
+        expect(await harnessMessaging(env, io)).toEqual({});
       } finally {
         child.kill("SIGKILL");
         await exited;
@@ -480,40 +488,44 @@ describe("native messaging ownership", () => {
 
   it.each(["omp", "pi"] as const)(
     "%s requires a complete channel in an otherwise valid manifest",
-    (peer) => {
+    async (peer) => {
       const { env, io, path, record } = environment(peer);
       writeFileSync(path, JSON.stringify({ ...record, token: "" }));
-      expect(nativeWatchOwner(env, io)).toBeUndefined();
-      expect(harnessMessaging(env, io)).toEqual({});
+      expect(await nativeWatchOwner(env, io)).toBeUndefined();
+      expect(await harnessMessaging(env, io)).toEqual({});
     },
   );
 
   it.each(["omp", "pi"] as const)(
     "%s requires positive ancestry even for a live explicit manifest",
-    (peer) => {
+    async (peer) => {
       const { env, record } = environment(peer);
       expect(
-        harnessMessaging({ HOME: "/nonexistent-todou-home", ...env }, NO_TREE)
-          .token,
+        (
+          await harnessMessaging(
+            { HOME: "/nonexistent-todou-home", ...env },
+            NO_TREE,
+          )
+        ).token,
       ).toBe(record.token);
-      expect(nativeWatchOwner(env, NO_TREE)).toBeUndefined();
+      expect(await nativeWatchOwner(env, NO_TREE)).toBeUndefined();
       const unrelated = procTree([
         { pid: 424240, ppid: 424241, env },
         { pid: 424241, ppid: 1, argv: [peer] },
       ]);
-      expect(nativeWatchOwner(env, unrelated)).toBeUndefined();
+      expect(await nativeWatchOwner(env, unrelated)).toBeUndefined();
     },
   );
 
-  it("does not revive env credentials when an ancestry-only manifest is malformed", () => {
+  it("does not revive env credentials when an ancestry-only manifest is malformed", async () => {
     const { env, io, path } = environment("omp");
     delete env.TODOU_OMP_STATE;
     writeFileSync(path, "null");
-    expect(harnessMessaging(env, io)).toEqual({});
-    expect(nativeWatchOwner(env, io)).toBeUndefined();
+    expect(await harnessMessaging(env, io)).toEqual({});
+    expect(await nativeWatchOwner(env, io)).toBeUndefined();
   });
 
-  it("preserves env-only legacy omp messaging without inventing a watch owner", () => {
+  it("preserves env-only legacy omp messaging without inventing a watch owner", async () => {
     const env = {
       OMPCODE: "1",
       XDG_RUNTIME_DIR: scratchDir("todou-legacy-"),
@@ -526,21 +538,21 @@ describe("native messaging ownership", () => {
       { pid: process.pid, ppid: 1, argv: ["omp"] },
     ]);
     for (const tree of [NO_TREE, io]) {
-      expect(harnessMessaging(env, tree)).toEqual({
+      expect(await harnessMessaging(env, tree)).toEqual({
         peer: "omp",
         socket: OMP,
         token: "legacy-token",
         tools: ["todou_watch"],
       });
-      expect(nativeWatchOwner(env, tree)).toBeUndefined();
+      expect(await nativeWatchOwner(env, tree)).toBeUndefined();
     }
   });
 
-  it("accepts an owned legacy manifest without the agent field", () => {
+  it("accepts an owned legacy manifest without the agent field", async () => {
     const { env, io, path, record } = environment("omp");
     writeFileSync(path, JSON.stringify({ ...record, agent: undefined }));
-    expect(nativeWatchOwner(env, io)?.peer).toBe("omp");
-    expect(harnessMessaging(env, io).token).toBe(record.token);
+    expect((await nativeWatchOwner(env, io))?.peer).toBe("omp");
+    expect((await harnessMessaging(env, io)).token).toBe(record.token);
   });
 
   it.each([
@@ -550,7 +562,7 @@ describe("native messaging ownership", () => {
     ["pi", "pi"],
   ] as const)(
     "an unextended inner %s never borrows its outer %s channel",
-    (inner, outer) => {
+    async (inner, outer) => {
       const { env: inherited, path } = environment(outer);
       const env = {
         ...inherited,
@@ -567,12 +579,12 @@ describe("native messaging ownership", () => {
         },
         { pid: process.pid, ppid: 1, argv: [outer] },
       ]);
-      expect(harnessMessaging(env, io)).toEqual({});
-      expect(nativeWatchOwner(env, io)).toBeUndefined();
+      expect(await harnessMessaging(env, io)).toEqual({});
+      expect(await nativeWatchOwner(env, io)).toBeUndefined();
       // Even when the outer host's file vanishes, its exported channel is
       // not a legacy channel belonging to the inner host.
       unlinkSync(path);
-      expect(harnessMessaging(env, io)).toEqual({});
+      expect(await harnessMessaging(env, io)).toEqual({});
     },
   );
 
@@ -583,7 +595,7 @@ describe("native messaging ownership", () => {
     ["pi", "pi"],
   ] as const)(
     "the nearer %s manifest wins over an inherited outer %s manifest",
-    (inner, outer) => {
+    async (inner, outer) => {
       const { env, path, record, dir } = environment(inner);
       const outerPath = join(dir, `${process.ppid}.json`);
       writeFileSync(
@@ -610,13 +622,13 @@ describe("native messaging ownership", () => {
         { pid: process.pid, ppid: process.ppid, env: inherited, argv: [inner] },
         { pid: process.ppid, ppid: 1, argv: [outer] },
       ]);
-      expect(harnessMessaging(child, io)).toEqual({
+      expect(await harnessMessaging(child, io)).toEqual({
         peer: inner,
         socket: record.socket,
         token: record.token,
         tools: record.tools,
       });
-      expect(nativeWatchOwner(child, io)?.path).toBe(path);
+      expect((await nativeWatchOwner(child, io))?.path).toBe(path);
     },
   );
 
@@ -627,7 +639,7 @@ describe("native messaging ownership", () => {
     ["pi", "pi"],
   ] as const)(
     "an unmarked shell under inner %s cannot borrow outer %s",
-    (inner, outer) => {
+    async (inner, outer) => {
       const { env: inherited } = environment(outer);
       const env = {
         ...inherited,
@@ -645,13 +657,13 @@ describe("native messaging ownership", () => {
           },
           { pid: process.pid, ppid: 1, argv: [outer] },
         ]);
-        expect(harnessMessaging(env, io)).toEqual({});
-        expect(nativeWatchOwner(env, io)).toBeUndefined();
+        expect(await harnessMessaging(env, io)).toEqual({});
+        expect(await nativeWatchOwner(env, io)).toBeUndefined();
       }
     },
   );
 
-  it("finds the owner beyond an unmarked omp eval worker", () => {
+  it("finds the owner beyond an unmarked omp eval worker", async () => {
     const { env, record, path } = environment("omp");
     const bare = { XDG_RUNTIME_DIR: env.XDG_RUNTIME_DIR };
     const io = procTree([
@@ -663,16 +675,16 @@ describe("native messaging ownership", () => {
       },
       { pid: process.pid, ppid: 1, argv: ["omp"] },
     ]);
-    expect(harnessMessaging(bare, io)).toEqual({
+    expect(await harnessMessaging(bare, io)).toEqual({
       peer: "omp",
       socket: record.socket,
       token: record.token,
       tools: record.tools,
     });
-    expect(nativeWatchOwner(bare, io)?.path).toBe(path);
+    expect((await nativeWatchOwner(bare, io))?.path).toBe(path);
   });
 
-  it("reads a bash service under omp's daemon broker as omp, not Claude Code", () => {
+  it("reads a bash service under omp's daemon broker as omp, not Claude Code", async () => {
     // Measured on omp v18.12.6 (T-564): the service gets both markers back,
     // and the broker between it and omp carries neither.
     const { env, record } = environment("omp");
@@ -687,17 +699,17 @@ describe("native messaging ownership", () => {
       },
       { pid: process.pid, ppid: 1, argv: ["/opt/omp/bin/omp"] },
     ]);
-    expect(detectHarnessId(service, io)).toBe("omp");
-    expect(harnessMessaging(service, io)).toEqual({
+    expect(await detectHarnessId(service, io)).toBe("omp");
+    expect(await harnessMessaging(service, io)).toEqual({
       peer: "omp",
       socket: record.socket,
       token: record.token,
       tools: record.tools,
     });
-    expect(nativeWatchOwner(service, io)?.pid).toBe(process.pid);
+    expect((await nativeWatchOwner(service, io))?.pid).toBe(process.pid);
   });
 
-  it("does not borrow an outer omp manifest through an unmarked clean inner host", () => {
+  it("does not borrow an outer omp manifest through an unmarked clean inner host", async () => {
     const { env: inherited } = environment("omp");
     const clean = {
       XDG_RUNTIME_DIR: inherited.XDG_RUNTIME_DIR,
@@ -713,26 +725,26 @@ describe("native messaging ownership", () => {
       },
       { pid: process.pid, ppid: 1, argv: ["omp"] },
     ]);
-    expect(harnessMessaging(clean, io)).toEqual({});
-    expect(nativeWatchOwner(clean, io)).toBeUndefined();
+    expect(await harnessMessaging(clean, io)).toEqual({});
+    expect(await nativeWatchOwner(clean, io)).toBeUndefined();
   });
 
-  it("preserves a legacy env channel alongside an owned identity-only manifest", () => {
+  it("preserves a legacy env channel alongside an owned identity-only manifest", async () => {
     const { env, io, path, record } = environment("omp");
     writeFileSync(
       path,
       JSON.stringify({ ...record, socket: undefined, token: undefined }),
     );
-    expect(harnessMessaging(env, io)).toEqual({
+    expect(await harnessMessaging(env, io)).toEqual({
       peer: "omp",
       socket: env.TODOU_MESSAGING_SOCKET,
       token: env.TODOU_MESSAGING_TOKEN,
       tools: ["obsolete_tool"],
     });
-    expect(nativeWatchOwner(env, io)).toBeUndefined();
+    expect(await nativeWatchOwner(env, io)).toBeUndefined();
   });
 
-  it("does not treat an inherited legacy omp channel as an inner host's channel", () => {
+  it("does not treat an inherited legacy omp channel as an inner host's channel", async () => {
     const inherited = {
       OMPCODE: "1",
       XDG_RUNTIME_DIR: scratchDir("todou-legacy-nested-"),
@@ -744,8 +756,8 @@ describe("native messaging ownership", () => {
       { pid: 424241, ppid: process.pid, env: inherited, argv: ["omp"] },
       { pid: process.pid, ppid: 1, argv: ["omp"] },
     ]);
-    expect(harnessMessaging(inherited, io)).toEqual({});
-    expect(nativeWatchOwner(inherited, io)).toBeUndefined();
+    expect(await harnessMessaging(inherited, io)).toEqual({});
+    expect(await nativeWatchOwner(inherited, io)).toBeUndefined();
   });
 });
 
@@ -815,16 +827,16 @@ describe("a bash service another session's broker runs", () => {
     return { a, b, service, tree };
   }
 
-  it("pushes to, filters on, and lives as long as the session that asked", () => {
+  it("pushes to, filters on, and lives as long as the session that asked", async () => {
     const { b, service, tree } = twin();
     const io = tree(service);
-    expect(harnessMessaging(service, io)).toEqual({
+    expect(await harnessMessaging(service, io)).toEqual({
       peer: "omp",
       socket: b.socket,
       token: b.token,
       tools: ["todou_watch"],
     });
-    expect(nativeWatchOwner(service, io)).toEqual({
+    expect(await nativeWatchOwner(service, io)).toEqual({
       peer: "omp",
       pid: B,
       path: b.path,
@@ -832,16 +844,16 @@ describe("a bash service another session's broker runs", () => {
       socket: b.socket,
       token: b.token,
     });
-    expect(detectAgentContext(service, "/nonexistent", "/", io)).toEqual({
+    expect(await detectAgentContext(service, "/nonexistent", "/", io)).toEqual({
       agent: "omp",
       session_id: b.session_id,
     });
-    expect(liveSessionIdReader({ env: service, io })()).toEqual({
+    expect(await (await liveSessionIdReader({ env: service, io }))()).toEqual({
       id: b.session_id,
     });
   });
 
-  it("takes no channel where the asking session published none", () => {
+  it("takes no channel where the asking session published none", async () => {
     const { service, tree } = twin();
     const {
       TODOU_OMP_STATE: _state,
@@ -850,35 +862,37 @@ describe("a bash service another session's broker runs", () => {
       ...bare
     } = service;
     const io = tree(bare);
-    expect(harnessMessaging(bare, io)).toEqual({});
-    expect(nativeWatchOwner(bare, io)).toBeUndefined();
+    expect(await harnessMessaging(bare, io)).toEqual({});
+    expect(await nativeWatchOwner(bare, io)).toBeUndefined();
   });
 
-  it("refuses a record naming another session than PI_SESSION_ID", () => {
+  it("refuses a record naming another session than PI_SESSION_ID", async () => {
     // An omp without the extension passes an outer omp's variable on as is.
     const { service, tree } = twin();
     const inherited = { ...service, PI_SESSION_ID: "session-elsewhere" };
     const io = tree(inherited);
-    expect(harnessMessaging(inherited, io)).toEqual({});
-    expect(nativeWatchOwner(inherited, io)).toBeUndefined();
-    expect(liveSessionIdReader({ env: inherited, io })()).toEqual({});
+    expect(await harnessMessaging(inherited, io)).toEqual({});
+    expect(await nativeWatchOwner(inherited, io)).toBeUndefined();
+    expect(await (await liveSessionIdReader({ env: inherited, io }))()).toEqual(
+      {},
+    );
   });
 
-  it("keeps to the process tree without PI_SESSION_ID to check against", () => {
+  it("keeps to the process tree without PI_SESSION_ID to check against", async () => {
     // omp before 18.12.4.
     const { a, service, tree } = twin();
     const { PI_SESSION_ID: _id, ...old } = service;
     const io = tree(old);
-    expect(harnessMessaging(old, io).socket).toBe(a.socket);
-    expect(nativeWatchOwner(old, io)?.pid).toBe(A);
+    expect((await harnessMessaging(old, io)).socket).toBe(a.socket);
+    expect((await nativeWatchOwner(old, io))?.pid).toBe(A);
   });
 
-  it("keeps to the process tree where no broker stands between", () => {
+  it("keeps to the process tree where no broker stands between", async () => {
     // Variables a descendant carried away from another session agree with
     // each other just as well, which is why only the broker earns belief.
     const { a, service, tree } = twin();
     const io = tree(service, false);
-    expect(harnessMessaging(service, io).socket).toBe(a.socket);
-    expect(nativeWatchOwner(service, io)?.pid).toBe(A);
+    expect((await harnessMessaging(service, io)).socket).toBe(a.socket);
+    expect((await nativeWatchOwner(service, io))?.pid).toBe(A);
   });
 });

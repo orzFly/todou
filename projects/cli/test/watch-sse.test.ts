@@ -673,7 +673,7 @@ describe("watcher declaration on the feed (T-540)", () => {
   it("opens each stream with the context asked for at that moment", async () => {
     let session = "s-one";
     const { nudges, calls } = await open({
-      context: () => ({ agent: "claude-code", session_id: session }),
+      context: async () => ({ agent: "claude-code", session_id: session }),
     });
     expect(sessionsSent(calls)).toEqual(["s-one"]);
     await nudges.wait(1_000);

@@ -28,18 +28,18 @@ const assistantLine = (model: string) =>
 const userLine = JSON.stringify({ type: "user", message: { role: "user" } });
 
 describe("detectAgentContext", () => {
-  it("returns null outside Claude Code", () => {
-    expect(detectAgentContext({}, home)).toBeNull();
-    expect(detectAgentContext({ CLAUDECODE: "0" }, home)).toBeNull();
+  it("returns null outside Claude Code", async () => {
+    expect(await detectAgentContext({}, home)).toBeNull();
+    expect(await detectAgentContext({ CLAUDECODE: "0" }, home)).toBeNull();
   });
 
-  it("degrades to agent-only when nothing else is known", () => {
-    expect(detectAgentContext({ CLAUDECODE: "1" }, home)).toEqual({
+  it("degrades to agent-only when nothing else is known", async () => {
+    expect(await detectAgentContext({ CLAUDECODE: "1" }, home)).toEqual({
       agent: "claude-code",
     });
   });
 
-  it("reads the model from the newest assistant transcript entry", () => {
+  it("reads the model from the newest assistant transcript entry", async () => {
     writeTranscript("-proj-a", [
       userLine,
       assistantLine("claude-old-model"),
@@ -48,7 +48,7 @@ describe("detectAgentContext", () => {
       JSON.stringify({ type: "progress", note: 'has "model" word but junk' }),
     ]);
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
         home,
       ),
@@ -59,7 +59,7 @@ describe("detectAgentContext", () => {
     });
   });
 
-  it("skips unparseable lines and survives a tail cut", () => {
+  it("skips unparseable lines and survives a tail cut", async () => {
     const padding = JSON.stringify({
       type: "user",
       message: { role: "user", content: "x".repeat(1024) },
@@ -69,39 +69,43 @@ describe("detectAgentContext", () => {
       assistantLine("claude-fable-5"),
       '{"type":"assistant","message":{"model":',
     ]);
-    const ctx = detectAgentContext(
+    const ctx = await detectAgentContext(
       { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
       home,
     );
     expect(ctx?.model).toBe("claude-fable-5");
   });
 
-  it("transcript beats CLAUDE_MODEL; CLAUDE_MODEL is the fallback", () => {
+  it("transcript beats CLAUDE_MODEL; CLAUDE_MODEL is the fallback", async () => {
     writeTranscript("-proj-a", [assistantLine("claude-from-transcript")]);
     expect(
-      detectAgentContext(
-        {
-          CLAUDECODE: "1",
-          CLAUDE_CODE_SESSION_ID: SID,
-          CLAUDE_MODEL: "claude-from-env",
-        },
-        home,
+      (
+        await detectAgentContext(
+          {
+            CLAUDECODE: "1",
+            CLAUDE_CODE_SESSION_ID: SID,
+            CLAUDE_MODEL: "claude-from-env",
+          },
+          home,
+        )
       )?.model,
     ).toBe("claude-from-transcript");
 
     expect(
-      detectAgentContext(
-        {
-          CLAUDECODE: "1",
-          CLAUDE_CODE_SESSION_ID: "99999999-aaaa-bbbb-cccc-dddddddddddd",
-          CLAUDE_MODEL: "claude-from-env",
-        },
-        home,
+      (
+        await detectAgentContext(
+          {
+            CLAUDECODE: "1",
+            CLAUDE_CODE_SESSION_ID: "99999999-aaaa-bbbb-cccc-dddddddddddd",
+            CLAUDE_MODEL: "claude-from-env",
+          },
+          home,
+        )
       )?.model,
     ).toBe("claude-from-env");
   });
 
-  it("scans past a single line larger than one chunk (T-42 shape)", () => {
+  it("scans past a single line larger than one chunk (T-42 shape)", async () => {
     // An image Read appends a ~400 KB base64 tool_result line; when the
     // current turn's assistant entry is not yet flushed, that line is the
     // effective tail and must not shield older assistant entries.
@@ -120,12 +124,16 @@ describe("detectAgentContext", () => {
       JSON.stringify({ type: "permission-mode" }),
     ]);
     expect(
-      detectAgentContext({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID }, home)
-        ?.model,
+      (
+        await detectAgentContext(
+          { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
+          home,
+        )
+      )?.model,
     ).toBe("claude-fable-5");
   });
 
-  it("reassembles an assistant line that spans chunk boundaries", () => {
+  it("reassembles an assistant line that spans chunk boundaries", async () => {
     // Multi-byte characters straddle the 256 KB boundaries; decoding per
     // chunk instead of per line would corrupt them and lose the entry.
     const hugeAssistant = JSON.stringify({
@@ -138,42 +146,52 @@ describe("detectAgentContext", () => {
       '{"type":"assistant","message":{"model":',
     ]);
     expect(
-      detectAgentContext({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID }, home)
-        ?.model,
+      (
+        await detectAgentContext(
+          { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
+          home,
+        )
+      )?.model,
     ).toBe("claude-fable-5");
   });
 
-  it("skips <synthetic> placeholder entries from API-error turns", () => {
+  it("skips <synthetic> placeholder entries from API-error turns", async () => {
     writeTranscript("-proj-a", [
       assistantLine("claude-fable-5"),
       userLine,
       assistantLine("<synthetic>"),
     ]);
     expect(
-      detectAgentContext({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID }, home)
-        ?.model,
+      (
+        await detectAgentContext(
+          { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
+          home,
+        )
+      )?.model,
     ).toBe("claude-fable-5");
 
     writeTranscript("-proj-a", [userLine, assistantLine("<synthetic>")]);
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
         home,
       ),
     ).toEqual({ agent: "claude-code", session_id: SID });
     expect(
-      detectAgentContext(
-        {
-          CLAUDECODE: "1",
-          CLAUDE_CODE_SESSION_ID: SID,
-          CLAUDE_MODEL: "claude-from-env",
-        },
-        home,
+      (
+        await detectAgentContext(
+          {
+            CLAUDECODE: "1",
+            CLAUDE_CODE_SESSION_ID: SID,
+            CLAUDE_MODEL: "claude-from-env",
+          },
+          home,
+        )
       )?.model,
     ).toBe("claude-from-env");
   });
 
-  it("gives up past the 16 MB scan cap and falls back to CLAUDE_MODEL", () => {
+  it("gives up past the 16 MB scan cap and falls back to CLAUDE_MODEL", async () => {
     const padding = JSON.stringify({
       type: "user",
       message: { role: "user", content: "x".repeat(1024) },
@@ -183,21 +201,23 @@ describe("detectAgentContext", () => {
       ...Array.from({ length: 17 * 1024 }, () => padding),
     ]);
     expect(
-      detectAgentContext(
-        {
-          CLAUDECODE: "1",
-          CLAUDE_CODE_SESSION_ID: SID,
-          CLAUDE_MODEL: "claude-from-env",
-        },
-        home,
+      (
+        await detectAgentContext(
+          {
+            CLAUDECODE: "1",
+            CLAUDE_CODE_SESSION_ID: SID,
+            CLAUDE_MODEL: "claude-from-env",
+          },
+          home,
+        )
       )?.model,
     ).toBe("claude-from-env");
   });
 
-  it("survives an empty transcript and a lone half-written line", () => {
+  it("survives an empty transcript and a lone half-written line", async () => {
     writeTranscript("-proj-a", [""]);
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
         home,
       ),
@@ -205,24 +225,28 @@ describe("detectAgentContext", () => {
 
     writeTranscript("-proj-a", ['{"type":"assistant","message":{"model":"tru']);
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
         home,
       ),
     ).toEqual({ agent: "claude-code", session_id: SID });
   });
 
-  it("finds a model on the very first line of a small transcript", () => {
+  it("finds a model on the very first line of a small transcript", async () => {
     writeTranscript("-proj-a", [assistantLine("claude-first"), userLine]);
     expect(
-      detectAgentContext({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID }, home)
-        ?.model,
+      (
+        await detectAgentContext(
+          { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
+          home,
+        )
+      )?.model,
     ).toBe("claude-first");
   });
 
-  it("rejects path-shaped session ids", () => {
+  it("rejects path-shaped session ids", async () => {
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "../../etc/passwd" },
         home,
       ),
@@ -234,18 +258,18 @@ describe("detectPermissionMode (T-252)", () => {
   const modeLine = (mode: string) =>
     JSON.stringify({ type: "permission-mode", permissionMode: mode });
 
-  it("maps every mode a push may attest to", () => {
+  it("maps every mode a push may attest to", async () => {
     writeTranscript("-proj-a", [userLine, modeLine("bypassPermissions")]);
-    expect(detectPermissionMode(SID, home)).toBe("bypass");
+    expect(await detectPermissionMode(SID, home)).toBe("bypass");
 
     writeTranscript("-proj-a", [userLine, modeLine("default")]);
-    expect(detectPermissionMode(SID, home)).toBe("prompting");
+    expect(await detectPermissionMode(SID, home)).toBe("prompting");
 
     writeTranscript("-proj-a", [userLine, modeLine("acceptEdits")]);
-    expect(detectPermissionMode(SID, home)).toBe("prompting");
+    expect(await detectPermissionMode(SID, home)).toBe("prompting");
   });
 
-  it("reads the mode off an ordinary user entry too", () => {
+  it("reads the mode off an ordinary user entry too", async () => {
     // The field rides along on every user turn, not only on the record
     // written when the mode changes.
     writeTranscript("-proj-a", [
@@ -255,10 +279,10 @@ describe("detectPermissionMode (T-252)", () => {
         permissionMode: "acceptEdits",
       }),
     ]);
-    expect(detectPermissionMode(SID, home)).toBe("prompting");
+    expect(await detectPermissionMode(SID, home)).toBe("prompting");
   });
 
-  it("attests nothing at all once plan mode is the newest word", () => {
+  it("attests nothing at all once plan mode is the newest word", async () => {
     // Not "keep looking for something translatable": the receiver decides
     // what plan normalizes to by a flag the transcript never records, and
     // an older bypass line describes a mode already left behind. Attesting
@@ -268,18 +292,20 @@ describe("detectPermissionMode (T-252)", () => {
       userLine,
       modeLine("plan"),
     ]);
-    expect(detectPermissionMode(SID, home)).toBeUndefined();
+    expect(await detectPermissionMode(SID, home)).toBeUndefined();
   });
 
-  it("degrades quietly with no session, no transcript, no shape", () => {
-    expect(detectPermissionMode(undefined, home)).toBeUndefined();
+  it("degrades quietly with no session, no transcript, no shape", async () => {
+    expect(await detectPermissionMode(undefined, home)).toBeUndefined();
     expect(
-      detectPermissionMode("99999999-aaaa-bbbb-cccc-dddddddddddd", home),
+      await detectPermissionMode("99999999-aaaa-bbbb-cccc-dddddddddddd", home),
     ).toBeUndefined();
-    expect(detectPermissionMode("../../etc/passwd", home)).toBeUndefined();
+    expect(
+      await detectPermissionMode("../../etc/passwd", home),
+    ).toBeUndefined();
 
     writeTranscript("-proj-a", ['{"permissionMode":"bypassPer']);
-    expect(detectPermissionMode(SID, home)).toBeUndefined();
+    expect(await detectPermissionMode(SID, home)).toBeUndefined();
   });
 });
 
@@ -358,83 +384,89 @@ describe("liveSessionId (T-289)", () => {
     messagingSocketPath: sock(pid),
   });
 
-  const read = (env: Env, io: Partial<ProcessTreeIo> = noTree()) =>
-    liveSessionIdReader({
-      env: { CLAUDECODE: "1", ...env },
-      home: liveHome,
-      io,
-    })();
+  const read = async (env: Env, io: Partial<ProcessTreeIo> = noTree()) =>
+    (
+      await liveSessionIdReader({
+        env: { CLAUDECODE: "1", ...env },
+        home: liveHome,
+        io,
+      })
+    )();
 
-  it("reads the id from the record the socket's pid names", () => {
+  it("reads the id from the record the socket's pid names", async () => {
     // The only record this home holds, so an implementation reaching for the
     // reading process's own `process.pid` — the watch's, one fork below the
     // claude process — finds nothing and fails here. This case is the card.
     writeRecord(4046359, record(4046359, LIVE));
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(4046359) })).toEqual({
-      id: LIVE,
-    });
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(4046359) })).toEqual(
+      {
+        id: LIVE,
+      },
+    );
   });
 
-  it("says nothing with no socket and no process tree", () => {
-    expect(read({})).toEqual({});
+  it("says nothing with no socket and no process tree", async () => {
+    expect(await read({})).toEqual({});
   });
 
-  it("says nothing when the socket's name is not a pid", () => {
+  it("says nothing when the socket's name is not a pid", async () => {
     expect(
-      read({ CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/agent.sock" }),
+      await read({ CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/agent.sock" }),
     ).toEqual({});
   });
 
-  it("names the path it tried once a pid has resolved", () => {
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(1234567) })).toEqual({
-      unreadable: sessionFile(1234567),
-    });
+  it("names the path it tried once a pid has resolved", async () => {
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(1234567) })).toEqual(
+      {
+        unreadable: sessionFile(1234567),
+      },
+    );
   });
 
-  it("treats a malformed record as unreadable, never as an error", () => {
+  it("treats a malformed record as unreadable, never as an error", async () => {
     writeRecord(700001, '{"pid":700001,"sessionId":');
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700001) })).toEqual({
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700001) })).toEqual({
       unreadable: sessionFile(700001),
     });
   });
 
-  it("refuses a record whose pid disagrees with the one asked for", () => {
+  it("refuses a record whose pid disagrees with the one asked for", async () => {
     // Pids are reused and records outlive the processes they name: taking
     // this one would start hiding a stranger's writes instead.
     writeRecord(700002, { ...record(700002, LIVE), pid: 700099 });
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700002) })).toEqual({
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700002) })).toEqual({
       unreadable: sessionFile(700002),
     });
   });
 
-  it("refuses a record naming a different messaging socket", () => {
+  it("refuses a record naming a different messaging socket", async () => {
     writeRecord(700003, {
       ...record(700003, LIVE),
       messagingSocketPath: sock(700004),
     });
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700003) })).toEqual({
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700003) })).toEqual({
       unreadable: sessionFile(700003),
     });
   });
 
-  it("refuses a session id that is path-shaped, over-long or not a string", () => {
+  it("refuses a session id that is path-shaped, over-long or not a string", async () => {
     writeRecord(700005, record(700005, "../../etc/passwd"));
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700005) })).toEqual({
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700005) })).toEqual({
       unreadable: sessionFile(700005),
     });
 
     writeRecord(700006, record(700006, "a".repeat(201)));
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700006) })).toEqual({
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700006) })).toEqual({
       unreadable: sessionFile(700006),
     });
 
     writeRecord(700007, record(700007, 12345));
-    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700007) })).toEqual({
+    expect(await read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700007) })).toEqual({
       unreadable: sessionFile(700007),
     });
   });
 
-  it("falls back to the process tree when the socket is unset", () => {
+  it("falls back to the process tree when the socket is unset", async () => {
     // The real shape: the marker is introduced *for* claude's children, so
     // the ancestor carrying CLAUDECODE=1 is a child of claude, and it is
     // claude's own pid that indexes the sessions directory.
@@ -443,12 +475,12 @@ describe("liveSessionId (T-289)", () => {
       { pid: 800001, ppid: 800002, env: { CLAUDECODE: "1" } },
       { pid: 800002, ppid: 1, env: {} },
     ]);
-    expect(read({}, tree)).toEqual({ id: LIVE });
+    expect(await read({}, tree)).toEqual({ id: LIVE });
   });
 
-  it("answers afresh on every call, which is the whole point", () => {
+  it("answers afresh on every call, which is the whole point", async () => {
     writeRecord(900001, record(900001, LIVE));
-    const reader = liveSessionIdReader({
+    const reader = await liveSessionIdReader({
       env: {
         CLAUDECODE: "1",
         CLAUDE_CODE_MESSAGING_SOCKET: sock(900001),
@@ -456,13 +488,13 @@ describe("liveSessionId (T-289)", () => {
       home: liveHome,
       io: noTree(),
     });
-    expect(reader()).toEqual({ id: LIVE });
+    expect(await reader()).toEqual({ id: LIVE });
     const rotated = "884c574a-aaaa-bbbb-cccc-000000000002";
     writeRecord(900001, record(900001, rotated));
-    expect(reader()).toEqual({ id: rotated });
+    expect(await reader()).toEqual({ id: rotated });
   });
 
-  it("stays quiet for a harness with no answer of its own", () => {
+  it("stays quiet for a harness with no answer of its own", async () => {
     // Pointed at a home that does hold a valid record, and at the socket
     // naming it: a harness without the member must return nothing rather
     // than fall through to Claude Code's file.
@@ -474,11 +506,13 @@ describe("liveSessionId (T-289)", () => {
       { PI_CODING_AGENT: "true" },
     ]) {
       expect(
-        liveSessionIdReader({
-          env: { ...env, ...marker },
-          home: liveHome,
-          io: noTree(),
-        })(),
+        await (
+          await liveSessionIdReader({
+            env: { ...env, ...marker },
+            home: liveHome,
+            io: noTree(),
+          })
+        )(),
       ).toEqual({});
     }
   });

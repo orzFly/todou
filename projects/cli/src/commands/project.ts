@@ -1,4 +1,4 @@
-import { readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   MEMBER_ROLES,
@@ -24,17 +24,17 @@ import {
 import { CliError, reportError } from "../errors.ts";
 import { makePainter, plural, table } from "../format.ts";
 
-function statOrNull(path: string) {
+async function statOrNull(path: string) {
   try {
-    return statSync(path);
+    return await stat(path);
   } catch {
     return null;
   }
 }
 
-function readOrUndefined(path: string): string | undefined {
+async function readOrUndefined(path: string): Promise<string | undefined> {
   try {
-    return readFileSync(path, "utf8");
+    return await readFile(path, "utf8");
   } catch {
     return undefined;
   }
@@ -46,8 +46,8 @@ function readOrUndefined(path: string): string | undefined {
  * at the root, so a file deeper down would cover only a corner of it —
  * and cwd itself otherwise.
  */
-function linkTarget(cwd: string): string {
-  return gitToplevel(cwd) ?? cwd;
+async function linkTarget(cwd: string): Promise<string> {
+  return (await gitToplevel(cwd)) ?? cwd;
 }
 
 const [CONFIG_VARIANT, PLAIN_VARIANT] = DIR_CONFIG_NAMES;
@@ -57,12 +57,14 @@ const [CONFIG_VARIANT, PLAIN_VARIANT] = DIR_CONFIG_NAMES;
  * the preferred name beside an existing .todou.toml would shadow it — then
  * the .config/ variant when that directory already exists.
  */
-function dirConfigFileIn(dir: string): string {
+async function dirConfigFileIn(dir: string): Promise<string> {
   const preferred = join(dir, CONFIG_VARIANT);
   const plain = join(dir, PLAIN_VARIANT);
-  if (statOrNull(preferred)?.isFile()) return preferred;
-  if (statOrNull(plain)?.isFile()) return plain;
-  return statOrNull(join(dir, ".config"))?.isDirectory() ? preferred : plain;
+  if ((await statOrNull(preferred))?.isFile()) return preferred;
+  if ((await statOrNull(plain))?.isFile()) return plain;
+  return (await statOrNull(join(dir, ".config")))?.isDirectory()
+    ? preferred
+    : plain;
 }
 
 export class ProjectListCommand extends ApiCommand {
@@ -275,7 +277,7 @@ export class ProjectLinkCommand extends ApiCommand {
     const slug = (await client.getProject(this.slug)).slug;
 
     if (!useLocal) {
-      const { own, files } = loadCliConfigSet(this.context.env);
+      const { own, files } = await loadCliConfigSet(this.context.env);
       // The binding is written to `config.toml` alone; with fragments in
       // play the merged view's bindings belong to several files at once.
       const previous = own.bindings.filter((b) => b.remote !== remote);
@@ -283,7 +285,7 @@ export class ProjectLinkCommand extends ApiCommand {
         ...previous,
         { remote: remote as string, server, project: slug },
       ];
-      saveCliConfig(own, this.context.env);
+      await saveCliConfig(own, this.context.env);
       this.note(`linked ${remote} → ${server} · ${slug}`);
       // Concat-plus-later-wins means this file's binding outranks a
       // fragment's; say so, or a stale binding in a fragment reads as if
@@ -307,20 +309,20 @@ export class ProjectLinkCommand extends ApiCommand {
     }
 
     const cwd = this.context.cwd;
-    const file = dirConfigFileIn(linkTarget(cwd));
+    const file = await dirConfigFileIn(await linkTarget(cwd));
     // The server is written as the origin — a name is this machine's user
     // config, and this file may be committed and travel to a machine that
     // never defined it. Everything else in the file is kept, comments
     // included. A file that does not parse can only get here shadowed by a
     // nearer one, so nothing reads it today; it is replaced outright.
-    let existing = readOrUndefined(file);
+    let existing = await readOrUndefined(file);
     let prior: Record<string, unknown> = {};
     try {
       if (existing !== undefined) prior = parseToml(existing);
     } catch {
       existing = undefined;
     }
-    writeFileSync(
+    await writeFile(
       file,
       renderToml(existing, {
         ...prior,
@@ -334,9 +336,9 @@ export class ProjectLinkCommand extends ApiCommand {
     );
     // If the walk would not hand this very file back, "link succeeded but
     // commands go elsewhere" is undebuggable — say who wins instead.
-    let winner: ReturnType<typeof discoverDirConfig> = null;
+    let winner: Awaited<ReturnType<typeof discoverDirConfig>> = null;
     try {
-      winner = discoverDirConfig(cwd, this.context.env);
+      winner = await discoverDirConfig(cwd, this.context.env);
     } catch {
       // A nearer, broken file shadows it; the next command names the path.
     }
@@ -370,28 +372,30 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
 
   async execute(): Promise<number | undefined> {
     try {
-      return this.unlink();
+      return await this.unlink();
     } catch (error) {
       return reportError(error, this.context.stderr);
     }
   }
 
-  private unlink(): number {
+  private async unlink(): Promise<number> {
     if (this.local && this.global) {
       throw new CliError("--local and --global contradict each other");
     }
     const cwd = this.context.cwd;
-    const target = linkTarget(cwd);
+    const target = await linkTarget(cwd);
 
     if (!this.global) {
       // Deleted by existence, never parsed — a broken file must stay
       // removable, because it blocks every context-resolving command.
-      const files = DIR_CONFIG_NAMES.map((name) => join(target, name)).filter(
-        (path) => statOrNull(path)?.isFile(),
-      );
+      const files: string[] = [];
+      for (const name of DIR_CONFIG_NAMES) {
+        const path = join(target, name);
+        if ((await statOrNull(path))?.isFile()) files.push(path);
+      }
       const file = files[0];
       if (file !== undefined) {
-        unlinkSync(file);
+        await unlink(file);
         this.context.stderr.write(`unlinked ${displayPath(file, cwd)}\n`);
         const rest = files[1];
         if (rest !== undefined) {
@@ -404,7 +408,7 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
       // A file elsewhere governs this directory; removing the binding
       // would change nothing, so point at the file instead of deleting it
       // — reaching outside the target is more than one CLI call should do.
-      const governing = discoverDirConfig(cwd, this.context.env);
+      const governing = await discoverDirConfig(cwd, this.context.env);
       if (governing !== null) {
         throw new CliError(
           `the directory config in effect here is ${displayPath(governing.path, cwd)}`,
@@ -415,7 +419,7 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
         throw new CliError(`no directory config at ${target}`);
       }
     }
-    const remote = gitRemoteUrl(cwd);
+    const remote = await gitRemoteUrl(cwd);
     const checked = `checked ${CONFIG_VARIANT} and ${PLAIN_VARIANT} at ${target}, and the user-config bindings`;
     if (!remote) {
       throw new CliError(
@@ -425,7 +429,7 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
           : checked,
       );
     }
-    const { own, files } = loadCliConfigSet(this.context.env);
+    const { own, files } = await loadCliConfigSet(this.context.env);
     const remaining = own.bindings.filter((b) => b.remote !== remote);
     if (remaining.length === own.bindings.length) {
       // The binding may still exist — in a fragment this command must not
@@ -453,7 +457,7 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
       );
     }
     own.bindings = remaining;
-    saveCliConfig(own, this.context.env);
+    await saveCliConfig(own, this.context.env);
     this.context.stderr.write(`unlinked ${remote}\n`);
     // Concat order put config.toml last, so removing its binding hands the
     // remote back to whatever a fragment still holds — say so. Judged on

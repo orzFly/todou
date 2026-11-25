@@ -52,7 +52,7 @@ describe("Codex watch delivery", () => {
       render: () => "pending",
       emit: (items, since, cursor) => emitted.push({ items, since, cursor }),
       messaging: { codex: target },
-      session: () => THREAD,
+      session: async () => THREAD,
       clock,
       note: () => {},
     });
@@ -75,13 +75,13 @@ describe("Codex watch delivery", () => {
         onItems: () => {},
         onEmpty: () => {},
       });
-      follow.finish();
+      await follow.finish();
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(emitted).toEqual([{ items: [item], since: "c0", cursor: "c1" }]);
       expect(requests()).toEqual([]);
       expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
     } finally {
-      follow.finish();
+      await follow.finish();
       await new Promise<void>((resolve) => setImmediate(resolve));
       kill.mockRestore();
     }
@@ -190,15 +190,15 @@ describe("Codex watch delivery", () => {
       runCodexQueue: async () => {
         throw new Error("queue unavailable");
       },
-      session: () => THREAD,
+      session: async () => THREAD,
       clock: virtualClock(),
       note: (line) => notes.push(line),
     });
     cleanups.push(follow.finish);
     expect(follow.silent).toBe(true);
     expect(await follow.afterItems?.(["answer"], "c1")).toBe("stop");
-    follow.finish();
-    follow.finish();
+    await follow.finish();
+    await follow.finish();
     expect(emitted).toEqual([{ items: ["answer"], since: "c0", cursor: "c1" }]);
     expect(notes.join("\n")).toContain("--follow=codex stopped");
     expect(notes.join("\n")).not.toContain("crossSessionInbound");
@@ -219,7 +219,7 @@ describe("Codex watch delivery", () => {
       render,
       emit: () => {},
       messaging: { codex: { threadId: THREAD, bin: "/opt/codex" } },
-      session: () => THREAD,
+      session: async () => THREAD,
       clock: virtualClock(),
       note: () => {},
     });
@@ -230,20 +230,23 @@ describe("Codex watch delivery", () => {
     expect(follow.shouldStop?.()).toBe(true);
   });
 
-  it("requires an executable and explicit thread; never borrows Claude or socket-only delivery", () => {
+  it("requires an executable and explicit thread; never borrows Claude or socket-only delivery", async () => {
     const { bin } = codexOnPath();
     const env = { CODEX_THREAD_ID: THREAD, TODOU_CODEX_BIN: bin };
     const target = { threadId: THREAD, bin };
-    expect(codexTarget(env)).toEqual(target);
+    expect(await codexTarget(env)).toEqual(target);
     expect(
-      harnessMessaging({ ...env, CLAUDE_CODE_MESSAGING_SOCKET: "/wrong.sock" }),
+      await harnessMessaging({
+        ...env,
+        CLAUDE_CODE_MESSAGING_SOCKET: "/wrong.sock",
+      }),
     ).toEqual({ codex: target });
     expect(
-      codexTarget({ ...env, CODEX_THREAD_ID: "../thread" }),
+      await codexTarget({ ...env, CODEX_THREAD_ID: "../thread" }),
     ).toBeUndefined();
-    expect(codexTarget({ TODOU_CODEX_BIN: bin })).toBeUndefined();
+    expect(await codexTarget({ TODOU_CODEX_BIN: bin })).toBeUndefined();
     expect(
-      codexTarget({
+      await codexTarget({
         CODEX_THREAD_ID: THREAD,
         TODOU_CODEX_SOCKET: "/run/control.sock",
       }),
@@ -313,7 +316,7 @@ const render = (items: string[], since?: string, cursor?: string) =>
   `${items.join("\n")}\nsince: ${since}\ncursor: ${cursor}`;
 
 describe("Codex queue transport", () => {
-  it("finds codex on PATH, skipping relative and non-executable entries", () => {
+  it("finds codex on PATH, skipping relative and non-executable entries", async () => {
     const { dir, bin } = codexOnPath();
     const plain = mkdtempSync(join(tmpdir(), "todou-codex-plain-"));
     cleanups.push(() => rmSync(plain, { recursive: true, force: true }));
@@ -323,20 +326,26 @@ describe("Codex queue transport", () => {
       HOME: "/nonexistent-todou-home",
       PATH: ["relative", plain, dir].join(":"),
     };
-    expect(codexTarget(env)).toEqual({ threadId: THREAD, bin });
-    expect(codexTarget({ ...env, PATH: plain })).toBeUndefined();
-    expect(codexTarget({ ...env, PATH: "relative" })).toBeUndefined();
-    expect(codexTarget({ ...env, PATH: "", TODOU_CODEX_BIN: bin })).toEqual({
+    expect(await codexTarget(env)).toEqual({ threadId: THREAD, bin });
+    expect(await codexTarget({ ...env, PATH: plain })).toBeUndefined();
+    expect(await codexTarget({ ...env, PATH: "relative" })).toBeUndefined();
+    expect(
+      await codexTarget({ ...env, PATH: "", TODOU_CODEX_BIN: bin }),
+    ).toEqual({
       threadId: THREAD,
       bin,
     });
-    expect(codexTarget({ ...env, TODOU_CODEX_BIN: "codex" })).toBeUndefined();
-    expect(codexTarget({ ...env, CODEX_THREAD_ID: "../t" })).toBeUndefined();
+    expect(
+      await codexTarget({ ...env, TODOU_CODEX_BIN: "codex" }),
+    ).toBeUndefined();
+    expect(
+      await codexTarget({ ...env, CODEX_THREAD_ID: "../t" }),
+    ).toBeUndefined();
   });
 
   it("uses the queue even when an App socket is configured", async () => {
     const { bin } = codexOnPath();
-    const target = codexTarget({
+    const target = await codexTarget({
       CODEX_THREAD_ID: THREAD,
       TODOU_CODEX_SOCKET: "/run/control.sock",
       TODOU_CODEX_BIN: bin,
@@ -476,7 +485,7 @@ describe("Codex queue transport", () => {
       render: (items) => items.join("\n"),
       emit: () => {},
       messaging: { codex: { threadId: THREAD, bin: "/opt/codex" } },
-      session: () => THREAD,
+      session: async () => THREAD,
       clock: virtualClock(),
       note: (line) => notes.push(line),
       runCodexQueue: run,
@@ -516,7 +525,7 @@ describe("Codex queue transport", () => {
         emit: () => {},
         messaging: { codex: { threadId: THREAD, bin: "/opt/codex" } },
         frame,
-        session: () => THREAD,
+        session: async () => THREAD,
         clock: virtualClock(),
         note: () => {},
         runCodexQueue: run,

@@ -5,7 +5,6 @@
 # its own directory: `.nix/flake.nix` cannot read `../nix/`.
 { pkgs }:
 {
-  deno = pkgs.callPackage ./deno.nix { };
   nodejs = pkgs.nodejs_26;
 
   # `pkgs.pnpm` is an alias. package.json's devEngines.packageManager asks for
@@ -21,4 +20,8 @@
   # off PATH so that a hand-run scripts/bundle-cli.sh says `command not found`
   # instead of quietly bundling with a different version than `pnpm exec` picks.
   esbuild = pkgs.esbuild;
+
+  # zig 0.16 builds linux-amd64 but fails on the macOS targets while cmake is
+  # still identifying the C++ compiler.
+  txiki = pkgs.callPackage ./txiki.nix { zig = pkgs.zig_0_15; };
 }

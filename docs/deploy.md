@@ -177,19 +177,19 @@ Once installed, `todou upgrade` reads this endpoint itself. A build the
 GitHub release also carries — same version, same sha256 — installs from the
 server without a question; anything else (a commit past the last tag, or
 GitHub out of reach) asks the user to trust the server first. Release tags
-built by the docker image, or by `push-cli.sh` on Linux, macOS or Windows (Git
-Bash), are byte-identical to the GitHub release, as long as all of them
-compile with the one deno that `scripts/deno-pins-match.sh` checks for.
+built by the docker image, or by `push-cli.sh` on a Linux machine, are
+byte-identical to the GitHub release: every one of them assembles its
+executables from the txiki.js runtimes `.nix/txiki.nix` builds.
 
-The docker image ships all five builds and enables this by default. A
+The docker image ships all seven builds and enables this by default. A
 checkout deployment is handed them from a development machine instead:
 
 ```bash
-scripts/push-cli.sh todou@todou.example    # builds, packs, ~98 MB over scp
+scripts/push-cli.sh todou@todou.example    # builds, packs, ~35 MB over scp
 ```
 
 Building on the host itself is not worth arranging: `build-cli.sh` needs
-deno, `pack-cli.sh` needs zstd, and a server should not grow a toolchain to
+nix, `pack-cli.sh` needs zstd, and a server should not grow a toolchain to
 make one command work. So the script builds here — refusing, unless
 `--force`, to build a tree that is dirty or off `origin/master`, since the
 version it bakes in would then describe something the host will never run —

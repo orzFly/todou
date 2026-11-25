@@ -1,13 +1,13 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { constants } from "node:fs";
 import {
-  accessSync,
-  constants,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+  access,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Readable } from "node:stream";
@@ -52,7 +52,10 @@ const STREAM_PATHS = [
  * own and the slip cannot go unnoticed. A body that is genuinely one
  * existing filename is rare, and it is the reason that level only warns.
  */
-export function classifyBodyValue(value: string, cwd: string): BodyPathVerdict {
+export async function classifyBodyValue(
+  value: string,
+  cwd: string,
+): Promise<BodyPathVerdict> {
   if (value === "-") {
     return { level: "stream", why: "which is how --body-file spells stdin" };
   }
@@ -62,8 +65,8 @@ export function classifyBodyValue(value: string, cwd: string): BodyPathVerdict {
   if (value.includes("\n")) return null;
   try {
     const path = resolve(cwd, value);
-    if (!statSync(path).isFile()) return null;
-    accessSync(path, constants.R_OK);
+    if (!(await stat(path)).isFile()) return null;
+    await access(path, constants.R_OK);
   } catch {
     return null;
   }
@@ -79,12 +82,12 @@ export function classifyBodyValue(value: string, cwd: string): BodyPathVerdict {
  * reason it cannot name the comment id to delete. What actually landed is
  * the summary line the command prints afterwards.
  */
-function guardBodyPath(
+async function guardBodyPath(
   body: string,
   cwd: string,
   note?: (line: string) => void,
-): void {
-  const verdict = classifyBodyValue(body, cwd);
+): Promise<void> {
+  const verdict = await classifyBodyValue(body, cwd);
   if (verdict === null) return;
   if (verdict.level === "stream") {
     throw new CliError(
@@ -107,11 +110,11 @@ function guardBodyPath(
  * path is returned as typed, relative paths included, because it is printed
  * back to the person who typed it.
  */
-export function bodyLocation(options: {
+export async function bodyLocation(options: {
   body?: string;
   bodyFile?: string;
   cwd: string;
-}): { kind: "file"; path: string } | null {
+}): Promise<{ kind: "file"; path: string } | null> {
   const path = options.bodyFile;
   if (options.body !== undefined || path === undefined || path === "-") {
     return null;
@@ -119,7 +122,7 @@ export function bodyLocation(options: {
   if (STREAM_PATHS.some((pattern) => pattern.test(path))) return null;
   try {
     // A named pipe outside STREAM_PATHS reads once, like stdin.
-    if (!statSync(resolve(options.cwd, path)).isFile()) return null;
+    if (!(await stat(resolve(options.cwd, path))).isFile()) return null;
   } catch {
     return null;
   }
@@ -147,14 +150,14 @@ export async function readBody(options: {
 }): Promise<string> {
   if (options.body !== undefined) {
     if (!options.allowBodyPath) {
-      guardBodyPath(options.body, options.cwd, options.note);
+      await guardBodyPath(options.body, options.cwd, options.note);
     }
     return options.body;
   }
   if (options.bodyFile === "-") return drain(options.stdin);
   if (options.bodyFile !== undefined) {
     try {
-      return readFileSync(options.bodyFile, "utf8");
+      return await readFile(options.bodyFile, "utf8");
     } catch (cause) {
       throw new CliError(`cannot read ${options.bodyFile}: ${String(cause)}`);
     }
@@ -168,22 +171,39 @@ export async function readBody(options: {
   return editBody(options.env);
 }
 
-function editBody(env: Record<string, string | undefined>): string {
+async function editBody(
+  env: Record<string, string | undefined>,
+): Promise<string> {
   const editor = env.EDITOR || env.VISUAL || "vi";
-  const dir = mkdtempSync(join(tmpdir(), "todou-body-"));
+  const dir = await mkdtemp(join(tmpdir(), "todou-body-"));
   const file = join(dir, "BODY.md");
   try {
-    writeFileSync(file, "");
-    const result = spawnSync(editor, [file], { stdio: "inherit", shell: true });
-    if (result.error || result.status !== 0) {
+    await writeFile(file, "");
+    if ((await runEditor(editor, file)) !== 0) {
       throw new CliError(`editor ${editor} failed`);
     }
-    const body = readFileSync(file, "utf8");
+    const body = await readFile(file, "utf8");
     if (body.trim() === "") {
       throw new CliError("aborted: empty body");
     }
     return body;
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Runs `$EDITOR` on one file on the terminal this process holds, and resolves
+ * with its exit code — null when it could not be started or was killed by a
+ * signal, which a caller reads the same as any other failure.
+ *
+ * Through a shell, so an `$EDITOR` carrying its own arguments (`code --wait`)
+ * runs the way the user wrote it.
+ */
+function runEditor(editor: string, file: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const child = spawn(editor, [file], { stdio: "inherit", shell: true });
+    child.on("error", () => resolve(null));
+    child.on("exit", (code) => resolve(code));
+  });
 }

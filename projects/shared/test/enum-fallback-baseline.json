@@ -54,7 +54,7 @@
       "guarded": true
     },
     {
-      "id": "projects/cli/src/harness/messaging.ts :: switch detectHarnessId(env, io) #1",
+      "id": "projects/cli/src/harness/messaging.ts :: switch await detectHarnessId(env, io) #1",
       "guarded": true
     },
     {

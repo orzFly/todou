@@ -1,7 +1,7 @@
 // Loads mermaid straight from node_modules, for the CLI run from source. The
 // release bundle never reaches this module, and must not contain it: it imports
-// mermaid, uncompressed. parser.ts imports it under a specifier esbuild does
-// not follow.
+// mermaid, uncompressed. node-loader.ts imports it under a specifier esbuild
+// does not follow.
 import { registerHooks } from "node:module";
 import type { DiagramParser } from "./types.ts";
 

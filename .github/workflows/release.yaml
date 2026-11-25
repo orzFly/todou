@@ -30,11 +30,13 @@ jobs:
           for f in package.json projects/*/package.json; do
             [ "$(node -p "require('./$f').version")" = "$v" ]
           done
-      # The same deno as the Dockerfile and .nix/deno.nix, so the image's
-      # /api/cli serves these exact bytes (scripts/deno-pins-match.sh).
-      - uses: denoland/setup-deno@v2
+      # The runtimes the docker image builds from the same .nix/txiki.nix,
+      # so the image's /api/cli serves these exact bytes (T-570).
+      - uses: cachix/install-nix-action@v31
+      - uses: nix-community/cache-nix-action@v6
         with:
-          deno-version: v2.9.8
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('.nix/**') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:cli
       - name: Assert the artifact reports the tag

@@ -78,7 +78,7 @@ export class LoginCommand extends Command<CliContext> {
       const env = this.context.env;
       // Judged on the merged view, written to `config.toml` alone: a
       // fragment's profiles must not be flattened into the write target.
-      const { config, own, files } = loadCliConfigSet(env);
+      const { config, own, files } = await loadCliConfigSet(env);
       const names = buildNameTable(config);
       const aliases = buildAliasTable(config);
       const given = this.server ?? config.default_server;
@@ -151,7 +151,7 @@ export class LoginCommand extends Command<CliContext> {
           : await this.browserToken(webOrigin);
 
       // Verify before persisting so a mis-paste fails loudly, not later.
-      const agentContext = detectAgentContext(this.context.env);
+      const agentContext = await detectAgentContext(this.context.env);
       const client = new TodouClient({
         baseUrl: origin,
         token,
@@ -170,7 +170,7 @@ export class LoginCommand extends Command<CliContext> {
       }
       own.servers[origin] = entry;
       own.default_server = origin;
-      saveCliConfig(own, env);
+      await saveCliConfig(own, env);
       this.context.stderr.write(
         `logged in to ${origin} as ${me.login}${
           this.profile ? ` (profile "${this.profile}")` : ""
@@ -233,7 +233,7 @@ export class LoginCommand extends Command<CliContext> {
         `run \`todou login ${origin}\` first`,
       );
     }
-    const agentContext = detectAgentContext(this.context.env);
+    const agentContext = await detectAgentContext(this.context.env);
     const me = await new TodouClient({
       baseUrl: origin,
       token,
@@ -258,7 +258,7 @@ export class LoginCommand extends Command<CliContext> {
     const entry = own.servers[origin] ?? { tokens: {} };
     entry.tokens = { ...entry.tokens, [profile]: { act_as: me.login } };
     own.servers[origin] = entry;
-    saveCliConfig(own, this.context.env);
+    await saveCliConfig(own, this.context.env);
     this.context.stderr.write(
       `logged in to ${origin} as ${me.login} (profile "${profile}", acting as ${me.login} with the default token)\n`,
     );

@@ -31,9 +31,9 @@ describe("native raw watch lifetime", () => {
     vi.useFakeTimers();
     let live: NativeWatchOwner | undefined = { ...owner };
     const note = vi.fn();
-    const lifetime = openWatchLifetime({
+    const lifetime = await openWatchLifetime({
       env: {},
-      readOwner: () => live,
+      readOwner: async () => live,
       note,
     });
     try {
@@ -55,14 +55,14 @@ describe("native raw watch lifetime", () => {
     }
   });
 
-  it("does not adopt an owner that appears after startup", () => {
+  it("does not adopt an owner that appears after startup", async () => {
     vi.useFakeTimers();
     const readOwner = vi
       .fn()
-      .mockReturnValueOnce(undefined)
-      .mockReturnValue(owner);
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue(owner);
     expect(
-      openWatchLifetime({ env: {}, readOwner, note: vi.fn() }),
+      await openWatchLifetime({ env: {}, readOwner, note: vi.fn() }),
     ).toBeUndefined();
     expect(readOwner).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
@@ -70,9 +70,9 @@ describe("native raw watch lifetime", () => {
 
   it("disposes its independent check and outstanding sleeps on normal completion", async () => {
     vi.useFakeTimers();
-    const lifetime = openWatchLifetime({
+    const lifetime = await openWatchLifetime({
       env: {},
-      readOwner: () => owner,
+      readOwner: async () => owner,
       note: vi.fn(),
     });
     const sleeping = lifetime?.clock.sleep(3_600_000);
@@ -119,7 +119,7 @@ describe("native raw watch lifetime", () => {
       render: (items) => items.map((item) => item.body).join("\n"),
       emit,
       messaging: owner,
-      session: () => owner.sessionId,
+      session: async () => owner.sessionId,
       clock: systemClock,
       signal: abort.signal,
       note: () => {},
@@ -149,7 +149,7 @@ describe("native raw watch lifetime", () => {
         }),
       ).toBe(0);
     } finally {
-      follow.finish();
+      await follow.finish();
     }
     expect(drain).toHaveBeenCalledOnce();
     expect(push.pushes).toEqual([]);

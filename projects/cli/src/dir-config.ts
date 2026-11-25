@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -38,10 +38,10 @@ const DirConfigFile = z.object({
  */
 const CREDENTIAL_KEYS = ["token", "tokens", "servers"];
 
-function parseDirConfig(path: string): Omit<DirConfig, "path"> {
+async function parseDirConfig(path: string): Promise<Omit<DirConfig, "path">> {
   let raw: Record<string, unknown>;
   try {
-    raw = parseToml(readFileSync(path, "utf8")) as Record<string, unknown>;
+    raw = parseToml(await readFile(path, "utf8")) as Record<string, unknown>;
   } catch (cause) {
     throw new CliError(
       `cannot parse directory config ${path}: ${String(cause)}`,
@@ -76,32 +76,35 @@ function parseDirConfig(path: string): Omit<DirConfig, "path"> {
   };
 }
 
-function realpathOr(path: string): string {
+async function realpathOr(path: string): Promise<string> {
   try {
-    return realpathSync(path);
+    return await realpath(path);
   } catch {
     return path;
   }
 }
 
-function statOrNull(path: string) {
+async function statOrNull(path: string) {
   try {
-    return statSync(path);
+    return await stat(path);
   } catch {
     return null;
   }
 }
 
-function defaultDevOf(path: string): number | undefined {
-  return statOrNull(path)?.dev;
+async function defaultDevOf(path: string): Promise<number | undefined> {
+  return (await statOrNull(path))?.dev;
 }
 
-function resolveHome(env: Env): string | null {
+async function resolveHome(env: Env): Promise<string | null> {
   const home = env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir();
   return home ? realpathOr(home) : null;
 }
 
-function resolveXdgConfigHome(env: Env, home: string | null): string | null {
+async function resolveXdgConfigHome(
+  env: Env,
+  home: string | null,
+): Promise<string | null> {
   const fromEnv = env.XDG_CONFIG_HOME;
   if (fromEnv && isAbsolute(fromEnv)) return realpathOr(fromEnv);
   return home === null ? null : realpathOr(join(home, ".config"));
@@ -119,14 +122,14 @@ function isAncestorOf(dir: string, descendant: string): boolean {
  * is the exception: submodules are components of their superproject, so
  * the walk continues into it.
  */
-function vcsRootStopsWalk(dir: string): boolean {
+async function vcsRootStopsWalk(dir: string): Promise<boolean> {
   const gitPath = join(dir, ".git");
-  const git = statOrNull(gitPath);
+  const git = await statOrNull(gitPath);
   if (git?.isDirectory()) return true;
   if (git?.isFile()) {
     let text: string;
     try {
-      text = readFileSync(gitPath, "utf8");
+      text = await readFile(gitPath, "utf8");
     } catch {
       return true;
     }
@@ -138,8 +141,8 @@ function vcsRootStopsWalk(dir: string): boolean {
     return !(gitdir && /\.git[\\/]modules[\\/]/.test(gitdir));
   }
   return (
-    statOrNull(join(dir, ".hg")) !== null ||
-    statOrNull(join(dir, ".svn")) !== null
+    (await statOrNull(join(dir, ".hg"))) !== null ||
+    (await statOrNull(join(dir, ".svn"))) !== null
   );
 }
 
@@ -157,21 +160,23 @@ function vcsRootStopsWalk(dir: string): boolean {
  * keys) throws instead of being skipped: skipping would let the command
  * silently resolve to a different project further up.
  */
-export function discoverDirConfig(
+export async function discoverDirConfig(
   cwd: string,
   env: Env = process.env,
-  seams?: { devOf?: (path: string) => number | undefined },
-): DirConfig | null {
+  seams?: {
+    devOf?: (path: string) => number | undefined | Promise<number | undefined>;
+  },
+): Promise<DirConfig | null> {
   let dir: string;
   try {
-    dir = realpathSync(cwd);
+    dir = await realpath(cwd);
   } catch {
     return null;
   }
-  const home = resolveHome(env);
-  const xdgConfigHome = resolveXdgConfigHome(env, home);
+  const home = await resolveHome(env);
+  const xdgConfigHome = await resolveXdgConfigHome(env, home);
   const devOf = seams?.devOf ?? defaultDevOf;
-  const startDev = devOf(dir);
+  const startDev = await devOf(dir);
   if (startDev === undefined) return null;
 
   while (true) {
@@ -179,14 +184,14 @@ export function discoverDirConfig(
       return null;
     }
     if (dir === xdgConfigHome) return null;
-    if (devOf(dir) !== startDev) return null;
+    if ((await devOf(dir)) !== startDev) return null;
     for (const name of DIR_CONFIG_NAMES) {
       const candidate = join(dir, name);
-      if (statOrNull(candidate)?.isFile()) {
-        return { path: candidate, ...parseDirConfig(candidate) };
+      if ((await statOrNull(candidate))?.isFile()) {
+        return { path: candidate, ...(await parseDirConfig(candidate)) };
       }
     }
-    if (vcsRootStopsWalk(dir)) return null;
+    if (await vcsRootStopsWalk(dir)) return null;
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;

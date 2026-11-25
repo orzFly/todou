@@ -25,14 +25,16 @@ if [ -z "$VERSION" ]; then
   VERSION="$(git describe --tags --always --abbrev=9 --dirty 2>/dev/null || echo unknown)"
 fi
 
-# name:os:arch:kind:runtime — the five names are build-cli.sh's own contract.
-# Plain string pairs rather than `declare -A` for the same reason as there:
-# associative arrays need bash 4, and macOS still ships bash 3.2.
+# name:os:arch:kind:runtime — the seven names are build-cli.sh's own contract.
+# Plain strings rather than `declare -A`: associative arrays need bash 4, and
+# macOS still ships bash 3.2.
 ARTIFACTS="
 todou-linux-amd64:linux:amd64:binary:
 todou-linux-arm64:linux:arm64:binary:
 todou-macos-arm64:darwin:arm64:binary:
+todou-macos-amd64:darwin:amd64:binary:
 todou-windows-amd64.exe:windows:amd64:binary:
+todou-windows-arm64.exe:windows:arm64:binary:
 todou.cjs:any:any:script:node>=20.12
 "
 

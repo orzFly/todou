@@ -73,7 +73,7 @@ export async function openChangeNudges(opts: {
    * The agent context to open each stream with, asked afresh on every
    * (re)connect so a rotated harness session is reported as the new one.
    */
-  context?: () => AgentContext | null;
+  context?: () => Promise<AgentContext | null>;
 }): Promise<ChangeNudges> {
   const { client, projects, clock } = opts;
   const random = opts.random ?? Math.random;
@@ -128,7 +128,7 @@ export async function openChangeNudges(opts: {
   };
 
   const tryConnect = async (): Promise<void> => {
-    const context = opts.context?.() ?? null;
+    const context = (await opts.context?.()) ?? null;
     try {
       const opened = await client.openChangeStream({
         query: declaration(),
@@ -198,15 +198,15 @@ export async function openChangeNudges(opts: {
       }
       // The harness moved to a new session under us: reopen now, so the
       // old session's listing lingers out and the new one appears (T-540).
-      if (
-        stream !== null &&
-        opts.context !== undefined &&
-        opts.context()?.session_id !== openedSession
-      ) {
-        const old = stream;
-        stream = null;
-        old.close();
-        retryAt = 0;
+      if (stream !== null && opts.context !== undefined) {
+        const session = (await opts.context())?.session_id;
+        // Asked again after the read: the stream may have dropped meanwhile.
+        if (stream !== null && session !== openedSession) {
+          const old = stream;
+          stream = null;
+          old.close();
+          retryAt = 0;
+        }
       }
       if (
         stream === null &&

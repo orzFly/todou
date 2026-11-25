@@ -122,10 +122,10 @@ export async function collectWriteCursor(args: {
     // there is no window in which the session id could rotate under it.
     const self = await resolveSelfFilter(args.client, args.session, retry);
     const { items } = await retryTransient(
-      () =>
+      async () =>
         drainTimeline(args.client, args.project, args.number, {
           after: since,
-          ...self.params(),
+          ...(await self.params()),
         }),
       retry,
     );

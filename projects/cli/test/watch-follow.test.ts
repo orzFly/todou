@@ -46,7 +46,7 @@ describe("pi follow transport", () => {
     expect(follow.silent).toBe(true);
     expect(push.fromName).toBeUndefined();
     expect(notes.join("\n")).not.toContain("attests");
-    follow.finish();
+    await follow.finish();
     expect(push.closed()).toBe(true);
   });
 });
@@ -1002,20 +1002,20 @@ describe("watch --follow=uds attested mode (T-292)", () => {
     CLAUDE_CODE_MESSAGING_SOCKET: socket,
   });
 
-  it("re-reads the transcript on every call", () => {
+  it("re-reads the transcript on every call", async () => {
     writeTranscript(SID, "bypassPermissions");
     const notes: string[] = [];
     const mode = attestedMode({
-      session: () => SID,
+      session: async () => SID,
       home,
       note: (line) => notes.push(line),
     });
 
-    expect(mode()).toBe("bypass");
+    expect(await mode()).toBe("bypass");
     writeTranscript(SID, "default");
     // Half the card in one assertion: the second push carries what the
     // session is now, not what it was when the channel opened.
-    expect(mode()).toBe("prompting");
+    expect(await mode()).toBe("prompting");
 
     expect(notes).toEqual([
       `--follow=uds attests bypass for session ${SID}`,
@@ -1023,31 +1023,31 @@ describe("watch --follow=uds attested mode (T-292)", () => {
     ]);
   });
 
-  it("says it once while nothing changes", () => {
+  it("says it once while nothing changes", async () => {
     writeTranscript(SID, "bypassPermissions");
     const notes: string[] = [];
     const mode = attestedMode({
-      session: () => SID,
+      session: async () => SID,
       home,
       note: (line) => notes.push(line),
     });
 
-    for (let i = 0; i < 5; i++) expect(mode()).toBe("bypass");
+    for (let i = 0; i < 5; i++) expect(await mode()).toBe("bypass");
 
     // A line per push would bury the changes, which are the news.
     expect(notes).toEqual([`--follow=uds attests bypass for session ${SID}`]);
   });
 
-  it("states the consequence where there is no mode to attest", () => {
+  it("states the consequence where there is no mode to attest", async () => {
     const notes: string[] = [];
     const mode = attestedMode({
-      session: () => undefined,
+      session: async () => undefined,
       home,
       note: (line) => notes.push(line),
     });
 
-    expect(mode()).toBeUndefined();
-    expect(mode()).toBeUndefined();
+    expect(await mode()).toBeUndefined();
+    expect(await mode()).toBeUndefined();
 
     expect(notes).toEqual([
       "--follow=uds attests no permission mode for session (unknown) — " +
@@ -1055,7 +1055,7 @@ describe("watch --follow=uds attested mode (T-292)", () => {
     ]);
   });
 
-  it("attests nothing once plan mode is the newest word", () => {
+  it("attests nothing once plan mode is the newest word", async () => {
     // T-252's contract, unchanged — asserted here because a live toggle
     // into plan mode is now a path this function takes, rather than one
     // settled before the channel opened.
@@ -1063,12 +1063,12 @@ describe("watch --follow=uds attested mode (T-292)", () => {
     writeTranscript(planSid, "plan");
     const notes: string[] = [];
     const mode = attestedMode({
-      session: () => planSid,
+      session: async () => planSid,
       home,
       note: (line) => notes.push(line),
     });
 
-    expect(mode()).toBeUndefined();
+    expect(await mode()).toBeUndefined();
     expect(notes).toEqual([
       `--follow=uds attests no permission mode for session ${planSid} — ` +
         "such a push is held only if the receiving session is in bypass",

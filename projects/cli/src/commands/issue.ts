@@ -1223,7 +1223,7 @@ export class IssueWatchCommand extends ProjectCommand {
     // dial there have to be talking about the same endpoint.
     const messaging: HarnessMessaging =
       this.watchLifetime?.owner ??
-      harnessMessaging(this.context.env, this.context.processTree);
+      (await harnessMessaging(this.context.env, this.context.processTree));
     const transport = followTransport({
       raw: this.follow,
       poll: this.poll,
@@ -1442,7 +1442,7 @@ export class IssueWatchCommand extends ProjectCommand {
             const page = await drainTimeline(client, project, number, {
               after,
               types,
-              ...self.params(),
+              ...(await self.params()),
             });
             if (wantsCards) {
               await cards.add(
@@ -1476,7 +1476,7 @@ export class IssueWatchCommand extends ProjectCommand {
           },
         });
       } finally {
-        follow.finish();
+        await follow.finish();
       }
     } finally {
       nudges?.close();
@@ -1763,7 +1763,7 @@ export class IssueCreateCommand extends ProjectCommand {
     const created = withRef(issue, await fetchRefPrefix(client, project));
     this.output(created, () => `${created.ref} created: ${titleText(created)}`);
     await this.reportDiagrams(
-      [bodyDoc(body, this, `issue-${issue.number}.md`)],
+      [await bodyDoc(body, this, `issue-${issue.number}.md`)],
       { kind: "issue", project, number: issue.number },
     );
   }
@@ -1971,7 +1971,7 @@ export class IssueEditCommand extends ProjectCommand {
       this.output(single, () => `${single.ref} updated`);
       if (shared.body !== undefined) {
         await this.reportDiagrams(
-          [bodyDoc(shared.body, this, `issue-${single.number}.md`)],
+          [await bodyDoc(shared.body, this, `issue-${single.number}.md`)],
           { kind: "issue", project, number: single.number },
         );
       }

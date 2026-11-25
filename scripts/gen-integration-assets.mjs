@@ -3,7 +3,7 @@
  * Inlines each agent-integration source file into a TypeScript module the CLI
  * bundle can carry (T-308).
  *
- * `todou` ships as one esbuild-produced .cjs and four `deno compile`
+ * `todou` ships as one esbuild-produced .cjs and six single-file
  * executables. Neither form takes a resource file along, so an extension that
  * `integration install` writes to disk has to already be inside the binary as
  * a string. Keeping the real source in a real file — checked by tsc, linted,

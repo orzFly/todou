@@ -262,16 +262,16 @@ export type SelfFilter = {
  * exists, and the watch's own session's writes come back to it as news
  * (T-289).
  */
-export type SelfFilterSource = { params(): SelfFilter };
+export type SelfFilterSource = { params(): Promise<SelfFilter> };
 
 /** A filter with nothing to re-read: `--any-actor`, `--exclude-actor`. */
 export function fixedSelfFilter(params: SelfFilter): SelfFilterSource {
-  return { params: () => params };
+  return { params: async () => params };
 }
 
 /** Who this process is, both as the harness reports it now and as it began. */
 export type SessionSource = {
-  live(): LiveSession;
+  live(): Promise<LiveSession>;
   /** What the environment said when this process was spawned. */
   startup: string | undefined;
 };
@@ -297,8 +297,8 @@ export async function resolveSelfFilter(
   let asked = false;
   let saidUnreadable = false;
   return {
-    params() {
-      const live = session.live();
+    async params() {
+      const live = await session.live();
       if (live.unreadable !== undefined && !saidUnreadable) {
         saidUnreadable = true;
         // Stated as its consequence, not as its cause: falling back to the

@@ -1,11 +1,5 @@
-import {
-  type Dirent,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import type { Dirent } from "node:fs";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type {
   SpecFileInput,
@@ -82,16 +76,16 @@ const WRONG_DIR_HINT =
  * uncapped — any number of local files is legal there. Entries are walked
  * in name order so which file gets blamed is stable for a given tree.
  */
-function collectMarkdown(
+async function collectMarkdown(
   root: string,
   opts: { pushLimits: boolean },
-): { files: SpecFileInput[]; skipped: string[] } {
+): Promise<{ files: SpecFileInput[]; skipped: string[] }> {
   const files: SpecFileInput[] = [];
   const skipped: string[] = [];
-  const walk = (dir: string, prefix: string): void => {
+  const walk = async (dir: string, prefix: string): Promise<void> => {
     let entries: Dirent[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = await readdir(dir, { withFileTypes: true });
     } catch (cause) {
       throw new CliError(`cannot read directory ${dir}: ${String(cause)}`);
     }
@@ -100,7 +94,7 @@ function collectMarkdown(
       if (entry.name.startsWith(".")) continue;
       const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       if (entry.isDirectory()) {
-        walk(join(dir, entry.name), path);
+        await walk(join(dir, entry.name), path);
       } else if (entry.isFile()) {
         if (!/\.md$/i.test(entry.name)) {
           skipped.push(path);
@@ -113,7 +107,7 @@ function collectMarkdown(
             WRONG_DIR_HINT,
           );
         }
-        const body = readFileSync(join(dir, entry.name), "utf8");
+        const body = await readFile(join(dir, entry.name), "utf8");
         if (opts.pushLimits && body.length > SPEC_MAX_FILE_CHARS) {
           throw new CliError(
             `${path} is over the spec file cap ` +
@@ -125,7 +119,7 @@ function collectMarkdown(
       }
     }
   };
-  walk(root, "");
+  await walk(root, "");
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
   return { files, skipped };
 }
@@ -258,7 +252,9 @@ export class SpecPushCommand extends ProjectCommand {
     assertWriteCursorFlags(this);
     const waitFlags = specWaitFlags(this, this.wait);
     const { project, number } = await this.resolveIssueRef(client, this.number);
-    const { files, skipped } = collectMarkdown(this.dir, { pushLimits: true });
+    const { files, skipped } = await collectMarkdown(this.dir, {
+      pushLimits: true,
+    });
     const input = SpecPushInput.safeParse({
       files,
       message: this.message,
@@ -503,20 +499,20 @@ export class SpecPullCommand extends ProjectCommand {
       this.version === undefined ? undefined : Number(this.version),
     );
 
-    mkdirSync(this.dir, { recursive: true });
+    await mkdir(this.dir, { recursive: true });
     for (const file of spec.files) {
       const target = join(this.dir, file.path);
-      mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, file.body);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, file.body);
     }
 
     const specPaths = new Set(spec.files.map((f) => f.path));
-    const extras = collectMarkdown(this.dir, {
-      pushLimits: false,
-    }).files.filter((f) => !specPaths.has(f.path));
+    const extras = (
+      await collectMarkdown(this.dir, { pushLimits: false })
+    ).files.filter((f) => !specPaths.has(f.path));
     for (const extra of extras) {
       if (this.prune) {
-        unlinkSync(join(this.dir, extra.path));
+        await unlink(join(this.dir, extra.path));
         this.note(`pruned ${extra.path}`);
       } else {
         this.note(

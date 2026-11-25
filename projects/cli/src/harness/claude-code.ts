@@ -1,34 +1,35 @@
-import { globSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
+import { anyName, findPath } from "./find-path.ts";
 import { findInJsonlTail } from "./jsonl-tail.ts";
 import type { Harness, LiveSession } from "./types.ts";
 
 export const claudeCode = {
   id: "claude-code",
   matches: (env) => env.CLAUDECODE === "1",
-  context({ env, home }) {
+  async context({ env, home }) {
     const context: AgentContext = { agent: "claude-code" };
     const sessionId = env.CLAUDE_CODE_SESSION_ID;
     if (sessionId) context.session_id = sessionId;
-    const model = detectModel(env, sessionId, home);
+    const model = await detectModel(env, sessionId, home);
     if (model) context.model = model;
     return context;
   },
-  liveSessionId({ env, home, host }): LiveSession {
+  async liveSessionId({ env, home, host }): Promise<LiveSession> {
     const socket = env.CLAUDE_CODE_MESSAGING_SOCKET;
     // The pid of the *claude* process, which is what the sessions directory
     // is indexed by. Never `process.pid`: that is the reading process's own,
     // one fork below, and its record never exists — so the lookup would fail
     // every time, fall back to the startup value, and leave the staleness
     // this probe exists to end looking as though it had been fixed (T-289).
-    const pid = socket ? pidFromSocket(socket) : host()?.pid;
+    const pid = socket ? pidFromSocket(socket) : (await host())?.pid;
     if (pid === undefined) return {};
     const file = join(home, ".claude", "sessions", `${pid}.json`);
     try {
-      const record = JSON.parse(readFileSync(file, "utf8")) as {
+      const record = JSON.parse(await readFile(file, "utf8")) as {
         pid?: unknown;
         sessionId?: unknown;
         messagingSocketPath?: unknown;
@@ -74,13 +75,13 @@ function pidFromSocket(socket: string): number | undefined {
  * goes stale when the user switches models mid-session, while the last
  * assistant entry always reflects the model that actually responded.
  */
-export function detectModel(
+export async function detectModel(
   env: Env,
   sessionId: string | undefined,
   home: string,
-): string | undefined {
+): Promise<string | undefined> {
   if (sessionId) {
-    const fromTranscript = modelFromTranscript(sessionId, home);
+    const fromTranscript = await modelFromTranscript(sessionId, home);
     if (fromTranscript) return fromTranscript;
   }
   return env.CLAUDE_MODEL || undefined;
@@ -89,7 +90,7 @@ export function detectModel(
 function modelFromTranscript(
   sessionId: string,
   home: string,
-): string | undefined {
+): Promise<string | undefined> {
   return fromTranscript(sessionId, home, modelFromLine);
 }
 
@@ -106,28 +107,29 @@ function modelFromTranscript(
  * receiver normalizes by a flag the transcript does not record — yields
  * nothing at all, and so does an unreadable transcript.
  */
-export function detectPermissionMode(
+export async function detectPermissionMode(
   sessionId: string | undefined,
   home: string = homedir(),
-): "bypass" | "prompting" | undefined {
+): Promise<"bypass" | "prompting" | undefined> {
   if (!sessionId) return undefined;
-  const found = fromTranscript(sessionId, home, permissionModeFromLine);
+  const found = await fromTranscript(sessionId, home, permissionModeFromLine);
   return found === AMBIGUOUS ? undefined : found;
 }
 
-function fromTranscript<T>(
+async function fromTranscript<T>(
   sessionId: string,
   home: string,
   pick: (line: string) => T | undefined,
-): T | undefined {
+): Promise<T | undefined> {
   // The id comes from the environment: refuse anything path-shaped.
   if (!/^[0-9a-zA-Z-]+$/.test(sessionId)) return undefined;
   try {
-    const file = globSync(
-      join(home, ".claude", "projects", "*", `${sessionId}.jsonl`),
-    )[0];
+    const file = await findPath(join(home, ".claude", "projects"), [
+      anyName,
+      `${sessionId}.jsonl`,
+    ]);
     if (!file) return undefined;
-    return findInJsonlTail(file, pick);
+    return await findInJsonlTail(file, pick);
   } catch {
     // Unreadable transcript is never an error.
     return undefined;

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import type {
   CommentComponentInput,
@@ -28,7 +28,8 @@ export async function readQuestionsInput(
   source: string,
   stdin: Readable,
 ): Promise<CommentComponentInput> {
-  const raw = source === "-" ? await drain(stdin) : readQuestionsFile(source);
+  const raw =
+    source === "-" ? await drain(stdin) : await readQuestionsFile(source);
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -47,9 +48,9 @@ export async function readQuestionsInput(
   return { type: "questions", questions: result.data };
 }
 
-function readQuestionsFile(path: string): string {
+async function readQuestionsFile(path: string): Promise<string> {
   try {
-    return readFileSync(path, "utf8");
+    return await readFile(path, "utf8");
   } catch (cause) {
     throw new CliError(`cannot read ${path}: ${String(cause)}`);
   }
