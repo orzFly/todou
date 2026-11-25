@@ -369,22 +369,40 @@ let
 
   # The program a todou executable is, in miniature: the network and sqlite
   # paths that could touch TJS_HOME, compiled the way the CLI is.
+  #
+  # The fetches are timed because a cookie jar path into a missing directory
+  # does not fail: lws waits about five seconds on its lock and then carries
+  # on. That shows only on a request to another process, such as the CLI's to
+  # its server, which is why one goes to the separate server below.
   standaloneProbe = writeText "probe.js" ''
     import { Database } from 'tjs:sqlite';
 
+    async function timed(url) {
+        const started = performance.now();
+        const body = await (await fetch(url)).text();
+        return { body, ms: Math.round(performance.now() - started) };
+    }
+
     const server = tjs.serve({ port: 0, listenIp: '127.0.0.1', fetch: () => new Response('pong') });
-    const body = await (await fetch(`http://127.0.0.1:''${server.port}/`)).text();
+    const own = await timed(`http://127.0.0.1:''${server.port}/`);
     await server.close();
+    const other = await timed(`http://127.0.0.1:''${tjs.env.PROBE_PORT}/`);
 
     const db = new Database(':memory:');
     const [ row ] = db.prepare('select 40 + 2 as n').all();
     db.close();
 
-    if (body !== 'pong' || row.n !== 42) {
-        console.error(`probe got body=''${body} n=''${row.n}`);
+    const got = JSON.stringify({ own, other, n: row.n });
+    if (own.body !== 'pong' || other.body !== 'pong' || own.ms > 2000 || other.ms > 2000 || row.n !== 42) {
+        console.error(`probe got ''${got}`);
         tjs.exit(1);
     }
     console.log('ok');
+  '';
+
+  standaloneServer = writeText "server.js" ''
+    const server = tjs.serve({ port: 0, listenIp: '127.0.0.1', fetch: () => new Response('pong') });
+    console.log(server.port);
   '';
 
   tests = {
@@ -430,14 +448,21 @@ let
     # as before, so it gets a HOME of its own. That it does create one there
     # is asserted too: it shows the emptiness check below can fail.
     standalone-home = runCommand "tjs-test-standalone-home" { } ''
-      mkdir compile-home run-home
+      mkdir compile-home run-home server-home
       cp ${standaloneProbe} probe.js
       HOME="$PWD/compile-home" ${host}/bin/tjs compile probe.js probe
       if [ ! -d compile-home/.tjs ]; then
         echo "tjs compile no longer creates ~/.tjs; the check below proves nothing" >&2
         exit 1
       fi
-      got=$(HOME="$PWD/run-home" ./probe)
+      HOME="$PWD/server-home" ${host}/bin/tjs run ${standaloneServer} > port.txt &
+      server=$!
+      trap 'kill $server' EXIT
+      for _ in $(seq 1 100); do
+        [ -s port.txt ] && break
+        sleep 0.1
+      done
+      got=$(HOME="$PWD/run-home" PROBE_PORT=$(head -n 1 port.txt) ./probe)
       if [ "$got" != ok ]; then
         echo "probe printed '$got'" >&2
         exit 1
