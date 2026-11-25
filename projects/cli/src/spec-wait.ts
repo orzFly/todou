@@ -189,7 +189,7 @@ export async function waitForSpecReview(args: {
   /** `--invisible`: wait without being listed as a live watcher (T-540). */
   invisible: boolean;
   /** The agent context each feed (re)connect reports. */
-  context: () => AgentContext | null;
+  context: () => Promise<AgentContext | null>;
   debounceSec: number;
   timeoutSec: number;
   intervalSec: number;
@@ -346,7 +346,7 @@ export async function waitForSpecReview(args: {
       drain: async (after) => {
         const page = await drainTimeline(client, project, number, {
           after,
-          ...selfFilter.params(),
+          ...(await selfFilter.params()),
         });
         // The loop retries this whole drain if either request fails. Do not
         // commit its cursor or state until both succeed: otherwise a failed

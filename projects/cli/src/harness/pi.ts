@@ -26,17 +26,17 @@ import type {
 export const pi = {
   id: "pi",
   matches: (env) => env.PI_CODING_AGENT === "true",
-  context(ctx) {
+  async context(ctx) {
     const { env, home, cwd, host } = ctx;
     const context: AgentContext = { agent: "pi" };
     const here = resolve(cwd);
-    const hostProcess = host();
-    const state = piState(ctx);
+    const hostProcess = await host();
+    const state = await piState(ctx);
     if (state) {
       context.session_id = state.sessionId;
       const model =
         (state.sessionFile
-          ? findInJsonlTail(state.sessionFile, modelFromLine)
+          ? await findInJsonlTail(state.sessionFile, modelFromLine)
           : undefined) ??
         (env.PI_SESSION_ID === state.sessionId
           ? qualified(env.PI_PROVIDER, env.PI_MODEL)
@@ -53,28 +53,29 @@ export const pi = {
       const model =
         qualified(env.PI_PROVIDER, env.PI_MODEL) ??
         (path && isAbsolute(path) && basename(path).endsWith(`_${id}.jsonl`)
-          ? findInJsonlTail(path, modelFromLine)
+          ? await findInJsonlTail(path, modelFromLine)
           : undefined);
       if (model) context.model = model;
       return context;
     }
-    const file = currentSessionFile({
+    const file = await currentSessionFile({
       dirs: sessionDirs(env, home, here, hostProcess),
       cwd: here,
       hostCwd: hostProcess?.cwd ? resolve(hostProcess.cwd) : undefined,
       explicit: hostProcess && flagValue(hostProcess.argv, "--session"),
-      // pi 0.85.1 appends with appendFileSync, which closes the descriptor.
-      // Its readable descriptor table has no jsonl file, so `openLogs: []`
-      // would incorrectly suppress this fallback.
+      // pi 0.85.1 appends through node's synchronous append call, which
+      // opens and closes the file each time. Its readable descriptor table
+      // has no jsonl file, so `openLogs: []` would incorrectly suppress this
+      // fallback.
     });
     if (!file) return context;
     context.session_id = file.id;
-    const model = findInJsonlTail(file.path, modelFromLine);
+    const model = await findInJsonlTail(file.path, modelFromLine);
     if (model) context.model = model;
     return context;
   },
-  liveSessionId(ctx): LiveSession {
-    const attempt = piStateAttempt(ctx);
+  async liveSessionId(ctx): Promise<LiveSession> {
+    const attempt = await piStateAttempt(ctx);
     if (attempt.state) return { id: attempt.state.sessionId };
     return attempt.unreadable ? { unreadable: attempt.unreadable } : {};
   },
@@ -114,36 +115,42 @@ export function piHostAncestor(
 type StateContext = Pick<HarnessContext, "env" | "host" | "ancestorPids">;
 
 /** The pi publisher belonging to this host, never an enclosing omp record. */
-export function piState(ctx: StateContext): OmpState | undefined {
-  return piStateAttempt(ctx).state;
+export async function piState(
+  ctx: StateContext,
+): Promise<OmpState | undefined> {
+  return (await piStateAttempt(ctx)).state;
 }
 
-function piStateAttempt({ env, host, ancestorPids }: StateContext): {
+async function piStateAttempt({
+  env,
+  host,
+  ancestorPids,
+}: StateContext): Promise<{
   state?: OmpState;
   unreadable?: string;
-} {
-  const hostProcess = host();
-  const pids = () => {
-    const chain = ancestorPids();
+}> {
+  const hostProcess = await host();
+  const pids = async () => {
+    const chain = await ancestorPids();
     if (!hostProcess) return chain;
     const boundary = chain.indexOf(hostProcess.pid);
     // A nearer publisher may be a nested pi which inherited the same marker.
     // The marker's host is an outer bound, not proof against that publisher.
     return boundary < 0 ? [hostProcess.pid] : chain.slice(0, boundary + 1);
   };
-  const attempt = publishedStateAttempt(env, pids);
+  const attempt = await publishedStateAttempt(env, pids);
   if (attempt.state?.agent === "pi") return attempt;
   if (attempt.state) return {};
   const path = env.TODOU_PI_STATE;
   if (path) {
-    const owners = pids();
+    const owners = await pids();
     // Without a visible tree, an explicit pi record still works. With a host,
     // an inherited path beyond that boundary cannot name our session.
     if (
       owners.length === 0 ||
       owners.some((pid) => basename(path) === `${pid}.json`)
     ) {
-      const state = readOmpStateAt(path);
+      const state = await readOmpStateAt(path);
       if (!state) return { unreadable: path };
       if (state.agent === "pi") return { state };
     }

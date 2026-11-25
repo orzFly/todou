@@ -217,7 +217,7 @@ describe("openPeerPush wire format (T-252)", () => {
       target: peer.target,
       render,
       fromName: "todou-watch-T-252",
-      fromMode: () => "bypass",
+      fromMode: async () => "bypass",
       clock: virtualClock(),
     });
     await push.send(["entry one"], "c0", "c1");
@@ -300,7 +300,7 @@ describe.each(["omp", "pi"] as const)(
         // The cast stands in for an omp caller compiled against an older
         // shape, which is the one way this could regress silently.
         ...({
-          fromMode: () => {
+          fromMode: async () => {
             asked += 1;
             return "bypass";
           },
@@ -360,7 +360,7 @@ describe("openPeerPush auth line (T-255)", () => {
       target: peer.target,
       render,
       fromName: "todou-watch-T-252",
-      fromMode: () => "bypass",
+      fromMode: async () => "bypass",
       clock: virtualClock(),
     });
     await push.send(["entry one"], "c0", "c1");
@@ -529,7 +529,7 @@ describe("openPeerPush attested mode (T-292)", () => {
       render,
       fromName: "todou-watch",
       clock: virtualClock(),
-      fromMode: () => modes[asked++],
+      fromMode: async () => modes[asked++],
     });
     await push.send(["entry one"], "c0", "c1");
     await peer.received(1);
@@ -557,7 +557,7 @@ describe("openPeerPush attested mode (T-292)", () => {
       render,
       fromName: "todou-watch",
       clock: virtualClock(),
-      fromMode: () => {
+      fromMode: async () => {
         asked += 1;
         return "bypass";
       },
@@ -1093,6 +1093,42 @@ describe("openPeerPush stale socket sweep (T-319)", () => {
     }
   });
 
+  // A watch that ends on the `exit` path alone cannot wait for its node to be
+  // removed (T-792). Whatever is left at this process's own address answers
+  // nothing, and the next watch to want that address must still get it.
+  it("takes over its own address from a socket nobody listens on", async () => {
+    const peer = await fakePeer("takeover");
+    const self = join(
+      dirname(peer.target),
+      `no-reply-todou-watch-${process.pid}.sock`,
+    );
+    // A listener killed outright leaves its node behind, unlinked by nothing.
+    const left = spawn(
+      process.execPath,
+      [
+        "-e",
+        `require("node:net").createServer().listen(${JSON.stringify(self)}, () => process.kill(process.pid, "SIGKILL"))`,
+      ],
+      { stdio: "ignore" },
+    );
+    await new Promise((resolve) => left.on("exit", resolve));
+    await expect(dialLine(self, "\n")).rejects.toMatchObject({
+      code: "ECONNREFUSED",
+    });
+
+    const push = await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+    });
+    await expect(dialLine(self, "\n")).resolves.toBeUndefined();
+
+    await push.close();
+    expect(existsSync(self)).toBe(false);
+    await peer.close();
+  });
+
   it("opens and pushes with nothing in the directory but the target", async () => {
     const peer = await fakePeer("emptysweep");
     const dir = dirname(peer.target);
@@ -1157,7 +1193,7 @@ describe("openPeerPush signal and exit cleanup (T-319)", () => {
       (signal: NodeJS.Signals) => void
     >;
     expect(signalListener).toBeTypeOf("function");
-    signalListener?.("SIGTERM");
+    await signalListener?.("SIGTERM");
 
     expect(existsSync(self)).toBe(false);
     // Re-raised rather than answered with an exit code, so the supervising

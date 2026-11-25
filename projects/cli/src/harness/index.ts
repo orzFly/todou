@@ -124,21 +124,21 @@ function hostDepth(
  * directory and walks the tree only if that directory held anything — the
  * price of finding a harness whose runtimes carry none of its markers (T-313).
  */
-function select(
+async function select(
   env: Env,
-  ancestors: () => readonly Ancestor[],
-  pids: () => readonly number[],
+  ancestors: () => Promise<readonly Ancestor[]>,
+  pids: () => Promise<readonly number[]>,
   trace?: SelectionTrace,
-): Selection | null {
+): Promise<Selection | null> {
   const candidates = HARNESSES.filter((h) => h.matches(env));
   if (trace) {
     trace.candidates = candidates.map((h) => h.id);
     for (const harness of candidates) {
-      trace.depths[harness.id] = hostDepth(harness, ancestors()) ?? null;
+      trace.depths[harness.id] = hostDepth(harness, await ancestors()) ?? null;
     }
   }
   if (candidates.length === 0) {
-    const found = published(env, pids);
+    const found = await published(env, pids);
     if (trace) {
       trace.route = found ? "published-record" : "none";
       if (found?.hostPid !== undefined && found.recordPath !== undefined) {
@@ -152,7 +152,7 @@ function select(
     return { harness: candidates[0] as Harness };
   }
 
-  const chain = ancestors();
+  const chain = await ancestors();
   let best: { harness: Harness; depth: number } | undefined;
   for (const harness of candidates) {
     const depth = hostDepth(harness, chain);
@@ -181,8 +181,11 @@ function select(
  * marker anywhere in the chain that would stop at our immediate parent, which
  * on this path is the eval runtime and not the omp holding the session.
  */
-function published(env: Env, pids: () => readonly number[]): Selection | null {
-  const state = publishedState(env, pids);
+async function published(
+  env: Env,
+  pids: () => Promise<readonly number[]>,
+): Promise<Selection | null> {
+  const state = await publishedState(env, pids);
   // A record with no `agent` names no harness to select; believing it would
   // mean guessing which one wrote a layout more than one may come to use.
   if (state?.agent === undefined) return null;
@@ -200,38 +203,39 @@ function published(env: Env, pids: () => readonly number[]): Selection | null {
  */
 function hostResolver(
   selection: Selection,
-  ancestors: () => readonly Ancestor[],
+  ancestors: () => Promise<readonly Ancestor[]>,
   io?: Partial<ProcessTreeIo>,
-): () => HostProcess | undefined {
-  let resolved = false;
-  let host: HostProcess | undefined;
-  return () => {
-    if (resolved) return host;
-    resolved = true;
-    const chain = ancestors();
-    const found =
-      (selection.harness.id === "pi"
-        ? piHostAncestor(chain)
-        : selection.harness.id === "omp"
-          ? ompHostAncestor(chain)
-          : undefined) ??
-      (selection.hostPid === undefined
-        ? nearestUnmarked(selection.harness, chain)
-        : chain.find((a) => a.pid === selection.hostPid));
-    if (found) {
-      const procRoot = io?.procRoot ?? "/proc";
-      host = {
-        pid: found.pid,
-        argv: found.argv,
-        cwd: found.cwd,
-        openLogs: openSessionLogs(procRoot, found.pid),
-        stdin: readFd(procRoot, found.pid, 0),
-        ...(selection.harness.id === "omp" && behindOmpBroker(chain, found)
-          ? { brokered: true }
-          : {}),
-      };
-    }
-    return host;
+): () => Promise<HostProcess | undefined> {
+  let host: Promise<HostProcess | undefined> | undefined;
+  return () => (host ??= resolveHost(selection, ancestors, io));
+}
+
+async function resolveHost(
+  selection: Selection,
+  ancestors: () => Promise<readonly Ancestor[]>,
+  io?: Partial<ProcessTreeIo>,
+): Promise<HostProcess | undefined> {
+  const chain = await ancestors();
+  const found =
+    (selection.harness.id === "pi"
+      ? piHostAncestor(chain)
+      : selection.harness.id === "omp"
+        ? ompHostAncestor(chain)
+        : undefined) ??
+    (selection.hostPid === undefined
+      ? nearestUnmarked(selection.harness, chain)
+      : chain.find((a) => a.pid === selection.hostPid));
+  if (!found) return undefined;
+  const procRoot = io?.procRoot ?? "/proc";
+  return {
+    pid: found.pid,
+    argv: found.argv,
+    cwd: found.cwd,
+    openLogs: await openSessionLogs(procRoot, found.pid),
+    stdin: await readFd(procRoot, found.pid, 0),
+    ...(selection.harness.id === "omp" && behindOmpBroker(chain, found)
+      ? { brokered: true }
+      : {}),
   };
 }
 
@@ -251,23 +255,23 @@ function nearestUnmarked(
  * Provenance of the invoking agent harness. Detection must never break a
  * command: every probe failure degrades to "less metadata", not to an error.
  */
-export function detectAgentContext(
+export async function detectAgentContext(
   env: Env,
   home: string = homedir(),
   cwd: string = process.cwd(),
   io?: Partial<ProcessTreeIo>,
-): AgentContext | null {
+): Promise<AgentContext | null> {
   try {
-    let chain: readonly Ancestor[] | undefined;
+    let chain: Promise<readonly Ancestor[]> | undefined;
     const ancestors = () => (chain ??= readAncestors(io));
-    let pidChain: readonly number[] | undefined;
+    let pidChain: Promise<readonly number[]> | undefined;
     const pids = () => (pidChain ??= ancestorPids(io));
-    const selection = select(env, ancestors, pids);
+    const selection = await select(env, ancestors, pids);
     if (selection === null) return null;
     const host = hostResolver(selection, ancestors, io);
     if (selection.harness.id === "pi" && env.PI_SESSION_ID) {
-      const pid = host()?.pid;
-      const inherited = ancestors().find(
+      const pid = (await host())?.pid;
+      const inherited = (await ancestors()).find(
         (ancestor) => ancestor.pid === pid,
       )?.env;
       // Native pi refreshes these for each bash invocation. If the host was
@@ -284,7 +288,7 @@ export function detectAgentContext(
       }
     }
 
-    return selection.harness.context({
+    return await selection.harness.context({
       env,
       home,
       cwd,
@@ -306,19 +310,19 @@ export function detectAgentContext(
  * later call is one read of a small file, or — for a harness that publishes
  * no such thing — nothing at all.
  */
-export function liveSessionIdReader(opts: {
+export async function liveSessionIdReader(opts: {
   env: Env;
   home?: string;
   cwd?: string;
   io?: Partial<ProcessTreeIo>;
-}): () => LiveSession {
-  const nothing = () => ({});
+}): Promise<() => Promise<LiveSession>> {
+  const nothing = async () => ({});
   try {
-    let chain: readonly Ancestor[] | undefined;
+    let chain: Promise<readonly Ancestor[]> | undefined;
     const ancestors = () => (chain ??= readAncestors(opts.io));
-    let pidChain: readonly number[] | undefined;
+    let pidChain: Promise<readonly number[]> | undefined;
     const pids = () => (pidChain ??= ancestorPids(opts.io));
-    const selection = select(opts.env, ancestors, pids);
+    const selection = await select(opts.env, ancestors, pids);
     const probe = selection?.harness.liveSessionId;
     if (selection === null || probe === undefined) return nothing;
     const harness = selection.harness;
@@ -330,9 +334,9 @@ export function liveSessionIdReader(opts: {
       host: hostResolver(selection, ancestors, opts.io),
       ancestorPids: pids,
     };
-    return () => {
+    return async () => {
       try {
-        return probe.call(harness, ctx);
+        return await probe.call(harness, ctx);
       } catch {
         // Same contract as every other probe: less metadata, never an error.
         return {};
@@ -348,17 +352,19 @@ export function liveSessionIdReader(opts: {
  * once — which is what keeps it usable on the token-selection path, where it
  * runs for every command.
  */
-export function detectHarnessId(
+export async function detectHarnessId(
   env: Env,
   io?: Partial<ProcessTreeIo>,
-): HarnessId | null {
-  let chain: readonly Ancestor[] | undefined;
-  let pidChain: readonly number[] | undefined;
+): Promise<HarnessId | null> {
+  let chain: Promise<readonly Ancestor[]> | undefined;
+  let pidChain: Promise<readonly number[]> | undefined;
   return (
-    select(
-      env,
-      () => (chain ??= readAncestors(io)),
-      () => (pidChain ??= ancestorPids(io)),
+    (
+      await select(
+        env,
+        () => (chain ??= readAncestors(io)),
+        () => (pidChain ??= ancestorPids(io)),
+      )
     )?.harness.id ?? null
   );
 }
@@ -368,19 +374,19 @@ export function detectHarnessId(
  * on — everything `todou agent doctor` reports about detection. Never throws,
  * like every other probe here.
  */
-export function explainHarness(
+export async function explainHarness(
   env: Env,
   io?: Partial<ProcessTreeIo>,
-): { id: HarnessId | null; trace: SelectionTrace; hostPid?: number } {
+): Promise<{ id: HarnessId | null; trace: SelectionTrace; hostPid?: number }> {
   const trace: SelectionTrace = { candidates: [], route: "none", depths: {} };
   try {
-    let chain: readonly Ancestor[] | undefined;
+    let chain: Promise<readonly Ancestor[]> | undefined;
     const ancestors = () => (chain ??= readAncestors(io));
-    let pidChain: readonly number[] | undefined;
+    let pidChain: Promise<readonly number[]> | undefined;
     const pids = () => (pidChain ??= ancestorPids(io));
-    const selection = select(env, ancestors, pids, trace);
+    const selection = await select(env, ancestors, pids, trace);
     if (selection === null) return { id: null, trace };
-    const hostPid = hostResolver(selection, ancestors, io)()?.pid;
+    const hostPid = (await hostResolver(selection, ancestors, io)())?.pid;
     return {
       id: selection.harness.id,
       trace,

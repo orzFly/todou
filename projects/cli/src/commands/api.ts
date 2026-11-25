@@ -1,12 +1,11 @@
-import { readFileSync } from "node:fs";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { readFile } from "node:fs/promises";
 import type { TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ApiCommand } from "../api-command.ts";
 import { drain } from "../body.ts";
 import { CliError } from "../errors.ts";
 import { parseChoice } from "../parse.ts";
+import { pipeWebStream } from "../web-stream-sink.ts";
 
 const METHODS = ["get", "post", "patch", "put", "delete"] as const;
 
@@ -62,12 +61,7 @@ export class ApiPassthroughCommand extends ApiCommand {
     }
     // Unconditional parsing used to make every binary endpoint unusable and
     // push people into hand-rolling an authenticated curl (T-176).
-    // `end: false`: stdout belongs to the process, not to this pipeline.
-    await pipeline(
-      Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
-      this.context.stdout,
-      { end: false },
-    );
+    await pipeWebStream(res.body, this.context.stdout);
   }
 
   private async readJsonBody(): Promise<unknown> {
@@ -78,7 +72,7 @@ export class ApiPassthroughCommand extends ApiCommand {
     } else if (this.body.startsWith("@")) {
       const file = this.body.slice(1);
       try {
-        raw = readFileSync(file, "utf8");
+        raw = await readFile(file, "utf8");
       } catch (cause) {
         throw new CliError(`cannot read ${file}: ${String(cause)}`);
       }

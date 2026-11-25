@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bodyLocation } from "./body.ts";
@@ -23,18 +23,18 @@ export type DocLocation =
  * A written body and where it can be fixed: the `--body-file` it came from,
  * or else a scratch file of this name.
  */
-export function bodyDoc(
+export async function bodyDoc(
   text: string,
   flags: { body?: string; bodyFile?: string; context: { cwd: string } },
   scratchName: string,
-): { text: string; location: DocLocation } {
+): Promise<{ text: string; location: DocLocation }> {
   return {
     text,
-    location: bodyLocation({
+    location: (await bodyLocation({
       body: flags.body,
       bodyFile: flags.bodyFile,
       cwd: flags.context.cwd,
-    }) ?? { kind: "scratch", name: scratchName },
+    })) ?? { kind: "scratch", name: scratchName },
   };
 }
 
@@ -83,15 +83,18 @@ export async function reportDiagramProblems(args: {
 
   const paths = new Map<DocLocation, string>();
   let scratchDir: string | undefined;
-  const pathOf = (doc: { text: string; location: DocLocation }): string => {
+  const pathOf = async (doc: {
+    text: string;
+    location: DocLocation;
+  }): Promise<string> => {
     const known = paths.get(doc.location);
     if (known !== undefined) return known;
     let path: string;
     if (doc.location.kind === "scratch") {
       // Left behind on purpose: the file is the one the user is told to edit.
-      scratchDir ??= mkdtempSync(join(tmpdir(), "todou-body-"));
+      scratchDir ??= await mkdtemp(join(tmpdir(), "todou-body-"));
       path = join(scratchDir, doc.location.name);
-      writeFileSync(path, doc.text);
+      await writeFile(path, doc.text);
     } else {
       path = doc.location.path;
     }
@@ -110,7 +113,7 @@ export async function reportDiagramProblems(args: {
   args.note(args.paint("yellow", `warning: ${headline}`));
   for (const { doc, fence, result } of failures) {
     const line = fence.startLine + (result.line ?? 1) - 1;
-    args.note(`  ${pathOf(doc)}:${line}`);
+    args.note(`  ${await pathOf(doc)}:${line}`);
     for (const text of result.message.split("\n")) args.note(`    ${text}`);
   }
 
@@ -119,7 +122,7 @@ export async function reportDiagramProblems(args: {
     args.note("  the spec is pushed; fix the diagrams and push again");
   } else {
     // A comment or an issue body is one document.
-    const path = shellQuote(pathOf(failures[0].doc));
+    const path = shellQuote(await pathOf(failures[0].doc));
     args.note(
       fix.kind === "comment"
         ? "  the comment is posted; fix the file and update it:"

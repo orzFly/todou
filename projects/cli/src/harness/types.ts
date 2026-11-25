@@ -56,11 +56,12 @@ export type HarnessContext = {
   cwd: string;
   /**
    * Lazy, because walking the process tree costs two `ps` spawns on macOS: a
-   * harness that never asks never pays. Returns undefined when the tree is
+   * harness that never asks never pays. Resolves to undefined when the tree is
    * unavailable or this harness's markers cannot be attributed to any visible
-   * ancestor.
+   * ancestor. Every call answers with the same promise, so the walk happens
+   * once however many probes ask.
    */
-  host(): HostProcess | undefined;
+  host(): Promise<HostProcess | undefined>;
   /**
    * Our ancestors' pids, nearest first — enough to ask which of them published
    * a `<pid>.json` record about itself, and nothing more. Pids only, so this
@@ -69,7 +70,7 @@ export type HarnessContext = {
    * Lazy and cached for the same reason as `host`, and cheaper than it: the
    * caller that needs this runs before anything is known to match.
    */
-  ancestorPids(): readonly number[];
+  ancestorPids(): Promise<readonly number[]>;
 };
 
 /**
@@ -115,7 +116,7 @@ export type Harness = {
   /** AgentContext.agent value, and the auto-selected token profile name. */
   id: HarnessId;
   matches(env: Env): boolean;
-  context(ctx: HarnessContext): AgentContext;
+  context(ctx: HarnessContext): Promise<AgentContext>;
   /**
    * Optional because a harness has to publish something re-readable before
    * there is an answer to read. Claude Code does so itself; omp's comes from
@@ -123,5 +124,5 @@ export type Harness = {
    * that extension is. The rest keep filtering on the id they started with,
    * and this member is where an answer lands when somebody measures one.
    */
-  liveSessionId?(ctx: HarnessContext): LiveSession;
+  liveSessionId?(ctx: HarnessContext): Promise<LiveSession>;
 };

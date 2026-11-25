@@ -18,17 +18,17 @@ export type WatchLifetime = {
 };
 
 /** Only a verified, rereadable native owner can bind a raw watch's lifetime. */
-export function openWatchLifetime(opts: {
+export async function openWatchLifetime(opts: {
   env: Env;
   io?: Partial<ProcessTreeIo>;
   clock?: Clock;
   note: (line: string) => void;
   /** Tests can mutate the same snapshot without a real process tree. */
-  readOwner?: () => NativeWatchOwner | undefined;
-}): WatchLifetime | undefined {
+  readOwner?: () => Promise<NativeWatchOwner | undefined>;
+}): Promise<WatchLifetime | undefined> {
   const readOwner =
     opts.readOwner ?? (() => nativeWatchOwner(opts.env, opts.io));
-  const initial = readOwner();
+  const initial = await readOwner();
   if (initial === undefined) return undefined;
   // Own the values, even when a test reader returns a mutable object.
   const owner = { ...initial };
@@ -36,8 +36,8 @@ export function openWatchLifetime(opts: {
   // reparent the watch without retiring the still-live native owner.
   const readCapturedOwner =
     opts.readOwner ??
-    (() => {
-      const state = readOmpStateAt(owner.path);
+    (async () => {
+      const state = await readOmpStateAt(owner.path);
       if (
         state === undefined ||
         state.socket === undefined ||
@@ -57,24 +57,39 @@ export function openWatchLifetime(opts: {
     });
   const abort = new AbortController();
   const clock = opts.clock ?? systemClock;
-  const timer = setInterval(() => {
-    const live = readCapturedOwner();
-    if (
-      live !== undefined &&
-      live.peer === owner.peer &&
-      live.pid === owner.pid &&
-      live.path === owner.path &&
-      live.sessionId === owner.sessionId &&
-      live.socket === owner.socket &&
-      live.token === owner.token
-    ) {
-      return;
+  // A read is asynchronous now, so a slow one could still be running when
+  // the next tick fires, or when the watch has already been closed; neither
+  // may produce a second verdict.
+  let checking = false;
+  let closed = false;
+  const timer = setInterval(async () => {
+    if (checking) return;
+    checking = true;
+    try {
+      const live = await readCapturedOwner();
+      if (closed) return;
+      if (
+        live !== undefined &&
+        live.peer === owner.peer &&
+        live.pid === owner.pid &&
+        live.path === owner.path &&
+        live.sessionId === owner.sessionId &&
+        live.socket === owner.socket &&
+        live.token === owner.token
+      ) {
+        return;
+      }
+      closed = true;
+      clearInterval(timer);
+      opts.note("watch stopped: native session owner changed or disappeared");
+      abort.abort();
+    } finally {
+      checking = false;
     }
-    clearInterval(timer);
-    opts.note("watch stopped: native session owner changed or disappeared");
-    abort.abort();
   }, OWNER_CHECK_MS);
-  timer.unref();
+  // Optional: on a runtime whose timers are plain numbers there is nothing to
+  // unref, and the single-file build exits once the command returns anyway.
+  timer.unref?.();
   return {
     owner,
     signal: abort.signal,
@@ -89,6 +104,7 @@ export function openWatchLifetime(opts: {
         ),
     },
     close: () => {
+      closed = true;
       clearInterval(timer);
       abort.abort();
     },

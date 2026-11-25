@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { BUILD_VERSION } from "@todou/shared/version";
 
@@ -37,7 +37,7 @@ export type InstallProbe = {
   script: string | undefined;
   execPath: string;
   platform: NodeJS.Platform;
-  realpath?: (path: string) => string;
+  realpath?: (path: string) => Promise<string>;
 };
 
 /** Names as scripts/build-cli.sh writes them; null where it builds nothing. */
@@ -56,8 +56,8 @@ export function binaryArtifact(os: string, arch: string): string | null {
   }
 }
 
-export function detectInstall(probe: InstallProbe): InstallForm {
-  const real = probe.realpath ?? realpathSync;
+export async function detectInstall(probe: InstallProbe): Promise<InstallForm> {
+  const real = probe.realpath ?? realpath;
   if (probe.buildVersion === null) {
     return {
       kind: "refused",
@@ -70,12 +70,12 @@ export function detectInstall(probe: InstallProbe): InstallForm {
   if (probe.deno?.build.standalone) {
     form = {
       kind: "binary",
-      path: real(probe.deno.execPath()),
+      path: await real(probe.deno.execPath()),
       artifact: binaryArtifact(probe.deno.build.os, probe.deno.build.arch),
       platform: probe.platform,
     };
   } else if (probe.script !== undefined) {
-    const path = real(resolve(probe.script));
+    const path = await real(resolve(probe.script));
     form = {
       kind: "script",
       path,
@@ -107,7 +107,7 @@ export function detectInstall(probe: InstallProbe): InstallForm {
   return form;
 }
 
-export function currentInstall(): InstallForm {
+export function currentInstall(): Promise<InstallForm> {
   return detectInstall({
     deno: (globalThis as { Deno?: DenoGlobal }).Deno,
     buildVersion: BUILD_VERSION,

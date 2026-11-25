@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import type {
   SpecAnnotationInput,
@@ -20,7 +20,8 @@ export async function readAnnotationsInput(
   source: string,
   stdin: Readable,
 ): Promise<SpecAnnotationInput[]> {
-  const raw = source === "-" ? await drain(stdin) : readAnnotationsFile(source);
+  const raw =
+    source === "-" ? await drain(stdin) : await readAnnotationsFile(source);
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -39,9 +40,9 @@ export async function readAnnotationsInput(
   return result.data;
 }
 
-function readAnnotationsFile(path: string): string {
+async function readAnnotationsFile(path: string): Promise<string> {
   try {
-    return readFileSync(path, "utf8");
+    return await readFile(path, "utf8");
   } catch (cause) {
     throw new CliError(`cannot read ${path}: ${String(cause)}`);
   }

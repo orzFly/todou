@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import {
   basename,
   dirname,
@@ -51,7 +51,7 @@ import type {
 export const omp = {
   id: "omp",
   matches: (env) => env.OMPCODE === "1",
-  context(ctx) {
+  async context(ctx) {
     const { env, home, cwd, host } = ctx;
     const context: AgentContext = { agent: "omp" };
     // omp's own answer beats every heuristic below it, and costs one small
@@ -65,7 +65,7 @@ export const omp = {
     // invisible for as long as the descriptor below could cover it, and omp
     // creates the log lazily at the first turn, so early in a session neither
     // could answer and a live session reported none at all (T-312).
-    const state = ompStateAttempt(ctx).state;
+    const state = (await ompStateAttempt(ctx)).state;
     if (state) {
       context.session_id = state.sessionId;
       // The extension deliberately publishes no model: it changes every turn,
@@ -74,14 +74,14 @@ export const omp = {
       const live =
         state.sessionFile === undefined
           ? undefined
-          : findInJsonlTail(state.sessionFile, modelFromLine);
+          : await findInJsonlTail(state.sessionFile, modelFromLine);
       if (live) context.model = live;
       return context;
     }
     const here = resolve(cwd);
-    const hostProcess = host();
+    const hostProcess = await host();
     const hostCwd = hostProcess?.cwd ? resolve(hostProcess.cwd) : undefined;
-    const file = currentSessionFile({
+    const file = await currentSessionFile({
       dirs: sessionDirs(env, home, here, hostProcess),
       cwd: here,
       hostCwd,
@@ -96,14 +96,14 @@ export const omp = {
     });
     if (file) {
       context.session_id = file.id;
-      const model = findInJsonlTail(file.path, modelFromLine);
+      const model = await findInJsonlTail(file.path, modelFromLine);
       if (model) context.model = model;
       return context;
     }
     // Third, and only where the two above had nothing: the breadcrumb omp
     // drops against its terminal the moment a session is created, which is
     // the only record of that session until the log exists.
-    const breadcrumb = terminalBreadcrumb({
+    const breadcrumb = await terminalBreadcrumb({
       dirs: terminalSessionRoots(env, home),
       stdin: hostProcess?.stdin,
       cwd: here,
@@ -115,8 +115,8 @@ export const omp = {
     if (breadcrumb) context.session_id = breadcrumb;
     return context;
   },
-  liveSessionId(ctx): LiveSession {
-    const attempt = ompStateAttempt(ctx);
+  async liveSessionId(ctx): Promise<LiveSession> {
+    const attempt = await ompStateAttempt(ctx);
     if (attempt.state) return { id: attempt.state.sessionId };
     return attempt.unreadable ? { unreadable: attempt.unreadable } : {};
   },
@@ -190,29 +190,29 @@ export function ompHostAncestor(
 }
 
 /** Shared namespace records belong to their publisher, not every descendant. */
-export function ompStateAttempt({
+export async function ompStateAttempt({
   env,
   host,
   ancestorPids,
-}: Pick<HarnessContext, "env" | "host" | "ancestorPids">): {
+}: Pick<HarnessContext, "env" | "host" | "ancestorPids">): Promise<{
   state?: OmpState;
   unreadable?: string;
   /** Believed on the environment's word; no ancestor published it. */
   brokered?: true;
-} {
-  const hostProcess = host();
+}> {
+  const hostProcess = await host();
   if (hostProcess?.brokered) {
-    const attempt = brokeredStateAttempt(env);
+    const attempt = await brokeredStateAttempt(env);
     if (attempt) return attempt;
   }
-  const pids = () => {
-    const chain = ancestorPids();
+  const pids = async () => {
+    const chain = await ancestorPids();
     if (!hostProcess) return chain;
     const boundary = chain.indexOf(hostProcess.pid);
     // Nested omp may inherit the marker; its nearer publisher still wins.
     return boundary < 0 ? [hostProcess.pid] : chain.slice(0, boundary + 1);
   };
-  const attempt = publishedStateAttempt(env, pids);
+  const attempt = await publishedStateAttempt(env, pids);
   if (
     attempt.state &&
     (attempt.state.agent === undefined || attempt.state.agent === "omp")
@@ -222,12 +222,12 @@ export function ompStateAttempt({
   if (attempt.state) return {};
   const path = env.TODOU_OMP_STATE;
   if (path) {
-    const owners = pids();
+    const owners = await pids();
     if (
       owners.length === 0 ||
       owners.some((pid) => basename(path) === `${pid}.json`)
     ) {
-      const state = readOmpStateAt(path);
+      const state = await readOmpStateAt(path);
       if (!state) return { unreadable: path };
       // Records predating the agent field were all written by omp.
       if (state.agent === undefined || state.agent === "omp") return { state };
@@ -252,16 +252,18 @@ export function ompStateAttempt({
  * Undefined defers to the process tree: an omp older than `PI_SESSION_ID`
  * (18.12.4) leaves nothing to check the variable against.
  */
-function brokeredStateAttempt(
+async function brokeredStateAttempt(
   env: Env,
-): { state?: OmpState; unreadable?: string; brokered?: true } | undefined {
+): Promise<
+  { state?: OmpState; unreadable?: string; brokered?: true } | undefined
+> {
   const sessionId = env.PI_SESSION_ID;
   if (!sessionId) return undefined;
   const path = env.TODOU_OMP_STATE;
   // The asking session published nothing. The broker's parent may have, and
   // its channel is not this session's.
   if (!path) return {};
-  const state = readOmpStateAt(path);
+  const state = await readOmpStateAt(path);
   if (!state) return { unreadable: path };
   if (state.agent !== undefined && state.agent !== "omp") return {};
   // Another session's record, or this one's after a `/new`: not who asked.
@@ -389,8 +391,8 @@ function ompProfile(env: Env): string | undefined {
 /**
  * The directories omp may be keeping one kind of per-user data in, in the order
  * it prefers them. Both are offered rather than resolved, because choosing
- * between them is an `existsSync` on omp's side and a `readdirSync` that finds
- * nothing on ours — the same answer for one syscall instead of two.
+ * between them is an existence check on omp's side and a directory listing
+ * that finds nothing on ours — the same answer for one syscall instead of two.
  *
  * Parameterised over the XDG variable and the directory name together, because
  * omp files its two kinds under different XDG categories and everything else
@@ -454,18 +456,18 @@ function terminalSessionRoots(env: Env, home: string): string[] {
  *  - **The cwd must contain ours or the host's**, the same test the scan makes
  *    and for the same reason: one flat session directory holds every project.
  */
-function terminalBreadcrumb(opts: {
+async function terminalBreadcrumb(opts: {
   dirs: readonly string[];
   stdin: string | undefined;
   cwd: string;
   hostCwd?: string;
-}): string | undefined {
+}): Promise<string | undefined> {
   const terminal = terminalId(opts.stdin);
   if (terminal === undefined) return undefined;
   for (const dir of opts.dirs) {
     let lines: string[];
     try {
-      lines = readFileSync(join(dir, terminal), "utf8").split("\n");
+      lines = (await readFile(join(dir, terminal), "utf8")).split("\n");
     } catch {
       continue; // No breadcrumb for this terminal under this root.
     }
@@ -473,7 +475,7 @@ function terminalBreadcrumb(opts: {
     const file = lines[1]?.trim();
     if (!cwd || !file) continue;
     if (lines[2]?.trim() !== "fresh") continue;
-    if (existsSync(file)) continue;
+    if (await exists(file)) continue;
     if (
       !contains(cwd, opts.cwd) &&
       !(opts.hostCwd !== undefined && contains(cwd, opts.hostCwd))
@@ -484,6 +486,16 @@ function terminalBreadcrumb(opts: {
     if (id !== undefined) return id;
   }
   return undefined;
+}
+
+/** Whether anything is at `path`, following a symlink to its target. */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { join } from "node:path";
 import type { Env } from "../config.ts";
 import { ompAgentDir } from "../harness/omp.ts";
@@ -32,7 +32,7 @@ export type Integration = {
    * a command that can never install anything, reporting the plausible-
    * sounding lie that nothing is installed here.
    */
-  tracesOnThisMachine(env: Env, home: string): boolean;
+  tracesOnThisMachine(env: Env, home: string): Promise<boolean>;
   /** The file `install` writes and `uninstall` removes. */
   targetPath(env: Env, home: string): string;
   /** The extension source, inlined at build time. */
@@ -48,13 +48,13 @@ export const INTEGRATIONS: readonly Integration[] = [
     id: "omp",
     label: "omp",
     version: 6,
-    tracesOnThisMachine(env, home) {
+    async tracesOnThisMachine(env, home) {
       const { dir, configRoot } = ompAgentDir(env, home);
       // The config root counts too: a fresh omp that has been configured but
       // has not yet written a session has no `agent/` directory, and refusing
       // to install there would send the user to read this code to find out
       // why `install-all` skipped the agent they are looking at.
-      return existsSync(dir) || existsSync(configRoot);
+      return (await exists(dir)) || (await exists(configRoot));
     },
     targetPath(env, home) {
       return join(ompAgentDir(env, home).dir, "extensions", OMP_FILE);
@@ -65,10 +65,10 @@ export const INTEGRATIONS: readonly Integration[] = [
     id: "pi",
     label: "Pi",
     version: 2,
-    tracesOnThisMachine(env, home) {
+    async tracesOnThisMachine(env, home) {
       const { dir, configRoot } = piAgentDir(env, home);
       // A configured Pi may have a root before its first agent session.
-      return existsSync(dir) || existsSync(configRoot);
+      return (await exists(dir)) || (await exists(configRoot));
     },
     targetPath(env, home) {
       return join(piAgentDir(env, home).dir, "extensions", PI_FILE);
@@ -76,6 +76,15 @@ export const INTEGRATIONS: readonly Integration[] = [
     asset: PI_EXTENSION_SOURCE,
   },
 ];
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** The record for one id, or undefined when nothing answers to that name. */
 export function integration(id: string): Integration | undefined {

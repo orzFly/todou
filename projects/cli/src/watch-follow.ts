@@ -252,7 +252,7 @@ export type Follow<T> = {
   /** Retain a collected batch for stdout when its native owner retires. */
   stopped: (items: T[], cursor: string | undefined) => void;
   /** Hands over what is not known to have landed, then closes. */
-  finish: () => void;
+  finish: () => Promise<void>;
 };
 
 /**
@@ -271,18 +271,18 @@ export type Follow<T> = {
  * succeeded would leave the old behaviour in place while looking fixed.
  */
 export function attestedMode(opts: {
-  session: () => string | undefined;
+  session: () => Promise<string | undefined>;
   /** Test seam; production leaves it unset and the real home is read. */
   home?: string;
   note: (line: string) => void;
-}): () => "bypass" | "prompting" | undefined {
+}): () => Promise<"bypass" | "prompting" | undefined> {
   let reported = false;
   let last: "bypass" | "prompting" | undefined;
-  return () => {
-    const session = opts.session();
+  return async () => {
+    const session = await opts.session();
     // `detectPermissionMode` takes its home default on `undefined`, so
     // production passing the unset seam straight through needs no branch.
-    const mode = detectPermissionMode(session, opts.home);
+    const mode = await detectPermissionMode(session, opts.home);
     if (reported && mode === last) return mode;
     const what = mode ?? "no permission mode";
     const where = `for session ${session ?? "(unknown)"}`;
@@ -351,7 +351,7 @@ export async function openFollow<T>(opts: {
    * the session id it started under, and a `/clear` retires that id without
    * ending this process.
    */
-  session: () => string | undefined;
+  session: () => Promise<string | undefined>;
   /** Test seam; production leaves it unset and the real home is read. */
   home?: string;
   clock: Clock;
@@ -381,7 +381,7 @@ export async function openFollow<T>(opts: {
     silent: false,
     seen: () => {},
     stopped: (items, cursor) => opts.emit(items, undefined, cursor),
-    finish: () => {},
+    finish: async () => {},
   };
   if (opts.transport === null) return oneShot;
 
@@ -509,7 +509,7 @@ export async function openFollow<T>(opts: {
       return push?.rejected ? "stop" : "continue";
     },
     shouldStop: push === null ? undefined : () => push.rejected !== null,
-    finish: () => {
+    finish: async () => {
       if (finished) return;
       finished = true;
       for (const signal of signals) process.off(signal, onSignal);
@@ -551,7 +551,7 @@ export async function openFollow<T>(opts: {
             (unbounced === 0 ? "" : ` (${unbounced} could not be bounced)`),
         );
       }
-      push.close();
+      await push.close();
       if (stoppedBy) {
         const interruptedBy = stoppedBy;
         process.stdout.write("", () =>

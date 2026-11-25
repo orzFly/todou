@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type {
   AnswersSubmitInput,
   IssueQuestionsItem,
@@ -418,9 +419,8 @@ export class QuestionAnswerCommand extends ProjectCommand {
     } else if (source.trimStart().startsWith("[")) {
       raw = source;
     } else {
-      const { readFileSync } = await import("node:fs");
       try {
-        raw = readFileSync(source, "utf8");
+        raw = await readFile(source, "utf8");
       } catch (cause) {
         throw new CliError(`cannot read ${source}: ${String(cause)}`);
       }

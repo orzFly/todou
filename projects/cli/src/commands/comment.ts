@@ -193,7 +193,7 @@ export class CommentAddCommand extends ProjectCommand {
             `wait for answers with \`todou question wait ${number} ${comment.id}\``,
     );
     await this.reportDiagrams(
-      [bodyDoc(body, this, `comment-${comment.id}.md`)],
+      [await bodyDoc(body, this, `comment-${comment.id}.md`)],
       { kind: "comment", project, number, commentId: comment.id },
     );
   }
@@ -577,7 +577,7 @@ export class CommentEditCommand extends ProjectCommand {
       () => `edited ${commentRef(commentId)} on ${edited.issue_ref}`,
     );
     await this.reportDiagrams(
-      [bodyDoc(body, this, `comment-${commentId}.md`)],
+      [await bodyDoc(body, this, `comment-${commentId}.md`)],
       { kind: "comment", project, number, commentId },
     );
   }

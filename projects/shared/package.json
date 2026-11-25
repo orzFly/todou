@@ -8,8 +8,15 @@
   "exports": {
     ".": "./src/index.ts",
     "./config": "./src/config.ts",
+    "./config-file": "./src/config-file.ts",
     "./version": "./src/version.ts",
     "./spec-remap": "./src/spec-remap.ts"
+  },
+  "imports": {
+    "#git-describe": {
+      "tjs": "./src/git-describe-unavailable.ts",
+      "default": "./src/git-describe.ts"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

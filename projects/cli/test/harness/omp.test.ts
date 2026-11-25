@@ -180,23 +180,25 @@ const recently = (secondsAgo: number) => Date.now() / 1000 - secondsAgo;
 const sessionsIn = (dir: string) => join(dir, "sessions");
 
 describe("omp detection", () => {
-  it("returns null without the omp marker", () => {
-    expect(detect({}, home, project)).toBeNull();
-    expect(detect({ OMPCODE: "0" }, home, project)).toBeNull();
+  it("returns null without the omp marker", async () => {
+    expect(await detect({}, home, project)).toBeNull();
+    expect(await detect({ OMPCODE: "0" }, home, project)).toBeNull();
     // Sharing pi's variables is not being pi's fork at runtime: an ordinary
     // shell may export either of these permanently.
-    expect(detect({ PI_CODING_AGENT_DIR: "/x" }, home, project)).toBeNull();
-    expect(detect({ OMP_PROFILE: "work" }, home, project)).toBeNull();
+    expect(
+      await detect({ PI_CODING_AGENT_DIR: "/x" }, home, project),
+    ).toBeNull();
+    expect(await detect({ OMP_PROFILE: "work" }, home, project)).toBeNull();
   });
 
-  it("wins the tie against the claude-code marker omp sets on purpose", () => {
+  it("wins the tie against the claude-code marker omp sets on purpose", async () => {
     // omp puts CLAUDECODE=1 in its shell environment so that tools keyed on
     // Claude Code behave inside it. Both predicates therefore match every omp
     // shell, and with no tree to attribute them the registry order decides —
     // which is the whole reason omp leads it. Before T-109 this reported
     // claude-code, and with it the id of whatever claude session was outside.
     expect(
-      detect(
+      await detect(
         { ...ENV, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
         home,
         project,
@@ -204,11 +206,11 @@ describe("omp detection", () => {
     ).toEqual({ agent: "omp" });
   });
 
-  it("degrades to agent-only when no session has been recorded", () => {
-    expect(detect(ENV, home, project)).toEqual({ agent: "omp" });
+  it("degrades to agent-only when no session has been recorded", async () => {
+    expect(await detect(ENV, home, project)).toEqual({ agent: "omp" });
   });
 
-  it("reads the session id and model past omp's leading title slot", () => {
+  it("reads the session id and model past omp's leading title slot", async () => {
     const dir = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -216,16 +218,16 @@ describe("omp detection", () => {
       id: SID,
       lines: [modelChange("llm-gw/example-v4-flash"), userLine],
     });
-    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
-      {
-        agent: "omp",
-        session_id: SID,
-        model: "llm-gw/example-v4-flash",
-      },
-    );
+    expect(
+      await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
+    ).toEqual({
+      agent: "omp",
+      session_id: SID,
+      model: "llm-gw/example-v4-flash",
+    });
   });
 
-  it("takes the newest of model_change and assistant message, either way round", () => {
+  it("takes the newest of model_change and assistant message, either way round", async () => {
     const dir = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -237,7 +239,8 @@ describe("omp detection", () => {
       ],
     });
     expect(
-      detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
+      (await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project))
+        ?.model,
     ).toBe("llm-gw/answered-with");
 
     const swapped = agentDir();
@@ -248,11 +251,12 @@ describe("omp detection", () => {
       lines: [assistant("llm-gw", "old-model"), modelChange("openai/switched")],
     });
     expect(
-      detect({ ...ENV, PI_CODING_AGENT_DIR: swapped }, home, project)?.model,
+      (await detect({ ...ENV, PI_CODING_AGENT_DIR: swapped }, home, project))
+        ?.model,
     ).toBe("openai/switched");
   });
 
-  it("reports a role-tagged model change, because it is still what answered", () => {
+  it("reports a role-tagged model change, because it is still what answered", async () => {
     // Every call site that records one has just made that model active —
     // including the retry fallback, which is the model the next turn runs on.
     const dir = agentDir();
@@ -266,11 +270,12 @@ describe("omp detection", () => {
       ],
     });
     expect(
-      detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
+      (await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project))
+        ?.model,
     ).toBe("openai/stood-in");
   });
 
-  it("finds omp's session when a tool runs us from a subdirectory", () => {
+  it("finds omp's session when a tool runs us from a subdirectory", async () => {
     const dir = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -278,14 +283,16 @@ describe("omp detection", () => {
       id: SID,
       lines: [modelChange("llm-gw/example-v4-flash")],
     });
-    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, nested)).toEqual({
+    expect(
+      await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, nested),
+    ).toEqual({
       agent: "omp",
       session_id: SID,
       model: "llm-gw/example-v4-flash",
     });
   });
 
-  it("ignores a session whose cwd does not contain ours", () => {
+  it("ignores a session whose cwd does not contain ours", async () => {
     const dir = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -293,14 +300,14 @@ describe("omp detection", () => {
       id: SID,
       lines: [modelChange("llm-gw/deeper-model")],
     });
-    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
-      {
-        agent: "omp",
-      },
-    );
+    expect(
+      await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
+    ).toEqual({
+      agent: "omp",
+    });
   });
 
-  it("picks the most recently written session when several are open", () => {
+  it("picks the most recently written session when several are open", async () => {
     const dir = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -316,16 +323,16 @@ describe("omp detection", () => {
       lines: [modelChange("llm-gw/live-model")],
       mtime: recently(1),
     });
-    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
-      {
-        agent: "omp",
-        session_id: SID,
-        model: "llm-gw/live-model",
-      },
-    );
+    expect(
+      await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
+    ).toEqual({
+      agent: "omp",
+      session_id: SID,
+      model: "llm-gw/live-model",
+    });
   });
 
-  it("refuses a session log too old to be the one being written", () => {
+  it("refuses a session log too old to be the one being written", async () => {
     const dir = agentDir();
     // Being the newest log this project has is not the same as being live. A
     // live one is seconds old, because omp appends the user's message before
@@ -339,13 +346,13 @@ describe("omp detection", () => {
       lines: [modelChange("llm-gw/finished-yesterday")],
       mtime: recently(26 * 60 * 60),
     });
-    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
-      { agent: "omp" },
-    );
+    expect(
+      await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
+    ).toEqual({ agent: "omp" });
   });
 
   describe("where omp files a project's sessions", () => {
-    it("encodes a cwd under $HOME relative to it", () => {
+    it("encodes a cwd under $HOME relative to it", async () => {
       const dir = agentDir();
       writeSession({
         sessionsRoot: sessionsIn(dir),
@@ -354,7 +361,8 @@ describe("omp detection", () => {
         lines: [modelChange("llm-gw/at-home")],
       });
       expect(
-        detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, homeProject)?.model,
+        (await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, homeProject))
+          ?.model,
       ).toBe("llm-gw/at-home");
     });
 
@@ -367,7 +375,7 @@ describe("omp detection", () => {
       );
     });
 
-    it("falls back to pi's absolute form outside both", () => {
+    it("falls back to pi's absolute form outside both", async () => {
       const dir = agentDir();
       writeSession({
         sessionsRoot: sessionsIn(dir),
@@ -380,15 +388,17 @@ describe("omp detection", () => {
         tmpRoot: "/nonexistent-tmp",
       });
       expect(
-        detect(
-          { ...ENV_ABS, PI_CODING_AGENT_DIR: dir },
-          "/nonexistent-home",
-          project,
+        (
+          await detect(
+            { ...ENV_ABS, PI_CODING_AGENT_DIR: dir },
+            "/nonexistent-home",
+            project,
+          )
         )?.model,
       ).toBe("llm-gw/absolute");
     });
 
-    it("follows a named profile when the variable did not reach us", () => {
+    it("follows a named profile when the variable did not reach us", async () => {
       // omp exports PI_CODING_AGENT_DIR itself whenever a profile is active,
       // so this covers the environment arriving without it.
       writeSession({
@@ -405,11 +415,11 @@ describe("omp detection", () => {
         lines: [modelChange("llm-gw/profiled")],
       });
       expect(
-        detect({ ...ENV, OMP_PROFILE: "work" }, home, project)?.model,
+        (await detect({ ...ENV, OMP_PROFILE: "work" }, home, project))?.model,
       ).toBe("llm-gw/profiled");
     });
 
-    it("follows PI_CONFIG_DIR", () => {
+    it("follows PI_CONFIG_DIR", async () => {
       writeSession({
         sessionsRoot: join(home, ".omp-alt", "agent", "sessions"),
         cwd: project,
@@ -417,11 +427,12 @@ describe("omp detection", () => {
         lines: [modelChange("llm-gw/relocated")],
       });
       expect(
-        detect({ ...ENV, PI_CONFIG_DIR: ".omp-alt" }, home, project)?.model,
+        (await detect({ ...ENV, PI_CONFIG_DIR: ".omp-alt" }, home, project))
+          ?.model,
       ).toBe("llm-gw/relocated");
     });
 
-    it("follows the XDG data directory, and only while omp's own is in place", () => {
+    it("follows the XDG data directory, and only while omp's own is in place", async () => {
       const xdg = scratchDir("todou-omp-xdg-");
       writeSession({
         sessionsRoot: join(xdg, "omp", "sessions"),
@@ -429,13 +440,13 @@ describe("omp detection", () => {
         id: SID,
         lines: [modelChange("llm-gw/xdg")],
       });
-      expect(detect({ ...ENV, XDG_DATA_HOME: xdg }, home, project)?.model).toBe(
-        "llm-gw/xdg",
-      );
+      expect(
+        (await detect({ ...ENV, XDG_DATA_HOME: xdg }, home, project))?.model,
+      ).toBe("llm-gw/xdg");
       // A relocated agent directory takes its data with it, so the split no
       // longer applies and the session above is not ours to claim.
       expect(
-        detect(
+        await detect(
           { ...ENV, XDG_DATA_HOME: xdg, PI_CODING_AGENT_DIR: agentDir() },
           home,
           project,
@@ -443,7 +454,7 @@ describe("omp detection", () => {
       ).toEqual({ agent: "omp" });
     });
 
-    it("keeps the XDG split under a profile that overrules the override", () => {
+    it("keeps the XDG split under a profile that overrules the override", async () => {
       // The override does not relocate anything here — omp discards it in
       // favour of the profile — so omp's directory is still where omp put it
       // and the split still applies. Reading the override as a relocation
@@ -456,20 +467,22 @@ describe("omp detection", () => {
         lines: [modelChange("llm-gw/xdg-profiled")],
       });
       expect(
-        detect(
-          {
-            ...ENV,
-            XDG_DATA_HOME: xdg,
-            OMP_PROFILE: "work",
-            PI_CODING_AGENT_DIR: agentDir(),
-          },
-          home,
-          project,
+        (
+          await detect(
+            {
+              ...ENV,
+              XDG_DATA_HOME: xdg,
+              OMP_PROFILE: "work",
+              PI_CODING_AGENT_DIR: agentDir(),
+            },
+            home,
+            project,
+          )
         )?.model,
       ).toBe("llm-gw/xdg-profiled");
     });
 
-    it("reads a flat session directory, filtering foreign projects by header cwd", () => {
+    it("reads a flat session directory, filtering foreign projects by header cwd", async () => {
       const flat = scratchDir("todou-omp-flat-");
       // Under one flat directory every project lands side by side, so the
       // newest file there is often somebody else's.
@@ -488,11 +501,15 @@ describe("omp detection", () => {
         mtime: recently(2),
       });
       expect(
-        detect({ ...ENV, PI_CODING_AGENT_SESSION_DIR: flat }, home, project),
+        await detect(
+          { ...ENV, PI_CODING_AGENT_SESSION_DIR: flat },
+          home,
+          project,
+        ),
       ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/ours" });
     });
 
-    it("treats bound-but-empty omp directories as unset (T-120 shape)", () => {
+    it("treats bound-but-empty omp directories as unset (T-120 shape)", async () => {
       const dir = agentDir();
       writeSession({
         sessionsRoot: sessionsIn(dir),
@@ -501,16 +518,18 @@ describe("omp detection", () => {
         lines: [modelChange("llm-gw/example-v4-flash")],
       });
       expect(
-        detect(
-          {
-            ...ENV,
-            PI_CODING_AGENT_DIR: dir,
-            PI_CODING_AGENT_SESSION_DIR: "",
-            PI_CONFIG_DIR: "",
-            OMP_PROFILE: "",
-          },
-          home,
-          project,
+        (
+          await detect(
+            {
+              ...ENV,
+              PI_CODING_AGENT_DIR: dir,
+              PI_CODING_AGENT_SESSION_DIR: "",
+              PI_CONFIG_DIR: "",
+              OMP_PROFILE: "",
+            },
+            home,
+            project,
+          )
         )?.model,
       ).toBe("llm-gw/example-v4-flash");
     });
@@ -521,7 +540,7 @@ describe("omp detection", () => {
     ["a half-written header", ['{"type":"session","id":"tru']],
     ["a foreign opening entry", [JSON.stringify({ type: "message" })]],
     ["an empty file", [""]],
-  ])("degrades to agent-only on %s", (_name, lines) => {
+  ])("degrades to agent-only on %s", async (_name, lines) => {
     const dir = agentDir();
     const target = join(
       sessionsIn(dir),
@@ -529,14 +548,14 @@ describe("omp detection", () => {
     );
     mkdirSync(target, { recursive: true });
     writeFileSync(join(target, `x_${SID}.jsonl`), lines.join("\n"));
-    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
-      {
-        agent: "omp",
-      },
-    );
+    expect(
+      await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
+    ).toEqual({
+      agent: "omp",
+    });
   });
 
-  it("keeps the session when the log carries no model yet", () => {
+  it("keeps the session when the log carries no model yet", async () => {
     const dir = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -544,15 +563,15 @@ describe("omp detection", () => {
       id: SID,
       lines: [userLine],
     });
-    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
-      {
-        agent: "omp",
-        session_id: SID,
-      },
-    );
+    expect(
+      await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
+    ).toEqual({
+      agent: "omp",
+      session_id: SID,
+    });
   });
 
-  it("skips unparseable lines to reach the newest real entry", () => {
+  it("skips unparseable lines to reach the newest real entry", async () => {
     const dir = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -565,7 +584,8 @@ describe("omp detection", () => {
       ],
     });
     expect(
-      detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
+      (await detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project))
+        ?.model,
     ).toBe("llm-gw/example-v4-flash");
   });
 });
@@ -640,7 +660,7 @@ describe("omp session recovery through the host process", () => {
    * not having one, because the interesting part is which of those falls back
    * to guessing and which reports nothing at all.
    */
-  it("takes the log omp holds open over the newest one", () => {
+  it("takes the log omp holds open over the newest one", async () => {
     const dir = agentDir();
     // What recency alone would have said: newer, and not the one omp is in.
     // This is T-308's smoke test in miniature — two instances, one project.
@@ -659,7 +679,7 @@ describe("omp session recovery through the host process", () => {
       mtime: recently(30),
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -668,7 +688,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/ours" });
   });
 
-  it("reports no session when omp holds no log open", () => {
+  it("reports no session when omp holds no log open", async () => {
     const dir = agentDir();
     // `--no-session`: the log below is a real past session of this project,
     // and recency would hand back its id as the current one.
@@ -680,7 +700,7 @@ describe("omp session recovery through the host process", () => {
       mtime: recently(1),
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -689,7 +709,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp" });
   });
 
-  it("falls back to recency when several logs are held open", () => {
+  it("falls back to recency when several logs are held open", async () => {
     const dir = agentDir();
     const older = writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -708,7 +728,7 @@ describe("omp session recovery through the host process", () => {
     // Nothing measured says what two open logs mean, so this is the one case
     // that stays a guess rather than becoming a refusal.
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -717,7 +737,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/newer" });
   });
 
-  it("reports no session when the held log has no header yet", () => {
+  it("reports no session when the held log has no header yet", async () => {
     const dir = agentDir();
     // A log open but not yet declared is still the session omp is in, so the
     // scan's answer is the wrong one and silence is the right one.
@@ -731,7 +751,7 @@ describe("omp session recovery through the host process", () => {
     const blank = join(sessionsIn(dir), "brand-new.jsonl");
     writeFileSync(blank, "");
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -740,7 +760,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp" });
   });
 
-  it("recovers a --session-dir that exists only on omp's command line", () => {
+  it("recovers a --session-dir that exists only on omp's command line", async () => {
     const flat = scratchDir("todou-omp-flat-");
     writeSession({
       dir: flat,
@@ -749,7 +769,7 @@ describe("omp session recovery through the host process", () => {
       lines: [modelChange("llm-gw/recovered")],
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         ENV,
         home,
         project,
@@ -758,7 +778,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/recovered" });
   });
 
-  it("lets omp's flag beat the environment variable", () => {
+  it("lets omp's flag beat the environment variable", async () => {
     const fromEnv = scratchDir("todou-omp-env-");
     const fromFlag = scratchDir("todou-omp-flag-");
     writeSession({
@@ -774,7 +794,7 @@ describe("omp session recovery through the host process", () => {
       lines: [modelChange("llm-gw/from-flag")],
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_SESSION_DIR: fromEnv },
         home,
         project,
@@ -783,7 +803,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/from-flag" });
   });
 
-  it("claims omp's session when we run outside omp's own directory", () => {
+  it("claims omp's session when we run outside omp's own directory", async () => {
     const dir = agentDir();
     const elsewhere = scratchDir("todou-omp-elsewhere-");
     writeSession({
@@ -793,7 +813,7 @@ describe("omp session recovery through the host process", () => {
       lines: [modelChange("llm-gw/by-host-cwd")],
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         elsewhere,
@@ -802,7 +822,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/by-host-cwd" });
   });
 
-  it("takes a --resume path from outside every scanned directory", () => {
+  it("takes a --resume path from outside every scanned directory", async () => {
     const outside = scratchDir("todou-omp-outside-");
     const path = writeSession({
       dir: outside,
@@ -811,7 +831,7 @@ describe("omp session recovery through the host process", () => {
       lines: [modelChange("llm-gw/named")],
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: agentDir() },
         home,
         project,
@@ -820,7 +840,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/named" });
   });
 
-  it("ignores a --resume that names an id prefix rather than a file", () => {
+  it("ignores a --resume that names an id prefix rather than a file", async () => {
     // The same flag opens a picker or matches an id prefix, and neither is a
     // path; the scan is what answers then, exactly as with no flag at all.
     const dir = agentDir();
@@ -831,7 +851,7 @@ describe("omp session recovery through the host process", () => {
       lines: [modelChange("llm-gw/by-scan")],
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -840,7 +860,7 @@ describe("omp session recovery through the host process", () => {
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/by-scan" });
   });
 
-  it("lets a newer session beat the one named on the command line", () => {
+  it("lets a newer session beat the one named on the command line", async () => {
     // `/resume` switches sessions from inside a running omp, which leaves the
     // argv naming a session omp has left; the live one is still the one being
     // appended to.
@@ -861,7 +881,7 @@ describe("omp session recovery through the host process", () => {
       mtime: recently(1),
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -905,7 +925,7 @@ describe("the session omp publishes for itself", () => {
    * decides it, and the assertion is that the *older* session wins — a
    * detector still scanning would report the newer one and look correct.
    */
-  it("beats the scan where the scan is guessing", () => {
+  it("beats the scan where the scan is guessing", async () => {
     const dir = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -931,7 +951,7 @@ describe("the session omp publishes for itself", () => {
       PI_CODING_AGENT_DIR: dir,
       TODOU_OMP_STATE: writeState(process.pid, state(process.pid, SID, ours)),
     };
-    expect(detect(env, home, project)).toEqual({
+    expect(await detect(env, home, project)).toEqual({
       agent: "omp",
       session_id: SID,
       model: "llm-gw/ours",
@@ -939,16 +959,18 @@ describe("the session omp publishes for itself", () => {
     // And with the record gone the same environment falls back to the guess,
     // so the case above is the record's doing and not the fixture's.
     rmSync(env.TODOU_OMP_STATE);
-    expect(detect(env, home, project)).toEqual({
+    expect(await detect(env, home, project)).toEqual({
       agent: "omp",
       session_id: OTHER_SID,
       model: "llm-gw/the-other-instance",
     });
   });
 
-  it("reports the id alone when the record names no session file", () => {
+  it("reports the id alone when the record names no session file", async () => {
     const path = writeState(process.pid, state(process.pid, SID));
-    expect(detect({ ...ENV, TODOU_OMP_STATE: path }, home, project)).toEqual({
+    expect(
+      await detect({ ...ENV, TODOU_OMP_STATE: path }, home, project),
+    ).toEqual({
       agent: "omp",
       session_id: SID,
     });
@@ -973,8 +995,8 @@ describe("the session omp publishes for itself", () => {
         }),
       );
 
-    it("reads a socket and a token that belong together", () => {
-      expect(channel(SOCK, TOKEN)).toMatchObject({
+    it("reads a socket and a token that belong together", async () => {
+      expect(await channel(SOCK, TOKEN)).toMatchObject({
         sessionId: SID,
         socket: SOCK,
         token: TOKEN,
@@ -990,17 +1012,20 @@ describe("the session omp publishes for itself", () => {
       ["a token past any plausible length", SOCK, "a".repeat(513)],
       ["a socket with no token beside it", SOCK, undefined],
       ["a token with no socket beside it", undefined, TOKEN],
-    ])("keeps the session id and drops the channel on %s", (_n, sock, tok) => {
-      const read = channel(sock, tok);
-      expect(read?.sessionId).toBe(SID);
-      expect(read?.socket).toBeUndefined();
-      expect(read?.token).toBeUndefined();
-    });
+    ])(
+      "keeps the session id and drops the channel on %s",
+      async (_n, sock, tok) => {
+        const read = await channel(sock, tok);
+        expect(read?.sessionId).toBe(SID);
+        expect(read?.socket).toBeUndefined();
+        expect(read?.token).toBeUndefined();
+      },
+    );
 
-    it("reads the record an older extension wrote, channel and all absent", () => {
+    it("reads the record an older extension wrote, channel and all absent", async () => {
       // The regression that matters: every omp on this machine running the
       // previous extension publishes exactly this, and it must keep answering.
-      expect(channel()).toMatchObject({ sessionId: SID });
+      expect(await channel()).toMatchObject({ sessionId: SID });
     });
   });
 
@@ -1010,12 +1035,12 @@ describe("the session omp publishes for itself", () => {
         writeState(process.pid, { ...state(process.pid, SID), tools }),
       );
 
-    it("reads a list of names", () => {
-      expect(read(["todou_watch"])?.tools).toEqual(["todou_watch"]);
+    it("reads a list of names", async () => {
+      expect((await read(["todou_watch"]))?.tools).toEqual(["todou_watch"]);
     });
 
-    it("reads nothing where the record carries none", () => {
-      expect(read(undefined)?.tools).toBeUndefined();
+    it("reads nothing where the record carries none", async () => {
+      expect((await read(undefined))?.tools).toBeUndefined();
     });
 
     it.each([
@@ -1027,8 +1052,8 @@ describe("the session omp publishes for itself", () => {
         "more names than any real extension registers",
         Array.from({ length: 17 }, (_, i) => `t${i}`),
       ],
-    ])("drops the whole field on %s", (_n, tools) => {
-      expect(read(tools)?.tools).toBeUndefined();
+    ])("drops the whole field on %s", async (_n, tools) => {
+      expect((await read(tools))?.tools).toBeUndefined();
     });
   });
 
@@ -1047,9 +1072,9 @@ describe("the session omp publishes for itself", () => {
       session_id: OTHER_SID,
       model: "llm-gw/scanned",
     };
-    const fallsBack = (path: string) => {
+    const fallsBack = async (path: string) => {
       expect(
-        detect(
+        await detect(
           { ...ENV, PI_CODING_AGENT_DIR: dir, TODOU_OMP_STATE: path },
           home,
           project,
@@ -1057,64 +1082,74 @@ describe("the session omp publishes for itself", () => {
       ).toEqual(scanned);
     };
 
-    it("when the file is not there", () => {
-      fallsBack(join(runtime, "never-written.json"));
+    it("when the file is not there", async () => {
+      await fallsBack(join(runtime, "never-written.json"));
     });
 
-    it("when the JSON is half-written", () => {
-      fallsBack(writeState(process.pid, '{"v":1,"pid":'));
+    it("when the JSON is half-written", async () => {
+      await fallsBack(writeState(process.pid, '{"v":1,"pid":'));
     });
 
-    it("when the version is one this does not know", () => {
-      fallsBack(writeState(process.pid, { ...state(process.pid, SID), v: 2 }));
+    it("when the version is one this does not know", async () => {
+      await fallsBack(
+        writeState(process.pid, { ...state(process.pid, SID), v: 2 }),
+      );
     });
 
-    it("when the record names a pid other than the file it is in", () => {
+    it("when the record names a pid other than the file it is in", async () => {
       // A copied or hand-edited record, which is what ties the answer to the
       // path we were pointed at rather than to any file that parses.
-      fallsBack(writeState(process.pid, state(DEAD, SID)));
+      await fallsBack(writeState(process.pid, state(DEAD, SID)));
     });
 
-    it("when the process that wrote it is gone", () => {
+    it("when the process that wrote it is gone", async () => {
       // A crash between the last write and `session_shutdown` leaves this
       // behind, and its id belongs to a session nobody is in any more.
-      fallsBack(writeState(DEAD, state(DEAD, SID)));
+      await fallsBack(writeState(DEAD, state(DEAD, SID)));
     });
 
-    it("when the id is not one that may go into a URL", () => {
-      fallsBack(writeState(process.pid, state(process.pid, "../../etc")));
+    it("when the id is not one that may go into a URL", async () => {
+      await fallsBack(writeState(process.pid, state(process.pid, "../../etc")));
     });
   });
 
   describe("liveSessionId", () => {
-    const read = (env: Record<string, string>) =>
-      liveSessionIdReader({ env: { ...ENV, ...env }, home, io: NO_TREE })();
+    const read = async (env: Record<string, string>) =>
+      (
+        await liveSessionIdReader({
+          env: { ...ENV, ...env },
+          home,
+          io: NO_TREE,
+        })
+      )();
 
-    it("re-reads the record on every call", () => {
+    it("re-reads the record on every call", async () => {
       const path = statePath(process.pid);
       writeState(process.pid, state(process.pid, SID));
-      const reader = liveSessionIdReader({
+      const reader = await liveSessionIdReader({
         env: { ...ENV, TODOU_OMP_STATE: path },
         home,
         io: NO_TREE,
       });
-      expect(reader()).toEqual({ id: SID });
+      expect(await reader()).toEqual({ id: SID });
       // What a `/new` or a `/resume` does to it mid-watch: the session id
       // rotates without the process changing, so a reader that captured the
       // first answer would keep filtering on a session nobody is in.
       writeState(process.pid, state(process.pid, OTHER_SID));
-      expect(reader()).toEqual({ id: OTHER_SID });
+      expect(await reader()).toEqual({ id: OTHER_SID });
     });
 
-    it("says nothing at all where the extension is not installed", () => {
-      expect(read({})).toEqual({});
+    it("says nothing at all where the extension is not installed", async () => {
+      expect(await read({})).toEqual({});
     });
 
-    it("names the file it could not believe", () => {
+    it("names the file it could not believe", async () => {
       // Not `{}`: falling back silently here restores the startup snapshot
       // this probe exists to replace, and does it looking like a success.
       const path = writeState(DEAD, state(DEAD, SID));
-      expect(read({ TODOU_OMP_STATE: path })).toEqual({ unreadable: path });
+      expect(await read({ TODOU_OMP_STATE: path })).toEqual({
+        unreadable: path,
+      });
     });
   });
 });
@@ -1276,12 +1311,12 @@ describe("the session omp published, found by ancestor pid", () => {
   }
 
   /* The window itself: a session whose log has not been created yet. */
-  it("answers before the log exists, with the id and no model", () => {
+  it("answers before the log exists, with the id and no model", async () => {
     const runtime = runtimeWith({
       [OMP_PID]: record(OMP_PID, SID, join(project, "not-created-yet.jsonl")),
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, ...runtime },
         home,
         project,
@@ -1290,7 +1325,7 @@ describe("the session omp published, found by ancestor pid", () => {
     ).toEqual({ agent: "omp", session_id: SID });
   });
 
-  it("outranks a descriptor naming a different session", () => {
+  it("outranks a descriptor naming a different session", async () => {
     const dir = agentDir();
     const held = writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -1306,7 +1341,7 @@ describe("the session omp published, found by ancestor pid", () => {
     });
     const runtime = runtimeWith({ [OMP_PID]: record(OMP_PID, SID, ours) });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, ...runtime, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -1315,7 +1350,7 @@ describe("the session omp published, found by ancestor pid", () => {
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/ours" });
   });
 
-  it("leaves the descriptor in charge when nothing was published", () => {
+  it("leaves the descriptor in charge when nothing was published", async () => {
     const dir = agentDir();
     const held = writeSession({
       sessionsRoot: sessionsIn(dir),
@@ -1324,7 +1359,7 @@ describe("the session omp published, found by ancestor pid", () => {
       lines: [modelChange("llm-gw/held")],
     });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -1339,12 +1374,12 @@ describe("the session omp published, found by ancestor pid", () => {
    * carries a marker, so the published host record selects the session.
    */
   for (const comm of ["python3", "omp"]) {
-    it(`finds omp from a bare ${comm} eval runtime`, () => {
+    it(`finds omp from a bare ${comm} eval runtime`, async () => {
       const runtime = runtimeWith({
         [OMP_PID]: record(OMP_PID, SID, join(project, "not-created-yet.jsonl")),
       });
       expect(
-        detectAgentContext(
+        await detectAgentContext(
           { TMPDIR: tmpdir(), ...runtime },
           home,
           project,
@@ -1354,7 +1389,7 @@ describe("the session omp published, found by ancestor pid", () => {
     });
   }
 
-  it("takes the nearest publisher, so omp inside omp resolves to itself", () => {
+  it("takes the nearest publisher, so omp inside omp resolves to itself", async () => {
     const inner = 424243;
     const root = scratchDir("todou-omp-nested-");
     const write = (pid: number, ppid: number, argv: string[]) => {
@@ -1374,19 +1409,24 @@ describe("the session omp published, found by ancestor pid", () => {
       [inner]: record(inner, OTHER_SID),
     });
     expect(
-      detectAgentContext({ TMPDIR: tmpdir(), ...runtime }, home, project, {
-        platform: "linux" as const,
-        procRoot: root,
-        startPid: CHILD_PID,
-      }),
+      await detectAgentContext(
+        { TMPDIR: tmpdir(), ...runtime },
+        home,
+        project,
+        {
+          platform: "linux" as const,
+          procRoot: root,
+          startPid: CHILD_PID,
+        },
+      ),
     ).toEqual({ agent: "omp", session_id: SID });
   });
 
   describe("refuses a record it cannot believe", () => {
     const bare = { TMPDIR: tmpdir() };
-    const rejects = (records: Record<number, unknown>) => {
+    const rejects = async (records: Record<number, unknown>) => {
       expect(
-        detectAgentContext(
+        await detectAgentContext(
           { ...bare, ...runtimeWith(records) },
           home,
           project,
@@ -1395,12 +1435,12 @@ describe("the session omp published, found by ancestor pid", () => {
       ).toBeNull();
     };
 
-    it("a version it does not know", () => {
-      rejects({ [OMP_PID]: { ...record(OMP_PID, SID), v: 2 } });
+    it("a version it does not know", async () => {
+      await rejects({ [OMP_PID]: { ...record(OMP_PID, SID), v: 2 } });
     });
 
-    it("a pid that disagrees with the file it is named by", () => {
-      rejects({ [OMP_PID]: record(OMP_PID + 1, SID) });
+    it("a pid that disagrees with the file it is named by", async () => {
+      await rejects({ [OMP_PID]: record(OMP_PID + 1, SID) });
     });
 
     /*
@@ -1409,7 +1449,7 @@ describe("the session omp published, found by ancestor pid", () => {
      * is never read at all and would prove nothing. Only a fixture tree can
      * offer a dead ancestor, so the whole chain is fixture pids here.
      */
-    it("a pid nobody is using, even sitting on an ancestor", () => {
+    it("a pid nobody is using, even sitting on an ancestor", async () => {
       const DEAD = 424244;
       const root = scratchDir("todou-omp-dead-");
       for (const [pid, ppid] of [
@@ -1423,7 +1463,7 @@ describe("the session omp published, found by ancestor pid", () => {
         writeFileSync(join(dir, "cmdline"), "omp\0");
       }
       expect(
-        detectAgentContext(
+        await detectAgentContext(
           { ...bare, ...runtimeWith({ [DEAD]: record(DEAD, SID) }) },
           home,
           project,
@@ -1432,19 +1472,19 @@ describe("the session omp published, found by ancestor pid", () => {
       ).toBeNull();
     });
 
-    it("a record naming no agent", () => {
+    it("a record naming no agent", async () => {
       const { agent: _, ...noAgent } = record(OMP_PID, SID);
-      rejects({ [OMP_PID]: noAgent });
+      await rejects({ [OMP_PID]: noAgent });
     });
 
-    it("half-written json", () => {
-      rejects({ [OMP_PID]: '{"v":1,"pid":' });
+    it("half-written json", async () => {
+      await rejects({ [OMP_PID]: '{"v":1,"pid":' });
     });
   });
 
-  it("ignores a runtime directory that holds no records", () => {
+  it("ignores a runtime directory that holds no records", async () => {
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { TMPDIR: tmpdir(), ...runtimeWith({}) },
         home,
         project,
@@ -1459,10 +1499,10 @@ describe("the session omp published, found by ancestor pid", () => {
    * the environment while a believable omp record sits on an ancestor: the
    * record must not take the selection.
    */
-  it("never takes a harness that matched on the environment", () => {
+  it("never takes a harness that matched on the environment", async () => {
     const runtime = runtimeWith({ [OMP_PID]: record(OMP_PID, SID) });
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { CLAUDECODE: "1", TMPDIR: tmpdir(), ...runtime },
         home,
         project,
@@ -1472,23 +1512,26 @@ describe("the session omp published, found by ancestor pid", () => {
   });
 
   describe("liveSessionId", () => {
-    const read = (env: Record<string, string>, io: object) =>
-      liveSessionIdReader({ env, home, cwd: project, io })();
+    const read = async (env: Record<string, string>, io: object) =>
+      (await liveSessionIdReader({ env, home, cwd: project, io }))();
 
-    it("reads the record even with no variable in the environment", () => {
+    it("reads the record even with no variable in the environment", async () => {
       const runtime = runtimeWith({ [OMP_PID]: record(OMP_PID, SID) });
       expect(
-        read({ TMPDIR: tmpdir(), ...runtime }, chain({ childEnv: {} })),
+        await read({ TMPDIR: tmpdir(), ...runtime }, chain({ childEnv: {} })),
       ).toEqual({ id: SID });
     });
 
-    it("names a publisher whose record would not read", () => {
+    it("names a publisher whose record would not read", async () => {
       const runtime = runtimeWith({ [OMP_PID]: '{"v":1,"pid":' });
       // Selection needs a harness first, so the marker is present here; what
       // is under test is that a found-but-unreadable record is reported rather
       // than silently degrading to the startup snapshot.
       expect(
-        read({ ...ENV, ...runtime }, chain({ childEnv: { OMPCODE: "1" } })),
+        await read(
+          { ...ENV, ...runtime },
+          chain({ childEnv: { OMPCODE: "1" } }),
+        ),
       ).toEqual({
         unreadable: join(
           runtime.XDG_RUNTIME_DIR as string,
@@ -1561,14 +1604,17 @@ describe("the session omp filed against its terminal", () => {
     );
   }
 
-  it("answers with the session, and with no model to read", () => {
+  it("answers with the session, and with no model to read", async () => {
     // The model lives in the log, and the log not existing is half of why the
     // breadcrumb was believed — so this is the same answer a session opened a
     // moment ago already gave, with the session in it now.
-    expect(read({ breadcrumb: {} })).toEqual({ agent: "omp", session_id: SID });
+    expect(await read({ breadcrumb: {} })).toEqual({
+      agent: "omp",
+      session_id: SID,
+    });
   });
 
-  it("leaves the descriptor in charge wherever there is one", () => {
+  it("leaves the descriptor in charge wherever there is one", async () => {
     // Ordering, stated against a breadcrumb that would otherwise be taken:
     // the descriptor names the session omp is appending to right now, while
     // this names whatever last opened the terminal.
@@ -1579,14 +1625,14 @@ describe("the session omp filed against its terminal", () => {
       id: OTHER_SID,
       lines: [modelChange("llm-gw/held")],
     });
-    expect(read({ dir, breadcrumb: {}, openLogs: [held] })).toEqual({
+    expect(await read({ dir, breadcrumb: {}, openLogs: [held] })).toEqual({
       agent: "omp",
       session_id: OTHER_SID,
       model: "llm-gw/held",
     });
   });
 
-  it("is never reached once omp has published a record of its own", () => {
+  it("is never reached once omp has published a record of its own", async () => {
     const runtime = scratchDir("todou-omp-crumb-rt-");
     const statePath = join(runtime, `${process.pid}.json`);
     writeFileSync(
@@ -1600,7 +1646,7 @@ describe("the session omp filed against its terminal", () => {
       }),
     );
     expect(
-      read({
+      await read({
         breadcrumb: {},
         env: { TODOU_OMP_STATE: statePath },
         hostPid: process.pid,
@@ -1615,7 +1661,7 @@ describe("the session omp filed against its terminal", () => {
    */
   const nothing = { agent: "omp" };
 
-  it("refuses one whose session file is already there", () => {
+  it("refuses one whose session file is already there", async () => {
     // The realistic collision: pane-splitting multiplexers reuse a pts number
     // hard, and the omp that had it before left a breadcrumb naming a log it
     // really did write. Existence is what tells the two apart.
@@ -1625,22 +1671,22 @@ describe("the session omp filed against its terminal", () => {
       cwd: project,
       id: OTHER_SID,
     });
-    expect(read({ dir, breadcrumb: { file: written } })).toEqual(nothing);
+    expect(await read({ dir, breadcrumb: { file: written } })).toEqual(nothing);
   });
 
-  it("refuses one with the fresh marker rewritten away", () => {
+  it("refuses one with the fresh marker rewritten away", async () => {
     // omp clears it once the log lands, so a missing marker beside a path
     // that does not exist is a session deleted or moved, not one starting.
-    expect(read({ breadcrumb: { fresh: false } })).toEqual(nothing);
+    expect(await read({ breadcrumb: { fresh: false } })).toEqual(nothing);
   });
 
-  it("refuses one filed from another project", () => {
+  it("refuses one filed from another project", async () => {
     expect(
-      read({ breadcrumb: { cwd: scratchDir("todou-omp-elsewhere-") } }),
+      await read({ breadcrumb: { cwd: scratchDir("todou-omp-elsewhere-") } }),
     ).toEqual(nothing);
   });
 
-  it("refuses a file name that yields no session id", () => {
+  it("refuses a file name that yields no session id", async () => {
     // `--resume` opens the path it is handed, under any name at all, so the
     // id is only there to be read while omp chose the name itself.
     for (const file of [
@@ -1648,20 +1694,22 @@ describe("the session omp filed against its terminal", () => {
       join(project, "sessions", `2026-09-12_${SID}.txt`),
       join(project, "sessions", "2026-09-12_../../etc.jsonl"),
     ]) {
-      expect(read({ breadcrumb: { file } })).toEqual(nothing);
+      expect(await read({ breadcrumb: { file } })).toEqual(nothing);
     }
   });
 
-  it("reads no breadcrumb at all when omp's stdin is not a terminal", () => {
+  it("reads no breadcrumb at all when omp's stdin is not a terminal", async () => {
     // Without a tty omp names the terminal from ZELLIJ_PANE_ID and its like,
     // which need not have reached us and need not still say the same thing.
-    expect(read({ breadcrumb: {}, stdin: "pipe:[918273]" })).toEqual(nothing);
+    expect(await read({ breadcrumb: {}, stdin: "pipe:[918273]" })).toEqual(
+      nothing,
+    );
     // And with no descriptor table to read at all, which is every platform
     // without /proc and every process that is not ours to look into.
     const dir = agentDir();
     breadcrumb(dir);
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, PI_CODING_AGENT_DIR: dir },
         home,
         project,
@@ -1670,10 +1718,10 @@ describe("the session omp filed against its terminal", () => {
     ).toEqual(nothing);
   });
 
-  it("never guesses at the terminal by listing the directory", () => {
+  it("never guesses at the terminal by listing the directory", async () => {
     // It holds every terminal this user has ever had. Our own fd 0 is the
     // bash tool's pty or /dev/null, and it is not omp's.
-    expect(read({ breadcrumb: { terminal: "pts-99" } })).toEqual(nothing);
+    expect(await read({ breadcrumb: { terminal: "pts-99" } })).toEqual(nothing);
   });
 
   /*
@@ -1681,11 +1729,11 @@ describe("the session omp filed against its terminal", () => {
    * one, so the two follow different XDG variables — and both stop following
    * XDG at the same point, which is a rule that exists once.
    */
-  it("follows the XDG state directory, and only while omp's own is in place", () => {
+  it("follows the XDG state directory, and only while omp's own is in place", async () => {
     const xdg = scratchDir("todou-omp-state-");
     breadcrumb(join(xdg, "omp"));
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, XDG_STATE_HOME: xdg },
         home,
         project,
@@ -1695,7 +1743,7 @@ describe("the session omp filed against its terminal", () => {
     // A relocated agent directory takes its state with it, exactly as it
     // takes its sessions.
     expect(
-      detectAgentContext(
+      await detectAgentContext(
         { ...ENV, XDG_STATE_HOME: xdg, PI_CODING_AGENT_DIR: agentDir() },
         home,
         project,

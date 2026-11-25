@@ -380,7 +380,7 @@ describe("project unlink → user-config binding (T-366 fragments)", () => {
       readToml(join(xdg, "todou", "config.work.toml")).bindings,
     ).toHaveLength(1);
     // And the merged view after: the fragment's binding is back in force.
-    const merged = loadCliConfig({ XDG_CONFIG_HOME: xdg });
+    const merged = await loadCliConfig({ XDG_CONFIG_HOME: xdg });
     expect(merged.bindings).toEqual([
       { remote, server: "https://todou.example", project: "from-frag" },
     ]);
@@ -416,7 +416,7 @@ describe("project unlink → user-config binding (T-366 fragments)", () => {
     expect(
       readToml(join(xdg, "todou", "config.work.toml")).bindings,
     ).toHaveLength(1);
-    const merged = loadCliConfig({ XDG_CONFIG_HOME: xdg });
+    const merged = await loadCliConfig({ XDG_CONFIG_HOME: xdg });
     expect(
       merged.bindings.filter((b) => b.remote === remote).at(-1)?.project,
     ).toBe("acme");

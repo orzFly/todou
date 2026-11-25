@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
@@ -21,21 +21,21 @@ import type { Harness } from "./types.ts";
 export const dsh = {
   id: "dsh",
   matches: (env) => Boolean(env.DSH_SESSION_ID),
-  context({ env, home }) {
+  async context({ env, home }) {
     const context: AgentContext = { agent: "dsh" };
     const sessionId = env.DSH_SESSION_ID;
     if (sessionId) context.session_id = sessionId;
-    const model = modelForSession(env, sessionId, home);
+    const model = await modelForSession(env, sessionId, home);
     if (model) context.model = model;
     return context;
   },
 } satisfies Harness;
 
-function modelForSession(
+async function modelForSession(
   env: Env,
   sessionId: string | undefined,
   home: string,
-): string | undefined {
+): Promise<string | undefined> {
   if (!sessionId) return undefined;
   // The id comes from the environment: refuse anything path-shaped.
   if (!/^[0-9a-zA-Z-]+$/.test(sessionId)) return undefined;
@@ -43,7 +43,7 @@ function modelForSession(
   // not a home directory chosen relative to the filesystem root.
   const dshHome = env.DSH_HOME || join(home, ".dsh");
   try {
-    const raw = readFileSync(
+    const raw = await readFile(
       join(
         dshHome,
         "storages",

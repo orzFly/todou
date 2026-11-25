@@ -161,7 +161,7 @@ export abstract class ApiCommand extends Command<CliContext> {
   protected ctx!: ResolvedContext;
   protected agentContext: AgentContext | null = null;
   /** Replaced in `execute` once the environment is known (T-289). */
-  protected liveSession: () => LiveSession = () => ({});
+  protected liveSession: () => Promise<LiveSession> = async () => ({});
   protected watchLifetime?: WatchLifetime;
 
   /** Only resident raw watches opt in; ordinary commands keep their lifetime. */
@@ -170,17 +170,17 @@ export abstract class ApiCommand extends Command<CliContext> {
   }
 
   /** Who this process is now: the id it holds live, else the one it began with. */
-  protected ownSession(): string | undefined {
-    return this.liveSession().id ?? this.agentContext?.session_id;
+  protected async ownSession(): Promise<string | undefined> {
+    return (await this.liveSession()).id ?? this.agentContext?.session_id;
   }
 
   /**
    * The startup context with the session it holds now, for a stream that
    * reconnects across a harness rotating its session (T-540).
    */
-  protected liveAgentContext(): AgentContext | null {
+  protected async liveAgentContext(): Promise<AgentContext | null> {
     if (this.agentContext === null) return null;
-    const session = this.ownSession();
+    const session = await this.ownSession();
     return session === undefined
       ? this.agentContext
       : { ...this.agentContext, session_id: session };
@@ -222,8 +222,8 @@ export abstract class ApiCommand extends Command<CliContext> {
 
   async execute(): Promise<number | undefined> {
     try {
-      this.config = loadCliConfig(this.context.env);
-      this.ctx = resolveContext({
+      this.config = await loadCliConfig(this.context.env);
+      this.ctx = await resolveContext({
         flags: {
           server: this.serverFlag,
           project: this.projectFlag(),
@@ -231,8 +231,8 @@ export abstract class ApiCommand extends Command<CliContext> {
         },
         env: this.context.env,
         config: this.config,
-        remoteUrl: gitRemoteUrl(this.context.cwd),
-        dirConfig: discoverDirConfig(this.context.cwd, this.context.env),
+        remoteUrl: await gitRemoteUrl(this.context.cwd),
+        dirConfig: await discoverDirConfig(this.context.cwd, this.context.env),
       });
       if (!this.ctx.server) {
         throw new CliError(
@@ -270,19 +270,19 @@ export abstract class ApiCommand extends Command<CliContext> {
       }
       this.agentContext =
         this.agentContextOverride() ??
-        detectAgentContext(
+        (await detectAgentContext(
           this.context.env,
           this.context.home,
           undefined,
           this.context.processTree,
-        );
-      this.liveSession = liveSessionIdReader({
+        ));
+      this.liveSession = await liveSessionIdReader({
         env: this.context.env,
         home: this.context.home,
         io: this.context.processTree,
       });
       if (this.bindWatchOwner()) {
-        this.watchLifetime = openWatchLifetime({
+        this.watchLifetime = await openWatchLifetime({
           env: this.context.env,
           io: this.context.processTree,
           clock: this.context.clock,

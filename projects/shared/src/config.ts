@@ -1,6 +1,9 @@
 // Node-only: exported as `@todou/shared/config`, deliberately kept out of
-// the browser-facing "." export because it reads the filesystem.
-import { readFileSync } from "node:fs";
+// the browser-facing "." export because it reads the filesystem. Only the
+// asynchronous read lives here: the CLI imports this module, and the CLI's
+// single-file build runs on a runtime with no synchronous file API (T-792).
+// The server's synchronous loader is `@todou/shared/config-file`.
+import { readFile } from "node:fs/promises";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
@@ -37,12 +40,14 @@ export type TomlDoc = { path: string; doc: Record<string, unknown> };
  * silently skipping one document of a merged set would quietly change
  * which server and which identity a command ends up using.
  */
-export function loadTomlDocs(options: { paths: string[] }): Array<TomlDoc> {
+export async function loadTomlDocs(options: {
+  paths: string[];
+}): Promise<Array<TomlDoc>> {
   const docs: Array<TomlDoc> = [];
   for (const path of options.paths) {
     let text: string;
     try {
-      text = readFileSync(path, "utf8");
+      text = await readFile(path, "utf8");
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw new ConfigError(`cannot read config ${path}: ${String(cause)}`);
@@ -106,50 +111,4 @@ export function deepMergeDocs(
     (merged, doc) => mergeAt([], merged, doc) as Record<string, unknown>,
     {},
   );
-}
-
-export function loadTomlConfig<S extends z.ZodType>(options: {
-  schema: S;
-  /** File to read when `tomlSource` is absent. */
-  path?: string;
-  /** Parse this string instead of reading `path`. */
-  tomlSource?: string;
-  /** When true, a missing/unreadable `path` yields an empty document. */
-  optional?: boolean;
-  /** ENV names → config paths. ENV always wins over TOML. */
-  envMap?: Array<[string, string[]]>;
-  env?: Record<string, string | undefined>;
-}): z.infer<S> {
-  const env = options.env ?? process.env;
-
-  let raw: Record<string, unknown> = {};
-  if (options.tomlSource !== undefined) {
-    raw = parseToml(options.tomlSource) as Record<string, unknown>;
-  } else if (options.path !== undefined) {
-    try {
-      raw = parseToml(readFileSync(options.path, "utf8")) as Record<
-        string,
-        unknown
-      >;
-    } catch (cause) {
-      if (!options.optional) {
-        throw new ConfigError(
-          `cannot read config ${options.path}: ${String(cause)}`,
-        );
-      }
-    }
-  }
-
-  for (const [name, path] of options.envMap ?? []) {
-    const value = env[name];
-    if (value !== undefined && value !== "") {
-      setPath(raw, path, value);
-    }
-  }
-
-  const parsed = options.schema.safeParse(raw);
-  if (!parsed.success) {
-    throw new ConfigError(`invalid config: ${parsed.error.message}`);
-  }
-  return parsed.data as z.infer<S>;
 }

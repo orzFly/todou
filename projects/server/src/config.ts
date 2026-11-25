@@ -1,9 +1,6 @@
 import { resolve } from "node:path";
-import {
-  ConfigError,
-  flexibleBool,
-  loadTomlConfig,
-} from "@todou/shared/config";
+import { ConfigError, flexibleBool } from "@todou/shared/config";
+import { loadTomlConfig } from "@todou/shared/config-file";
 import { z } from "zod";
 import { compileTrustedProxies, type TrustedPeerCheck } from "./http/proxy.ts";
 

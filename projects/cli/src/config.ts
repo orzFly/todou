@@ -1,11 +1,11 @@
 import {
-  chmodSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -103,30 +103,29 @@ export function tildePath(path: string, env: Env): string {
  * so "last" is spliced in, never sorted into place.
  *
  * A name like `config.x.toml` owned by a directory is not a TOML
- * document; `statSync` (which follows symlinks) lets a symlink to a
+ * document; `stat` (which follows symlinks) lets a symlink to a
  * regular file in and keeps directories out.
  */
-export function discoverConfigFiles(env: Env = process.env): string[] {
+export async function discoverConfigFiles(
+  env: Env = process.env,
+): Promise<string[]> {
   const own = configPath(env);
   let entries: string[];
   try {
-    entries = readdirSync(dirname(own));
+    entries = await readdir(dirname(own));
   } catch {
     return [own];
   }
-  const fragments = entries
-    .filter((name) => {
-      if (!name.startsWith("config.") || !name.endsWith(".toml")) {
-        return false;
-      }
-      const middle = name.slice("config.".length, -".toml".length);
-      if (middle.length === 0) return false;
-      try {
-        return statSync(join(dirname(own), name)).isFile();
-      } catch {
-        return false;
-      }
-    })
+  const kept: string[] = [];
+  for (const name of entries) {
+    if (!name.startsWith("config.") || !name.endsWith(".toml")) continue;
+    const middle = name.slice("config.".length, -".toml".length);
+    if (middle.length === 0) continue;
+    try {
+      if ((await stat(join(dirname(own), name))).isFile()) kept.push(name);
+    } catch {}
+  }
+  const fragments = kept
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .map((name) => join(dirname(own), name));
   return [...fragments, own];
@@ -168,21 +167,28 @@ export function parseCliConfigSet(
   return { config: merged.data, own: own.data, files };
 }
 
-export function loadCliConfigSet(env: Env = process.env): CliConfigSet {
+export async function loadCliConfigSet(
+  env: Env = process.env,
+): Promise<CliConfigSet> {
   return parseCliConfigSet(
-    loadTomlDocs({ paths: discoverConfigFiles(env) }),
+    await loadTomlDocs({ paths: await discoverConfigFiles(env) }),
     env,
   );
 }
 
-export function loadCliConfig(env: Env = process.env): CliConfig {
-  return loadCliConfigSet(env).config;
+export async function loadCliConfig(
+  env: Env = process.env,
+): Promise<CliConfig> {
+  return (await loadCliConfigSet(env)).config;
 }
 
 /** Tokens live here, so the directory is 0700 and the file 0600. */
-export function saveCliConfig(config: CliConfig, env: Env = process.env): void {
+export async function saveCliConfig(
+  config: CliConfig,
+  env: Env = process.env,
+): Promise<void> {
   const path = configPath(env);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const doc = withoutUndefined(config) as {
     servers?: Record<
       string,
@@ -208,13 +214,13 @@ export function saveCliConfig(config: CliConfig, env: Env = process.env): void {
   if (doc.bindings?.length === 0) delete doc.bindings;
   let existing: string | undefined;
   try {
-    existing = readFileSync(path, "utf8");
+    existing = await readFile(path, "utf8");
   } catch {
     existing = undefined;
   }
-  writeFileSync(path, renderToml(existing, doc), { mode: 0o600 });
-  // writeFileSync applies mode only on create; tighten pre-existing files too.
-  chmodSync(path, 0o600);
+  await writeFile(path, renderToml(existing, doc), { mode: 0o600 });
+  // writeFile applies mode only on create; tighten pre-existing files too.
+  await chmod(path, 0o600);
 }
 
 /**

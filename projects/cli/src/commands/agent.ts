@@ -59,7 +59,7 @@ export class AgentHowToWatchCommand extends Command<CliContext> {
 
   async execute(): Promise<number | undefined> {
     try {
-      const { advice } = adviseHere(this.context);
+      const { advice } = await adviseHere(this.context);
       this.context.stdout.write(`${advice.paragraphs.join("\n\n")}\n`);
       return 0;
     } catch (error) {
@@ -72,11 +72,11 @@ export class AgentHowToWatchCommand extends Command<CliContext> {
  * The inputs `how-to-watch` decides on and the decision, computed once for it
  * and for `doctor`, so the report describes the very advice an agent got.
  */
-function adviseHere(context: CliContext): {
+async function adviseHere(context: CliContext): Promise<{
   advice: FollowAdvice;
   messaging: HarnessMessaging;
   optedOut: boolean;
-} {
+}> {
   const env = context.env;
   // Threaded the way `watch` threads it: under omp the answer depends on
   // which ancestor published a record, so a test can only state a
@@ -84,10 +84,10 @@ function adviseHere(context: CliContext): {
   const tree = context.processTree;
   // Read once, read whole: the socket and the tool list come out of the
   // same lookup, and two lookups could straddle an extension update.
-  const messaging = harnessMessaging(env, tree);
-  const opted = optedOut(loadCliConfig(env));
+  const messaging = await harnessMessaging(env, tree);
+  const opted = optedOut(await loadCliConfig(env));
   const advice = followAdvice({
-    harness: detectHarnessId(env, tree),
+    harness: await detectHarnessId(env, tree),
     socket: messaging.socket,
     codex: messaging.codex,
     tools: messaging.tools ?? [],
@@ -119,9 +119,9 @@ export class AgentDoctorCommand extends Command<CliContext> {
 
   async execute(): Promise<number | undefined> {
     try {
-      const { advice, messaging, optedOut } = adviseHere(this.context);
+      const { advice, messaging, optedOut } = await adviseHere(this.context);
       this.context.stdout.write(
-        doctorReport({
+        await doctorReport({
           env: this.context.env,
           cwd: this.context.cwd,
           home: this.context.home ?? homedir(),
@@ -162,7 +162,7 @@ export class AgentOptOutUdsCommand extends Command<CliContext> {
       const env = this.context.env;
       // Judged on the merged view — a fragment's opt-out counts — while
       // the write lands in `config.toml` alone.
-      const { config, own } = loadCliConfigSet(env);
+      const { config, own } = await loadCliConfigSet(env);
       if (optedOut(config)) {
         this.context.stdout.write(
           `--follow=uds was already opted out · ${whereItLives(env)}\n`,
@@ -170,7 +170,7 @@ export class AgentOptOutUdsCommand extends Command<CliContext> {
         return 0;
       }
       own.agent = { ...own.agent, follow_uds: false };
-      saveCliConfig(own, env);
+      await saveCliConfig(own, env);
       this.context.stdout.write(
         `--follow=uds opted out · ${whereItLives(env)}\n` +
           "`todou agent how-to-watch` will stop offering it; " +
@@ -197,7 +197,7 @@ export class AgentOptInUdsCommand extends Command<CliContext> {
   async execute(): Promise<number | undefined> {
     try {
       const env = this.context.env;
-      const { config, own, files } = loadCliConfigSet(env);
+      const { config, own, files } = await loadCliConfigSet(env);
       if (config.agent?.follow_uds === undefined) {
         this.context.stdout.write(
           `--follow=uds was already advised · ${whereItLives(env)}\n`,
@@ -221,7 +221,7 @@ export class AgentOptInUdsCommand extends Command<CliContext> {
         if (Object.keys(rest).length > 0) own.agent = rest;
         else delete own.agent;
       }
-      saveCliConfig(own, env);
+      await saveCliConfig(own, env);
       this.context.stdout.write(
         `--follow=uds advised again · ${whereItLives(env)}\n` +
           (fragmentOptOut

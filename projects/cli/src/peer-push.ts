@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readdirSync, rmSync } from "node:fs";
+import { readdir, rm } from "node:fs/promises";
 import { connect, createServer, type Socket } from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
 import { type Clock, systemClock } from "./clock.ts";
@@ -117,7 +117,8 @@ export type PeerPush<T> = {
   replies(): { discarded: number; unbounced: number };
   /** Resolves when `rejected` is set, so a quiet phase can be cut short. */
   whenRejected: Promise<void>;
-  close(): void;
+  /** Idempotent; resolves once the listener is down and its node is gone. */
+  close(): Promise<void>;
 };
 
 /**
@@ -164,7 +165,7 @@ type PeerPushReceiver =
        * attestation is a claim about the sender at the moment its frame goes
        * out and a resident watch outlives the mode it opened in.
        */
-      fromMode?: () => "bypass" | "prompting" | undefined;
+      fromMode?: () => Promise<"bypass" | "prompting" | undefined>;
     }
   | { receiver: "omp" }
   | { receiver: "pi" };
@@ -227,16 +228,19 @@ const SELF_NAMES = /^(?:no-reply-)?todou-watch-([0-9]+)\.sock$/;
  * that will not unlink, leaves this where it stands and the channel opens
  * anyway. A watch that refused to start over a leftover file would be a worse
  * bug than the one being fixed, so nothing here is a precondition — the
- * unconditional `rmSync(self)` at the bind stays exactly where it is, because
- * the bind must not rest on a pass that is allowed to fail.
+ * unconditional removal of `self` at the bind stays exactly where it is,
+ * because the bind must not rest on a pass that is allowed to fail.
+ *
+ * It is also the backstop for a watch that ended on the `exit` path alone,
+ * where nothing can wait for a file to be removed (see `close`).
  *
  * A live pid means a live sibling watch, whose socket this must not take: the
  * pid check is what keeps one watch from unlinking another's receipts.
  */
-function sweepStale(dir: string): void {
+async function sweepStale(dir: string): Promise<void> {
   let names: string[];
   try {
-    names = readdirSync(dir);
+    names = await readdir(dir);
   } catch {
     return; // No such directory, or no permission to read it.
   }
@@ -244,7 +248,7 @@ function sweepStale(dir: string): void {
     const pid = Number(SELF_NAMES.exec(name)?.[1]);
     if (!Number.isInteger(pid) || pid <= 0 || alive(pid)) continue;
     try {
-      rmSync(join(dir, name), { force: true });
+      await rm(join(dir, name), { force: true });
     } catch {
       // Housekeeping: a file that will not unlink is not this watch's problem.
     }
@@ -454,8 +458,8 @@ export async function openPeerPush<T>(
   // has nothing to clean and can fail with something other than ENOENT,
   // which would degrade the whole channel over a no-op.
   if (!isWindows) {
-    sweepStale(dirname(self));
-    rmSync(self, { force: true });
+    await sweepStale(dirname(self));
+    await rm(self, { force: true });
   }
   await new Promise<void>((resolve, reject_) => {
     server.once("error", reject_);
@@ -489,29 +493,38 @@ export async function openPeerPush<T>(
   const raise =
     opts.raise ??
     ((signal: NodeJS.Signals) => process.kill(process.pid, signal));
-  const onSignal = (signal: NodeJS.Signals) => {
-    close();
-    raise(signal);
+  const onSignal = async (signal: NodeJS.Signals) => {
+    try {
+      await close();
+    } finally {
+      raise(signal);
+    }
   };
-  function close(): void {
-    if (closed) return;
+  /** The part of closing that awaits nothing, all an `exit` listener runs. */
+  function shutDown(): void {
     closed = true;
     if (!isWindows) {
       for (const signal of CLEANUP_SIGNALS) process.off(signal, onSignal);
-      process.off("exit", close);
+      process.off("exit", shutDown);
     }
     for (const socket of sockets) socket.destroy();
     sockets.clear();
     server.close();
-    if (!isWindows) rmSync(self, { force: true });
+  }
+  async function close(): Promise<void> {
+    if (closed) return;
+    shutDown();
+    if (!isWindows) await rm(self, { force: true });
   }
   // Registered after the bind rather than before it: an open that fails on
   // `listen` throws with nothing on `process` to take off again. Both are
   // removed by `close`, so a command that ends normally — or is closed twice
-  // — leaves nothing behind.
+  // — leaves nothing behind. An `exit` listener cannot wait for anything, so
+  // that path runs `shutDown` alone and leaves the explicit removal of the
+  // node to the next open's sweep.
   if (!isWindows) {
     for (const signal of CLEANUP_SIGNALS) process.on(signal, onSignal);
-    process.on("exit", close);
+    process.on("exit", shutDown);
   }
 
   return {
@@ -532,7 +545,7 @@ export async function openPeerPush<T>(
       // the field at all — extension receivers need no envelope.
       const claudeCode =
         opts.receiver === "omp" || opts.receiver === "pi" ? undefined : opts;
-      const fromMode = claudeCode?.fromMode?.();
+      const fromMode = await claudeCode?.fromMode?.();
       const build = (body: string) =>
         JSON.stringify({
           type: "user",

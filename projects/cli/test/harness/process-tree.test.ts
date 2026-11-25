@@ -25,7 +25,7 @@ function psTree(procs: Proc[]): {
   calls: () => number;
 } {
   let calls = 0;
-  const ps = (args: readonly string[]): string => {
+  const ps = async (args: readonly string[]): Promise<string> => {
     calls++;
     if (args[0] === "-Ao") {
       return procs
@@ -53,7 +53,7 @@ function psTree(procs: Proc[]): {
 }
 
 describe("process-tree arbitration", () => {
-  it("picks the inner harness when claude code launched codex", () => {
+  it("picks the inner harness when claude code launched codex", async () => {
     // The shell codex spawned carries both; codex itself carries only what it
     // inherited, which is what marks it as the one that introduced the rest.
     const io = procTree([
@@ -62,39 +62,43 @@ describe("process-tree arbitration", () => {
       { pid: 102, ppid: 103, env: { ...CLAUDE } },
       { pid: 103, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("codex");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("codex");
   });
 
-  it("picks the inner harness when codex launched claude code", () => {
+  it("picks the inner harness when codex launched claude code", async () => {
     const io = procTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...CODEX } },
       { pid: 101, ppid: 102, env: { ...CODEX } },
       { pid: 102, ppid: 103, env: { ...CODEX } },
       { pid: 103, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("claude-code");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe(
+      "claude-code",
+    );
   });
 
-  it("picks pi over the claude code session that launched it", () => {
+  it("picks pi over the claude code session that launched it", async () => {
     const io = procTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...PI } },
       { pid: 101, ppid: 102, env: { ...CLAUDE } },
       { pid: 102, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...PI }, io)).toBe("pi");
+    expect(await detectHarnessId({ ...CLAUDE, ...PI }, io)).toBe("pi");
   });
 
-  it("picks hermes over the claude code session it spawned from", () => {
+  it("picks hermes over the claude code session it spawned from", async () => {
     // The registry puts hermes last, so this can only come from the tree.
     const io = procTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...HERMES } },
       { pid: 101, ppid: 102, env: { ...CLAUDE } },
       { pid: 102, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...HERMES }, io)).toBe("hermes-agent");
+    expect(await detectHarnessId({ ...CLAUDE, ...HERMES }, io)).toBe(
+      "hermes-agent",
+    );
   });
 
-  it("picks omp over the claude code session that launched it", () => {
+  it("picks omp over the claude code session that launched it", async () => {
     // omp inherits CLAUDECODE from the claude that spawned it and sets it
     // again for its own shells, so only the tree separates the two.
     const io = procTree([
@@ -103,10 +107,10 @@ describe("process-tree arbitration", () => {
       { pid: 102, ppid: 103, env: { ...CLAUDE } },
       { pid: 103, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...OMP }, io)).toBe("omp");
+    expect(await detectHarnessId({ ...OMP }, io)).toBe("omp");
   });
 
-  it("picks claude code over the omp session that launched it", () => {
+  it("picks claude code over the omp session that launched it", async () => {
     // Here CLAUDECODE is introduced twice over — by omp at the bottom and by
     // claude in the middle — and the nearer one is what we are running under.
     const io = procTree([
@@ -115,10 +119,10 @@ describe("process-tree arbitration", () => {
       { pid: 102, ppid: 103, env: { OMPCODE: "1" } },
       { pid: 103, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...OMP }, io)).toBe("claude-code");
+    expect(await detectHarnessId({ ...OMP }, io)).toBe("claude-code");
   });
 
-  it("gives omp the equal-depth tie its double marker creates", () => {
+  it("gives omp the equal-depth tie its double marker creates", async () => {
     // One process introduced both markers, and only omp does that — so this
     // is the case the registry order exists to settle, and it settles it the
     // one way that can be right (T-109).
@@ -126,53 +130,59 @@ describe("process-tree arbitration", () => {
       { pid: 100, ppid: 101, env: { ...OMP } },
       { pid: 101, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...OMP }, io)).toBe("omp");
-    expect(detectHarnessId({ ...OMP }, noTree())).toBe("omp");
+    expect(await detectHarnessId({ ...OMP }, io)).toBe("omp");
+    expect(await detectHarnessId({ ...OMP }, noTree())).toBe("omp");
   });
 
-  it("reads a ppid past a comm holding spaces and parentheses", () => {
+  it("reads a ppid past a comm holding spaces and parentheses", async () => {
     const io = procTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...CODEX }, comm: "we (ird) p" },
       { pid: 101, ppid: 0, env: { ...CLAUDE } },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("codex");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("codex");
   });
 
-  it("falls back to the registry order with no process tree", () => {
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, noTree())).toBe(
+  it("falls back to the registry order with no process tree", async () => {
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, noTree())).toBe(
       "claude-code",
     );
   });
 
-  it("falls back to the registry order on an unreadable ancestor", () => {
+  it("falls back to the registry order on an unreadable ancestor", async () => {
     // The chain ends at the process whose environ cannot be read, leaving
     // both markers unattributed rather than half-attributed.
     const io = procTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...CODEX } },
       { pid: 101, ppid: 999, env: { ...CLAUDE, ...CODEX } },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("claude-code");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe(
+      "claude-code",
+    );
   });
 
-  it("falls back to the registry order when nothing is attributable", () => {
+  it("falls back to the registry order when nothing is attributable", async () => {
     // Every visible ancestor carries both markers: they were introduced
     // outside the chain — a container boundary, or a permanent export.
     const io = procTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...CODEX } },
       { pid: 101, ppid: 0, env: { ...CLAUDE, ...CODEX } },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("claude-code");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe(
+      "claude-code",
+    );
   });
 
-  it("falls back to the registry order when two hosts sit at one depth", () => {
+  it("falls back to the registry order when two hosts sit at one depth", async () => {
     const io = procTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...CODEX } },
       { pid: 101, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("claude-code");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe(
+      "claude-code",
+    );
   });
 
-  it("stops at a depth limit instead of following a cycle", () => {
+  it("stops at a depth limit instead of following a cycle", async () => {
     const procs: Proc[] = [];
     for (let i = 0; i < 40; i++) {
       procs.push({
@@ -184,18 +194,21 @@ describe("process-tree arbitration", () => {
     // The only ancestor lacking a marker sits below the cap, so neither
     // harness is attributable and the order decides.
     procs.push({ pid: 140, ppid: 0, env: {} });
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, procTree(procs))).toBe(
-      "claude-code",
-    );
+    expect(
+      await detectHarnessId({ ...CLAUDE, ...CODEX }, procTree(procs)),
+    ).toBe("claude-code");
   });
 
-  it("reads no process tree on any platform without one", () => {
+  it("reads no process tree on any platform without one", async () => {
     const { io, calls } = psTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...CODEX } },
       { pid: 101, ppid: 0, env: { ...CLAUDE } },
     ]);
     expect(
-      detectHarnessId({ ...CLAUDE, ...CODEX }, { ...io, platform: "win32" }),
+      await detectHarnessId(
+        { ...CLAUDE, ...CODEX },
+        { ...io, platform: "win32" },
+      ),
     ).toBe("claude-code");
     expect(calls()).toBe(0);
   });
@@ -217,40 +230,42 @@ describe("process-tree cost", () => {
    */
   const NO_RUNTIME = { XDG_RUNTIME_DIR: scratchDir("todou-noruntime-") };
 
-  it("reads nothing at all outside every harness", () => {
+  it("reads nothing at all outside every harness", async () => {
     const { io, calls } = psTree(chain());
-    expect(detectHarnessId(NO_RUNTIME, io)).toBeNull();
+    expect(await detectHarnessId(NO_RUNTIME, io)).toBeNull();
     expect(calls()).toBe(0);
   });
 
-  it("reads nothing when a single harness signals", () => {
+  it("reads nothing when a single harness signals", async () => {
     const { io, calls } = psTree(chain());
-    expect(detectHarnessId({ ...CLAUDE, ...NO_RUNTIME }, io)).toBe(
+    expect(await detectHarnessId({ ...CLAUDE, ...NO_RUNTIME }, io)).toBe(
       "claude-code",
     );
     expect(calls()).toBe(0);
   });
 
-  it("spends exactly two ps calls to break a tie", () => {
+  it("spends exactly two ps calls to break a tie", async () => {
     const { io, calls } = psTree(chain());
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("codex");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("codex");
     expect(calls()).toBe(2);
   });
 
-  it("does not cache an injected tree across calls", () => {
+  it("does not cache an injected tree across calls", async () => {
     const { io, calls } = psTree(chain());
-    detectHarnessId({ ...CLAUDE, ...CODEX }, io);
-    detectHarnessId({ ...CLAUDE, ...CODEX }, io);
+    await detectHarnessId({ ...CLAUDE, ...CODEX }, io);
+    await detectHarnessId({ ...CLAUDE, ...CODEX }, io);
     expect(calls()).toBe(4);
   });
 
-  it("stops the chain at a uid that is not ours", () => {
+  it("stops the chain at a uid that is not ours", async () => {
     const { io } = psTree([
       { pid: 100, ppid: 101, env: { ...CLAUDE, ...CODEX } },
       { pid: 101, ppid: 102, uid: UID + 1, env: { ...CLAUDE } },
       { pid: 102, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("claude-code");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe(
+      "claude-code",
+    );
   });
 
   /*
@@ -259,7 +274,7 @@ describe("process-tree cost", () => {
    * ancestor's environment. Our own pid stands in for the publisher because a
    * record is only believed while the process it names is alive.
    */
-  it("spends one ps call, not two, to match a published record", () => {
+  it("spends one ps call, not two, to match a published record", async () => {
     const runtime = scratchDir("todou-runtime-");
     const dir = join(runtime, "todou-omp");
     mkdirSync(dir, { recursive: true });
@@ -276,13 +291,13 @@ describe("process-tree cost", () => {
       { pid: 100, ppid: process.pid, env: {} },
       { pid: process.pid, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId({ XDG_RUNTIME_DIR: runtime }, io)).toBe("omp");
+    expect(await detectHarnessId({ XDG_RUNTIME_DIR: runtime }, io)).toBe("omp");
     expect(calls()).toBe(1);
   });
 });
 
 describe("macOS ps parsing", () => {
-  it("keeps markers straight when a value holds spaces", () => {
+  it("keeps markers straight when a value holds spaces", async () => {
     // `ps -E` prints argv and the environment run together, and a value with
     // spaces is split across tokens — as SSH_CLIENT always is.
     const { io } = psTree([
@@ -304,10 +319,10 @@ describe("macOS ps parsing", () => {
         env: { SSH_CLIENT: "203.0.113.1 60020 22", ...CLAUDE },
       },
     ]);
-    expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("codex");
+    expect(await detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("codex");
   });
 
-  it("carries the host argv through to a detector", () => {
+  it("carries the host argv through to a detector", async () => {
     const home = scratchDir("todou-pt-home-");
     const flat = scratchDir("todou-pt-flat-");
     const project = scratchDir("todou-pt-project-");
@@ -329,7 +344,7 @@ describe("macOS ps parsing", () => {
         env: {},
       },
     ]);
-    expect(detectAgentContext(PI, home, project, io)).toEqual({
+    expect(await detectAgentContext(PI, home, project, io)).toEqual({
       agent: "pi",
       session_id: "01900000-0000-7000-8000-00000000000a",
     });
@@ -370,9 +385,9 @@ describe("the pid-only chain", () => {
 
   const SID = "01900000-0000-7000-8000-000000000001";
 
-  it("walks past ancestors that expose only stat", () => {
+  it("walks past ancestors that expose only stat", async () => {
     expect(
-      detectHarnessId(
+      await detectHarnessId(
         publish(process.pid, SID),
         statOnlyTree([
           [424245, 424246],
@@ -383,23 +398,23 @@ describe("the pid-only chain", () => {
     ).toBe("omp");
   });
 
-  it("stops at an ancestor it cannot read at all", () => {
+  it("stops at an ancestor it cannot read at all", async () => {
     // The publisher sits beyond a gap in the tree, so the chain never reaches
     // it and the record is never found — ignorance, not a wrong answer.
     expect(
-      detectHarnessId(
+      await detectHarnessId(
         publish(process.pid, SID),
         statOnlyTree([[424245, 424247]]),
       ),
     ).toBeNull();
   });
 
-  it("stops at a uid that is not ours", () => {
+  it("stops at a uid that is not ours", async () => {
     const { io } = psTree([
       { pid: 100, ppid: 101, env: {} },
       { pid: 101, ppid: process.pid, uid: UID + 1, env: {} },
       { pid: process.pid, ppid: 0, env: {} },
     ]);
-    expect(detectHarnessId(publish(process.pid, SID), io)).toBeNull();
+    expect(await detectHarnessId(publish(process.pid, SID), io)).toBeNull();
   });
 });

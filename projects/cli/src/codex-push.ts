@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { Env } from "./config.ts";
 import type { PeerPush, Rejection } from "./peer-push.ts";
@@ -10,10 +11,10 @@ export type CodexTarget = { threadId: string; bin: string };
 const THREAD_ID = /^[a-zA-Z0-9-]{1,200}$/;
 
 /** Only the explicitly identified thread on this host; never a recent rollout. */
-export function codexTarget(env: Env): CodexTarget | undefined {
+export async function codexTarget(env: Env): Promise<CodexTarget | undefined> {
   const threadId = env.CODEX_THREAD_ID;
   if (!threadId || !THREAD_ID.test(threadId)) return;
-  const bin = codexBin(env);
+  const bin = await codexBin(env);
   return bin === undefined ? undefined : { threadId, bin };
 }
 
@@ -22,7 +23,7 @@ export function codexTarget(env: Env): CodexTarget | undefined {
  * first one on PATH. Only absolute PATH entries count, so a relative entry
  * cannot make the working directory decide what runs.
  */
-function codexBin(env: Env): string | undefined {
+async function codexBin(env: Env): Promise<string | undefined> {
   const candidates = env.TODOU_CODEX_BIN
     ? [env.TODOU_CODEX_BIN]
     : (env.PATH ?? "")
@@ -32,8 +33,8 @@ function codexBin(env: Env): string | undefined {
   for (const candidate of candidates) {
     if (!isAbsolute(candidate)) continue;
     try {
-      if (!statSync(candidate).isFile()) continue;
-      accessSync(candidate, constants.X_OK);
+      if (!(await stat(candidate)).isFile()) continue;
+      await access(candidate, constants.X_OK);
       return candidate;
     } catch {
       // Not there, or not executable: try the next entry.
@@ -195,7 +196,7 @@ export function openCodexQueuePush<T>(opts: {
     unconfirmed: () => held,
     replies: () => ({ discarded: 0, unbounced: 0 }),
     whenRejected,
-    close() {
+    async close() {
       opts.signal?.removeEventListener("abort", abort);
       closed = true;
     },

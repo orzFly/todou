@@ -30,7 +30,7 @@ const SECRETS = {
  * nor Claude Code's, with an older extension installed and a PATH that finds
  * two `todou`s.
  */
-function ompService() {
+async function ompService() {
   const root = scratchDir("todou-doctor-");
   const home = join(root, "home");
   const runtime = join(root, "run");
@@ -69,7 +69,7 @@ function ompService() {
   }
 
   const xdg = join(root, "xdg");
-  saveCliConfig(
+  await saveCliConfig(
     {
       default_server: SERVER,
       servers: {
@@ -141,7 +141,7 @@ async function doctor(options: Parameters<typeof runCli>[1]) {
 
 describe("agent doctor", () => {
   it("shows every input T-564's four failures turned on", async () => {
-    const fx = ompService();
+    const fx = await ompService();
     const out = await doctor({
       env: fx.env,
       home: fx.home,
@@ -214,7 +214,7 @@ describe("agent doctor", () => {
   });
 
   it("never prints a token, from any source", async () => {
-    const fx = ompService();
+    const fx = await ompService();
     const out = await doctor({
       env: fx.env,
       home: fx.home,
@@ -239,7 +239,7 @@ describe("agent doctor", () => {
   });
 
   it("names the record when no marker reached this process", async () => {
-    const fx = ompService();
+    const fx = await ompService();
     const out = await doctor({
       env: {
         HOME: fx.env.HOME as string,

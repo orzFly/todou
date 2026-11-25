@@ -57,9 +57,12 @@ const dir = realpathSync(mkdtempSync(join(tmpdir(), "todou-config-show-")));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 /** A config file under its own XDG root, and the env that finds it. */
-function seed(name: string, config: CliConfig): Record<string, string> {
+async function seed(
+  name: string,
+  config: CliConfig,
+): Promise<Record<string, string>> {
   const env = { XDG_CONFIG_HOME: join(dir, name) };
-  saveCliConfig(config, env);
+  await saveCliConfig(config, env);
   return env;
 }
 
@@ -113,7 +116,7 @@ const TWO_SERVERS: CliConfig = {
 
 describe("config show", () => {
   it("reports two servers, their profiles, and the winning source", async () => {
-    const env = seed("two-servers", TWO_SERVERS);
+    const env = await seed("two-servers", TWO_SERVERS);
     const { human, report } = await show({ env });
 
     // Whole-output equality, on purpose (T-185 design §五③): a sliding
@@ -188,7 +191,7 @@ describe("config show", () => {
   });
 
   it("names the uds opt-out, and only when it is set", async () => {
-    const off = seed("uds-opted-out", {
+    const off = await seed("uds-opted-out", {
       ...TWO_SERVERS,
       agent: { follow_uds: false },
     });
@@ -200,14 +203,14 @@ describe("config show", () => {
     // switch is the user's to throw. `opt-out-uds`'s own receipt says it.
     expect(human).not.toContain("opt-in-uds");
 
-    const on = await show({ env: seed("uds-advised", TWO_SERVERS) });
+    const on = await show({ env: await seed("uds-advised", TWO_SERVERS) });
     expect(on.human).not.toContain("--follow=uds");
     expect(on.report.agent).toEqual({ follow_uds: true });
   });
 
   it("names TODOU_TOKEN as the source without echoing it", async () => {
     const env = {
-      ...seed("env-token", TWO_SERVERS),
+      ...(await seed("env-token", TWO_SERVERS)),
       TODOU_TOKEN: SENTINELS.env,
     };
     const { human, report } = await show({ env });
@@ -228,7 +231,7 @@ describe("config show", () => {
   });
 
   it("names the profile a detected harness selected", async () => {
-    const env = { ...seed("harness", TWO_SERVERS), CLAUDECODE: "1" };
+    const env = { ...(await seed("harness", TWO_SERVERS)), CLAUDECODE: "1" };
     const { human, report } = await show({ env });
 
     expect(human).toContain(
@@ -241,7 +244,7 @@ describe("config show", () => {
   it("shows a directory config shadowing the binding it sits beside", async () => {
     const remote = "git@git.example:org/repo.git";
     const cwd = makeRepo("shadowed", remote);
-    const env = seed("shadowed-xdg", {
+    const env = await seed("shadowed-xdg", {
       default_server: "https://todou.example",
       servers: {
         "https://todou.example": {
@@ -288,7 +291,7 @@ describe("config show", () => {
   it("says so when this repository's remote matches no binding", async () => {
     const remote = "git@git.example:org/unbound.git";
     const cwd = makeRepo("unbound", remote);
-    const env = seed("unbound-xdg", {
+    const env = await seed("unbound-xdg", {
       default_server: "https://todou.example",
       servers: {
         "https://todou.example": {
@@ -382,7 +385,7 @@ describe("config show", () => {
   it("reports the alias a --server was rewritten from", async () => {
     // "Why is my server this one" is what this command answers, and a
     // --server that silently became another base needs to be visible.
-    const env = seed("aliased", {
+    const env = await seed("aliased", {
       default_server: "http://gateway.test/todou",
       servers: {
         "http://gateway.test/todou": {
@@ -412,7 +415,7 @@ describe("config show", () => {
     // Both renderings, one assertion each: that the "unchanged when there
     // are no aliases" property holds is what keeps this from becoming noise
     // in every agent's `config show`.
-    const env = seed("plain", TWO_SERVERS);
+    const env = await seed("plain", TWO_SERVERS);
     const { human, report } = await show({ env });
 
     expect(human).not.toContain("instead_of");
@@ -421,7 +424,7 @@ describe("config show", () => {
   });
 
   it("lets an unknown --profile fail, and leaks nothing while failing", async () => {
-    const env = seed("bad-profile", TWO_SERVERS);
+    const env = await seed("bad-profile", TWO_SERVERS);
     const result = await runCli(["config", "show", "--profile", "nope"], {
       env,
     });
@@ -485,7 +488,7 @@ describe("config show with names and fragments (T-366)", () => {
   };
 
   it("renders the name on server lines and via name on the context line", async () => {
-    const env = seed("named", NAMED);
+    const env = await seed("named", NAMED);
     const { human, report } = await show({ env });
 
     expect(human).toContain(
@@ -502,7 +505,7 @@ describe("config show with names and fragments (T-366)", () => {
   });
 
   it("lists every file in merge order and marks the write target", async () => {
-    const env = seed("fragments", TWO_SERVERS);
+    const env = await seed("fragments", TWO_SERVERS);
     writeFragment(
       env,
       "config.10-work.toml",
@@ -532,7 +535,7 @@ describe("config show with names and fragments (T-366)", () => {
 
   it("names the fragment a binding came from on the binding line", async () => {
     const remote = "git@git.example:org/repo.git";
-    const env = seed("frag-binding", TWO_SERVERS);
+    const env = await seed("frag-binding", TWO_SERVERS);
     const fragment = join(
       String(env.XDG_CONFIG_HOME),
       "todou",
@@ -745,7 +748,7 @@ describe("config show with act-as profiles (T-693)", () => {
   };
 
   it("names what each profile acts as, never the token it borrows", async () => {
-    const env = seed("act-as", ACTING);
+    const env = await seed("act-as", ACTING);
     const { human, report } = await show({
       env: { ...env, TODOU_PROFILE: "harness" },
     });

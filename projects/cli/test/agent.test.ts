@@ -206,16 +206,16 @@ describe("agent opt-out-uds / opt-in-uds", () => {
         },
       ],
     };
-    saveCliConfig(seeded, env);
+    await saveCliConfig(seeded, env);
 
     await runCli(["agent", "opt-out-uds"], { env });
-    expect(loadCliConfig(env)).toEqual({
+    expect(await loadCliConfig(env)).toEqual({
       ...seeded,
       agent: { follow_uds: false },
     });
 
     await runCli(["agent", "opt-in-uds"], { env });
-    expect(loadCliConfig(env)).toEqual(seeded);
+    expect(await loadCliConfig(env)).toEqual(seeded);
     expect(readFileSync(configPath(env), "utf8")).not.toContain("[agent]");
   });
 

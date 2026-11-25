@@ -103,7 +103,7 @@ export class UpgradeCommand extends Command<CliContext> {
           `--from takes auto, github or server, not "${this.from}"`,
         );
       }
-      const install = this.seam.install ?? currentInstall();
+      const install = this.seam.install ?? (await currentInstall());
       const current =
         this.seam.currentVersion ?? this.cli.binaryVersion ?? resolveVersion();
 
@@ -123,7 +123,8 @@ export class UpgradeCommand extends Command<CliContext> {
         this.reserved = await reserve(install.path);
       }
 
-      const origin = from === "github" ? undefined : this.serverOrigin(from);
+      const origin =
+        from === "github" ? undefined : await this.serverOrigin(from);
       const fetchImpl = this.context.fetchImpl ?? fetch;
       const [github, server] = await Promise.all([
         probeGithub(fetchImpl, GITHUB_REPO),
@@ -295,15 +296,15 @@ export class UpgradeCommand extends Command<CliContext> {
     );
   }
 
-  private serverOrigin(from: From): string | undefined {
+  private async serverOrigin(from: From): Promise<string | undefined> {
     const env = this.context.env;
-    const config = loadCliConfig(env);
-    const ctx = resolveContext({
+    const config = await loadCliConfig(env);
+    const ctx = await resolveContext({
       flags: { server: this.serverFlag },
       env,
       config,
-      remoteUrl: gitRemoteUrl(this.context.cwd),
-      dirConfig: discoverDirConfig(this.context.cwd, env),
+      remoteUrl: await gitRemoteUrl(this.context.cwd),
+      dirConfig: await discoverDirConfig(this.context.cwd, env),
     });
     if (ctx.serverUnknownName) {
       // Only fatal when the server is the point; otherwise GitHub still answers.

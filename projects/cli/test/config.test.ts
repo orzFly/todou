@@ -40,14 +40,14 @@ describe("configPath", () => {
 });
 
 describe("load/save round-trip", () => {
-  it("missing file loads as empty config", () => {
-    const config = loadCliConfig(envFor("fresh"));
+  it("missing file loads as empty config", async () => {
+    const config = await loadCliConfig(envFor("fresh"));
     expect(config).toEqual({ servers: {}, bindings: [] });
   });
 
-  it("persists servers, bindings, and default_server", () => {
+  it("persists servers, bindings, and default_server", async () => {
     const env = envFor("roundtrip");
-    saveCliConfig(
+    await saveCliConfig(
       {
         default_server: "https://todou.example",
         servers: {
@@ -67,47 +67,47 @@ describe("load/save round-trip", () => {
       },
       env,
     );
-    const config = loadCliConfig(env);
+    const config = await loadCliConfig(env);
     expect(config.default_server).toBe("https://todou.example");
     expect(config.servers["https://todou.example"]?.token).toBe("todou_pat_x");
     expect(config.bindings[0]?.project).toBe("todou");
   });
 
-  it("omits undefined default_server instead of writing a bad value", () => {
+  it("omits undefined default_server instead of writing a bad value", async () => {
     const env = envFor("no-default");
-    saveCliConfig({ servers: {}, bindings: [] }, env);
+    await saveCliConfig({ servers: {}, bindings: [] }, env);
     expect(readFileSync(configPath(env), "utf8")).not.toContain(
       "default_server",
     );
   });
 
-  it("writes no [agent] section for a config that has no preference", () => {
+  it("writes no [agent] section for a config that has no preference", async () => {
     // The reason the table is optional rather than defaulted: every `todou
     // login` rewrites this file, and a defaulted table would grow a section
     // into it that nobody asked for.
     const env = envFor("no-agent");
-    saveCliConfig({ servers: {}, bindings: [] }, env);
+    await saveCliConfig({ servers: {}, bindings: [] }, env);
     expect(readFileSync(configPath(env), "utf8")).not.toContain("agent");
-    expect(loadCliConfig(env).agent).toBeUndefined();
+    expect((await loadCliConfig(env)).agent).toBeUndefined();
   });
 
-  it("round-trips the uds opt-out", () => {
+  it("round-trips the uds opt-out", async () => {
     const env = envFor("agent-opt-out");
-    saveCliConfig(
+    await saveCliConfig(
       { servers: {}, bindings: [], agent: { follow_uds: false } },
       env,
     );
-    expect(loadCliConfig(env).agent).toEqual({ follow_uds: false });
+    expect((await loadCliConfig(env)).agent).toEqual({ follow_uds: false });
   });
 
-  it("chmods the file to 0600", () => {
+  it("chmods the file to 0600", async () => {
     const env = envFor("perms");
-    saveCliConfig({ servers: {}, bindings: [] }, env);
+    await saveCliConfig({ servers: {}, bindings: [] }, env);
     const mode = statSync(configPath(env)).mode & 0o777;
     expect(mode).toBe(0o600);
   });
 
-  it("keeps a hand-written instead_of through a rewrite", () => {
+  it("keeps a hand-written instead_of through a rewrite", async () => {
     // Hand-editing is the only way to write this key.
     const env = envFor("instead-of");
     const path = configPath(env);
@@ -123,23 +123,25 @@ describe("load/save round-trip", () => {
         "",
       ].join("\n"),
     );
-    const loaded = loadCliConfig(env);
+    const loaded = await loadCliConfig(env);
     expect(loaded.servers["http://198.51.100.7/todou"]?.instead_of).toEqual([
       "https://todou.example",
     ]);
-    saveCliConfig(loaded, env);
-    expect(loadCliConfig(env).servers["http://198.51.100.7/todou"]).toEqual({
+    await saveCliConfig(loaded, env);
+    expect(
+      (await loadCliConfig(env)).servers["http://198.51.100.7/todou"],
+    ).toEqual({
       token: "todou_pat_fallback",
       tokens: {},
       instead_of: ["https://todou.example"],
     });
   });
 
-  it("writes no instead_of for an entry that has none", () => {
+  it("writes no instead_of for an entry that has none", async () => {
     // Defaulted like `tokens`, and deleted the same way: otherwise every
     // login would grow an `instead_of = []` into a file nobody asked it to.
     const env = envFor("no-instead-of");
-    saveCliConfig(
+    await saveCliConfig(
       {
         servers: { "https://todou.example": { tokens: {}, instead_of: [] } },
         bindings: [],
@@ -150,7 +152,7 @@ describe("load/save round-trip", () => {
     expect(written).not.toContain("instead_of");
     expect(written).not.toContain("tokens");
     expect(
-      loadCliConfig(env).servers["https://todou.example"]?.instead_of,
+      (await loadCliConfig(env)).servers["https://todou.example"]?.instead_of,
     ).toEqual([]);
   });
 });
@@ -180,11 +182,11 @@ describe("rewriting a hand-written config.toml (T-610)", () => {
     "",
   ].join("\n");
 
-  it("appends new tables and arrays of tables as sections", () => {
+  it("appends new tables and arrays of tables as sections", async () => {
     // Left to toml-patch, a first `[[bindings]]` throws, and a new server
     // lands as an inline table wedged between the root keys.
     const env = seed("append", handWritten);
-    const { own } = loadCliConfigSet(env);
+    const { own } = await loadCliConfigSet(env);
     entryOf(own, "https://todou.example").tokens["claude-code"] =
       "todou_pat_cc";
     own.servers["http://localhost:8637"] = {
@@ -198,7 +200,7 @@ describe("rewriting a hand-written config.toml (T-610)", () => {
       project: "todou",
       note: "kept",
     });
-    saveCliConfig(own, env);
+    await saveCliConfig(own, env);
     expect(readFileSync(configPath(env), "utf8")).toBe(
       [
         handWritten.trimEnd(),
@@ -217,11 +219,11 @@ describe("rewriting a hand-written config.toml (T-610)", () => {
         "",
       ].join("\n"),
     );
-    saveCliConfig(loadCliConfigSet(env).own, env);
-    expect(loadCliConfigSet(env).own.bindings[0]?.note).toBe("kept");
+    await saveCliConfig((await loadCliConfigSet(env)).own, env);
+    expect((await loadCliConfigSet(env)).own.bindings[0]?.note).toBe("kept");
   });
 
-  it("removes what was deleted and nothing else", () => {
+  it("removes what was deleted and nothing else", async () => {
     const env = seed(
       "remove",
       [
@@ -233,28 +235,28 @@ describe("rewriting a hand-written config.toml (T-610)", () => {
         "",
       ].join("\n"),
     );
-    const { own } = loadCliConfigSet(env);
+    const { own } = await loadCliConfigSet(env);
     delete own.servers["http://localhost:8637"];
-    saveCliConfig(own, env);
+    await saveCliConfig(own, env);
     expect(readFileSync(configPath(env), "utf8")).toBe(handWritten);
   });
 
-  it("keeps every value when the file is shaped so it cannot be appended to", () => {
+  it("keeps every value when the file is shaped so it cannot be appended to", async () => {
     // `servers` is an inline table, which no later `[servers."…"]` header
     // may extend; the read-back check has to catch that before it is written.
     const env = seed(
       "inline",
       '# inline\nservers = { "https://a.example" = { token = "x" } }\n',
     );
-    const { own } = loadCliConfigSet(env);
+    const { own } = await loadCliConfigSet(env);
     entryOf(own, "https://a.example").tokens.codex = "y";
     own.servers["https://b.example"] = {
       token: "z",
       tokens: {},
       instead_of: [],
     };
-    saveCliConfig(own, env);
-    expect(loadCliConfig(env).servers).toEqual({
+    await saveCliConfig(own, env);
+    expect((await loadCliConfig(env)).servers).toEqual({
       "https://a.example": {
         token: "x",
         tokens: { codex: "y" },
@@ -277,7 +279,7 @@ describe("normalizeServer", () => {
 });
 
 describe("discoverConfigFiles", () => {
-  it("lists fragments sorted, then config.toml appended last", () => {
+  it("lists fragments sorted, then config.toml appended last", async () => {
     const env = envFor("discover");
     const dir = join(env.XDG_CONFIG_HOME, "todou");
     mkdirSync(dir, { recursive: true });
@@ -289,7 +291,7 @@ describe("discoverConfigFiles", () => {
     ]) {
       writeFileSync(join(dir, name), "# fragment\n");
     }
-    expect(discoverConfigFiles(env)).toEqual([
+    expect(await discoverConfigFiles(env)).toEqual([
       join(dir, "config.10-work.toml"),
       join(dir, "config.a.toml"),
       join(dir, "config.b.toml"),
@@ -297,7 +299,7 @@ describe("discoverConfigFiles", () => {
     ]);
   });
 
-  it("ignores lookalikes, and a directory named config.x.toml", () => {
+  it("ignores lookalikes, and a directory named config.x.toml", async () => {
     const env = envFor("discover-lookalikes");
     const dir = join(env.XDG_CONFIG_HOME, "todou");
     mkdirSync(join(dir, "config.x.toml"), { recursive: true });
@@ -309,12 +311,12 @@ describe("discoverConfigFiles", () => {
     ]) {
       writeFileSync(join(dir, name), "# no\n");
     }
-    expect(discoverConfigFiles(env)).toEqual([join(dir, "config.toml")]);
+    expect(await discoverConfigFiles(env)).toEqual([join(dir, "config.toml")]);
   });
 
-  it("returns only config.toml when the directory does not exist", () => {
+  it("returns only config.toml when the directory does not exist", async () => {
     const env = envFor("discover-absent");
-    expect(discoverConfigFiles(env)).toEqual([configPath(env)]);
+    expect(await discoverConfigFiles(env)).toEqual([configPath(env)]);
   });
 });
 
@@ -329,17 +331,17 @@ describe("loadCliConfigSet", () => {
     writeFileSync(join(dir, name), body);
   }
 
-  it("later fragments win, and config.toml wins over both", () => {
+  it("later fragments win, and config.toml wins over both", async () => {
     const env = envFor("merge-order");
     fragment(env, "config.a.toml", 'default_server = "https://a.example"\n');
     fragment(env, "config.b.toml", 'default_server = "https://b.example"\n');
     fragment(env, "config.toml", 'default_server = "https://own.example"\n');
-    const { config, own } = loadCliConfigSet(env);
+    const { config, own } = await loadCliConfigSet(env);
     expect(config.default_server).toBe("https://own.example");
     expect(own.default_server).toBe("https://own.example");
   });
 
-  it("merges token profiles of the same server across files", () => {
+  it("merges token profiles of the same server across files", async () => {
     const env = envFor("merge-profiles");
     fragment(
       env,
@@ -360,7 +362,7 @@ describe("loadCliConfigSet", () => {
         "",
       ].join("\n"),
     );
-    const { config, own } = loadCliConfigSet(env);
+    const { config, own } = await loadCliConfigSet(env);
     const entry = config.servers["http://198.51.100.7/todou"];
     // Both survive: single validation on the merged raw documents, where
     // per-file zod defaults would have wiped one side with `= []`/`{}`.
@@ -375,7 +377,7 @@ describe("loadCliConfigSet", () => {
     });
   });
 
-  it("concatenates bindings across files, later entries winning the lookup", () => {
+  it("concatenates bindings across files, later entries winning the lookup", async () => {
     const env = envFor("merge-bindings");
     const remote = "git@example.com:me/repo.git";
     fragment(
@@ -405,7 +407,7 @@ describe("loadCliConfigSet", () => {
         "",
       ].join("\n"),
     );
-    const { config } = loadCliConfigSet(env);
+    const { config } = await loadCliConfigSet(env);
     expect(config.bindings).toEqual([
       { remote, server: "https://frag.example", project: "from-frag" },
       {
@@ -419,7 +421,7 @@ describe("loadCliConfigSet", () => {
     expect(last?.project).toBe("from-own");
   });
 
-  it("replaces arrays like instead_of whole", () => {
+  it("replaces arrays like instead_of whole", async () => {
     const env = envFor("merge-replace-arrays");
     fragment(
       env,
@@ -439,34 +441,36 @@ describe("loadCliConfigSet", () => {
         "",
       ].join("\n"),
     );
-    const { config } = loadCliConfigSet(env);
+    const { config } = await loadCliConfigSet(env);
     expect(config.servers["http://198.51.100.7/todou"]?.instead_of).toEqual([
       "https://three.example",
     ]);
   });
 
-  it("a broken fragment fails the load naming that file", () => {
+  it("a broken fragment fails the load naming that file", async () => {
     const env = envFor("broken-fragment");
     fragment(env, "config.bad.toml", "name = [broken\n");
-    expect(() => loadCliConfigSet(env)).toThrow(/config\.bad\.toml/);
+    await expect(loadCliConfigSet(env)).rejects.toThrow(/config\.bad\.toml/);
   });
 
-  it("a broken config.toml fails the load instead of reading as empty", () => {
+  it("a broken config.toml fails the load instead of reading as empty", async () => {
     // Today `optional: true` swallows a syntax error, and every command
     // then reports "no server configured" without a word about why.
     const env = envFor("broken-own");
     fragment(env, "config.toml", "name = [broken\n");
-    expect(() => loadCliConfig(env)).toThrow(/config\.toml/);
+    await expect(loadCliConfig(env)).rejects.toThrow(/config\.toml/);
   });
 
-  it("no file at all is the empty config, as today", () => {
-    const { config, own, files } = loadCliConfigSet(envFor("merge-empty"));
+  it("no file at all is the empty config, as today", async () => {
+    const { config, own, files } = await loadCliConfigSet(
+      envFor("merge-empty"),
+    );
     expect(config).toEqual({ servers: {}, bindings: [] });
     expect(own).toEqual({ servers: {}, bindings: [] });
     expect(files).toEqual([]);
   });
 
-  it("rejects a server name with characters a URL could need", () => {
+  it("rejects a server name with characters a URL could need", async () => {
     const env = envFor("bad-name");
     fragment(
       env,
@@ -475,13 +479,13 @@ describe("loadCliConfigSet", () => {
         "\n",
       ),
     );
-    expect(() => loadCliConfig(env)).toThrow(ConfigError);
+    await expect(loadCliConfig(env)).rejects.toThrow(ConfigError);
     const env2 = envFor("bad-name-2");
     fragment(
       env2,
       "config.toml",
       ['[servers."https://todou.example"]', 'name = "/etc"', ""].join("\n"),
     );
-    expect(() => loadCliConfig(env2)).toThrow(ConfigError);
+    await expect(loadCliConfig(env2)).rejects.toThrow(ConfigError);
   });
 });

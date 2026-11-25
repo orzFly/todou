@@ -405,7 +405,7 @@ export class WatchCommand extends ProjectCommand {
     // disagreement between them representable.
     const messaging: HarnessMessaging =
       this.watchLifetime?.owner ??
-      harnessMessaging(this.context.env, this.context.processTree);
+      (await harnessMessaging(this.context.env, this.context.processTree));
     const transport = followTransport({
       raw: this.follow,
       poll: this.poll,
@@ -658,7 +658,7 @@ export class WatchCommand extends ProjectCommand {
               types,
               scope,
               onPage: scopeApplied,
-              ...self.params(),
+              ...(await self.params()),
             });
             if (wantsCards) {
               await cards.add(
@@ -683,7 +683,7 @@ export class WatchCommand extends ProjectCommand {
           },
         });
       } finally {
-        follow.finish();
+        await follow.finish();
       }
     }
 
@@ -826,7 +826,7 @@ export class WatchCommand extends ProjectCommand {
             types,
             scope,
             onPage: scopeApplied,
-            ...self.params(),
+            ...(await self.params()),
           });
           await ensureSpellings(page.items);
           if (wantsCards) {
@@ -852,7 +852,7 @@ export class WatchCommand extends ProjectCommand {
         },
       });
     } finally {
-      follow.finish();
+      await follow.finish();
     }
   }
 

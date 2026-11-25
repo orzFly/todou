@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { readdir, readFile, readlink, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Env } from "../config.ts";
 
@@ -28,13 +28,13 @@ export type ProcessTreeIo = {
   /** Where the chain starts: our parent. */
   startPid: number;
   procRoot: string;
-  ps(args: readonly string[]): string;
+  ps(args: readonly string[]): Promise<string>;
 };
 
 /** Real chains run ~10 deep; 32 bounds a cycle or a pathological tree. */
 const MAX_DEPTH = 32;
 
-let cached: readonly Ancestor[] | undefined;
+let cached: Promise<readonly Ancestor[]> | undefined;
 
 /**
  * Our ancestors, nearest first, for as far as they can be attributed to us.
@@ -49,7 +49,7 @@ let cached: readonly Ancestor[] | undefined;
  */
 export function readAncestors(
   io?: Partial<ProcessTreeIo>,
-): readonly Ancestor[] {
+): Promise<readonly Ancestor[]> {
   // Only the real tree is cached: an injected fixture must not leak into the
   // next call, and the tree cannot change within one CLI invocation anyway.
   if (io === undefined && cached !== undefined) return cached;
@@ -58,7 +58,7 @@ export function readAncestors(
   return ancestors;
 }
 
-let cachedPids: readonly number[] | undefined;
+let cachedPids: Promise<readonly number[]> | undefined;
 
 /**
  * Our ancestors' pids alone, same chain and same same-uid rule as above.
@@ -71,23 +71,27 @@ let cachedPids: readonly number[] | undefined;
  * entirely; on macOS it needs the process table but not the second `ps` spawn
  * that reads every environment.
  */
-export function ancestorPids(io?: Partial<ProcessTreeIo>): readonly number[] {
+export function ancestorPids(
+  io?: Partial<ProcessTreeIo>,
+): Promise<readonly number[]> {
   if (io === undefined && cachedPids !== undefined) return cachedPids;
   const pids = collectPids(io);
   if (io === undefined) cachedPids = pids;
   return pids;
 }
 
-function collectPids(io?: Partial<ProcessTreeIo>): readonly number[] {
+async function collectPids(
+  io?: Partial<ProcessTreeIo>,
+): Promise<readonly number[]> {
   try {
     const uid = process.getuid?.();
     if (uid === undefined) return [];
     const startPid = io?.startPid ?? process.ppid;
     switch (io?.platform ?? process.platform) {
       case "linux":
-        return pidsFromProc(startPid, uid, io?.procRoot ?? "/proc");
+        return await pidsFromProc(startPid, uid, io?.procRoot ?? "/proc");
       case "darwin":
-        return pidsFromPs(startPid, uid, io?.ps ?? runPs);
+        return await pidsFromPs(startPid, uid, io?.ps ?? runPs);
       default:
         return [];
     }
@@ -96,20 +100,20 @@ function collectPids(io?: Partial<ProcessTreeIo>): readonly number[] {
   }
 }
 
-function pidsFromProc(
+async function pidsFromProc(
   startPid: number,
   uid: number,
   root: string,
-): readonly number[] {
+): Promise<readonly number[]> {
   const pids: number[] = [];
   let pid = startPid;
   for (let depth = 0; depth < MAX_DEPTH && pid > 0; depth++) {
     let ppid: number;
     try {
       const dir = join(root, String(pid));
-      if (statSync(dir).uid !== uid) break;
-      const stat = readFileSync(join(dir, "stat"), "utf8");
-      ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      if ((await stat(dir)).uid !== uid) break;
+      const fields = await readFile(join(dir, "stat"), "utf8");
+      ppid = Number(fields.slice(fields.lastIndexOf(")") + 2).split(" ")[1]);
     } catch {
       break; // unreadable: the chain ends here
     }
@@ -120,12 +124,12 @@ function pidsFromProc(
   return pids;
 }
 
-function pidsFromPs(
+async function pidsFromPs(
   startPid: number,
   uid: number,
-  ps: (args: readonly string[]) => string,
-): readonly number[] {
-  const table = parsePsTable(ps(["-Ao", "pid=,ppid=,uid="]));
+  ps: (args: readonly string[]) => Promise<string>,
+): Promise<readonly number[]> {
+  const table = parsePsTable(await ps(["-Ao", "pid=,ppid=,uid="]));
   const pids: number[] = [];
   let pid = startPid;
   for (let depth = 0; depth < MAX_DEPTH && pid > 0; depth++) {
@@ -138,16 +142,18 @@ function pidsFromPs(
   return pids;
 }
 
-function collect(io?: Partial<ProcessTreeIo>): readonly Ancestor[] {
+async function collect(
+  io?: Partial<ProcessTreeIo>,
+): Promise<readonly Ancestor[]> {
   try {
     const uid = process.getuid?.();
     if (uid === undefined) return []; // no uid means no same-uid rule: Windows
     const startPid = io?.startPid ?? process.ppid;
     switch (io?.platform ?? process.platform) {
       case "linux":
-        return fromProc(startPid, uid, io?.procRoot ?? "/proc");
+        return await fromProc(startPid, uid, io?.procRoot ?? "/proc");
       case "darwin":
-        return fromPs(startPid, uid, io?.ps ?? runPs);
+        return await fromPs(startPid, uid, io?.ps ?? runPs);
       default:
         return [];
     }
@@ -159,17 +165,17 @@ function collect(io?: Partial<ProcessTreeIo>): readonly Ancestor[] {
 
 /* -------------------------------------------------------------- Linux */
 
-function fromProc(
+async function fromProc(
   startPid: number,
   uid: number,
   root: string,
-): readonly Ancestor[] {
+): Promise<readonly Ancestor[]> {
   const ancestors: Ancestor[] = [];
   let pid = startPid;
   for (let depth = 0; depth < MAX_DEPTH && pid > 0; depth++) {
     let entry: { ancestor: Ancestor; ppid: number };
     try {
-      entry = procEntry(pid, root);
+      entry = await procEntry(pid, root);
     } catch {
       break; // unreadable: the chain ends here
     }
@@ -181,25 +187,25 @@ function fromProc(
   return ancestors;
 }
 
-function procEntry(
+async function procEntry(
   pid: number,
   root: string,
-): { ancestor: Ancestor; ppid: number } {
+): Promise<{ ancestor: Ancestor; ppid: number }> {
   const dir = join(root, String(pid));
   // The directory's owner is the process owner, and one stat is cheaper than
   // parsing the Uid line out of `status`.
-  const uid = statSync(dir).uid;
-  const stat = readFileSync(join(dir, "stat"), "utf8");
+  const uid = (await stat(dir)).uid;
+  const fields = await readFile(join(dir, "stat"), "utf8");
   // comm is parenthesised and may itself hold spaces and parentheses, so the
   // fields after it are only unambiguous counting from the last ')'.
-  const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-  const env = parseNulSeparated(readFileSync(join(dir, "environ"), "utf8"));
-  const argv = readFileSync(join(dir, "cmdline"), "utf8")
+  const ppid = Number(fields.slice(fields.lastIndexOf(")") + 2).split(" ")[1]);
+  const env = parseNulSeparated(await readFile(join(dir, "environ"), "utf8"));
+  const argv = (await readFile(join(dir, "cmdline"), "utf8"))
     .split("\0")
     .filter(Boolean);
   let cwd: string | undefined;
   try {
-    cwd = readlinkSync(join(dir, "cwd"));
+    cwd = await readlink(join(dir, "cwd"));
   } catch {
     // A cwd we cannot resolve costs a locator, not the ancestor.
   }
@@ -224,21 +230,21 @@ function procEntry(
  * descriptor only ever makes this ambiguous — which callers already treat as
  * "ask something else".
  */
-export function openSessionLogs(
+export async function openSessionLogs(
   procRoot: string,
   pid: number,
-): readonly string[] | undefined {
+): Promise<readonly string[] | undefined> {
   const dir = join(procRoot, String(pid), "fd");
   let names: string[];
   try {
-    names = readdirSync(dir);
+    names = await readdir(dir);
   } catch {
     return undefined;
   }
   const logs: string[] = [];
   for (const name of names) {
     try {
-      const target = readlinkSync(join(dir, name));
+      const target = await readlink(join(dir, name));
       if (target.endsWith(".jsonl") && !logs.includes(target)) {
         logs.push(target);
       }
@@ -259,13 +265,13 @@ export function openSessionLogs(
  * same question. A file unlinked underneath reads back as `<path> (deleted)`,
  * and is left that way: whether that still counts is the caller's to decide.
  */
-export function readFd(
+export async function readFd(
   procRoot: string,
   pid: number,
   fd: number,
-): string | undefined {
+): Promise<string | undefined> {
   try {
-    return readlinkSync(join(procRoot, String(pid), "fd", String(fd)));
+    return await readlink(join(procRoot, String(pid), "fd", String(fd)));
   } catch {
     return undefined;
   }
@@ -282,22 +288,26 @@ function parseNulSeparated(raw: string): Env {
 
 /* ------------------------------------------------------------- macOS */
 
-function runPs(args: readonly string[]): string {
-  const res = spawnSync("ps", [...args], { encoding: "utf8" });
-  if (res.error || res.status !== 0) throw new Error("ps failed");
-  return res.stdout;
+function runPs(args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("ps", [...args], { encoding: "utf8" }, (error, stdout) => {
+      // Set for a spawn failure and for a non-zero exit alike.
+      if (error) reject(new Error("ps failed"));
+      else resolve(stdout);
+    });
+  });
 }
 
 /**
  * Exactly two spawns: one table to walk the chain locally, one batched read of
  * the environments. Asking `ps` per level instead would cost a spawn each.
  */
-function fromPs(
+async function fromPs(
   startPid: number,
   uid: number,
-  ps: (args: readonly string[]) => string,
-): readonly Ancestor[] {
-  const table = parsePsTable(ps(["-Ao", "pid=,ppid=,uid="]));
+  ps: (args: readonly string[]) => Promise<string>,
+): Promise<readonly Ancestor[]> {
+  const table = parsePsTable(await ps(["-Ao", "pid=,ppid=,uid="]));
   const chain: number[] = [];
   let pid = startPid;
   for (let depth = 0; depth < MAX_DEPTH && pid > 0; depth++) {
@@ -310,7 +320,7 @@ function fromPs(
   if (chain.length === 0) return [];
 
   const details = parsePsEnvirons(
-    ps(["-E", "-ww", "-o", "pid=,command=", "-p", chain.join(",")]),
+    await ps(["-E", "-ww", "-o", "pid=,command=", "-p", chain.join(",")]),
   );
   const ancestors: Ancestor[] = [];
   for (const p of chain) {

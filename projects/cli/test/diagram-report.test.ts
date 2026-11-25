@@ -211,27 +211,33 @@ describe("bodyLocation", () => {
   const file = join(root, "body.md");
   writeFileSync(file, "x");
 
-  it("returns a real --body-file as typed", () => {
-    expect(bodyLocation({ bodyFile: "body.md", cwd: root })).toEqual({
+  it("returns a real --body-file as typed", async () => {
+    expect(await bodyLocation({ bodyFile: "body.md", cwd: root })).toEqual({
       kind: "file",
       path: "body.md",
     });
-    expect(bodyLocation({ bodyFile: file, cwd: "/" })).toEqual({
+    expect(await bodyLocation({ bodyFile: file, cwd: "/" })).toEqual({
       kind: "file",
       path: file,
     });
   });
 
-  it("returns null for stdin, stream paths and --body", () => {
-    expect(bodyLocation({ bodyFile: "-", cwd: root })).toBeNull();
-    expect(bodyLocation({ bodyFile: "/dev/fd/63", cwd: root })).toBeNull();
-    expect(bodyLocation({ bodyFile: "/proc/self/fd/0", cwd: root })).toBeNull();
-    expect(bodyLocation({ body: "inline", cwd: root })).toBeNull();
-    expect(bodyLocation({ cwd: root })).toBeNull();
+  it("returns null for stdin, stream paths and --body", async () => {
+    expect(await bodyLocation({ bodyFile: "-", cwd: root })).toBeNull();
+    expect(
+      await bodyLocation({ bodyFile: "/dev/fd/63", cwd: root }),
+    ).toBeNull();
+    expect(
+      await bodyLocation({ bodyFile: "/proc/self/fd/0", cwd: root }),
+    ).toBeNull();
+    expect(await bodyLocation({ body: "inline", cwd: root })).toBeNull();
+    expect(await bodyLocation({ cwd: root })).toBeNull();
   });
 
-  it("returns null for a path that is not a regular file", () => {
-    expect(bodyLocation({ bodyFile: root, cwd: "/" })).toBeNull();
-    expect(bodyLocation({ bodyFile: "missing.md", cwd: root })).toBeNull();
+  it("returns null for a path that is not a regular file", async () => {
+    expect(await bodyLocation({ bodyFile: root, cwd: "/" })).toBeNull();
+    expect(
+      await bodyLocation({ bodyFile: "missing.md", cwd: root }),
+    ).toBeNull();
   });
 });

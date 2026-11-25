@@ -8,6 +8,11 @@
   "bin": {
     "todou": "src/index.ts"
   },
+  "imports": {
+    "#mermaid-loader": {
+      "default": "./src/mermaid/node-loader.ts"
+    }
+  },
   "scripts": {
     "start": "node src/index.ts",
     "typecheck": "tsc --noEmit",

@@ -808,7 +808,7 @@ describe("question wait under an act-as profile (T-693)", () => {
 
   it("carries x-todou-act-as on the change stream too", async () => {
     const env = { XDG_CONFIG_HOME: dir };
-    saveCliConfig(
+    await saveCliConfig(
       {
         default_server: "http://stub.test",
         servers: {
