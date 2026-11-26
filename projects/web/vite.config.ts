@@ -80,7 +80,10 @@ const PAINT_GUARD_SLOT = "<!-- theme-paint-guard -->";
 export function themePaintGuard(): Plugin {
   return {
     name: "todou-theme-paint-guard",
-    transformIndexHtml(html) {
+    // The app's page only: dev also serves the browser fixtures under test/,
+    // which mount no theme store and carry no placeholder.
+    transformIndexHtml(html, { path }) {
+      if (path !== "/index.html") return html;
       if (!html.includes(PAINT_GUARD_SLOT))
         throw new Error(`index.html has no ${PAINT_GUARD_SLOT} placeholder`);
       return html.replace(

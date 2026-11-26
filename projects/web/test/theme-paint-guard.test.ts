@@ -5,9 +5,12 @@ import { themePaintGuard } from "../vite.config.ts";
 
 const INDEX = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
 
-function transform(html: string): string {
-  const hook = themePaintGuard().transformIndexHtml as (html: string) => string;
-  return hook(html);
+function transform(html: string, path = "/index.html"): string {
+  const hook = themePaintGuard().transformIndexHtml as (
+    html: string,
+    ctx: { path: string },
+  ) => string;
+  return hook(html, { path });
 }
 
 const inlineScripts = (html: string) =>
@@ -31,5 +34,12 @@ describe("theme paint guard", () => {
   it("refuses a page with no placeholder rather than dropping the guard", () => {
     const bare = INDEX.replace("<!-- theme-paint-guard -->", "");
     expect(() => transform(bare)).toThrow(/theme-paint-guard/);
+  });
+
+  it("leaves the browser fixtures' own pages alone", () => {
+    const fixture = "<!doctype html><html><head></head><body></body></html>";
+    expect(transform(fixture, "/test/browser/user-baseline.html")).toBe(
+      fixture,
+    );
   });
 });
