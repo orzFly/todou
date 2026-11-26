@@ -375,6 +375,12 @@ importers:
       '@fontsource-variable/geist':
         specifier: ^5.3.0
         version: 5.3.0
+      '@fontsource-variable/noto-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource-variable/noto-sans-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
@@ -387,6 +393,12 @@ importers:
       '@lobehub/icons-static-svg':
         specifier: ^1.94.0
         version: 1.94.0
+      '@orz/themes':
+        specifier: 0.1.2-master.20261125204259.gaf8791f
+        version: 0.1.2-master.20261125204259.gaf8791f
+      '@orz/ui':
+        specifier: 0.1.2-master.20261125204259.gaf8791f
+        version: 0.1.2-master.20261125204259.gaf8791f(@fontsource-variable/noto-sans-mono@5.3.0)(@fontsource-variable/noto-sans@5.3.0)(lucide-react@1.31.0(react@19.2.8))(overlayscrollbars@2.16.0)(radix-ui@1.6.7(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sonner@2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
       '@pierre/diffs':
         specifier: ^1.3.5
         version: 1.3.5(@shikijs/themes@4.4.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1266,6 +1278,12 @@ packages:
   '@fontsource-variable/geist@5.3.0':
     resolution: {integrity: sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA==}
 
+  '@fontsource-variable/noto-sans-mono@5.3.0':
+    resolution: {integrity: sha512-EgozyWG4nG2U1OT+zfdyHP1L8O0fUFMUBOilVF9urTshqIdfeGV9/FUQxaNHdPvHtV1cQCs1Ql0W1q93SiPK2w==}
+
+  '@fontsource-variable/noto-sans@5.3.0':
+    resolution: {integrity: sha512-e3ZuxzY9AL2psXPZlhwhnYrHUHv6PMoyK9MQ7croF0CUgURLqu9EMjW7q2FgVLwij1tjLsIHQrnwQ8aUcg4BiA==}
+
   '@hono/node-server@2.1.0':
     resolution: {integrity: sha512-XovyyCCnBzW+zKu+z/zq8hwNs4KOR5rEMAOxo2f40Q5xoOI37IMm6MIg2COOUtUApo0i6850MTBKH2u4QLGIqg==}
     engines: {node: '>=20'}
@@ -1353,6 +1371,31 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
+
+  '@orz/query@0.1.2-master.20261125204259.gaf8791f':
+    resolution: {integrity: sha512-oyOhjDns14C/k9R6wubipWnfZHfM1EhJqAAe07sCldw82uAHqXKq7mvnkvo1iheVNE1PPTiULAl+OyCMo1qX0w==}
+
+  '@orz/themes@0.1.2-master.20261125204259.gaf8791f':
+    resolution: {integrity: sha512-hZtN6o1xfthe8t64me76RmHHac0h5N0JWemHrwHlshgXaEkvhqftDqilVK/4Bn3SWdy/uPU/bGmOSXenEZRzbw==}
+
+  '@orz/ui@0.1.2-master.20261125204259.gaf8791f':
+    resolution: {integrity: sha512-4BFzIxjdsiD6CKYfIOWEAvUizcUMqF7WEu3WhbmD9GegfvnJ7MpRe85ML+ip6wasXj+HvdKeLFHFVgZg57Gzqw==}
+    peerDependencies:
+      '@fontsource-variable/noto-sans': ^5
+      '@fontsource-variable/noto-sans-mono': ^5
+      lucide-react: ^1
+      overlayscrollbars: ^2
+      radix-ui: ^1
+      react: ^19
+      react-dom: ^19
+      sonner: ^2
+    peerDependenciesMeta:
+      '@fontsource-variable/noto-sans':
+        optional: true
+      '@fontsource-variable/noto-sans-mono':
+        optional: true
+      overlayscrollbars:
+        optional: true
 
   '@oxc-project/types@0.143.0':
     resolution: {integrity: sha512-u6JZdLBTLotrNC9Vd6vPssINdzcCzleKAH6EJKImQb7GtYvX5keN2dxkoK44stCc4tffE6QQRtZTXVSzsLUlWA==}
@@ -3061,6 +3104,10 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  culori@4.0.2:
+    resolution: {integrity: sha512-1+BhOB8ahCn4O0cep0Sh2l9KCOfOdY+BXJnKMHFFzDEouSr/el18QwXEMRlOj9UY5nCeA8UN3a/82rUWRBeyBw==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
   cytoscape-cose-bilkent@4.1.0:
     resolution: {integrity: sha512-wgQlVIUJF13Quxiv5e1gstZ08rnZj2XaLHGoFMYXz7SkNfCDOOteKBE6SYRfA9WxxI/iBc3ajfDoc6hb/MRAHQ==}
@@ -4952,6 +4999,9 @@ packages:
   tailwind-merge@3.6.0:
     resolution: {integrity: sha512-uxL7qAVQriqRQPAyK3pj66VqskWqoZ37PW94jwOTwNfq/z9oyu1V+eqrZqtR2+fCiXdYOZe/Modt8GtvqNzu+w==}
 
+  tailwind-merge@3.7.1:
+    resolution: {integrity: sha512-v7y4BV4FUlO8exj/4M5UXKeoowDiuugVUg3tkMNIyOUCOHy5xp8+5aWQeXCtZ2491sUV1YPsVeM9EveZ6/xuZQ==}
+
   tailwindcss@4.3.3:
     resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
 
@@ -5899,6 +5949,10 @@ snapshots:
 
   '@fontsource-variable/geist@5.3.0': {}
 
+  '@fontsource-variable/noto-sans-mono@5.3.0': {}
+
+  '@fontsource-variable/noto-sans@5.3.0': {}
+
   '@hono/node-server@2.1.0(hono@4.13.1)':
     dependencies:
       hono: 4.13.1
@@ -6005,6 +6059,29 @@ snapshots:
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
+
+  '@orz/query@0.1.2-master.20261125204259.gaf8791f': {}
+
+  '@orz/themes@0.1.2-master.20261125204259.gaf8791f': {}
+
+  '@orz/ui@0.1.2-master.20261125204259.gaf8791f(@fontsource-variable/noto-sans-mono@5.3.0)(@fontsource-variable/noto-sans@5.3.0)(lucide-react@1.31.0(react@19.2.8))(overlayscrollbars@2.16.0)(radix-ui@1.6.7(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sonner@2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))':
+    dependencies:
+      '@orz/query': 0.1.2-master.20261125204259.gaf8791f
+      '@orz/themes': 0.1.2-master.20261125204259.gaf8791f
+      class-variance-authority: 0.7.1
+      clsx: 2.1.1
+      culori: 4.0.2
+      lucide-react: 1.31.0(react@19.2.8)
+      radix-ui: 1.6.7(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
+      sonner: 2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      tailwind-merge: 3.7.1
+      tw-animate-css: 1.4.0
+    optionalDependencies:
+      '@fontsource-variable/noto-sans': 5.3.0
+      '@fontsource-variable/noto-sans-mono': 5.3.0
+      overlayscrollbars: 2.16.0
 
   '@oxc-project/types@0.143.0': {}
 
@@ -7631,6 +7708,8 @@ snapshots:
   cssesc@3.0.0: {}
 
   csstype@3.2.3: {}
+
+  culori@4.0.2: {}
 
   cytoscape-cose-bilkent@4.1.0(cytoscape@3.34.4):
     dependencies:
@@ -9851,6 +9930,8 @@ snapshots:
   systeminformation@5.33.1: {}
 
   tailwind-merge@3.6.0: {}
+
+  tailwind-merge@3.7.1: {}
 
   tailwindcss@4.3.3: {}
 
