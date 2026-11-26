@@ -38,7 +38,7 @@ export function SearchToggle({ slug }: { slug: string }) {
     return (
       <Button
         variant="ghost"
-        size="sm"
+        size="icon-sm"
         aria-label="Search"
         aria-expanded={false}
         onClick={() => setOpen(true)}

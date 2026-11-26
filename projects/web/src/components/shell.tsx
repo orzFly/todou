@@ -371,7 +371,7 @@ export function AppShell({
                     className="flex-1"
                   />
                   {hasProjectRow && maySearch && <SearchToggle slug={slug} />}
-                  <NewIssueButton slug={slug} />
+                  <NewIssueButton slug={slug} iconOnly />
                 </div>
               )}
               {/* The connection banner lives INSIDE the header, not after it: the
