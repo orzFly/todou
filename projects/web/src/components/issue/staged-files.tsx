@@ -1,4 +1,5 @@
 import { Button } from "@orz/ui/components/button";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
 import { FileIcon, Maximize2Icon, PaperclipIcon, XIcon } from "lucide-react";
@@ -27,7 +28,6 @@ import {
   stagedTokenRanges,
   tokenInsertion,
 } from "@/lib/staged-tokens.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 export type StagedFile = {
   /** `<n>-<tag>`: the `n`th file of its editor, and a random tag. */

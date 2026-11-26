@@ -1,3 +1,4 @@
+import { registerDirtySource } from "@orz/ui/lib/unsaved-guard";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   type AnyRouter,
@@ -35,7 +36,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { questionsQuery } from "../src/api/questions.ts";
 import { UnsavedChangesGuard } from "../src/components/shared/unsaved-guard.tsx";
 import { QUESTION_LANDING_ROUTE_ID } from "../src/components/timeline/use-question-landing.ts";
-import { registerDirtySource } from "../src/lib/unsaved-guard.ts";
 import { IssueDetailPage } from "../src/pages/issue-detail.tsx";
 import { IssueRouteError } from "../src/pages/issue-route-error.tsx";
 import {

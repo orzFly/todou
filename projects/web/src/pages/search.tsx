@@ -41,10 +41,11 @@ import {
   useRegisterReturnLane,
   useReturnLinkState,
 } from "@/components/shared/return-context.tsx";
+import { SM_UP } from "@/lib/breakpoints.ts";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
-import { SM_UP } from "@/lib/use-media-query.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
 
@@ -169,6 +170,7 @@ export function SearchResults({
   // decision and not an omission somebody restores by hand: every hit it will
   // ever show arrives in one read, and `has_more` only renders a `+`.
   useRegisterReturnLane(null);
+  const header = useShellHeader();
   // The shell header, plus the results heading once it pins (T-454). The
   // domain chips scroll away with everything else, so they are not in it.
   // Measured when it is asked for rather than carried in state: the heading is
@@ -180,7 +182,7 @@ export function SearchResults({
     rows: () => returnRows(rootRef.current),
     inset: () =>
       resultsStickyTop(
-        headerBottom(),
+        headerBottom(header.current),
         headingRef.current?.getBoundingClientRect().height ?? 0,
         // `SM_UP` is the same breakpoint the heading's `sm:sticky` names.
         window.matchMedia(SM_UP).matches,

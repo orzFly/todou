@@ -1,6 +1,3 @@
-import { fireEvent, render } from "@testing-library/react";
-import { createElement, useRef } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   blockFor,
   holdRevealed,
@@ -9,9 +6,14 @@ import {
   restingScrollY,
   usableViewport,
   useScrollInsets,
-} from "../src/lib/scroll-insets.ts";
+} from "@orz/ui/hooks/scroll-insets";
+import { fireEvent, render } from "@testing-library/react";
+import { createElement, useRef } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ShellHeaderContext, useShellHeader } from "../src/lib/shell-header.ts";
 import { currentIndex } from "../src/lib/spec-change-nav.ts";
 import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
+import { DOCUMENT_HEADER } from "./render.tsx";
 
 // The overlays measured on a 1280×800 screen: shell header 57, floating title
 // bar 40, comment composer 93 collapsed — 129, 167 and 385 as a draft grows.
@@ -135,10 +137,20 @@ function stubHeights() {
   );
 }
 
+const underShell = (composer: "mounted" | "absent") =>
+  createElement(
+    ShellHeaderContext.Provider,
+    { value: DOCUMENT_HEADER },
+    createElement(Harness, { composer }),
+  );
+
+// As issue-detail.tsx and spec-view.tsx declare theirs: the shell's header
+// first, from context, then the page's own overlays.
 function Harness({ composer }: { composer: "mounted" | "absent" }) {
+  const header = useShellHeader();
   const bar = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  useScrollInsets({ top: [bar], bottom: [composerRef] });
+  useScrollInsets({ top: [header, bar], bottom: [composerRef] });
   return createElement(
     "div",
     null,
@@ -173,7 +185,7 @@ describe("useScrollInsets (T-299)", () => {
     document.body.append(header);
     stubHeights();
 
-    const view = render(createElement(Harness, { composer: "mounted" }));
+    const view = render(underShell("mounted"));
     expect(insets()).toEqual({ top: "105px", bottom: "93px" });
 
     view.unmount();
@@ -192,7 +204,7 @@ describe("useScrollInsets (T-299)", () => {
       scale: { value: 1 },
     });
     vi.stubGlobal("visualViewport", vv);
-    render(createElement(Harness, { composer: "mounted" }));
+    render(underShell("mounted"));
     expect(insets()).toEqual({ top: "148px", bottom: "330px" });
   });
 
@@ -200,13 +212,13 @@ describe("useScrollInsets (T-299)", () => {
     stubHeights();
     // A trashed card renders no composer at all, and a fallback height would
     // reserve a strip for an overlay that is not there.
-    render(createElement(Harness, { composer: "absent" }));
+    render(underShell("absent"));
     expect(insets()).toEqual({ top: "48px", bottom: "0px" });
   });
 
   it("drops an overlay's inset while focus is inside it (T-519)", () => {
     stubHeights();
-    const view = render(createElement(Harness, { composer: "mounted" }));
+    const view = render(underShell("mounted"));
     expect(insets()).toEqual({ top: "48px", bottom: "93px" });
 
     // The caret lives inside the sticky composer, so it always sits in the
@@ -220,7 +232,7 @@ describe("useScrollInsets (T-299)", () => {
 
   it("drops an overlay's inset while a mouse press that began inside it lasts", () => {
     stubHeights();
-    const view = render(createElement(Harness, { composer: "mounted" }));
+    const view = render(underShell("mounted"));
     view.getByLabelText("draft").focus();
     const quote = view.getByText("quoted line");
 

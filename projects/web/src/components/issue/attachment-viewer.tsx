@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogTitle,
 } from "@orz/ui/components/dialog";
+import { writeClipboard } from "@orz/ui/lib/clipboard";
 import { useQuery } from "@tanstack/react-query";
 import {
   CheckIcon,
@@ -42,7 +43,6 @@ import {
   textPreviewGate,
 } from "@/lib/attachment-preview.ts";
 import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
-import { writeClipboard } from "@/lib/clipboard.ts";
 
 /**
  * Where the footer's "Open in new tab" goes, if anywhere. An object URL is

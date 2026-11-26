@@ -7,9 +7,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@orz/ui/components/dialog";
+import { hasUnsavedWork } from "@orz/ui/lib/unsaved-guard";
 import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
 import { useCallback } from "react";
-import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
 
 /**
  * One guard for the whole app (T-317): a single `useBlocker` answers both

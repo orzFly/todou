@@ -10,12 +10,12 @@ import {
   placeholder as placeholderExt,
 } from "@codemirror/view";
 import { cn } from "@orz/ui";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import { useTheme } from "@orz/ui/theme";
 import { useEffect, useImperativeHandle, useRef } from "react";
 import { compositionSafeMeasure } from "@/lib/editor/composition-safe-measure.ts";
 import { parkedTooltip } from "@/lib/editor/parked-tooltip.ts";
 import { tooltipSpace } from "@/lib/editor/tooltip-space.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 export type CodeEditorHandle = {
   getValue: () => string;

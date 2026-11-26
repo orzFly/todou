@@ -1,5 +1,6 @@
 import { cn } from "@orz/ui";
 import { Skeleton } from "@orz/ui/components/skeleton";
+import { useSlashShortcut } from "@orz/ui/hooks/use-slash-shortcut";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { parseSearchQuery } from "@todou/shared";
@@ -62,7 +63,6 @@ import { AVATAR_SLOT } from "@/components/shared/user-picker.tsx";
 import { projectSpellings } from "@/lib/project-spellings.ts";
 import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
-import { useSlashShortcut } from "@/lib/use-slash-shortcut.ts";
 
 /** The last row, always present: what the box did before it understood refs. */
 type SearchRow = { kind: "search" };

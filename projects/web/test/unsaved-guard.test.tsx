@@ -1,3 +1,8 @@
+import {
+  hasUnsavedWork,
+  registerDirtySource,
+  useDirtySource,
+} from "@orz/ui/lib/unsaved-guard";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -31,11 +36,6 @@ import { MarkdownEditor } from "../src/components/shared/markdown-editor.tsx";
 import { AppShell } from "../src/components/shell.tsx";
 import { useCommentComposer } from "../src/components/timeline/composer.tsx";
 import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
-import {
-  hasUnsavedWork,
-  registerDirtySource,
-  useDirtySource,
-} from "../src/lib/unsaved-guard.ts";
 import { Sidebar, TitleBlock } from "../src/pages/issue-detail.tsx";
 import { NewIssuePage } from "../src/pages/new-issue.tsx";
 import {

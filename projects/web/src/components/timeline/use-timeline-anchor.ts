@@ -1,6 +1,6 @@
+import { holdRevealed, revealBlock } from "@orz/ui/hooks/scroll-insets";
 import { useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
-import { holdRevealed, revealBlock } from "@/lib/scroll-insets.ts";
 import {
   anchorElementId,
   parseTimelineAnchor,

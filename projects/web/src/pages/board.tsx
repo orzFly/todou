@@ -15,6 +15,9 @@ import { Badge } from "@orz/ui/components/badge";
 import { Button } from "@orz/ui/components/button";
 import { Checkbox } from "@orz/ui/components/checkbox";
 import { Skeleton } from "@orz/ui/components/skeleton";
+import { useOverlayScrollbars } from "@orz/ui/hooks/use-overlay-scrollbars";
+import { type SelectionState, useSelection } from "@orz/ui/hooks/use-selection";
+import { useSweepSelect } from "@orz/ui/hooks/use-sweep-select";
 import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import {
@@ -84,14 +87,8 @@ import {
   boardColumnRegion,
   WINDOW_REGION,
 } from "@/lib/return-view.ts";
-import { useOverlayScrollbars } from "@/lib/use-overlay-scrollbars.ts";
+import { groupState } from "@/lib/selection-group.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
-import {
-  groupState,
-  type SelectionState,
-  useSelection,
-} from "@/lib/use-selection.ts";
-import { useSweepSelect } from "@/lib/use-sweep-select.ts";
 
 /**
  * What a card needs to edit its own labels and assignees (T-533). Absent on
@@ -484,6 +481,13 @@ export function BoardPage() {
  * re-renders every column and card each time the pointer crosses into
  * another column. Only the thin droppable and draggable shells take those.
  */
+// The column's own content never means to scroll sideways: titles use
+// `wrap-anywhere` and the meta row clips rather than wraps (T-303, T-361).
+// Tailwind's `overflow-y-auto` leaves the x axis computing to `auto`, and
+// @orz/ui sets no overflow of its own, so without this the column is a
+// horizontal scroll container too. Module scope: the hook gets one object.
+const COLUMN_SCROLLBARS = { overflow: { x: "hidden", y: "scroll" } } as const;
+
 const BoardColumn = memo(function BoardColumn({
   slug,
   status,
@@ -506,7 +510,10 @@ const BoardColumn = memo(function BoardColumn({
   // One project-wide read that every column shares, not one per card.
   const watchers = useQuery(projectWatchersQuery(slug)).data?.issues;
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
-  const { slot, viewport } = useOverlayScrollbars(column.data !== undefined);
+  const { slot, viewport } = useOverlayScrollbars(
+    column.data !== undefined,
+    COLUMN_SCROLLBARS,
+  );
   // The column registers its own scrolling region because the page above it
   // never holds this element (T-407). `viewport` and not `slot`: overlay
   // scrollbars adopt this div rather than inserting one of their own, so its

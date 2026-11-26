@@ -23,10 +23,11 @@ import type {
 import { MePrefs, TodouError } from "@todou/shared";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
+import { ShellHeaderContext } from "../src/lib/shell-header.ts";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import { FakeResizeObserver, resizePage } from "./fake-resize-observer.ts";
-import { testQueryClient } from "./render.tsx";
+import { DOCUMENT_HEADER, testQueryClient } from "./render.tsx";
 
 vi.mock("@pierre/diffs/react", () => ({
   MultiFileDiff: () => <div data-testid="diff" />,
@@ -203,9 +204,11 @@ function renderSpecView(search: string) {
     defaultPendingMs: 0,
   });
   const view = render(
-    <QueryClientProvider client={testQueryClient()}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
+    <ShellHeaderContext.Provider value={DOCUMENT_HEADER}>
+      <QueryClientProvider client={testQueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ShellHeaderContext.Provider>,
   );
   return { ...view, router };
 }

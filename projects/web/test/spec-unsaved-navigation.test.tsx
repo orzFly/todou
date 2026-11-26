@@ -1,4 +1,5 @@
 import { EditorView } from "@codemirror/view";
+import { hasUnsavedWork } from "@orz/ui/lib/unsaved-guard";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -21,7 +22,6 @@ import { api, meQuery, projectQuery } from "../src/api/queries.ts";
 import { specFilesQuery, specQuery } from "../src/api/spec.ts";
 import { AppShell } from "../src/components/shell.tsx";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
-import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import { testQueryClient } from "./render.tsx";
 import { reviewViewport } from "./review-viewport.ts";

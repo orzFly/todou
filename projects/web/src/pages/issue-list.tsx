@@ -2,6 +2,9 @@ import { cn } from "@orz/ui";
 import { Button } from "@orz/ui/components/button";
 import { Checkbox } from "@orz/ui/components/checkbox";
 import { Skeleton } from "@orz/ui/components/skeleton";
+import { usePagedAppend } from "@orz/ui/hooks/use-paged-append";
+import { type Selection, useSelection } from "@orz/ui/hooks/use-selection";
+import { useSweepSelect } from "@orz/ui/hooks/use-sweep-select";
 import {
   keepPreviousData,
   useQuery,
@@ -99,16 +102,11 @@ import {
   useRegisterReturnLane,
 } from "@/components/shared/return-context.tsx";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
+import { groupState } from "@/lib/selection-group.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
-import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
-import {
-  groupState,
-  type Selection,
-  useSelection,
-} from "@/lib/use-selection.ts";
-import { useSweepSelect } from "@/lib/use-sweep-select.ts";
 
 /**
  * The list route serves two pages: the issue list and the trash (T-145).
@@ -251,6 +249,7 @@ export function ProjectIssueListPage({
     };
   }, [headerHeight, toolbarMounted]);
 
+  const header = useShellHeader();
   // One region for the whole page: both bodies scroll with the window, and a
   // group is not a scrolling element of its own — only its header pins.
   //
@@ -267,7 +266,7 @@ export function ProjectIssueListPage({
     rows: () => returnRows(rootRef.current),
     inset: () =>
       groupStickyTop(
-        headerBottom(),
+        headerBottom(header.current),
         toolbarRef.current?.getBoundingClientRect().height ?? 0,
         window.matchMedia("(min-width: 640px)").matches,
       ),
@@ -508,13 +507,14 @@ export function TrashView({
   // Declared rather than left out, so that the trash having no Load more is a
   // decision on the page and not an omission somebody restores by hand.
   useRegisterReturnLane(null);
+  const header = useShellHeader();
   // Nothing floats over this list but the shell header — there is no filter
   // toolbar here — so that is the whole inset (T-407).
   useRegisterReturnArea({
     region: WINDOW_REGION,
     element: () => null,
     rows: () => returnRows(rootRef.current),
-    inset: headerBottom,
+    inset: () => headerBottom(header.current),
     axis: "y",
   });
   // The rows are in this very render's output, `useSuspenseQuery` having

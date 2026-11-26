@@ -31,6 +31,7 @@ import {
 } from "@/components/shared/return-context.tsx";
 import type { ProjectRefOption } from "@/lib/project-spellings.ts";
 import { INBOX_TABS, type InboxTab, WINDOW_REGION } from "@/lib/return-view.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 import { headerBottom } from "@/lib/use-header-height.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
@@ -109,6 +110,7 @@ export function InboxPage() {
   // decision and not an omission somebody restores by hand: it is one payload,
   // cut by the server rather than paged.
   useRegisterReturnLane(null);
+  const header = useShellHeader();
   // Opening a card from here is what takes its row out of the list — reading
   // it retires the unread reason — so the row a position was anchored to is
   // routinely gone by the time the reader returns. The candidates remembered
@@ -117,7 +119,7 @@ export function InboxPage() {
     region: WINDOW_REGION,
     element: () => null,
     rows: () => returnRows(rootRef.current),
-    inset: headerBottom,
+    inset: () => headerBottom(header.current),
     axis: "y",
   });
   // The URL selects the tab. Keep it in the snapshot too so the detail page

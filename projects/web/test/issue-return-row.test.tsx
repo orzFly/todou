@@ -1,3 +1,4 @@
+import { useScrollInsets } from "@orz/ui/hooks/scroll-insets";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -30,7 +31,7 @@ import {
   returnLabelOf,
 } from "../src/lib/return-view.ts";
 import { writeReturnEntry } from "../src/lib/return-view-history.ts";
-import { useScrollInsets } from "../src/lib/scroll-insets.ts";
+import { useShellHeader } from "../src/lib/shell-header.ts";
 import { IssueDetailPage } from "../src/pages/issue-detail.tsx";
 import { render, renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -406,7 +407,7 @@ const named = (el: HTMLElement) =>
 function InsetHarness() {
   const title = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLDivElement>(null);
-  useScrollInsets({ top: [row] });
+  useScrollInsets({ top: [useShellHeader(), row] });
   return (
     <>
       <div ref={title}>the real title block</div>

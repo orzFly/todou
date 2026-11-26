@@ -2,6 +2,12 @@ import { Badge } from "@orz/ui/components/badge";
 import { Button } from "@orz/ui/components/button";
 import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
 import { Skeleton } from "@orz/ui/components/skeleton";
+import {
+  holdRevealed,
+  revealBlock,
+  useOwnHold,
+} from "@orz/ui/hooks/scroll-insets";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AnsweredComment,
@@ -36,9 +42,7 @@ import { UserChip } from "@/components/shared/user-chip.tsx";
 import type { Target } from "@/components/timeline/comment-item.tsx";
 import { useTimelineSettlement } from "@/components/timeline/timeline-answers.tsx";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
-import { holdRevealed, revealBlock, useOwnHold } from "@/lib/scroll-insets.ts";
 import { formatTimelineTime } from "@/lib/timeline-time.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { documentPip, useDocumentPip } from "@/lib/use-document-pip.ts";
 
 type Draft = { selected: Set<number>; other: string; declined: boolean };

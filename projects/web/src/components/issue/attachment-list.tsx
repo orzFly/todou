@@ -1,5 +1,7 @@
 import { cn } from "@orz/ui";
 import { SelectSlot } from "@orz/ui/components/checkbox";
+import { useSelection } from "@orz/ui/hooks/use-selection";
+import { useSweepSelect } from "@orz/ui/hooks/use-sweep-select";
 import { useQuery } from "@tanstack/react-query";
 import {
   AppWindowIcon,
@@ -49,8 +51,6 @@ import {
   previewKind,
 } from "@/lib/attachment-preview.ts";
 import { attachmentAnchorHref, attachmentHref } from "@/lib/attachment-refs.ts";
-import { useSelection } from "@/lib/use-selection.ts";
-import { useSweepSelect } from "@/lib/use-sweep-select.ts";
 
 /** Modifier-clicks (new tab, forced download) keep native link behavior. */
 function isPlainLeftClick(e: MouseEvent): boolean {

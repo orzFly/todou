@@ -6,6 +6,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@orz/ui/components/popover";
+import {
+  holdRevealed,
+  revealBlock,
+  useOwnHold,
+} from "@orz/ui/hooks/scroll-insets";
+import { POINTER_FINE, useMediaQuery } from "@orz/ui/hooks/use-media-query";
 import { formatAnchorRange, type SpecCommentItem } from "@todou/shared";
 import {
   CheckIcon,
@@ -60,7 +66,6 @@ import {
   rehypeSourceLines,
   SOURCE_LINE_ATTR,
 } from "@/lib/rehype-source-lines.ts";
-import { holdRevealed, revealBlock, useOwnHold } from "@/lib/scroll-insets.ts";
 import { buildBaselineTree } from "@/lib/spec-baseline-tree.ts";
 import { type LineRange, rangesIntersect } from "@/lib/spec-changes.ts";
 import {
@@ -77,7 +82,6 @@ import {
   segmentsInLines,
   sourceOffsetOfRendered,
 } from "@/lib/spec-source-index.ts";
-import { POINTER_FINE, useMediaQuery } from "@/lib/use-media-query.ts";
 
 type RehypePlugins = ComponentProps<typeof Markdown>["rehypePlugins"];
 

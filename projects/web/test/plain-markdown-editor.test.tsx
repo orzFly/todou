@@ -1,3 +1,4 @@
+import { hasUnsavedWork } from "@orz/ui/lib/unsaved-guard";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
@@ -15,7 +16,6 @@ import {
   PLAIN_TEXT_EDITOR_STORAGE_KEY,
   setPlainTextEditor,
 } from "../src/lib/plain-text-editor.ts";
-import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import { testQueryClient } from "./render.tsx";
 
 beforeEach(() => setPlainTextEditor(true));

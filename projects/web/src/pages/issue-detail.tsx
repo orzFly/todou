@@ -2,6 +2,9 @@ import { cn } from "@orz/ui";
 import { Button } from "@orz/ui/components/button";
 import { Input } from "@orz/ui/components/input";
 import { Skeleton } from "@orz/ui/components/skeleton";
+import { useScrollInsets } from "@orz/ui/hooks/scroll-insets";
+import { useMediaQuery } from "@orz/ui/hooks/use-media-query";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import {
   useMutation,
   useQuery,
@@ -98,10 +101,9 @@ import { RevealedRunsProvider } from "@/components/timeline/revealed-runs.tsx";
 import { SelectionQuote } from "@/components/timeline/selection-quote.tsx";
 import { Timeline } from "@/components/timeline/timeline.tsx";
 import { TimelineDivider } from "@/components/timeline/timeline-divider.tsx";
+import { SM_UP, XL_UP } from "@/lib/breakpoints.ts";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
-import { useScrollInsets } from "@/lib/scroll-insets.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
-import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -128,7 +130,9 @@ export function IssueDetailPage() {
   // timeline anchor, including before the mirror becomes visible (T-299).
   const rowRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  useScrollInsets({ top: [rowRef], bottom: [composerRef] });
+  // The shell's header first: the insets count only what they are given.
+  const header = useShellHeader();
+  useScrollInsets({ top: [header, rowRef], bottom: [composerRef] });
   const [end, setEnd] = useState<HTMLDivElement | null>(null);
   const atEnd = useInView(end);
   // Which of the three homes the back control takes (T-461). The header's nav

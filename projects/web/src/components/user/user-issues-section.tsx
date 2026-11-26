@@ -1,5 +1,6 @@
 import { cn } from "@orz/ui";
 import { Skeleton } from "@orz/ui/components/skeleton";
+import { usePagedAppend } from "@orz/ui/hooks/use-paged-append";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   UserIssueRole,
@@ -24,8 +25,8 @@ import {
   useRegisterReturnLane,
 } from "@/components/shared/return-context.tsx";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 import { headerBottom } from "@/lib/use-header-height.ts";
-import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 
@@ -182,6 +183,7 @@ export function UserIssuesSection({
     exhausted: lastCursor === null,
     loadMore: loadNextPage,
   });
+  const header = useShellHeader();
   // The window scrolls this page, and nothing floats over it but the shell
   // header. The rows are read from this section alone, so the projects
   // section below it cannot contribute an anchor (T-407).
@@ -189,7 +191,7 @@ export function UserIssuesSection({
     region: WINDOW_REGION,
     element: () => null,
     rows: () => returnRows(rootRef.current),
-    inset: headerBottom,
+    inset: () => headerBottom(header.current),
     axis: "y",
   });
 

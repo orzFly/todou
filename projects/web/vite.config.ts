@@ -147,6 +147,10 @@ export default defineConfig(() => ({
     // tests (otherwise renders leak across cases).
     globals: true,
     setupFiles: ["./test/setup.ts"],
+    // @orz/* runs through Vite like the app's own modules, not straight from
+    // node_modules: a test's vi.mock("sonner") then reaches the toasts
+    // @orz/ui raises too (its clipboard helpers, for one).
+    server: { deps: { inline: [/[\\/]@orz[\\/]/] } },
     // Node 25+ defines its own `localStorage` on globalThis, undefined without
     // --localstorage-file. vitest copies a happy-dom global over Node's only
     // for names on its own list, which `localStorage` is not on, so without

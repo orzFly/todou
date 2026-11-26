@@ -1,3 +1,4 @@
+import { POINTER_FINE } from "@orz/ui/hooks/use-media-query";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { useRef } from "react";
@@ -10,7 +11,6 @@ import {
   useQuoteTarget,
 } from "../src/components/timeline/quote-reply.tsx";
 import { SelectionQuote } from "../src/components/timeline/selection-quote.tsx";
-import { POINTER_FINE } from "../src/lib/use-media-query.ts";
 import { testQueryClient } from "./render.tsx";
 
 /** One timeline entry: a header outside the body, and the rendered body. */

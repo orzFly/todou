@@ -5,6 +5,21 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@orz/ui/components/popover";
+import {
+  holdRevealed,
+  type RevealMode,
+  restingScrollY,
+  revealBlock,
+  usableViewport,
+  useOwnHold,
+  useScrollInsets,
+} from "@orz/ui/hooks/scroll-insets";
+import { useElementHeight } from "@orz/ui/hooks/use-element-height";
+import { useMediaQuery } from "@orz/ui/hooks/use-media-query";
+import {
+  belowHeader,
+  VIEWPORT_CHROME_EVENT,
+} from "@orz/ui/hooks/viewport-chrome";
 import type { SelectedLineRange } from "@pierre/diffs";
 // Imported directly rather than through the lazy wrapper in pierre.tsx: this
 // whole page is route-lazy, so pierre never reaches the main bundle through
@@ -114,15 +129,8 @@ import {
   DiffstatBar,
   StatNumbers,
 } from "@/components/timeline/spec-version-card.tsx";
-import {
-  holdRevealed,
-  type RevealMode,
-  restingScrollY,
-  revealBlock,
-  usableViewport,
-  useOwnHold,
-  useScrollInsets,
-} from "@/lib/scroll-insets.ts";
+import { LG_UP, SM_UP, XL_UP } from "@/lib/breakpoints.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 import {
   acceptsShortcut,
   currentIndex,
@@ -146,13 +154,7 @@ import {
   computeVersionStats,
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
-import {
-  belowHeader,
-  useElementHeight,
-  useHeaderHeight,
-} from "@/lib/use-header-height.ts";
-import { LG_UP, SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
-import { VIEWPORT_CHROME_EVENT } from "@/lib/viewport-chrome.ts";
+import { useHeaderHeight } from "@/lib/use-header-height.ts";
 
 /** What ↑↓ stops on: both kinds of "changed since the baseline" mark (T-158). */
 const CHANGED_SELECTOR = ".spec-changed, .spec-ins-block";
@@ -636,7 +638,10 @@ function SpecViewBody({
   // wraps to two lines when its buttons no longer fit (T-178).
   const toolbarRef = useRef<HTMLDivElement>(null);
   const headerHeight = useHeaderHeight();
-  const toolbarHeight = useElementHeight(toolbarRef, TOOLBAR_FALLBACK_HEIGHT);
+  const toolbarHeight = useElementHeight(
+    () => toolbarRef.current,
+    TOOLBAR_FALLBACK_HEIGHT,
+  );
   const stickyTop = headerHeight + toolbarHeight;
 
   // Below lg only the toolbar's first row is sticky (T-593). `collapsed`:
@@ -686,8 +691,12 @@ function SpecViewBody({
   // Kept apart from `stickyTop`, which serves CSS offsets that want the
   // toolbar's own edge rather than a strip to land things in (T-299).
   const composerRef = useRef<HTMLDivElement>(null);
+  // The shell's header first: the insets count only what they are given.
+  const header = useShellHeader();
   useScrollInsets({
-    top: controlsPinned ? [toolbarRef, controlsRef] : [toolbarRef],
+    top: controlsPinned
+      ? [header, toolbarRef, controlsRef]
+      : [header, toolbarRef],
     bottom: [composerRef],
   });
 

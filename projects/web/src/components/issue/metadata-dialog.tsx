@@ -12,6 +12,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@orz/ui/components/tabs";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import { useQuery } from "@tanstack/react-query";
 import type { IssueMetadataWriteEntry } from "@todou/shared";
 import { type ComponentProps, useRef, useState } from "react";
@@ -46,7 +47,6 @@ import {
   readDocument,
 } from "@/lib/metadata-diff.ts";
 import { parseJsonDoc, serializeJsonDoc } from "@/lib/metadata-json.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 type TabName = "browse" | "bulk" | "json";
 

@@ -1,9 +1,9 @@
 import { Button } from "@orz/ui/components/button";
+import { useSlashShortcut } from "@orz/ui/hooks/use-slash-shortcut";
 import { useRouterState } from "@tanstack/react-router";
 import { SearchIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { SearchBox } from "@/components/search-box.tsx";
-import { useSlashShortcut } from "@/lib/use-slash-shortcut.ts";
 
 /**
  * The narrow header's search: an icon that expands into a box across the

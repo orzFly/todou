@@ -1,5 +1,6 @@
 import { cn } from "@orz/ui";
 import { Button } from "@orz/ui/components/button";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CommandInput,
@@ -61,7 +62,6 @@ import {
   parseCommandLines,
   summarizeCommands,
 } from "@/lib/slash-commands.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 export type PendingComment = {
   key: number;

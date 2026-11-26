@@ -1,5 +1,6 @@
 import { Button } from "@orz/ui/components/button";
 import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
+import type { Selection } from "@orz/ui/hooks/use-selection";
 import {
   useMutation,
   useQueries,
@@ -22,7 +23,6 @@ import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 import { pickSaveTarget, saveStream } from "@/lib/save-stream.ts";
 import { tarStream } from "@/lib/tar.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
-import type { Selection } from "@/lib/use-selection.ts";
 
 /**
  * The bytes of one attachment, from the same origin whatever the storage.

@@ -1,3 +1,4 @@
+import { registerDirtySource } from "@orz/ui/lib/unsaved-guard";
 import {
   cleanup,
   configure,
@@ -18,7 +19,6 @@ import {
   vi,
 } from "vitest";
 import { clearReturnMemory } from "../src/lib/return-view-history.ts";
-import { registerDirtySource } from "../src/lib/unsaved-guard.ts";
 import { router } from "../src/router.tsx";
 import {
   renderOnTheAppRouter,

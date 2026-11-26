@@ -2,6 +2,7 @@ import { cn } from "@orz/ui";
 import { Button } from "@orz/ui/components/button";
 import { Input } from "@orz/ui/components/input";
 import { Label } from "@orz/ui/components/label";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import {
   useQuery,
   useQueryClient,
@@ -73,7 +74,6 @@ import {
   parseCommandLines,
 } from "@/lib/slash-commands.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 // Mirrors the server's choice when no status is sent with a new issue.
 export function pickDefaultStatus(statuses: Status[]): Status | undefined {
