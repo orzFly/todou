@@ -1,7 +1,10 @@
 @import "tailwindcss";
+/* Ahead of @orz/ui's sheet: its `.os-scrollbar` resets the bar's size
+   variables, which `.os-theme-orz` then has to override on equal
+   specificity, so the theme has to come later. */
+@import "overlayscrollbars/overlayscrollbars.css";
 @import "@orz/ui/styles.css";
 @import "@orz/ui/fonts.css";
-@import "overlayscrollbars/overlayscrollbars.css";
 
 /* Every pierre code surface renders in a shadow root and resolves its
    palette with light-dark(); declarations from the outer tree win over
