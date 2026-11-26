@@ -736,7 +736,7 @@ export function MembersSection({ slug }: { slug: string }) {
           <p className="max-w-xl text-sm text-muted-foreground">
             {ORPHAN_NOTE}
           </p>
-          <div className="rounded-lg border border-amber-500/40">
+          <div className="rounded-lg border border-warning/40">
             <Table>
               <TableBody>
                 {orphans.map((group) => (
@@ -882,7 +882,7 @@ function OwnerHeaderRow({ group }: { group: Group }) {
       <TableCell>
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{login}</span>
-          <span className="rounded-full border border-amber-500/50 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400">
+          <span className="rounded-full border border-warning/50 px-2 py-0.5 text-xs text-warning">
             not a member of this project
           </span>
         </span>
@@ -1044,7 +1044,7 @@ function RoleCell({
         </SelectContent>
       </Select>
       {overCeiling && (
-        <span className="text-xs text-amber-700 dark:text-amber-400">
+        <span className="text-xs text-warning">
           above @{ownerLogin} — the next change clamps it to {ceiling}
         </span>
       )}

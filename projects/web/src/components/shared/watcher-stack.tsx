@@ -72,13 +72,13 @@ export function watchingSentence(groups: readonly WatcherGroup[]): ReactNode {
   );
 }
 
-/** The green dot ahead of a stack; its ring animates unless motion is reduced. */
+/** The success-coloured dot ahead of a stack; its ring animates unless motion is reduced. */
 export function PulseDot({ className }: { className?: string }) {
   return (
     <span
       aria-hidden
       className={cn(
-        "watcher-pulse relative inline-flex size-2 shrink-0 rounded-full bg-green-600 ring-3 ring-green-600/20",
+        "watcher-pulse relative inline-flex size-2 shrink-0 rounded-full bg-success ring-3 ring-success/20",
         className,
       )}
     />

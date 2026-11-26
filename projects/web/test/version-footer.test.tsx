@@ -36,11 +36,11 @@ describe("VersionFooter", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows both versions in amber when they differ", async () => {
+  it("shows both versions in the warning colour when they differ", async () => {
     vi.stubGlobal("fetch", versionServer("v0.2.1"));
     render(wrap(<VersionFooter />));
     const link = await screen.findByText("todou web v0.2.0 · server v0.2.1");
-    expect(link.className).toContain("text-amber-700");
+    expect(link.className).toContain("text-warning");
     expect(link.getAttribute("title")).toBeTruthy();
     vi.unstubAllGlobals();
   });

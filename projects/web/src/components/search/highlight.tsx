@@ -5,7 +5,8 @@ import type { ReactNode } from "react";
 /**
  * Whether a value names something. `unknown` is the honest answer while the
  * project's labels or statuses are still loading — it paints as valid, since
- * flashing every value amber and back is worse than being briefly quiet.
+ * flashing every value in the warning colour and back is worse than being
+ * briefly quiet.
  */
 export type ValueVerdict = "valid" | "special" | "invalid" | "unknown";
 
@@ -39,8 +40,8 @@ const KEY_CLASS = "text-primary";
 const PUNCT_CLASS = "text-muted-foreground";
 const VALUE_CLASS: Record<ValueVerdict, string> = {
   valid: "text-foreground bg-primary/12 rounded-[3px]",
-  special: "text-foreground bg-violet-500/15 rounded-[3px]",
-  invalid: "text-amber-700 dark:text-amber-400 underline decoration-wavy",
+  special: "text-foreground bg-marker rounded-[3px]",
+  invalid: "text-warning underline decoration-wavy",
   unknown: "text-foreground bg-primary/12 rounded-[3px]",
 };
 

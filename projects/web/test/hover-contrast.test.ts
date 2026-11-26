@@ -101,9 +101,18 @@ const measured = THEMES.flatMap((theme) =>
   ),
 );
 
+// The amber the card was tinted with when the customer took the screenshot.
 const AMBER = oklch(
   (/--color-amber-500:\s*([^;]+);/.exec(TAILWIND) as RegExpExecArray)[1].trim(),
 );
+
+// The unanswered card's own face, read off its class rather than restated:
+// a token tinted onto the card at some opacity.
+const FACE = (() => {
+  const m = /"@container mt-1 [^"]*\bbg-([a-z-]+)\/(\d+)\b/.exec(CARD);
+  if (!m) throw new Error("the unanswered card's face is not a token tint");
+  return { token: `--${m[1]}`, alpha: Number(m[2]) / 100 };
+})();
 
 type Paint = { token: string; alpha: number } | null;
 
@@ -152,7 +161,11 @@ const classesOf = (base: string, branch: string) =>
   `${base} ${branch}`.trim().split(/\s+/);
 
 function surfaces(tokens: Record<string, string>, classes: string[]) {
-  const card = over(AMBER, oklch(tokens["--card"]), 0.05);
+  const card = over(
+    oklch(tokens[FACE.token]),
+    oklch(tokens["--card"]),
+    FACE.alpha,
+  );
   const fill = (p: Paint) =>
     p === null ? card : over(oklch(tokens[p.token]), card, p.alpha);
   const hoverFill = paint(classes, "bg", true);

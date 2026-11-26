@@ -117,7 +117,7 @@ export function RefreshFailure({
       retrying={retrying}
       size={size}
       className={className}
-      textClassName="text-amber-800 dark:text-amber-200"
+      textClassName="text-warning"
     />
   );
 }

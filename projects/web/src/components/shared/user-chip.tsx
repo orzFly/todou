@@ -60,7 +60,7 @@ export function LiveDot({ className }: { className?: string }) {
       aria-hidden
       data-live-dot=""
       className={cn(
-        "pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full bg-green-600 ring-2 ring-background",
+        "pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full bg-success ring-2 ring-background",
         className,
       )}
     />

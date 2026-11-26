@@ -301,7 +301,7 @@ describe("SearchResults hit identity", () => {
       })),
     );
     expect((await screen.findByText("Diagnostic error")).className).toContain(
-      "text-amber-700",
+      "var(--warning)",
     );
     for (const severity of ["note", "future-severity"]) {
       const diagnostic = screen.getByText(`Diagnostic ${severity}`);

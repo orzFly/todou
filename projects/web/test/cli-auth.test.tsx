@@ -627,7 +627,7 @@ describe("CliAuthPage read failures", () => {
       const notice = await view.findByText(/Couldn't refresh your agents/);
       expect(notice.textContent).toContain("agents offline");
       expect(notice.closest('[role="status"]')?.className).toContain(
-        "text-amber",
+        "text-warning",
       );
       expect(view.getByText(content)).toBeTruthy();
       expect(
@@ -735,7 +735,7 @@ describe("CliAuthPage read failures", () => {
     const notice = await view.findByText(/Couldn't refresh this request/);
     expect(notice.textContent).toContain("request offline");
     expect(notice.closest('[role="status"]')?.className).toContain(
-      "text-amber",
+      "text-warning",
     );
     expect(view.getByText("AB3D-EFGH")).toBeTruthy();
     expect(view.getByText("cli @ bot-one")).toBeTruthy();

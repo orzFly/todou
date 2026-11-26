@@ -223,8 +223,7 @@ const TOOLBAR_FALLBACK_HEIGHT = 78;
  */
 const DISPLAY_SLOT =
   "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-full border px-2.5 text-xs";
-const DISPLAY_SLOT_ON =
-  "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400";
+const DISPLAY_SLOT_ON = "border-primary bg-primary text-primary-foreground";
 const DISPLAY_SLOT_OFF = "text-muted-foreground hover:border-foreground/50";
 const DISPLAY_SLOT_DISABLED = "border-dashed text-muted-foreground/60";
 
@@ -1901,12 +1900,10 @@ function SpecViewBody({
                   {fileLevelDrafts.map((draft) => (
                     <div
                       key={draft.id}
-                      className="rounded-md border border-indigo-500/40 p-2 text-sm"
+                      className="rounded-md border border-primary/40 p-2 text-sm"
                     >
                       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-                        <span className="font-medium text-indigo-700 dark:text-indigo-400">
-                          draft
-                        </span>
+                        <span className="font-medium text-primary">draft</span>
                         file comment
                         <span className="ml-auto" />
                         <Button
@@ -2180,7 +2177,7 @@ function SpecFileList({
             </span>
             <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
               {unresolved > 0 && (
-                <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <span className="rounded-full border px-1.5 text-xs border-warning/40 bg-warning/10 text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]">
                   {unresolved}
                 </span>
               )}
@@ -2248,11 +2245,9 @@ function UnplacedDraft({
   onDiscard: () => void;
 }) {
   return (
-    <div className="rounded-md border border-indigo-500/40 p-2 text-sm">
+    <div className="rounded-md border border-primary/40 p-2 text-sm">
       <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span className="font-medium text-indigo-700 dark:text-indigo-400">
-          draft
-        </span>
+        <span className="font-medium text-primary">draft</span>
         <span>
           {formatAnchorRange(draft.anchor)} · v{draft.anchor.version}
         </span>
@@ -2348,7 +2343,7 @@ function UnplacedComment({
               which is the whole of why the ternary is split across the line's
               edge (T-487). */}
           {item.resolved !== null && (
-            <span className="text-green-700 dark:text-green-400">resolved</span>
+            <span className="text-success">resolved</span>
           )}
         </CommentHeaderLine>
         {item.resolved === null && (
@@ -2995,9 +2990,7 @@ function DiffAnnotation({
               {formatAnchorRange(item.anchor)} · v{item.anchor.version}
             </span>
             {item.resolved !== null && (
-              <span className="text-green-700 dark:text-green-400">
-                resolved
-              </span>
+              <span className="text-success">resolved</span>
             )}
           </CommentHeaderIdentity>
           <CommentHeaderMeta

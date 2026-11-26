@@ -12,7 +12,7 @@ describe("UnreadMarker muted states (T-372)", () => {
       const badge = container.querySelector("span");
       expect(badge).toBeTruthy();
       expect(badge?.className).toContain("bg-muted-foreground/70");
-      expect(badge?.className).not.toContain("bg-blue-600");
+      expect(badge?.className).not.toContain("bg-primary");
       expect(badge?.getAttribute("title")).toContain(
         muted === "project"
           ? "the whole project is muted"
@@ -32,7 +32,7 @@ describe("UnreadMarker muted states (T-372)", () => {
       const ring = container.querySelector("span");
       expect(ring).toBeTruthy();
       expect(ring?.className).toContain("border-muted-foreground/60");
-      expect(ring?.className).not.toContain("border-blue-500");
+      expect(ring?.className).not.toContain("border-primary");
     },
   );
 
@@ -41,7 +41,7 @@ describe("UnreadMarker muted states (T-372)", () => {
       <UnreadMarker unread unreadComments={3} muted={null} />,
     );
     const badge = container.querySelector("span");
-    expect(badge?.className).toContain("bg-blue-600");
+    expect(badge?.className).toContain("bg-primary");
     expect(badge?.getAttribute("title")).toBe(
       "3 new comments since you last viewed",
     );

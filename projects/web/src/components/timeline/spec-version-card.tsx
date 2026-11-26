@@ -27,9 +27,17 @@ const CHANGE_BADGE: Record<
   { glyph: string; className: string }
 > = {
   added: { glyph: "A", className: "diff-addition-badge" },
-  modified: { glyph: "M", className: "bg-yellow-500/20 text-yellow-700" },
+  modified: {
+    glyph: "M",
+    className:
+      "bg-warning/20 text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]",
+  },
   removed: { glyph: "D", className: "diff-deletion-badge" },
-  renamed: { glyph: "R", className: "bg-blue-600/15 text-blue-700" },
+  renamed: {
+    glyph: "R",
+    className:
+      "bg-primary/15 text-[color-mix(in_oklab,var(--primary),var(--foreground)_65%)]",
+  },
 };
 
 /**
@@ -346,7 +354,7 @@ function ReviewCallToAction({
   const returnState = useReturnLinkState();
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-amber-500/30 bg-amber-500/10 px-2.5 py-2"
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-warning/30 bg-warning/10 px-2.5 py-2"
       data-testid="spec-review-cta"
     >
       <p className="min-w-0 flex-1 font-medium text-sm">Awaiting your review</p>

@@ -343,8 +343,8 @@ export function ReviewSubmitDialog({
           </Button>
           <Button
             size="sm"
-            variant="outline"
-            className="h-9 border-red-500/60 px-2 text-xs text-red-700 sm:h-7 sm:px-2.5 sm:text-[0.8rem] dark:text-red-400"
+            variant="destructive"
+            className="h-9 px-2 text-xs sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
             disabled={verdictDisabled}
             title={verdictTitle}
             onClick={() => submit("request_changes")}
@@ -355,7 +355,7 @@ export function ReviewSubmitDialog({
           </Button>
           <Button
             size="sm"
-            className="h-9 bg-green-700 px-2 text-xs text-white hover:bg-green-800 sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
+            className="h-9 px-2 text-xs sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
             disabled={approveDisabled}
             title={approveTitle}
             onClick={() => submit("approve")}

@@ -6,8 +6,7 @@ import { Fragment } from "react";
  * in `shared/match-highlight.tsx` so the two cannot drift apart; the two keep
  * separate components because only one of them can claim the server found it.
  */
-export const MARK_CLASS =
-  "rounded-sm bg-yellow-200/70 text-foreground dark:bg-yellow-500/30";
+export const MARK_CLASS = "rounded-sm bg-primary/15 text-foreground";
 
 type Part = { at: number; text: string; hit: boolean };
 

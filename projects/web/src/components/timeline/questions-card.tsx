@@ -166,7 +166,7 @@ function settlementOf(
  * timeline's `question_answered` or `question_withdrawn` event, this
  * mount's own submission, and only then `/questions`. A card none of them
  * settles yet renders the neutral state — "unknown" is not "unanswered",
- * and the amber form asserts the latter.
+ * and the warning-tinted form asserts the latter.
  */
 export function QuestionsCard({
   slug,
@@ -294,7 +294,7 @@ function SettledCard({
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
         {settlement.kind === "answered" ? (
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <CheckIcon className="size-3.5 shrink-0 text-green-600" />
+            <CheckIcon className="size-3.5 shrink-0 text-success" />
             answered by <UserChip user={settlement.answer.actor} compact />
             <SettledAt at={settlement.answer.created_at} />
           </span>
@@ -448,13 +448,10 @@ function AnswerForm({
   const form = (
     <div
       ref={root}
-      className="@container mt-1 space-y-4 rounded-md border border-amber-500/60 bg-amber-500/5 p-3"
+      className="@container mt-1 space-y-4 rounded-md border border-warning/60 bg-warning/5 p-3"
     >
       <div className="flex items-center justify-between gap-2">
-        <Badge
-          variant="outline"
-          className="border-amber-500/60 text-amber-700 dark:text-amber-400"
-        >
+        <Badge variant="outline" className="border-warning/60 text-warning">
           awaiting answer
         </Badge>
         {!pip.window && documentPip() && (
@@ -556,7 +553,7 @@ function AnswerForm({
   if (!pip.window) return form;
   return (
     <>
-      <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-dashed border-amber-500/60 bg-amber-500/5 px-3 py-1.5 text-sm text-muted-foreground">
+      <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-dashed border-warning/60 bg-warning/5 px-3 py-1.5 text-sm text-muted-foreground">
         <span className="flex items-center gap-2">
           <PictureInPicture2Icon className="size-4 shrink-0" />
           Answering in a floating window

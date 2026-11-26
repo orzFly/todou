@@ -12,8 +12,8 @@ const muteSuffixes = {
  * Positioning (list slot / board corner) stays at the call sites.
  *
  * A muted card (T-372) keeps its marker — the unread is real, and the
- * settings page's counts depend on it staying honest — but drops the blue
- * for muted-foreground: blue is reserved for what is asking for attention
+ * settings page's counts depend on it staying honest — but drops the primary
+ * for muted-foreground: primary is reserved for what is asking for attention
  * *now*, and this card has been told to wait. `muted-foreground` follows
  * the theme, so no dark: variants pair with it.
  */
@@ -43,7 +43,7 @@ export function UnreadMarker({
       <span
         className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10.5px] leading-none font-semibold tabular-nums ${
           muted === null
-            ? "bg-blue-600 text-white dark:bg-blue-500"
+            ? "bg-primary text-primary-foreground"
             : "bg-muted-foreground/70 text-background"
         }`}
         title={label}
@@ -60,9 +60,7 @@ export function UnreadMarker({
     return (
       <span
         className={`size-2 rounded-full border-[1.5px] ${
-          muted === null
-            ? "border-blue-500 dark:border-blue-400"
-            : "border-muted-foreground/60"
+          muted === null ? "border-primary" : "border-muted-foreground/60"
         }`}
         title={`new activity since you last viewed${suffix}`}
       />

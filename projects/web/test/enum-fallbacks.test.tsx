@@ -41,9 +41,9 @@ describe("server enum fallbacks", () => {
   );
 
   it.each([
-    ["unreviewed", "awaiting review", "text-amber-700"],
-    ["approved", "approved", "text-green-700"],
-    ["changes_requested", "changes requested", "text-red-700"],
+    ["unreviewed", "awaiting review", "var(--warning)"],
+    ["approved", "approved", "var(--success)"],
+    ["changes_requested", "changes requested", "var(--destructive)"],
     ["withdrawn", "withdrawn · reworking", "text-muted-foreground"],
   ] as const)(
     "preserves known status %s label and styling",

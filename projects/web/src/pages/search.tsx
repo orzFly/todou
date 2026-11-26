@@ -337,13 +337,13 @@ export function resultsStickyTop(
 function Diagnostics({ items }: { items: SearchDiagnostic[] }) {
   if (items.length === 0) return null;
   return (
-    <ul className="space-y-1 rounded-lg border border-amber-500/60 bg-amber-500/10 px-4 py-3 text-sm">
+    <ul className="space-y-1 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
       {items.map((item) => (
         <li
           key={`${item.key}:${item.value ?? ""}:${item.message}`}
           className={
             item.severity === "error"
-              ? "text-amber-700 dark:text-amber-400"
+              ? "text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]"
               : "text-muted-foreground"
           }
         >

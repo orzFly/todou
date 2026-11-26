@@ -168,12 +168,12 @@ function Mapping({ preview }: { preview: MoveIssueResult }) {
         </li>
       )}
       {dropped_labels.length > 0 && (
-        <li className="text-amber-700 dark:text-amber-500">
+        <li className="text-warning">
           Labels dropped: {dropped_labels.join(", ")}
         </li>
       )}
       {dropped_assignees.length > 0 && (
-        <li className="text-amber-700 dark:text-amber-500">
+        <li className="text-warning">
           Assignees dropped:{" "}
           {dropped_assignees.map((user) => `@${user.login}`).join(", ")}
         </li>

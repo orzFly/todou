@@ -1191,8 +1191,8 @@ const AnnotationChip = memo(function AnnotationChip({
         data-annotation-ui=""
         className={`absolute right-0 inline-flex cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs shadow-sm ${
           draftCount > 0
-            ? "border-indigo-500/60 bg-indigo-500/10 text-indigo-700 dark:text-indigo-400"
-            : "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+            ? "border-primary/40 bg-primary/10 text-[color-mix(in_oklab,var(--primary),var(--foreground)_65%)]"
+            : "border-warning/40 bg-warning/10 text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]"
         }`}
         style={{ top: chip.top }}
         aria-label={`${chip.items.length} comment(s) on this block`}
@@ -1209,12 +1209,10 @@ const AnnotationChip = memo(function AnnotationChip({
           item.kind === "draft" ? (
             <div
               key={item.key}
-              className="rounded-md border border-indigo-500/40 p-2 text-sm"
+              className="rounded-md border border-primary/40 p-2 text-sm"
             >
               <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-indigo-700 dark:text-indigo-400">
-                  draft
-                </span>
+                <span className="font-medium text-primary">draft</span>
                 {locate(item)}
                 <span className="ml-auto" />
                 {/* Editing reopens the composer, which the popover would
@@ -1276,7 +1274,7 @@ const AnnotationChip = memo(function AnnotationChip({
                       across the line's edge (T-487). */}
                   {item.item.resolved !== null && (
                     <span
-                      className="text-green-700 dark:text-green-400"
+                      className="text-success"
                       title={`resolved by ${displayNameOf(item.item.resolved.by)}`}
                     >
                       resolved

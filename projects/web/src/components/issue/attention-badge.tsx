@@ -13,7 +13,7 @@ import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UNANSWERED_QUESTIONS_HASH } from "@/lib/question-landing.ts";
 
 /**
- * The amber "waiting on you" pill worn by issue rows, board cards and inbox
+ * The warning-tinted "waiting on you" pill worn by issue rows, board cards and inbox
  * rows alike.
  *
  * Keep the label at icon + one token, and put the detail in `title`. The inbox
@@ -34,7 +34,7 @@ function AttentionBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400",
+        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs border-warning/40 bg-warning/10 text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]",
         className,
       )}
       title={title}
@@ -82,7 +82,7 @@ export function QuestionBadge({
  * "Something else has to happen first" (T-377), worn in the same places as
  * the two above.
  *
- * Deliberately NOT amber: this file's amber means "waiting on you", and a
+ * Deliberately NOT warning: this file's warning tint means "waiting on you", and a
  * blocked card is the opposite — it is waiting on somebody else, and nothing
  * the reader does to it now helps. Same shape, neutral colour, so the row
  * still scans as one family of pills.
@@ -149,7 +149,7 @@ export function SpecReviewBadge({
 }
 
 /**
- * The @-mention marker (T-373). Blue, not amber: the amber family is "work
+ * The @-mention marker (T-373). Primary, not warning: the warning family is "work
  * waiting on you" (a question, a review); a mention is news about you, and
  * its colour sits with the unread markers that say the same thing.
  */
@@ -157,7 +157,7 @@ export function MentionBadge({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border border-blue-500/60 bg-blue-500/10 px-1.5 py-0.5 text-xs text-blue-700 dark:text-blue-400",
+        "inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-xs text-[color-mix(in_oklab,var(--primary),var(--foreground)_65%)]",
         className,
       )}
       title="someone @-mentioned you here"

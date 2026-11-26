@@ -808,9 +808,9 @@ const UNKNOWN_EVENT_ICON = (
 );
 
 export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
-  opened: <CircleDotIcon className="size-3.5 text-green-600" />,
-  closed: <CircleSlashIcon className="size-3.5 text-purple-600" />,
-  reopened: <CircleDotIcon className="size-3.5 text-green-600" />,
+  opened: <CircleDotIcon className="size-3.5 text-success" />,
+  closed: <CircleSlashIcon className="size-3.5 text-muted-foreground" />,
+  reopened: <CircleDotIcon className="size-3.5 text-success" />,
   status_changed: <RefreshCwIcon className="size-3.5" />,
   title_changed: <PencilIcon className="size-3.5" />,
   label_added: <TagIcon className="size-3.5" />,
@@ -823,19 +823,19 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   attachment_deleted: (
     <PaperclipIcon className="size-3.5 text-muted-foreground" />
   ),
-  question_answered: <ListChecksIcon className="size-3.5 text-green-600" />,
+  question_answered: <ListChecksIcon className="size-3.5 text-success" />,
   question_withdrawn: <CirclePauseIcon className="size-3.5" />,
   spec_pushed: <BookOpenTextIcon className="size-3.5" />,
   spec_withdrawn: <CirclePauseIcon className="size-3.5" />,
-  spec_review: <FileCheck2Icon className="size-3.5 text-amber-600" />,
-  spec_comments_resolved: <CheckIcon className="size-3.5 text-green-600" />,
+  spec_review: <FileCheck2Icon className="size-3.5 text-warning" />,
+  spec_comments_resolved: <CheckIcon className="size-3.5 text-success" />,
   deleted: <Trash2Icon className="size-3.5 text-destructive" />,
   restored: <ArchiveRestoreIcon className="size-3.5" />,
   moved_out: <LogOutIcon className="size-3.5" />,
   moved_in: <LogInIcon className="size-3.5" />,
   block_added: <CirclePauseIcon className="size-3.5" />,
   block_removed: <CirclePauseIcon className="size-3.5" />,
-  block_cleared: <CirclePlayIcon className="size-3.5 text-green-600" />,
+  block_cleared: <CirclePlayIcon className="size-3.5 text-success" />,
   block_reblocked: <CirclePauseIcon className="size-3.5" />,
 };
 

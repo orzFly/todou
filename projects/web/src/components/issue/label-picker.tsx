@@ -211,7 +211,7 @@ export function LabelPicker({
           className="w-full border-b bg-transparent px-3 py-2 text-base outline-none md:text-sm"
         />
         {nearMismatch && (
-          <div className="m-2 flex flex-wrap items-center gap-1 rounded-md border border-amber-500/60 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+          <div className="m-2 flex flex-wrap items-center gap-1 rounded-md border px-2 py-1.5 text-xs border-warning/40 bg-warning/10 text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]">
             Similar label exists
             <LabelChip label={near} />—
             <button
@@ -224,7 +224,7 @@ export function LabelPicker({
             {onCreate && (
               <button
                 type="button"
-                className="cursor-pointer text-amber-700/75 underline dark:text-amber-400/75"
+                className="cursor-pointer underline"
                 disabled={creating}
                 onClick={() => void pick({ kind: "create", name: canonical })}
               >
