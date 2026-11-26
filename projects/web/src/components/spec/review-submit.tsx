@@ -263,7 +263,7 @@ export function ReviewSubmitDialog({
           }
         }}
       >
-        <DialogHeader className="min-w-0 pr-7">
+        <DialogHeader className="min-w-0">
           <DialogTitle className="min-w-0 text-sm leading-normal font-medium [overflow-wrap:anywhere]">
             Finish review — spec v{currentVersion}
           </DialogTitle>

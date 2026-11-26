@@ -5,6 +5,7 @@ import {
   DialogCloseButton,
   DialogContent,
   DialogTitle,
+  DialogTitleBar,
 } from "@orz/ui/components/dialog";
 import {
   CodeIcon,
@@ -340,9 +341,12 @@ export function DocumentCard({
           aria-describedby={undefined}
           showCloseButton={false}
         >
-          <div className="flex items-center gap-1">
-            <DialogTitle className="min-w-0 flex-1 truncate">
-              {filename}
+          <DialogTitleBar>
+            {/* The title lays out as a flex row after its marker, so the
+                ellipsis has to sit on the text's own box, and that box needs
+                a line tall enough to keep the descenders it clips. */}
+            <DialogTitle className="min-w-0 flex-1">
+              <span className="truncate leading-normal">{filename}</span>
             </DialogTitle>
             <span ref={setDialogToolbar} className="contents" />
             <Button
@@ -354,7 +358,7 @@ export function DocumentCard({
               {maximized ? <MinimizeIcon /> : <MaximizeIcon />}
             </Button>
             <DialogCloseButton />
-          </div>
+          </DialogTitleBar>
           <div
             className={cn(
               "min-h-0 overflow-auto",

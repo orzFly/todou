@@ -5,6 +5,7 @@ import {
   DialogCloseButton,
   DialogContent,
   DialogTitle,
+  DialogTitleBar,
 } from "@orz/ui/components/dialog";
 import { writeClipboard } from "@orz/ui/lib/clipboard";
 import { useQuery } from "@tanstack/react-query";
@@ -397,24 +398,32 @@ export function AttachmentViewerDialog({
           pair !== undefined ||
           diagram !== undefined) && (
           <>
-            <div className="flex items-center gap-1">
-              <DialogTitle className="min-w-0 flex-1 truncate">
-                {diagram !== undefined
-                  ? diagram.title
-                  : pair === undefined
-                    ? target?.filename
-                    : pair.kind === "diagram"
-                      ? pair.title
-                      : pair.before.filename === pair.after.filename
-                        ? pair.after.filename
-                        : `${pair.before.filename} → ${pair.after.filename}`}
+            {/* On touch each icon button keeps the rest of 36px beside it as
+                margin, so a gap on top of that only takes room a phone's
+                filename needs. */}
+            <DialogTitleBar className="touch:gap-0">
+              {/* The title lays out as a flex row after its marker, so the
+                  ellipsis has to sit on the text's own box, and that box
+                  needs a line tall enough to keep the descenders it clips. */}
+              <DialogTitle className="min-w-0 flex-1">
+                <span className="truncate leading-normal">
+                  {diagram !== undefined
+                    ? diagram.title
+                    : pair === undefined
+                      ? target?.filename
+                      : pair.kind === "diagram"
+                        ? pair.title
+                        : pair.before.filename === pair.after.filename
+                          ? pair.after.filename
+                          : `${pair.before.filename} → ${pair.after.filename}`}
+                </span>
               </DialogTitle>
               <span
                 ref={setHoldRegion}
                 // Alone, the zoom controls need no box; an empty one would
                 // add a gap beside a lone file that shows neither group.
                 className={cn(
-                  "items-center gap-1",
+                  "items-center gap-1 touch:gap-0",
                   count > 1 ? "flex" : "contents",
                 )}
               >
@@ -454,7 +463,7 @@ export function AttachmentViewerDialog({
                 {maximized ? <MinimizeIcon /> : <MaximizeIcon />}
               </Button>
               <DialogCloseButton />
-            </div>
+            </DialogTitleBar>
             <div
               className={cn(
                 "min-h-0 overflow-auto",

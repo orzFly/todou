@@ -252,7 +252,7 @@ function EditAgentDialog({
         </Button>
       </DialogTrigger>
       <DialogContent className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto">
-        <DialogHeader className="min-w-0 pr-7">
+        <DialogHeader className="min-w-0">
           <DialogTitle className="min-w-0 leading-normal [overflow-wrap:anywhere]">
             Edit {agent.login}
           </DialogTitle>

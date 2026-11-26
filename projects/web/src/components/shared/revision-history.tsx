@@ -2,8 +2,8 @@ import {
   Dialog,
   DialogCloseButton,
   DialogContent,
-  DialogHeader,
   DialogTitle,
+  DialogTitleBar,
 } from "@orz/ui/components/dialog";
 import {
   Popover,
@@ -220,7 +220,7 @@ function RevisionDialog({
   const [wrap, setWrap] = useState(readHistoryWrap);
   return (
     <>
-      <DialogHeader className="flex-row items-center gap-3 text-left">
+      <DialogTitleBar className="gap-3">
         <DialogTitle className="min-w-0 flex-1">
           Edit history — {label}
         </DialogTitle>
@@ -242,7 +242,7 @@ function RevisionDialog({
           wrap
         </Toggle>
         <DialogCloseButton />
-      </DialogHeader>
+      </DialogTitleBar>
       <RevisionDiff revision={revision} filename={filename} wrap={wrap} />
     </>
   );
