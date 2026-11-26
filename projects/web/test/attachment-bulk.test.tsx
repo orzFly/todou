@@ -109,12 +109,12 @@ describe("attachment multi-select (T-699)", () => {
       "label [data-attachment-icon]",
     ) as SVGElement;
     expect(icon).not.toBeNull();
-    const box = screen.getByLabelText("select b.txt") as HTMLInputElement;
+    const box = screen.getByRole("checkbox", { name: "select b.txt" });
 
     fireEvent.click(name);
-    expect(box.checked).toBe(false);
+    expect(box.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(icon);
-    expect(box.checked).toBe(true);
+    expect(box.getAttribute("aria-checked")).toBe("true");
     expect(view.container.querySelectorAll("label")).toHaveLength(2);
   });
 
@@ -179,18 +179,16 @@ describe("attachment multi-select (T-699)", () => {
     fireEvent.click(await screen.findByLabelText("select a"));
     fireEvent.click(screen.getByLabelText("select c"), { shiftKey: true });
     const checked = (name: string) =>
-      (screen.getByLabelText(`select ${name}`) as HTMLInputElement).checked;
+      screen.getByLabelText(`select ${name}`).getAttribute("aria-checked") ===
+      "true";
     expect(["a", "b", "c", "d"].map(checked)).toEqual([
       true,
       true,
       true,
       false,
     ]);
-    const all = screen.getByLabelText(
-      "select all attachments",
-    ) as HTMLInputElement;
-    expect(all.checked).toBe(false);
-    expect(all.indeterminate).toBe(true);
+    const all = screen.getByLabelText("select all attachments");
+    expect(all.getAttribute("aria-checked")).toBe("mixed");
   });
 
   it("deletes the selected files after one confirmation", async () => {

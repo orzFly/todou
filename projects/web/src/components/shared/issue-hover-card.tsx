@@ -1,3 +1,10 @@
+import { cn } from "@orz/ui";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@orz/ui/components/hover-card";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import type { IssueListItem } from "@todou/shared";
 import type { ReactNode } from "react";
@@ -12,13 +19,6 @@ import {
 import { IssueTitle, untitledLine } from "@/components/shared/issue-title.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card.tsx";
-import { Skeleton } from "@/components/ui/skeleton.tsx";
-import { cn } from "@/lib/utils.ts";
 
 /**
  * What a card is, for a reader who has not opened it: everything

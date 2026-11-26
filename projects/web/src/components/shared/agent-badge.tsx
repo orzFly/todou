@@ -1,10 +1,10 @@
+import { cn } from "@orz/ui";
+import { Badge } from "@orz/ui/components/badge";
 import type { AgentContext } from "@todou/shared";
 import { Bot } from "lucide-react";
 import type { CSSProperties } from "react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { harnessMeta, sessionCopy } from "@/lib/harness";
-import { cn } from "@/lib/utils";
 
 /* FNV-1a over the full session id: one-char differences must land on
    unrelated colors, and this must match across page loads (no Math.random). */

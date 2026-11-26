@@ -3,6 +3,7 @@
 
 import { Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { hasUnsavedWork } from "@orz/ui/lib/unsaved-guard";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { IssueMetadataEntry, MemberRole, Project } from "@todou/shared";
 import { StrictMode } from "react";
@@ -10,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import { issueMetadataQuery } from "../src/api/metadata.ts";
 import { projectQuery } from "../src/api/queries.ts";
 import { MetadataSection } from "../src/components/issue/metadata-section.tsx";
-import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import { cmGetValue, cmSetValue } from "./cm.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 

@@ -1,3 +1,4 @@
+import { registerDirtySource } from "@orz/ui/lib/unsaved-guard";
 import {
   cleanup,
   configure,
@@ -18,7 +19,6 @@ import {
   vi,
 } from "vitest";
 import { clearReturnMemory } from "../src/lib/return-view-history.ts";
-import { registerDirtySource } from "../src/lib/unsaved-guard.ts";
 import { router } from "../src/router.tsx";
 import {
   renderOnTheAppRouter,
@@ -1237,7 +1237,9 @@ describe("where the back control stands (T-461)", () => {
     // row is `-mx-2`, so the same offset off that box would put the gutter
     // copy 8px further out than the heading's (T-470's arithmetic, one floor
     // up).
-    expect((copy as HTMLElement).closest(".relative")).toBe(bar);
+    // From the parent: the control is `relative` itself, for its touch hit
+    // area.
+    expect((copy as HTMLElement).parentElement?.closest(".relative")).toBe(bar);
   });
 
   it("keeps the way back while the title is being renamed", async () => {

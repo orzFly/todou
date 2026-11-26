@@ -1,8 +1,8 @@
+import { Checkbox } from "@orz/ui/components/checkbox";
+import { useSelection } from "@orz/ui/hooks/use-selection";
+import { useSweepSelect } from "@orz/ui/hooks/use-sweep-select";
 import { act, fireEvent, render, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Checkbox } from "../src/components/ui/checkbox.tsx";
-import { useSelection } from "../src/lib/use-selection.ts";
-import { useSweepSelect } from "../src/lib/use-sweep-select.ts";
 
 // happy-dom has no layout, so rows are stacked by hand: row n spans
 // y = 30n .. 30n + 29 across the whole width.
@@ -26,7 +26,6 @@ function List() {
               aria-label={`select ${key}`}
               checked={selection.isSelected(key)}
               onClick={(e) => selection.toggle(key, { extend: e.shiftKey })}
-              onChange={() => {}}
             />
           </label>
           <span data-testid={`title-${key}`}>title {key}</span>
@@ -53,8 +52,9 @@ afterEach(() => {
 });
 
 const box = (key: number) =>
-  view.getByLabelText(`select ${key}`) as HTMLInputElement;
-const checked = () => KEYS.filter((key) => box(key).checked);
+  view.getByRole("checkbox", { name: `select ${key}` });
+const checked = () =>
+  KEYS.filter((key) => box(key).getAttribute("aria-checked") === "true");
 
 function press(key: number, init: Partial<PointerEventInit> = {}) {
   fireEvent.pointerDown(box(key), {

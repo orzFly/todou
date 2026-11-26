@@ -1,16 +1,16 @@
-import { Link } from "@tanstack/react-router";
-import type { UserKind, UserRef } from "@todou/shared";
-import { BotIcon } from "lucide-react";
-import { useUserAvatarFallback } from "@/api/prefs.ts";
-import { FallbackGlyph } from "@/components/shared/fallback-glyph.tsx";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { cn } from "@orz/ui";
+import { Avatar, AvatarFallback, AvatarImage } from "@orz/ui/components/avatar";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+} from "@orz/ui/components/tooltip";
+import { Link } from "@tanstack/react-router";
+import type { UserKind, UserRef } from "@todou/shared";
+import { BotIcon } from "lucide-react";
+import { useUserAvatarFallback } from "@/api/prefs.ts";
+import { FallbackGlyph } from "@/components/shared/fallback-glyph.tsx";
 
 /**
  * The name to show a human for a user. `?.` is not paranoia: the client casts
@@ -60,7 +60,7 @@ export function LiveDot({ className }: { className?: string }) {
       aria-hidden
       data-live-dot=""
       className={cn(
-        "pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full bg-green-600 ring-2 ring-background",
+        "pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full bg-success ring-2 ring-background",
         className,
       )}
     />

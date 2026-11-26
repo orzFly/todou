@@ -1,3 +1,7 @@
+import { cn } from "@orz/ui";
+import { Textarea } from "@orz/ui/components/textarea";
+import { isApplePlatform } from "@orz/ui/lib/platform";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import {
   forwardRef,
   type KeyboardEvent,
@@ -6,17 +10,12 @@ import {
   useRef,
   useState,
 } from "react";
-
 import type {
   MarkdownEditorHandle,
   MarkdownEditorProps,
   StagingSurface,
 } from "@/components/shared/markdown-editor.tsx";
-import { Textarea } from "@/components/ui/textarea";
-import { isApplePlatform } from "@/lib/platform.ts";
 import { STAGED_TOKEN_TYPE } from "@/lib/staged-tokens.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * `MarkdownEditor` for a browser that turned CodeMirror off (T-709): the

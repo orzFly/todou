@@ -26,7 +26,7 @@ describe("UnreadBadge", () => {
     ).container.querySelector("span");
     expect(badge?.classList.contains("ml-auto")).toBe(true);
     expect(badge?.classList.contains("shrink-0")).toBe(true);
-    expect(badge?.classList.contains("bg-blue-600")).toBe(true);
+    expect(badge?.classList.contains("bg-primary")).toBe(true);
     expect(badge?.classList.contains("rounded-full")).toBe(true);
   });
 

@@ -501,7 +501,9 @@ const cases: ProjectCase[] = [
     asAdmin: true,
     trigger: (view) => {
       fireEvent.click(view.getByLabelText("edit status done"));
-      fireEvent.click(view.getByLabelText("New issues start here"));
+      fireEvent.click(
+        view.getByRole("checkbox", { name: "New issues start here" }),
+      );
       fireEvent.click(view.getByRole("button", { name: "Save" }));
     },
     editWhilePaused: false,

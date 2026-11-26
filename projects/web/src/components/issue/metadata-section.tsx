@@ -1,3 +1,5 @@
+import { Button } from "@orz/ui/components/button";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { PencilIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -6,8 +8,6 @@ import { useCan } from "@/api/queries.ts";
 import { MetadataDialog } from "@/components/issue/metadata-dialog.tsx";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * A compact age, because the sidebar column is 240px wide and a locale

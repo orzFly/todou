@@ -78,8 +78,8 @@ export async function probeRefRowWidth(options = {}, fault = {}) {
   // before it arrives would allocate against fallback metrics.
   const titleStyle = getComputedStyle(blocks[0]);
   if (
-    !titleStyle.fontFamily.includes("Geist") ||
-    !document.fonts.check(`${titleStyle.fontSize} "Geist Variable"`)
+    !titleStyle.fontFamily.includes("Noto Sans Variable") ||
+    !document.fonts.check(`${titleStyle.fontSize} "Noto Sans Variable"`)
   ) {
     coverageErrors.push("row-font-not-loaded");
   }

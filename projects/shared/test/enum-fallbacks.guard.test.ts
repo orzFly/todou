@@ -190,8 +190,6 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Closed client grouping state: AssigneeSide is locally assigned added/removed from recognized assigned/unassigned events; side and end.last index local sets/arrays.",
   "projects/web/src/components/timeline/spec-version-card.tsx :: read CHANGE_BADGE[row.change] #1":
     "Closed display rows: specVersionStatsQuery calls computeVersionStats, which constructs added/modified/removed/renamed literals from payload paths and snapshot comparisons. Before stats arrive, SpecVersionCardBody constructs added/modified/removed fallback rows from safeParsed SpecPushedPayload; neither path copies a wire change discriminator.",
-  "projects/web/src/components/ui/checkbox.tsx :: read SLOT_HOVER[hoverGroup] #1":
-    "Closed client prop: hoverGroup is typed keyof typeof SLOT_HOVER, which the table declares in full; every render site writes it as a literal — colhead in status-pill.tsx, att and att-head in attachment-list.tsx. Not a server value.",
   "projects/web/src/lib/editor/code-context.ts :: mapping LITERAL_NODES #1":
     "Membership-only registry: all consumers use Object.hasOwn(LITERAL_NODES/RAW_HTML_NODES, Lezer node name); absent/inherited node names return false.",
   "projects/web/src/lib/editor/code-context.ts :: mapping RAW_HTML_NODES #1":

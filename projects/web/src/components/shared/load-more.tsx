@@ -1,6 +1,6 @@
+import { Button } from "@orz/ui/components/button";
 import { type RefObject, useEffect, useRef } from "react";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
-import { Button } from "@/components/ui/button";
 
 export function LoadMoreFailure({
   error,

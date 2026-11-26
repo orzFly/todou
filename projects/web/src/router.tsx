@@ -1,3 +1,14 @@
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@orz/ui/components/dialog";
+import { Toaster } from "@orz/ui/components/sonner";
+import { hasUnsavedWork } from "@orz/ui/lib/unsaved-guard";
 import { useQuery } from "@tanstack/react-query";
 import {
   createRootRoute,
@@ -24,22 +35,11 @@ import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import type { BackControlKind } from "@/components/shared/return-link.tsx";
 import { AppShell } from "@/components/shell.tsx";
 import { TitleController } from "@/components/title-controller.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Toaster } from "@/components/ui/sonner";
 import { activityDateSearchMiddleware } from "@/lib/activity-calendar-search.ts";
 import { statusOf } from "@/lib/http-status.ts";
 import { parseInsightsSearch } from "@/lib/insights-search.ts";
 import { INBOX_TABS, type InboxTab } from "@/lib/return-view.ts";
 import { parseSpecSearch } from "@/lib/spec-search.ts";
-import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
 import { AgentSettingsPage } from "@/pages/agent-settings.tsx";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
 import { BoardPage } from "@/pages/board.tsx";

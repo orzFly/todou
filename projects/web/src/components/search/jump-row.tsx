@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import {
   allocateCommentRef,
@@ -5,7 +6,6 @@ import {
   refTokenParts,
 } from "@/lib/comment-ref-layout.ts";
 import { pixels, segmentMetrics } from "@/lib/ref-text-metrics.ts";
-import { cn } from "@/lib/utils";
 
 type Elision = {
   width: number;

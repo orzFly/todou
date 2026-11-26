@@ -205,20 +205,20 @@ function mountBoard(
   );
 }
 
-const box = (number: number) =>
-  screen.getByLabelText(`select #${number}`) as HTMLInputElement;
+const box = (number: number) => screen.getByLabelText(`select #${number}`);
 
 const columnBox = (name: string) =>
-  screen.getByLabelText(`select every issue in ${name}`) as HTMLInputElement;
+  screen.getByLabelText(`select every issue in ${name}`);
+const state = (box: Element) => box.getAttribute("aria-checked");
 
 const checked = () =>
   [
-    ...document.querySelectorAll<HTMLInputElement>(
-      "[data-return-id] > [data-card-select] input[type=checkbox]",
+    ...document.querySelectorAll(
+      "[data-return-id] > [data-card-select] [role=checkbox]",
     ),
   ]
-    .filter((input) => input.checked)
-    .map((input) => input.getAttribute("aria-label"));
+    .filter((box) => state(box) === "true")
+    .map((box) => box.getAttribute("aria-label"));
 
 const column = (name: string) =>
   screen.getByTestId(`column-${name}`) as HTMLElement;
@@ -328,12 +328,12 @@ describe("selecting cards on the board (T-708)", () => {
     fireEvent.click(box(51), { shiftKey: true });
     expect(checked()).toEqual(["select #22", "select #51"]);
     expect(screen.getByText("2 selected")).toBeTruthy();
-    expect(columnBox("Todo").indeterminate).toBe(true);
-    expect(columnBox("Next").indeterminate).toBe(true);
-    expect(columnBox("Done").checked).toBe(false);
+    expect(state(columnBox("Todo"))).toBe("mixed");
+    expect(state(columnBox("Next"))).toBe("mixed");
+    expect(state(columnBox("Done"))).toBe("false");
 
     fireEvent.click(columnBox("Todo"));
-    expect(columnBox("Todo").checked).toBe(true);
+    expect(state(columnBox("Todo"))).toBe("true");
     expect(checked()).toEqual(["select #21", "select #22", "select #51"]);
     // All of a column clears it again, and only it.
     fireEvent.click(columnBox("Todo"));

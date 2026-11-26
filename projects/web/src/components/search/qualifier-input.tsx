@@ -1,6 +1,6 @@
+import { cn } from "@orz/ui";
 import type { ReactNode, RefObject } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
-import { cn } from "@/lib/utils";
 
 /** Where the caret is: an offset in the string. */
 export type CaretPosition = { caret: number };

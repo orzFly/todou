@@ -1,6 +1,6 @@
+import { usePagedAppend } from "@orz/ui/hooks/use-paged-append";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { usePagedAppend } from "../src/lib/use-paged-append.ts";
 
 describe("usePagedAppend synchronous reentry guard", () => {
   it("blocks two append calls in the same tick before pending renders", async () => {

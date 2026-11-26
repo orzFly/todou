@@ -9,6 +9,7 @@ import {
 import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { userSearchSchema } from "../src/api/users.ts";
+import { ShellHeaderContext } from "../src/lib/shell-header.ts";
 
 // happy-dom ships no EventSource, and the shell opens the user-level stream
 // on mount (T-122). An inert stand-in keeps shell-rendering tests mountable;
@@ -26,6 +27,17 @@ class InertEventSource {
 if (typeof globalThis.EventSource === "undefined") {
   (globalThis as { EventSource?: unknown }).EventSource = InertEventSource;
 }
+
+/**
+ * What AppShell hands its pages as the header: here the document's own
+ * `<header>`, which a test that needs one appends, read when it is asked for.
+ * Without one it is null, as outside the shell.
+ */
+export const DOCUMENT_HEADER = {
+  get current() {
+    return document.querySelector("header");
+  },
+};
 
 export function testQueryClient(): QueryClient {
   return new QueryClient({
@@ -118,9 +130,11 @@ export function renderWithProviders(
   });
   return {
     ...render(
-      <QueryClientProvider client={client}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>,
+      <ShellHeaderContext.Provider value={DOCUMENT_HEADER}>
+        <QueryClientProvider client={client}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </ShellHeaderContext.Provider>,
     ),
     // Where a gesture ended up, which is the only thing that tells a link that
     // navigates apart from one whose href is right and whose click does nothing.

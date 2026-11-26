@@ -1,3 +1,25 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
+import { Input } from "@orz/ui/components/input";
+import { Label } from "@orz/ui/components/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@orz/ui/components/select";
+import { Switch } from "@orz/ui/components/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@orz/ui/components/table";
+import { Textarea } from "@orz/ui/components/textarea";
 import {
   type UseMutationResult,
   useMutation,
@@ -62,31 +84,9 @@ import { projectIconFallback } from "@/components/shared/project-icon.tsx";
 import { RolePermissionsDialog } from "@/components/shared/role-permissions-table.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { UserOption } from "@/components/shared/user-picker.tsx";
-import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { labelColorFor, PRESET_COLORS } from "@/lib/labels.ts";
 import { cappedRole } from "@/lib/roles.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
-import { cn } from "@/lib/utils";
 
 /** Exported so a test can hold the picker to the schema's own list. */
 export const ROLES: readonly MemberRole[] = MEMBER_ROLES;
@@ -736,7 +736,7 @@ export function MembersSection({ slug }: { slug: string }) {
           <p className="max-w-xl text-sm text-muted-foreground">
             {ORPHAN_NOTE}
           </p>
-          <div className="rounded-lg border border-amber-500/40">
+          <div className="rounded-lg border border-warning/40">
             <Table>
               <TableBody>
                 {orphans.map((group) => (
@@ -882,7 +882,7 @@ function OwnerHeaderRow({ group }: { group: Group }) {
       <TableCell>
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{login}</span>
-          <span className="rounded-full border border-amber-500/50 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400">
+          <span className="rounded-full border border-warning/50 px-2 py-0.5 text-xs text-warning">
             not a member of this project
           </span>
         </span>
@@ -1044,7 +1044,7 @@ function RoleCell({
         </SelectContent>
       </Select>
       {overCeiling && (
-        <span className="text-xs text-amber-700 dark:text-amber-400">
+        <span className="text-xs text-warning">
           above @{ownerLogin} — the next change clamps it to {ceiling}
         </span>
       )}

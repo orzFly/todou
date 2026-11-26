@@ -1,3 +1,10 @@
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@orz/ui/components/dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   formatAnchorRange,
@@ -22,13 +29,6 @@ import {
   type ReviewCompletion,
   useReviewCompletion,
 } from "@/components/spec/use-review-completion.ts";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import {
   confirmSubmittedSpecReviewDrafts,
@@ -263,7 +263,7 @@ export function ReviewSubmitDialog({
           }
         }}
       >
-        <DialogHeader className="min-w-0 pr-7">
+        <DialogHeader className="min-w-0">
           <DialogTitle className="min-w-0 text-sm leading-normal font-medium [overflow-wrap:anywhere]">
             Finish review — spec v{currentVersion}
           </DialogTitle>
@@ -343,8 +343,8 @@ export function ReviewSubmitDialog({
           </Button>
           <Button
             size="sm"
-            variant="outline"
-            className="h-9 border-red-500/60 px-2 text-xs text-red-700 sm:h-7 sm:px-2.5 sm:text-[0.8rem] dark:text-red-400"
+            variant="destructive"
+            className="h-9 px-2 text-xs sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
             disabled={verdictDisabled}
             title={verdictTitle}
             onClick={() => submit("request_changes")}
@@ -355,7 +355,7 @@ export function ReviewSubmitDialog({
           </Button>
           <Button
             size="sm"
-            className="h-9 bg-green-700 px-2 text-xs text-white hover:bg-green-800 sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
+            className="h-9 px-2 text-xs sm:h-7 sm:px-2.5 sm:text-[0.8rem]"
             disabled={approveDisabled}
             title={approveTitle}
             onClick={() => submit("approve")}

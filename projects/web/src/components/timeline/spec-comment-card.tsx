@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { formatAnchorRange, type SpecCommentComponent } from "@todou/shared";
@@ -8,8 +10,6 @@ import { api } from "@/api/queries.ts";
 import { specFilesQuery } from "@/api/spec.ts";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import type { Target } from "@/components/timeline/comment-item.tsx";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils.ts";
 
 const CONTEXT_LINES = 8;
 
@@ -71,7 +71,7 @@ export function SpecCommentAnchorCard({
         </span>
         {resolvedAt !== null && (
           <span
-            className="shrink-0 rounded-full border border-green-600/60 bg-green-600/10 px-1.5 text-green-700 dark:text-green-400"
+            className="shrink-0 rounded-full border px-1.5 border-success/40 bg-success/10 text-[color-mix(in_oklab,var(--success),var(--foreground)_65%)]"
             title={resolvedAt}
           >
             resolved
@@ -182,7 +182,7 @@ function ExpandedContext({
             className={cn(
               "flex whitespace-pre-wrap",
               anchored
-                ? "bg-amber-500/10 text-foreground"
+                ? "bg-warning/10 text-foreground"
                 : "text-muted-foreground",
             )}
           >

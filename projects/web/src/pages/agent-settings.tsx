@@ -1,3 +1,15 @@
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@orz/ui/components/dialog";
+import { Input } from "@orz/ui/components/input";
+import { Label } from "@orz/ui/components/label";
 import {
   useMutation,
   useQuery,
@@ -29,18 +41,6 @@ import {
 import { TokenReveal } from "@/components/shared/token-reveal.tsx";
 import { TokenTable } from "@/components/shared/token-table.tsx";
 import { UserAvatar } from "@/components/shared/user-chip.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 
 /**
@@ -252,7 +252,7 @@ function EditAgentDialog({
         </Button>
       </DialogTrigger>
       <DialogContent className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto">
-        <DialogHeader className="min-w-0 pr-7">
+        <DialogHeader className="min-w-0">
           <DialogTitle className="min-w-0 leading-normal [overflow-wrap:anywhere]">
             Edit {agent.login}
           </DialogTitle>

@@ -1,3 +1,13 @@
+import { Badge } from "@orz/ui/components/badge";
+import { Button } from "@orz/ui/components/button";
+import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
+import { Skeleton } from "@orz/ui/components/skeleton";
+import {
+  holdRevealed,
+  revealBlock,
+  useOwnHold,
+} from "@orz/ui/hooks/scroll-insets";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AnsweredComment,
@@ -31,14 +41,8 @@ import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import type { Target } from "@/components/timeline/comment-item.tsx";
 import { useTimelineSettlement } from "@/components/timeline/timeline-answers.tsx";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog.tsx";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
-import { holdRevealed, revealBlock, useOwnHold } from "@/lib/scroll-insets.ts";
 import { formatTimelineTime } from "@/lib/timeline-time.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { documentPip, useDocumentPip } from "@/lib/use-document-pip.ts";
 
 type Draft = { selected: Set<number>; other: string; declined: boolean };
@@ -162,7 +166,7 @@ function settlementOf(
  * timeline's `question_answered` or `question_withdrawn` event, this
  * mount's own submission, and only then `/questions`. A card none of them
  * settles yet renders the neutral state — "unknown" is not "unanswered",
- * and the amber form asserts the latter.
+ * and the warning-tinted form asserts the latter.
  */
 export function QuestionsCard({
   slug,
@@ -290,7 +294,7 @@ function SettledCard({
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
         {settlement.kind === "answered" ? (
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <CheckIcon className="size-3.5 shrink-0 text-green-600" />
+            <CheckIcon className="size-3.5 shrink-0 text-success" />
             answered by <UserChip user={settlement.answer.actor} compact />
             <SettledAt at={settlement.answer.created_at} />
           </span>
@@ -444,13 +448,10 @@ function AnswerForm({
   const form = (
     <div
       ref={root}
-      className="@container mt-1 space-y-4 rounded-md border border-amber-500/60 bg-amber-500/5 p-3"
+      className="@container mt-1 space-y-4 rounded-md border border-warning/60 bg-warning/5 p-3"
     >
       <div className="flex items-center justify-between gap-2">
-        <Badge
-          variant="outline"
-          className="border-amber-500/60 text-amber-700 dark:text-amber-400"
-        >
+        <Badge variant="outline" className="border-warning/60 text-warning">
           awaiting answer
         </Badge>
         {!pip.window && documentPip() && (
@@ -552,7 +553,7 @@ function AnswerForm({
   if (!pip.window) return form;
   return (
     <>
-      <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-dashed border-amber-500/60 bg-amber-500/5 px-3 py-1.5 text-sm text-muted-foreground">
+      <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-dashed border-warning/60 bg-warning/5 px-3 py-1.5 text-sm text-muted-foreground">
         <span className="flex items-center gap-2">
           <PictureInPicture2Icon className="size-4 shrink-0" />
           Answering in a floating window
@@ -643,8 +644,8 @@ function QuestionForm({
               aria-pressed={active}
               className={`flex w-full items-start gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition-colors select-text ${
                 active
-                  ? "border-primary bg-primary/10 enabled:hover:bg-primary/20"
-                  : "border-transparent enabled:hover:border-foreground/40 enabled:hover:bg-foreground/6"
+                  ? "border-primary bg-primary/10 enabled:hover:bg-primary/30"
+                  : "border-transparent enabled:hover:border-foreground/45 enabled:hover:bg-foreground/6"
               }`}
             >
               <span className="mt-0.5 shrink-0 text-muted-foreground">
@@ -682,7 +683,7 @@ function QuestionForm({
           className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition-colors select-text ${
             draft.declined
               ? "border-destructive/60 bg-destructive/10 enabled:hover:bg-destructive/20"
-              : "border-transparent text-muted-foreground enabled:hover:border-foreground/40 enabled:hover:bg-foreground/6"
+              : "border-transparent text-muted-foreground enabled:hover:border-foreground/45 enabled:hover:bg-foreground/6"
           }`}
         >
           <CircleSlashIcon

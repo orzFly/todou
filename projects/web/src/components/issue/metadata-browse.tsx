@@ -1,12 +1,13 @@
+import { Badge } from "@orz/ui/components/badge";
+import { Button } from "@orz/ui/components/button";
+import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
+import { useMediaQuery } from "@orz/ui/hooks/use-media-query";
 import type { IssueMetadataEntry } from "@todou/shared";
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { compactAge } from "@/components/issue/metadata-section.tsx";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
+import { SM_UP } from "@/lib/breakpoints.ts";
 
 /**
  * Whether a value is long enough to fold. Read off the text rather than

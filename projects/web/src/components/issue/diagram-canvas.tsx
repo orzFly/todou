@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { useMemo } from "react";
 import { createPortal } from "react-dom";
 import type { DiagramView } from "@/components/issue/attachment-viewer.tsx";
@@ -5,7 +6,6 @@ import { DiagramDrawing } from "@/components/issue/compare-canvas.tsx";
 import { useZoomPan, type Widening } from "@/components/issue/use-zoom-pan.ts";
 import { ZoomControls } from "@/components/issue/zoom-controls.tsx";
 import { fitScale } from "@/lib/image-zoom.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * One mermaid diagram in the attachment viewer (T-773), zoomed and panned as

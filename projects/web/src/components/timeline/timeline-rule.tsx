@@ -1,5 +1,5 @@
+import { cn } from "@orz/ui";
 import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
 
 /**
  * A thin rule with its content sitting in the middle of it.

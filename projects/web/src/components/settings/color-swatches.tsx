@@ -1,7 +1,7 @@
+import { Button } from "@orz/ui/components/button";
+import { Input } from "@orz/ui/components/input";
 import { CheckIcon } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { PRESET_COLORS } from "@/lib/labels.ts";
 
 /** Lenient hand-typed hex → canonical #rrggbb, or null when unparseable. */

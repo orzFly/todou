@@ -1,3 +1,10 @@
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@orz/ui/components/dialog";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { IssueReferenceEntry } from "@todou/shared";
@@ -6,13 +13,6 @@ import { issueReferencesQuery } from "@/api/issue-references.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Skeleton } from "@/components/ui/skeleton";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
 const keyOf = (e: IssueReferenceEntry) => `${e.project_id}/${e.number}`;

@@ -1,5 +1,5 @@
+import { cn } from "@orz/ui";
 import { displayTitle } from "@todou/shared";
-import { cn } from "@/lib/utils.ts";
 
 type TitleSource = { title: string; body_preview?: string | null };
 

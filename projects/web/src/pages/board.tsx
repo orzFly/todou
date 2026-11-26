@@ -10,6 +10,14 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
+import { cn } from "@orz/ui";
+import { Badge } from "@orz/ui/components/badge";
+import { Button } from "@orz/ui/components/button";
+import { Checkbox } from "@orz/ui/components/checkbox";
+import { Skeleton } from "@orz/ui/components/skeleton";
+import { useOverlayScrollbars } from "@orz/ui/hooks/use-overlay-scrollbars";
+import { type SelectionState, useSelection } from "@orz/ui/hooks/use-selection";
+import { useSweepSelect } from "@orz/ui/hooks/use-sweep-select";
 import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import {
@@ -73,25 +81,14 @@ import {
   useRegisterReturnArea,
   useReturnLinkState,
 } from "@/components/shared/return-context.tsx";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
 import { openBlockCount } from "@/lib/blocks.ts";
 import {
   BOARD_CANVAS_REGION,
   boardColumnRegion,
   WINDOW_REGION,
 } from "@/lib/return-view.ts";
-import { useOverlayScrollbars } from "@/lib/use-overlay-scrollbars.ts";
+import { groupState } from "@/lib/selection-group.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
-import {
-  groupState,
-  type SelectionState,
-  useSelection,
-} from "@/lib/use-selection.ts";
-import { useSweepSelect } from "@/lib/use-sweep-select.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * What a card needs to edit its own labels and assignees (T-533). Absent on
@@ -484,6 +481,13 @@ export function BoardPage() {
  * re-renders every column and card each time the pointer crosses into
  * another column. Only the thin droppable and draggable shells take those.
  */
+// The column's own content never means to scroll sideways: titles use
+// `wrap-anywhere` and the meta row clips rather than wraps (T-303, T-361).
+// Tailwind's `overflow-y-auto` leaves the x axis computing to `auto`, and
+// @orz/ui sets no overflow of its own, so without this the column is a
+// horizontal scroll container too. Module scope: the hook gets one object.
+const COLUMN_SCROLLBARS = { overflow: { x: "hidden", y: "scroll" } } as const;
+
 const BoardColumn = memo(function BoardColumn({
   slug,
   status,
@@ -501,10 +505,15 @@ const BoardColumn = memo(function BoardColumn({
     [column.data],
   );
   const columnState = select?.stateOf(numbers) ?? "none";
+  // The select-all box shows while a mouse is on the header row.
+  const [headHover, setHeadHover] = useState(false);
   // One project-wide read that every column shares, not one per card.
   const watchers = useQuery(projectWatchersQuery(slug)).data?.issues;
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
-  const { slot, viewport } = useOverlayScrollbars(column.data !== undefined);
+  const { slot, viewport } = useOverlayScrollbars(
+    column.data !== undefined,
+    COLUMN_SCROLLBARS,
+  );
   // The column registers its own scrolling region because the page above it
   // never holds this element (T-407). `viewport` and not `slot`: overlay
   // scrollbars adopt this div rather than inserting one of their own, so its
@@ -528,7 +537,11 @@ const BoardColumn = memo(function BoardColumn({
       // is still the column the canvas has to find again (T-407).
       data-return-id={String(status.id)}
     >
-      <div className="group/colhead flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm">
+      <div
+        className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm"
+        onPointerEnter={(e) => setHeadHover(e.pointerType !== "touch")}
+        onPointerLeave={() => setHeadHover(false)}
+      >
         <StatusHeading
           status={status}
           select={
@@ -539,6 +552,7 @@ const BoardColumn = memo(function BoardColumn({
                   disabled: numbers.length === 0,
                   onChange: () => select.onSelectColumn(numbers),
                   label: `select every issue in ${status.name}`,
+                  revealed: headHover,
                 }
               : undefined
           }
@@ -679,12 +693,11 @@ const CardSelectBox = memo(function CardSelectBox({
       <Checkbox
         aria-label={`select ${ref}`}
         checked={selected}
-        // onClick rather than onChange: only the click carries shiftKey, and
-        // it fires for Space as well.
+        // onClick rather than onCheckedChange: only the click carries
+        // shiftKey, and it fires for Space as well.
         onClick={(e) => onSelect(number, e.shiftKey)}
-        onChange={() => {}}
         onPointerDown={keepOffDrag}
-        className="bg-background opacity-0 group-hover/card:opacity-100 group-data-[selecting]/select:opacity-100 checked:opacity-100 focus-visible:opacity-100 touch:hidden"
+        className="bg-background opacity-0 group-hover/card:opacity-100 group-data-[selecting]/select:opacity-100 data-[state=checked]:opacity-100 focus-visible:opacity-100 touch:hidden"
       />
     </span>
   );

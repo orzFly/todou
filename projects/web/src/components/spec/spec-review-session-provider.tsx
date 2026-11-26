@@ -1,3 +1,7 @@
+import {
+  type NavigationContext,
+  useDirtySource,
+} from "@orz/ui/lib/unsaved-guard";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMatches } from "@tanstack/react-router";
 import {
@@ -35,7 +39,6 @@ import {
   type SpecReviewSessionSnapshot,
   specReviewSessionSurvivesNavigation,
 } from "@/lib/spec-review-session.ts";
-import { type NavigationContext, useDirtySource } from "@/lib/unsaved-guard.ts";
 
 const SPEC_ROUTE_ID = "/authed/projects/$slug/issues/$number/spec";
 

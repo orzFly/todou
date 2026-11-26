@@ -1,7 +1,7 @@
+import { cn } from "@orz/ui";
 import type { ProjectIconFallback } from "@todou/shared";
 import { useId, useLayoutEffect, useRef } from "react";
 import { projectTint } from "@/lib/project-tint.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * As a share of the box. The text is sized in the box's own units, so it
@@ -76,7 +76,8 @@ export function FallbackGlyph({
     // on a board of cards is most of a commit (T-691). Without an observer
     // there is no later chance.
     if (resize === null) measure();
-    // A measurement taken in the fallback face is wrong once Geist arrives.
+    // A measurement taken in the fallback face is wrong once the UI font
+    // arrives.
     document.fonts?.addEventListener("loadingdone", measure);
     return () => {
       resize?.disconnect();
@@ -114,9 +115,10 @@ export function FallbackGlyph({
       )}
       {/* Not centred by flex: the mention chip makes every span in its avatar
           an inline-block, for the same copy-path reason as above. Vertically,
-          a line the box's height puts Geist's baseline 0.355em below the
-          middle, half its 0.7em cap height, which centres capitals rather than
-          the em box. Horizontally, an offset and a translate, because
+          a line the box's height puts Noto Sans's baseline 0.388em below the
+          middle, close to half its 0.719em cap height (0.359em), so capitals
+          sit centred to within 0.03em (half a pixel in a 40px avatar) rather
+          than the em box. Horizontally, an offset and a translate, because
           `text-align: center` starts a line wider than its box at the left
           edge, and the fit then shrinks it off-centre. That offset counts from
           the line's start, so the alignment is pinned rather than inherited:

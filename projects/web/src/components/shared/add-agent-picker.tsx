@@ -1,8 +1,8 @@
+import { Button } from "@orz/ui/components/button";
 import type { Agent } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { UserPicker } from "@/components/shared/user-picker.tsx";
-import { Button } from "@/components/ui/button";
 
 /**
  * Picks an agent to add to a project (T-228), through the shared user picker.

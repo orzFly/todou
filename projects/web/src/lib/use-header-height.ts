@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useElementHeight } from "@orz/ui/hooks/use-element-height";
+import { useShellHeader } from "@/lib/shell-header.ts";
 
 /** The shell header's desktop height, until the measurement lands. */
 const FALLBACK_HEADER_HEIGHT = 56;
@@ -20,75 +21,20 @@ const BORDER_OVERLAP = 1;
  * it, as the issue list's group headers do.
  */
 export function useHeaderHeight(): number {
-  const [headerHeight, setHeaderHeight] = useState(FALLBACK_HEADER_HEIGHT);
-
-  useEffect(() => {
-    const appbar = document.querySelector("header");
-    if (appbar === null) return;
-    const measure = () =>
-      setHeaderHeight(appbar.getBoundingClientRect().height);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    window.addEventListener("resize", measure);
-    const observer = new ResizeObserver(measure);
-    observer.observe(appbar);
-    return () => {
-      window.removeEventListener("resize", measure);
-      observer.disconnect();
-    };
-  }, []);
-
-  return headerHeight - BORDER_OVERLAP;
+  const header = useShellHeader();
+  return (
+    useElementHeight(() => header.current, FALLBACK_HEADER_HEIGHT) -
+    BORDER_OVERLAP
+  );
 }
 
 /**
- * A sticky `top` for a layer pinned `offset` pixels under the header's top:
- * the header follows the visual viewport (`--vv-top`) and slides away on a
- * phone (`--header-hide`, T-594), and a layer that did not do the same would
- * open a strip between the two. Pair it with `data-header-follow`, so the
- * layer also settles on the header's own transition.
- */
-export function belowHeader(offset: number): string {
-  return `calc(${offset}px + var(--vv-top, 0px) - var(--header-hide, 0px))`;
-}
-
-/**
- * Where the header ends in the viewport right now, which is less than its
+ * Where `header` ends in the viewport right now, which is less than its
  * height while it is sliding away. For insets read at the moment they are
  * used, rather than rendered.
  */
-export function headerBottom(): number {
-  const appbar = document.querySelector("header");
-  return appbar === null
+export function headerBottom(header: HTMLElement | null): number {
+  return header === null
     ? 0
-    : Math.max(0, appbar.getBoundingClientRect().bottom);
-}
-
-/**
- * The live height of one element, for stacking a second sticky layer under
- * the header. `fallback` stands in until the first measurement, and while
- * `ResizeObserver` is missing (happy-dom, older engines).
- */
-export function useElementHeight(
-  ref: React.RefObject<HTMLElement | null>,
-  fallback: number,
-): number {
-  const [height, setHeight] = useState(fallback);
-
-  useEffect(() => {
-    const element = ref.current;
-    if (element === null) return;
-    const measure = () => setHeight(element.getBoundingClientRect().height);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    window.addEventListener("resize", measure);
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => {
-      window.removeEventListener("resize", measure);
-      observer.disconnect();
-    };
-  }, [ref]);
-
-  return height;
+    : Math.max(0, header.getBoundingClientRect().bottom);
 }

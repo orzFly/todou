@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { createLink, useRouterState } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -8,7 +9,6 @@ import {
   useRef,
 } from "react";
 import { PagePending } from "@/components/page-skeleton.tsx";
-import { cn } from "@/lib/utils";
 
 /**
  * Categories on the left, the chosen one on the right (T-557). Below the

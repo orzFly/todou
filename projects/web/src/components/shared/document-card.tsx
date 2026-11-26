@@ -1,3 +1,12 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogCloseButton,
+  DialogContent,
+  DialogTitle,
+  DialogTitleBar,
+} from "@orz/ui/components/dialog";
 import {
   CodeIcon,
   DownloadIcon,
@@ -13,18 +22,10 @@ import { createPortal } from "react-dom";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { PatchView } from "@/components/shared/patch-view.tsx";
 import { CodeBlock } from "@/components/shared/pierre.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogCloseButton,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   documentKind,
   MARKDOWN_RENDER_MAX_CHARS,
 } from "@/lib/attachment-preview.ts";
-import { cn } from "@/lib/utils";
 
 /** "plain": the text as it is, for a file too large to render (T-582). */
 export type DocumentRender = "markdown" | "patch" | "code" | "plain";
@@ -340,9 +341,12 @@ export function DocumentCard({
           aria-describedby={undefined}
           showCloseButton={false}
         >
-          <div className="flex items-center gap-1">
-            <DialogTitle className="min-w-0 flex-1 truncate">
-              {filename}
+          <DialogTitleBar>
+            {/* The title lays out as a flex row after its marker, so the
+                ellipsis has to sit on the text's own box, and that box needs
+                a line tall enough to keep the descenders it clips. */}
+            <DialogTitle className="min-w-0 flex-1">
+              <span className="truncate leading-normal">{filename}</span>
             </DialogTitle>
             <span ref={setDialogToolbar} className="contents" />
             <Button
@@ -354,7 +358,7 @@ export function DocumentCard({
               {maximized ? <MinimizeIcon /> : <MaximizeIcon />}
             </Button>
             <DialogCloseButton />
-          </div>
+          </DialogTitleBar>
           <div
             className={cn(
               "min-h-0 overflow-auto",

@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { useMediaQuery } from "@orz/ui/hooks/use-media-query";
 import type { Issue } from "@todou/shared";
 import {
   type CSSProperties,
@@ -11,9 +13,8 @@ import {
   CompactIssueIdentity,
   IssueReturnLink,
 } from "@/components/shared/return-link.tsx";
+import { SM_UP, XL_UP } from "@/lib/breakpoints.ts";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
-import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * The title mirror, which appears once the real heading has scrolled away and

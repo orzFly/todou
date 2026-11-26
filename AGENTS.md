@@ -139,6 +139,21 @@ check, damage a copy of its input on purpose and confirm that it fails — that 
 above was found, and a check whose blind spot nobody has looked for is a check nobody has tested.
 This is the same mistake as judging a test run by a piped exit code; see "Reading a test run" above.
 
+## UI components
+
+The web client is built from `@orz/ui`: its components, hooks, theme store and stylesheet.
+
+- Before changing web UI, read `projects/web/node_modules/@orz/ui/skills/orz-ui/SKILL.md` and do
+  what it says. It and the guidelines under `projects/web/node_modules/@orz/ui/docs/` ship inside the
+  package, so they match the version installed.
+- Upgrade with `pnpm --filter @todou/web add @orz/ui@master @orz/themes@master`, naming every
+  `@orz/*` package the web client depends on. They must all be one exact version:
+  `@orz/ui` pins its siblings exactly, and a second version installs a second copy whose theme data
+  the store does not recognise. `projects/web/test/orz-versions.test.ts` fails otherwise.
+- A component `@orz/ui` lacks, or a bug in one, is a card on the orzui project (`-p orzui`, its
+  cards read `UI-<n>`), linked from the todou card with blocked-by. Do not draw a local copy in the
+  meantime.
+
 ## Navigation is links
 
 Anything whose job is to take the user somewhere else must be a real link — `<a href>`, or the

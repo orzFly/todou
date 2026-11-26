@@ -1,14 +1,14 @@
-import { Link, useMatchRoute } from "@tanstack/react-router";
-import { type CapabilityId, can, type MemberRole } from "@todou/shared";
-import { CheckIcon, EllipsisIcon, PlusIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
+} from "@orz/ui/components/dropdown-menu";
+import { Link, useMatchRoute } from "@tanstack/react-router";
+import { type CapabilityId, can, type MemberRole } from "@todou/shared";
+import { CheckIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 
 /**
  * Shared with the project switcher, which keeps the active tab across a
@@ -59,7 +59,7 @@ const shows = (tab: ProjectTab, role: MemberRole | null | undefined) =>
  * row, and the `···` is what bought that room back (T-454).
  */
 const TAB =
-  "rounded-md px-3 py-1 text-sm text-muted-foreground hover:text-foreground";
+  "rounded-md px-2 py-1 text-ui text-muted-foreground hover:text-foreground sm:px-2.5";
 
 /** What being on this page looks like, wherever the row chooses to say it. */
 const MARK = "bg-accent text-foreground font-medium";
@@ -212,12 +212,15 @@ export function ProjectNav({
 export function NewIssueButton({
   slug,
   className,
+  iconOnly = false,
 }: {
   slug: string;
   className?: string;
+  /** The phone's project row: the icon alone, at an icon button's size. */
+  iconOnly?: boolean;
 }) {
   return (
-    <Button size="sm" asChild className={className}>
+    <Button size={iconOnly ? "icon-sm" : "sm"} asChild className={className}>
       <Link
         to="/projects/$slug/issues/new"
         params={{ slug }}

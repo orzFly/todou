@@ -1,3 +1,4 @@
+import { Button } from "@orz/ui/components/button";
 import { Maximize2Icon } from "lucide-react";
 import {
   type ComponentProps,
@@ -33,7 +34,6 @@ import {
   type CompareSide,
   MediaCompare,
 } from "@/components/shared/media-compare.tsx";
-import { Button } from "@/components/ui/button";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import {
   type AttachmentRef,

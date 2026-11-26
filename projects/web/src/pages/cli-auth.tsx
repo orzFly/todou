@@ -1,3 +1,6 @@
+import { Button } from "@orz/ui/components/button";
+import { Card, CardContent } from "@orz/ui/components/card";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Agent, CliAuthRequestInfo, Me } from "@todou/shared";
@@ -23,9 +26,6 @@ import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { classifyReadFailure } from "@/lib/http-status.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 
@@ -357,7 +357,7 @@ export function CliAuthCodeCard({
               is asking for a personal access token.
             </p>
             <RequesterLine request={request} now={now} />
-            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+            <p className="text-sm font-medium text-warning">
               Approve only a login you started yourself, in a terminal showing
               this same code. If someone sent you this link, deny it — approving
               gives them a token that acts as the identity below until it is

@@ -1,7 +1,7 @@
+import { Button } from "@orz/ui/components/button";
 import { ACT_AS_HEADER, type TokenCreated } from "@todou/shared";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 
 /** One-time plaintext display — the value is gone once the dialog closes. */
 export function TokenReveal({ token }: { token: TokenCreated }) {

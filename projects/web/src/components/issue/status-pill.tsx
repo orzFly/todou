@@ -1,5 +1,5 @@
+import { SelectSlot } from "@orz/ui/components/checkbox";
 import type { Status } from "@todou/shared";
-import { SelectSlot } from "@/components/ui/checkbox";
 
 /**
  * The only drawing of a status (T-715), in menus and completions as much as
@@ -40,8 +40,9 @@ export function StatusPill({
  *
  * `select` is behaviour, not a second drawing: the select-all box of a board
  * column (T-732) or a list group (T-768) takes the dot's cell, so the name
- * does not move when it appears. The caller's row is `group/colhead`, whose
- * hover shows the box. Without it the output is what it always was.
+ * does not move when it appears. The caller's row passes `revealed` while
+ * the pointer is on it, which shows the box. Without it the output is what
+ * it always was.
  */
 export function StatusHeading({
   status,
@@ -54,6 +55,7 @@ export function StatusHeading({
     disabled: boolean;
     onChange: () => void;
     label: string;
+    revealed?: boolean;
   };
 }) {
   const dot = (
@@ -68,12 +70,11 @@ export function StatusHeading({
       {select ? (
         <SelectSlot
           icon={dot}
-          hoverGroup="colhead"
+          revealed={select.revealed && !select.disabled}
           aria-label={select.label}
-          checked={select.checked}
-          indeterminate={select.indeterminate}
+          checked={select.indeterminate ? "indeterminate" : select.checked}
           disabled={select.disabled}
-          onChange={select.onChange}
+          onCheckedChange={select.onChange}
           // Touch gets no selection here, so no invisible box to tap.
           className="touch:pointer-events-none"
         />

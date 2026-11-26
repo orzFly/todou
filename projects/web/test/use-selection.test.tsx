@@ -1,6 +1,6 @@
+import { useSelection } from "@orz/ui/hooks/use-selection";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { useSelection } from "../src/lib/use-selection.ts";
 
 const render = (keys: number[]) =>
   renderHook(({ keys }) => useSelection(keys), {

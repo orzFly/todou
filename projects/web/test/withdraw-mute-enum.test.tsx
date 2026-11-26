@@ -224,11 +224,11 @@ describe("UnreadMarker mute reason compatibility", () => {
       expect(badge.title).toBe("101 new comments since you last viewed");
       expect(badge.getAttribute("aria-label")).toBe(badge.title);
       expect(badge.textContent).toBe("99+");
-      expect(badge.className).toContain("bg-blue-600");
+      expect(badge.className).toContain("bg-primary");
       view.rerender(<UnreadMarker unread unreadComments={0} {...props} />);
       const ring = view.container.querySelector("span");
       expect(ring?.title).toBe("new activity since you last viewed");
-      expect(ring?.className).toContain("border-blue-500");
+      expect(ring?.className).toContain("border-primary");
       view.rerender(
         <UnreadMarker unread={false} unreadComments={0} {...props} />,
       );

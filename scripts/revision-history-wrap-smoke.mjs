@@ -887,7 +887,7 @@ function probeSource(fault) {
       catch (error) { return { error: String(error) }; }
     },
     setSpecWrap: value => { localStorage.setItem(${JSON.stringify(SPEC_KEY)}, value); },
-    setTheme: value => { localStorage.setItem('todou-theme', value); },
+    setTheme: mode => { localStorage.setItem('todou-theme', JSON.stringify({ ui: { theme: 'default', mode } })); },
     /** B5: the page's own prose and fences, which this card must not touch. */
     prose: () => {
       const bodies = [...document.querySelectorAll('.markdown-body')];

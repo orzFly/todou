@@ -1,3 +1,5 @@
+import { Button } from "@orz/ui/components/button";
+import { POINTER_FINE, useMediaQuery } from "@orz/ui/hooks/use-media-query";
 import { TextQuoteIcon } from "lucide-react";
 import {
   type CSSProperties,
@@ -11,10 +13,8 @@ import {
   type QuoteTarget,
   useQuoteReply,
 } from "@/components/timeline/quote-reply.tsx";
-import { Button } from "@/components/ui/button";
 import { sourceLines } from "@/lib/quote-markdown.ts";
 import { selectedSourceRange } from "@/lib/quote-selection.ts";
-import { POINTER_FINE, useMediaQuery } from "@/lib/use-media-query.ts";
 
 /** Marks the floating entry, so a press on it is not a new selection. */
 const UI_ATTR = "data-selection-quote";

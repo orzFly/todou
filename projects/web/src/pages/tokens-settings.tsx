@@ -1,3 +1,14 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import { Checkbox } from "@orz/ui/components/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@orz/ui/components/dialog";
+import { Input } from "@orz/ui/components/input";
+import { Label } from "@orz/ui/components/label";
 import {
   useMutation,
   useQueryClient,
@@ -25,17 +36,6 @@ import {
   UserPicker,
   UserSelectTrigger,
 } from "@/components/shared/user-picker.tsx";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
 
 type HolderFilter = "user" | "agents" | "all";
 
@@ -285,9 +285,9 @@ export function TokensSettingsPage() {
                         aria-labelledby={`scope-${scope}`}
                         aria-describedby={`scope-${scope}-grants`}
                         checked={scopes.includes(scope)}
-                        onChange={(e) =>
+                        onCheckedChange={(checked) =>
                           setScopes(
-                            toggleScope(scopes, scope, e.target.checked),
+                            toggleScope(scopes, scope, checked === true),
                           )
                         }
                       />

@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -44,7 +45,6 @@ import {
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
-import { cn } from "@/lib/utils.ts";
 
 /**
  * What an ordinary reference to the card being read adds beside its ref, the

@@ -1,6 +1,19 @@
 import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
+import { ShellHeaderContext } from "../src/lib/shell-header.ts";
 import { useHeaderHeight } from "../src/lib/use-header-height.ts";
+import { DOCUMENT_HEADER } from "./render.tsx";
+
+/** Under the shell, which hands its own header down by context. */
+const underShell = ({ children }: { children: ReactNode }) =>
+  createElement(
+    ShellHeaderContext.Provider,
+    { value: DOCUMENT_HEADER },
+    children,
+  );
+const measured = () =>
+  renderHook(() => useHeaderHeight(), { wrapper: underShell });
 
 /**
  * happy-dom has no layout engine: `getBoundingClientRect()` answers 0 for
@@ -24,19 +37,19 @@ describe("useHeaderHeight", () => {
     // The whole point of T-233: 56 is a fallback, not an answer. A header
     // that measures anything else has to come back as that.
     headerOf(97);
-    expect(renderHook(() => useHeaderHeight()).result.current).toBe(96);
+    expect(measured().result.current).toBe(96);
   });
 
   it("tucks the layer below one pixel under the header's border", () => {
     // Pinned exactly at the measured edge, a fractional zoom in Firefox can
     // leave a device-pixel row of page between the two (T-595).
     headerOf(92.5);
-    expect(renderHook(() => useHeaderHeight()).result.current).toBe(91.5);
+    expect(measured().result.current).toBe(91.5);
   });
 
   it("follows the header when it gains or loses a row", () => {
     const header = headerOf(97);
-    const { result } = renderHook(() => useHeaderHeight());
+    const { result } = measured();
     expect(result.current).toBe(96);
 
     header.getBoundingClientRect = () => ({ height: 57 }) as DOMRect;
@@ -45,6 +58,6 @@ describe("useHeaderHeight", () => {
   });
 
   it("stands on the fallback until there is a header to measure", () => {
-    expect(renderHook(() => useHeaderHeight()).result.current).toBe(55);
+    expect(measured().result.current).toBe(55);
   });
 });

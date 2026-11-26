@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { ChevronsLeftRightIcon } from "lucide-react";
 import {
   type CSSProperties,
@@ -12,7 +13,6 @@ import {
   useCompareMode,
 } from "@/lib/compare-mode.ts";
 import { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "@/lib/segment-styles.ts";
-import { cn } from "@/lib/utils.ts";
 
 type Size = { width: number; height: number };
 

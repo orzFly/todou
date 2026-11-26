@@ -1,6 +1,4 @@
-import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
-import { useCallback } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@orz/ui/components/button";
 import {
   Dialog,
   DialogContent,
@@ -8,8 +6,10 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
+} from "@orz/ui/components/dialog";
+import { hasUnsavedWork } from "@orz/ui/lib/unsaved-guard";
+import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
+import { useCallback } from "react";
 
 /**
  * One guard for the whole app (T-317): a single `useBlocker` answers both

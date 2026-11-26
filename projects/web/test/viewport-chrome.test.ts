@@ -1,11 +1,11 @@
-import { cleanup, render } from "@testing-library/react";
-import { createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   useAutoHideHeader,
   useVisualViewportInsets,
   visualViewportInsets,
-} from "../src/lib/viewport-chrome.ts";
+} from "@orz/ui/hooks/viewport-chrome";
+import { cleanup, render } from "@testing-library/react";
+import { createElement, useRef } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const root = document.documentElement;
 
@@ -94,8 +94,11 @@ describe("auto-hiding header (T-585)", () => {
     document.body.append(header);
   });
 
+  // As AppShell does: its own header's ref, which @orz/ui takes rather than
+  // looking for the page's first <header>.
   function Probe({ enabled, page }: { enabled: boolean; page?: string }) {
-    useAutoHideHeader(enabled, page);
+    const header = useRef(document.querySelector("header"));
+    useAutoHideHeader(header, enabled, page);
     return null;
   }
   function mount(enabled = true) {

@@ -1,8 +1,5 @@
-import type { TokenListItem } from "@todou/shared";
-import { Trash2Icon } from "lucide-react";
-import { UserChip } from "@/components/shared/user-chip.tsx";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@orz/ui/components/badge";
+import { Button } from "@orz/ui/components/button";
 import {
   Table,
   TableBody,
@@ -10,7 +7,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@orz/ui/components/table";
+import type { TokenListItem } from "@todou/shared";
+import { Trash2Icon } from "lucide-react";
+import { UserChip } from "@/components/shared/user-chip.tsx";
 
 const when = (iso: string | null) =>
   iso ? <time dateTime={iso}>{new Date(iso).toLocaleString()}</time> : "—";

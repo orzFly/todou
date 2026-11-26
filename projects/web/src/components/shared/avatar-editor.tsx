@@ -1,3 +1,6 @@
+import { cn } from "@orz/ui";
+import { Avatar, AvatarFallback, AvatarImage } from "@orz/ui/components/avatar";
+import { Button } from "@orz/ui/components/button";
 import {
   AVATAR_CONTENT_TYPES,
   AVATAR_MAX_BYTES,
@@ -13,10 +16,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { userAvatarFallback } from "@/components/shared/user-chip.tsx";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import { fitAvatar } from "@/lib/avatar-resize.ts";
-import { cn } from "@/lib/utils";
 
 const MAX_MB = AVATAR_MAX_BYTES / 1024 / 1024;
 

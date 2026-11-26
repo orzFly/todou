@@ -1,3 +1,25 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
+import {
+  holdRevealed,
+  type RevealMode,
+  restingScrollY,
+  revealBlock,
+  usableViewport,
+  useOwnHold,
+  useScrollInsets,
+} from "@orz/ui/hooks/scroll-insets";
+import { useElementHeight } from "@orz/ui/hooks/use-element-height";
+import { useMediaQuery } from "@orz/ui/hooks/use-media-query";
+import {
+  belowHeader,
+  VIEWPORT_CHROME_EVENT,
+} from "@orz/ui/hooks/viewport-chrome";
 import type { SelectedLineRange } from "@pierre/diffs";
 // Imported directly rather than through the lazy wrapper in pierre.tsx: this
 // whole page is route-lazy, so pierre never reaches the main bundle through
@@ -107,21 +129,8 @@ import {
   DiffstatBar,
   StatNumbers,
 } from "@/components/timeline/spec-version-card.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  holdRevealed,
-  type RevealMode,
-  restingScrollY,
-  revealBlock,
-  usableViewport,
-  useOwnHold,
-  useScrollInsets,
-} from "@/lib/scroll-insets.ts";
+import { LG_UP, SM_UP, XL_UP } from "@/lib/breakpoints.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 import {
   acceptsShortcut,
   currentIndex,
@@ -145,14 +154,7 @@ import {
   computeVersionStats,
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
-import {
-  belowHeader,
-  useElementHeight,
-  useHeaderHeight,
-} from "@/lib/use-header-height.ts";
-import { LG_UP, SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
-import { cn } from "@/lib/utils.ts";
-import { VIEWPORT_CHROME_EVENT } from "@/lib/viewport-chrome.ts";
+import { useHeaderHeight } from "@/lib/use-header-height.ts";
 
 /** What ↑↓ stops on: both kinds of "changed since the baseline" mark (T-158). */
 const CHANGED_SELECTOR = ".spec-changed, .spec-ins-block";
@@ -221,8 +223,7 @@ const TOOLBAR_FALLBACK_HEIGHT = 78;
  */
 const DISPLAY_SLOT =
   "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-full border px-2.5 text-xs";
-const DISPLAY_SLOT_ON =
-  "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400";
+const DISPLAY_SLOT_ON = "border-primary bg-primary text-primary-foreground";
 const DISPLAY_SLOT_OFF = "text-muted-foreground hover:border-foreground/50";
 const DISPLAY_SLOT_DISABLED = "border-dashed text-muted-foreground/60";
 
@@ -636,7 +637,10 @@ function SpecViewBody({
   // wraps to two lines when its buttons no longer fit (T-178).
   const toolbarRef = useRef<HTMLDivElement>(null);
   const headerHeight = useHeaderHeight();
-  const toolbarHeight = useElementHeight(toolbarRef, TOOLBAR_FALLBACK_HEIGHT);
+  const toolbarHeight = useElementHeight(
+    () => toolbarRef.current,
+    TOOLBAR_FALLBACK_HEIGHT,
+  );
   const stickyTop = headerHeight + toolbarHeight;
 
   // Below lg only the toolbar's first row is sticky (T-593). `collapsed`:
@@ -686,8 +690,12 @@ function SpecViewBody({
   // Kept apart from `stickyTop`, which serves CSS offsets that want the
   // toolbar's own edge rather than a strip to land things in (T-299).
   const composerRef = useRef<HTMLDivElement>(null);
+  // The shell's header first: the insets count only what they are given.
+  const header = useShellHeader();
   useScrollInsets({
-    top: controlsPinned ? [toolbarRef, controlsRef] : [toolbarRef],
+    top: controlsPinned
+      ? [header, toolbarRef, controlsRef]
+      : [header, toolbarRef],
     bottom: [composerRef],
   });
 
@@ -1892,12 +1900,10 @@ function SpecViewBody({
                   {fileLevelDrafts.map((draft) => (
                     <div
                       key={draft.id}
-                      className="rounded-md border border-indigo-500/40 p-2 text-sm"
+                      className="rounded-md border border-primary/40 p-2 text-sm"
                     >
                       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-                        <span className="font-medium text-indigo-700 dark:text-indigo-400">
-                          draft
-                        </span>
+                        <span className="font-medium text-primary">draft</span>
                         file comment
                         <span className="ml-auto" />
                         <Button
@@ -2171,7 +2177,7 @@ function SpecFileList({
             </span>
             <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
               {unresolved > 0 && (
-                <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <span className="rounded-full border px-1.5 text-xs border-warning/40 bg-warning/10 text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]">
                   {unresolved}
                 </span>
               )}
@@ -2239,11 +2245,9 @@ function UnplacedDraft({
   onDiscard: () => void;
 }) {
   return (
-    <div className="rounded-md border border-indigo-500/40 p-2 text-sm">
+    <div className="rounded-md border border-primary/40 p-2 text-sm">
       <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span className="font-medium text-indigo-700 dark:text-indigo-400">
-          draft
-        </span>
+        <span className="font-medium text-primary">draft</span>
         <span>
           {formatAnchorRange(draft.anchor)} · v{draft.anchor.version}
         </span>
@@ -2339,7 +2343,7 @@ function UnplacedComment({
               which is the whole of why the ternary is split across the line's
               edge (T-487). */}
           {item.resolved !== null && (
-            <span className="text-green-700 dark:text-green-400">resolved</span>
+            <span className="text-success">resolved</span>
           )}
         </CommentHeaderLine>
         {item.resolved === null && (
@@ -2986,9 +2990,7 @@ function DiffAnnotation({
               {formatAnchorRange(item.anchor)} · v{item.anchor.version}
             </span>
             {item.resolved !== null && (
-              <span className="text-green-700 dark:text-green-400">
-                resolved
-              </span>
+              <span className="text-success">resolved</span>
             )}
           </CommentHeaderIdentity>
           <CommentHeaderMeta

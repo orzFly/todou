@@ -1,4 +1,5 @@
 import { EditorView, showTooltip, type Tooltip } from "@codemirror/view";
+import { hasUnsavedWork } from "@orz/ui/lib/unsaved-guard";
 import { render } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -8,7 +9,6 @@ import {
   type MarkdownEditorHandle,
 } from "../src/components/shared/markdown-editor.tsx";
 import { STAGED_TOKEN_TYPE } from "../src/lib/staged-tokens.ts";
-import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import {
   cmGetValue,
   cmPlaceholder,

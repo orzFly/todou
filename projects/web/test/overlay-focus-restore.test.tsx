@@ -1,16 +1,16 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../src/components/ui/dropdown-menu.tsx";
+} from "@orz/ui/components/dropdown-menu";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "../src/components/ui/popover.tsx";
+} from "@orz/ui/components/popover";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
 async function openMenu() {
   render(

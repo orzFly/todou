@@ -107,7 +107,7 @@ async function seed(stack) {
 function rows(scope) {
   const root = scope ? document.querySelector(scope) : document;
   return [...(root?.querySelectorAll("[data-sweep-key]") ?? [])].map((row) => {
-    const box = row.querySelector('input[type="checkbox"]');
+    const box = row.querySelector('[role="checkbox"]');
     const title = row.querySelector('a[href*="/issues/"], a[href]');
     const centre = (el) => {
       const r = el.getBoundingClientRect();
@@ -120,7 +120,7 @@ function rows(scope) {
       body: { x: rect.right - 12, y: rect.bottom - 6 },
       titleLeft: title ? title.getBoundingClientRect().left : null,
       key: row.getAttribute("data-sweep-key"),
-      checked: box?.checked ?? false,
+      checked: box?.getAttribute("aria-checked") === "true",
       box: box ? centre(box) : null,
       title: title ? centre(title) : null,
       lifted: row.className.includes("opacity-30"),

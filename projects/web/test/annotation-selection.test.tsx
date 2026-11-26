@@ -1,3 +1,4 @@
+import { POINTER_FINE } from "@orz/ui/hooks/use-media-query";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
@@ -18,7 +19,6 @@ import {
   selectionEndpoints,
 } from "../src/components/spec/annotated-markdown.tsx";
 import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
-import { POINTER_FINE } from "../src/lib/use-media-query.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 /** Render, select `pick`'s range, and return the floating comment button. */

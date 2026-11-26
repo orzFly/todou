@@ -1,6 +1,6 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import type { ComponentProps, ReactNode } from "react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 // The selection's actions read their room off the toolbar row they sit in,
 // which carries `@container/bulk` (T-775). Below the first width the labels

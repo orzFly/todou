@@ -1,3 +1,12 @@
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@orz/ui/components/dialog";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { can, type MoveIssueResult, type Project } from "@todou/shared";
@@ -7,15 +16,6 @@ import { projectsQuery } from "@/api/queries.ts";
 import { ProjectListbox } from "@/components/project-listbox.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 /**
  * Pick a destination, see what the move would change, confirm.
@@ -168,12 +168,12 @@ function Mapping({ preview }: { preview: MoveIssueResult }) {
         </li>
       )}
       {dropped_labels.length > 0 && (
-        <li className="text-amber-700 dark:text-amber-500">
+        <li className="text-warning">
           Labels dropped: {dropped_labels.join(", ")}
         </li>
       )}
       {dropped_assignees.length > 0 && (
-        <li className="text-amber-700 dark:text-amber-500">
+        <li className="text-warning">
           Assignees dropped:{" "}
           {dropped_assignees.map((user) => `@${user.login}`).join(", ")}
         </li>

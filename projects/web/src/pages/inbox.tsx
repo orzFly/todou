@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import type { InboxItem, Status, Watcher } from "@todou/shared";
@@ -27,14 +29,13 @@ import {
   useRegisterReturnArea,
   useRegisterReturnLane,
 } from "@/components/shared/return-context.tsx";
-import { Skeleton } from "@/components/ui/skeleton";
 import type { ProjectRefOption } from "@/lib/project-spellings.ts";
 import { INBOX_TABS, type InboxTab, WINDOW_REGION } from "@/lib/return-view.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 import { headerBottom } from "@/lib/use-header-height.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * Labels for the canonical tab keys, also used in return snapshots.
@@ -109,6 +110,7 @@ export function InboxPage() {
   // decision and not an omission somebody restores by hand: it is one payload,
   // cut by the server rather than paged.
   useRegisterReturnLane(null);
+  const header = useShellHeader();
   // Opening a card from here is what takes its row out of the list — reading
   // it retires the unread reason — so the row a position was anchored to is
   // routinely gone by the time the reader returns. The candidates remembered
@@ -117,7 +119,7 @@ export function InboxPage() {
     region: WINDOW_REGION,
     element: () => null,
     rows: () => returnRows(rootRef.current),
-    inset: headerBottom,
+    inset: () => headerBottom(header.current),
     axis: "y",
   });
   // The URL selects the tab. Keep it in the snapshot too so the detail page

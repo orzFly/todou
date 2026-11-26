@@ -1,16 +1,16 @@
-import { Link } from "@tanstack/react-router";
-import type { SpecVersionInfo } from "@todou/shared";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
-import { useReturnLinkState } from "@/components/shared/return-context.tsx";
-import { UserChip } from "@/components/shared/user-chip.tsx";
+import { cn } from "@orz/ui";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@orz/ui/components/dropdown-menu";
+import { Link } from "@tanstack/react-router";
+import type { SpecVersionInfo } from "@todou/shared";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { UserChip } from "@/components/shared/user-chip.tsx";
 import type { SpecSearch } from "@/lib/spec-search.ts";
-import { cn } from "@/lib/utils.ts";
 
 const CHIP = "rounded-full border px-2.5 py-0.5 font-mono text-xs";
 

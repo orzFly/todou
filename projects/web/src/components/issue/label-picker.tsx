@@ -1,3 +1,9 @@
+import { cn } from "@orz/ui";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Label } from "@todou/shared";
 import { CheckIcon, MinusIcon } from "lucide-react";
@@ -7,17 +13,11 @@ import { api, useCan } from "@/api/queries.ts";
 import { LabelChip, LabelChips } from "@/components/issue/label-chip.tsx";
 import { PICKER_ROW, usePickerOrder } from "@/components/issue/picker-row.ts";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   canonicalizeLabelName,
   labelColorFor,
   labelNearKey,
   splitLabelName,
 } from "@/lib/labels.ts";
-import { cn } from "@/lib/utils";
 
 export function useCanCreateLabels(slug: string): boolean {
   return useCan(slug, "label.create");
@@ -211,7 +211,7 @@ export function LabelPicker({
           className="w-full border-b bg-transparent px-3 py-2 text-base outline-none md:text-sm"
         />
         {nearMismatch && (
-          <div className="m-2 flex flex-wrap items-center gap-1 rounded-md border border-amber-500/60 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+          <div className="m-2 flex flex-wrap items-center gap-1 rounded-md border px-2 py-1.5 text-xs border-warning/40 bg-warning/10 text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]">
             Similar label exists
             <LabelChip label={near} />—
             <button
@@ -224,7 +224,7 @@ export function LabelPicker({
             {onCreate && (
               <button
                 type="button"
-                className="cursor-pointer text-amber-700/75 underline dark:text-amber-400/75"
+                className="cursor-pointer underline"
                 disabled={creating}
                 onClick={() => void pick({ kind: "create", name: canonical })}
               >

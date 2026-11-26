@@ -76,19 +76,20 @@ const KNOWN_FAILURES = [
         o.visualViewportWidth === 360 &&
         o.side === "right" &&
         o.transform === "none" &&
-        o.triggerRight === 224.703125 &&
-        o.left === 225 &&
-        o.width === 127.296875 &&
-        o.right === 352.296875 &&
-        o.availableWidth === "127.29687499999997px" &&
-        o.wrapperTransform === `matrix(1, 0, 0, 1, 225, ${o.top})`
+        o.triggerRight === 215.96875 &&
+        o.left === 216 &&
+        o.width === 136.03125 &&
+        o.right === 352.03125 &&
+        o.availableWidth === "136.03125px" &&
+        o.wrapperTransform === `matrix(1, 0, 0, 1, 216, ${o.top})`
       );
     },
     why:
       "T-468: collisionPadding is 8. Floating UI core size() computes " +
-      "availableWidth from unrounded x=224.703125; @floating-ui/react-dom roundByDPR() " +
-      "places the wrapper at 225 (DPR 1), while the border box keeps width " +
-      "127.296875. This exact 0.296875px residual is recorded, not an I2 tolerance.",
+      "availableWidth from unrounded x=215.96875; @floating-ui/react-dom roundByDPR() " +
+      "places the wrapper at 216 (DPR 1), while the border box keeps width " +
+      "136.03125. This exact 0.03125px residual is recorded, not an I2 tolerance. " +
+      "The numbers are @orz/ui's menu sizes (T-793); the cause is unchanged.",
     retire:
       "After a Radix/Floating UI coordinate/size fix or a submenu placement fix, " +
       "run the default smoke: submenu-rounded must still measure its left-anchored " +
@@ -1348,27 +1349,27 @@ function selfTestReadings() {
   const viewport = { width: 360, height: 640 };
   const reading = {
     slot: "dropdown-menu-sub-content",
-    top: 284,
-    left: 225,
-    bottom: 324,
-    right: 352.296875,
-    width: 127.296875,
+    top: 195,
+    left: 216,
+    bottom: 235,
+    right: 352.03125,
+    width: 136.03125,
     height: 40,
     visibility: "visible",
     devicePixelRatio: 1,
     innerWidth: 360,
     visualViewportWidth: 360,
-    availableWidth: "127.29687499999997px",
+    availableWidth: "136.03125px",
     transform: "none",
-    wrapperTransform: "matrix(1, 0, 0, 1, 225, 284)",
+    wrapperTransform: "matrix(1, 0, 0, 1, 216, 195)",
     side: "right",
-    triggerRight: 224.703125,
+    triggerRight: 215.96875,
   };
   const cases = [
     ["observed", {}, viewport, 0, 1, 0],
     [
       "good: right edge repaired",
-      { right: 352, width: 127 },
+      { right: 352, width: 136 },
       viewport,
       0,
       0,
@@ -1376,7 +1377,7 @@ function selfTestReadings() {
     ],
     [
       "bad: larger overflow",
-      { right: 353.296875, width: 128.296875 },
+      { right: 353.03125, width: 137.03125 },
       viewport,
       1,
       0,
@@ -1384,7 +1385,7 @@ function selfTestReadings() {
     ],
     [
       "bad: tiny extra overflow",
-      { right: 352.3125, width: 127.3125 },
+      { right: 352.0625, width: 136.0625 },
       viewport,
       1,
       0,
@@ -1392,7 +1393,7 @@ function selfTestReadings() {
     ],
     ["bad: another edge", { top: 7 }, viewport, 1, 0, 1],
     ["bad: hidden", { visibility: "hidden" }, viewport, 1, 0, 1],
-    ["bad: unrelated cause", { triggerRight: 224 }, viewport, 1, 0, 1],
+    ["bad: unrelated cause", { triggerRight: 215 }, viewport, 1, 0, 1],
     ["bad: another viewport", {}, { width: 360, height: 520 }, 1, 0, 1],
   ];
   let passed = true;

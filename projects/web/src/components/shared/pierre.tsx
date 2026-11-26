@@ -1,3 +1,10 @@
+import {
+  type ColorScheme,
+  resolvePalette,
+  type TextMateTheme,
+  type Theme,
+} from "@orz/themes";
+import { type ThemeMode, useTheme } from "@orz/ui/theme";
 import type { CodeViewItem, ParsedPatch } from "@pierre/diffs";
 import type {
   CodeViewHandle,
@@ -16,7 +23,6 @@ import {
   useState,
 } from "react";
 import type { PatchCommit } from "@/lib/patch-commit.ts";
-import { syntaxThemeOf, type ThemePref, useThemePref } from "@/lib/theme.ts";
 
 type Chunk<P> =
   | { status: "loaded"; Component: ComponentType<P> }
@@ -179,26 +185,57 @@ export const PIERRE_THEME_TYPE = "system" as const;
 
 export type SyntaxTheme = { light: string; dark: string };
 
-// Keyed by preference, so every surface on the page hands pierre the same
+// Keyed by the pair, so every surface on the page hands pierre the same
 // object identity across renders (props-stability guidance below).
-const SYNTAX_THEMES = new Map<ThemePref, SyntaxTheme>();
+const SYNTAX_THEMES = new Map<string, SyntaxTheme>();
 
 /**
- * Syntax token colors for the active theme (T-144). Under "system" the pair
- * stays pierre's own, because the light/dark choice is then made by CSS
- * light-dark() inside the shadow root rather than by a React render. A named
- * theme resolves to one shiki theme in both slots: its kind is fixed, so the
- * slot the browser will not paint is irrelevant.
+ * Syntax token colors for a theme as shown (T-144), picked the way
+ * @orz/ui-code picks them. Under "system" a theme with both sides fills each
+ * slot from its own side, and CSS light-dark() inside the shadow root chooses
+ * between them, so an OS switch needs no render. Otherwise both slots take
+ * the side in view: its scheme is fixed, so the slot the browser will not
+ * paint is irrelevant. A slot whose palette names no shiki theme (it draws a
+ * TextMate theme of its own, or none) keeps pierre's own for that side;
+ * registering the drawn ones with pierre comes with @orz/ui-code (T-794).
  */
-export function useSyntaxTheme(): SyntaxTheme {
-  const pref = useThemePref();
-  const cached = SYNTAX_THEMES.get(pref);
+export function syntaxThemeFor(
+  theme: Theme,
+  colorScheme: ColorScheme,
+  mode: ThemeMode,
+  variant?: string,
+): SyntaxTheme {
+  const both = mode === "system" && theme.light && theme.dark;
+  const name = (
+    syntax: string | TextMateTheme | undefined,
+    pierre: string,
+  ): string => (typeof syntax === "string" ? syntax : pierre);
+  const side = (scheme: ColorScheme) =>
+    resolvePalette(theme, scheme, variant)?.syntax;
+  const light = name(side(both ? "light" : colorScheme), PIERRE_THEME.light);
+  const dark = name(side(both ? "dark" : colorScheme), PIERRE_THEME.dark);
+  const key = `${light}\0${dark}`;
+  const cached = SYNTAX_THEMES.get(key);
   if (cached) return cached;
-  const syntax = pref === "system" ? undefined : syntaxThemeOf(pref);
   const resolved: SyntaxTheme =
-    syntax === undefined ? PIERRE_THEME : { light: syntax, dark: syntax };
-  SYNTAX_THEMES.set(pref, resolved);
+    light === PIERRE_THEME.light && dark === PIERRE_THEME.dark
+      ? PIERRE_THEME
+      : { light, dark };
+  SYNTAX_THEMES.set(key, resolved);
   return resolved;
+}
+
+export function useSyntaxTheme(): SyntaxTheme {
+  const { pref, theme, colorScheme, variant } = useTheme();
+  const mode = pref.ui?.mode ?? "system";
+  // Under "system" both sides are read, so the variant asked for, not the
+  // one the side in view happens to show.
+  return syntaxThemeFor(
+    theme,
+    colorScheme,
+    mode,
+    mode === "system" ? pref.ui?.variant : variant,
+  );
 }
 
 /** The shape every code surface falls back to: the code, unhighlighted. */

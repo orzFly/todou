@@ -1,3 +1,4 @@
+import { openEnclosingFolds, revealBlock } from "@orz/ui/hooks/scroll-insets";
 import { fireEvent, waitFor } from "@testing-library/react";
 import type { SpecCommentItem } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +7,6 @@ import {
   type DisplayedAnnotation,
   visibleAnchor,
 } from "../src/components/spec/annotated-markdown.tsx";
-import { openEnclosingFolds, revealBlock } from "../src/lib/scroll-insets.ts";
 import { changedLineRanges } from "../src/lib/spec-changes.ts";
 import { renderWithProviders } from "./render.tsx";
 

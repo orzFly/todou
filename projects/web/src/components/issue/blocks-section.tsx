@@ -1,3 +1,4 @@
+import { Button } from "@orz/ui/components/button";
 import type { BlockRef } from "@todou/shared";
 import { PlusIcon, XIcon } from "lucide-react";
 import { useAddBlockMutation, useRemoveBlockMutation } from "@/api/issues.ts";
@@ -6,7 +7,6 @@ import { RefPicker } from "@/components/issue/ref-picker.tsx";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { TrashedBlocker } from "@/components/shared/trashed-blocker.tsx";
-import { Button } from "@/components/ui/button";
 
 type Direction = "blocked_by" | "blocks";
 

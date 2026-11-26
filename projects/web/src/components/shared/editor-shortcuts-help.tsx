@@ -1,12 +1,11 @@
-import { KeyboardIcon } from "lucide-react";
-import { useState } from "react";
-
-import { Button } from "@/components/ui/button.tsx";
+import { Button } from "@orz/ui/components/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover.tsx";
+} from "@orz/ui/components/popover";
+import { KeyboardIcon } from "lucide-react";
+import { useState } from "react";
 import { type ModKeyLabels, modKeyLabels } from "@/lib/platform.ts";
 
 type Key = keyof ModKeyLabels | "V" | ".";

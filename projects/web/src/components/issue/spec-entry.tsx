@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { enumLookup, type SpecReviewStatus } from "@todou/shared";
@@ -10,15 +11,14 @@ import {
   StatNumbers,
 } from "@/components/timeline/spec-version-card.tsx";
 import { eventAnchor } from "@/lib/timeline-anchors.ts";
-import { cn } from "@/lib/utils.ts";
 
 const STATUS_STYLE: Record<SpecReviewStatus, string> = {
   unreviewed:
-    "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    "border-warning/40 bg-warning/10 text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]",
   approved:
-    "border-green-600/60 bg-green-600/10 text-green-700 dark:text-green-400",
+    "border-success/40 bg-success/10 text-[color-mix(in_oklab,var(--success),var(--foreground)_65%)]",
   changes_requested:
-    "border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-400",
+    "border-destructive/40 bg-destructive/10 text-[color-mix(in_oklab,var(--destructive),var(--foreground)_65%)]",
   withdrawn: "text-muted-foreground",
 };
 

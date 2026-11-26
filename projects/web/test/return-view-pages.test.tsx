@@ -1,3 +1,4 @@
+import { Dialog, DialogContent, DialogTitle } from "@orz/ui/components/dialog";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -50,11 +51,6 @@ import type * as CalendarSectionModule from "../src/components/activity-calendar
 import * as returnContext from "../src/components/shared/return-context.tsx";
 import { ReturnViewProvider } from "../src/components/shared/return-context.tsx";
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "../src/components/ui/dialog.tsx";
-import {
   RETURN_VIEW_VERSION,
   type ReturnView,
   type ScrollRegion,
@@ -63,11 +59,12 @@ import {
   readCurrentReturnEntry,
   writeReturnEntry,
 } from "../src/lib/return-view-history.ts";
+import { ShellHeaderContext } from "../src/lib/shell-header.ts";
 import { BoardPage } from "../src/pages/board.tsx";
 import { InboxPage } from "../src/pages/inbox.tsx";
 import { ProjectIssueListPage } from "../src/pages/issue-list.tsx";
 import { router as appRouter } from "../src/router.tsx";
-import { testQueryClient } from "./render.tsx";
+import { DOCUMENT_HEADER, testQueryClient } from "./render.tsx";
 
 /**
  * The server states each cell's instants; fixtures spell out plain UTC ones so
@@ -1501,9 +1498,11 @@ function mountUser(
     history: historyAt(path, { pending, state: options.state }),
   });
   const view = render(
-    <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
+    <ShellHeaderContext.Provider value={DOCUMENT_HEADER}>
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ShellHeaderContext.Provider>,
   );
   return { ...view, router, client, listUserIssues, calendar };
 }

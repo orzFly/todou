@@ -271,13 +271,13 @@ function mountList(
   );
 }
 
-const box = (ref: number) =>
-  screen.getByLabelText(`select #${ref}`) as HTMLInputElement;
+const box = (ref: number) => screen.getByLabelText(`select #${ref}`);
+const state = (box: Element) => box.getAttribute("aria-checked");
 
 const checked = () =>
-  [...document.querySelectorAll<HTMLInputElement>("li input[type=checkbox]")]
-    .filter((input) => input.checked)
-    .map((input) => input.getAttribute("aria-label"));
+  [...document.querySelectorAll("li [role=checkbox]")]
+    .filter((box) => state(box) === "true")
+    .map((box) => box.getAttribute("aria-label"));
 
 async function chooseStatus(name: string) {
   const trigger = screen.getByTestId("bulk-status-trigger");
@@ -302,8 +302,8 @@ describe("selecting issues on the list (T-707)", () => {
     expect(checked()).toEqual(["select #52", "select #21"]);
     expect(screen.getByText("2 selected")).toBeTruthy();
 
-    const all = screen.getByLabelText("select all issues") as HTMLInputElement;
-    expect(all.indeterminate).toBe(true);
+    const all = screen.getByLabelText("select all issues");
+    expect(state(all)).toBe("mixed");
     fireEvent.click(all);
     expect(checked()).toEqual([
       "select #51",
@@ -394,25 +394,19 @@ describe("selecting issues on the list (T-707)", () => {
     mountList(statefulServer());
     await screen.findByText("card 22");
     const group = (name: string) =>
-      screen.getByLabelText(
-        `select every issue in ${name}`,
-      ) as HTMLInputElement;
+      screen.getByLabelText(`select every issue in ${name}`);
 
     fireEvent.click(box(21));
-    expect(group("Todo").indeterminate).toBe(true);
-    expect(group("Next").indeterminate).toBe(false);
-    expect(group("Next").checked).toBe(false);
+    expect(state(group("Todo"))).toBe("mixed");
+    expect(state(group("Next"))).toBe("false");
 
     fireEvent.click(group("Todo"));
     expect(checked()).toEqual(["select #21", "select #22"]);
-    expect(group("Todo").checked).toBe(true);
-    expect(group("Todo").indeterminate).toBe(false);
+    expect(state(group("Todo"))).toBe("true");
 
     fireEvent.click(group("Next"));
     expect(checked()).toHaveLength(4);
-    expect(
-      (screen.getByLabelText("select all issues") as HTMLInputElement).checked,
-    ).toBe(true);
+    expect(state(screen.getByLabelText("select all issues"))).toBe("true");
 
     fireEvent.click(group("Todo"));
     expect(checked()).toEqual(["select #51", "select #52"]);

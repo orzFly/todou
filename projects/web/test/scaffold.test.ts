@@ -1,6 +1,6 @@
+import { cn } from "@orz/ui";
 import { TODOU } from "@todou/shared";
 import { expect, it } from "vitest";
-import { cn } from "../src/lib/utils.ts";
 
 it("consumes @todou/shared TypeScript source directly", () => {
   expect(TODOU).toBe("todou");

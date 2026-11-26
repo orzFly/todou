@@ -22,8 +22,8 @@ export async function probeFallbacks({
     new Promise((resolve) => requestAnimationFrame(() => resolve()));
 
   await document.fonts.ready;
-  if (!document.fonts.check('600 16px "Geist Variable"')) {
-    coverageErrors.push("geist-not-loaded");
+  if (!document.fonts.check('600 16px "Noto Sans Variable"')) {
+    coverageErrors.push("ui-font-not-loaded");
   }
 
   const avatars = [

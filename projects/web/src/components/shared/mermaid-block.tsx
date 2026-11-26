@@ -1,3 +1,5 @@
+import { Button } from "@orz/ui/components/button";
+import { useTheme } from "@orz/ui/theme";
 import { Maximize2Icon } from "lucide-react";
 import {
   type CSSProperties,
@@ -9,7 +11,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { CompareViewerContext } from "@/components/issue/attachment-markdown.tsx";
 import {
@@ -24,7 +25,6 @@ import {
   MediaCompare,
 } from "@/components/shared/media-compare.tsx";
 import { CodeBlock, CodeDiffBlock } from "@/components/shared/pierre.tsx";
-import { Button } from "@/components/ui/button.tsx";
 import {
   type DiagramPalette,
   type DiagramResult,
@@ -32,23 +32,6 @@ import {
   renderDiagram,
 } from "@/lib/mermaid.ts";
 import { colourChanges } from "@/lib/mermaid-change.ts";
-
-// The palette is baked into the SVG at render time, so a theme switch has to
-// re-render. `data-theme` on <html> is the resolved theme — the preference
-// store alone would miss an OS switch while the preference is "system".
-function subscribeTheme(onChange: () => void): () => void {
-  const observer = new MutationObserver(onChange);
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["data-theme", "class"],
-  });
-  return () => observer.disconnect();
-}
-
-function themeSnapshot(): string {
-  const root = document.documentElement;
-  return `${root.dataset.theme ?? ""} ${root.classList.contains("dark")}`;
-}
 
 let canvas: CanvasRenderingContext2D | null | undefined;
 
@@ -380,12 +363,17 @@ function useDiagram(
   probe: RefObject<HTMLElement | null>,
   source: string,
 ): DiagramResult | null {
-  const theme = useSyncExternalStore(subscribeTheme, themeSnapshot);
+  // The palette is baked into the SVG at render time, so a theme switch has
+  // to re-render. The store rewrites its <style> and the root's attributes
+  // before it notifies, so the computed style read below is already the new
+  // theme's by the time this key changes. As shown, not as picked: under
+  // "system" an OS switch changes the scheme and leaves the pick alone.
+  const { theme: shown, colorScheme, variant } = useTheme();
+  const theme = `${shown.id} ${colorScheme} ${variant}`;
   const [result, setResult] = useState<DiagramResult | null>(null);
 
   useEffect(() => {
-    // Read only as a trigger: the colors come off the computed style below,
-    // which has already changed by the time the snapshot does.
+    // Read only as a trigger: the colors come off the computed style below.
     void theme;
     const el = probe.current;
     if (el === null) return;

@@ -1,8 +1,8 @@
+import type { NavigationContext } from "@orz/ui/lib/unsaved-guard";
 import type { SpecReviewVerdict } from "@todou/shared";
 import type { ComposerStaging } from "@/components/spec/spec-composer.tsx";
 import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
 import { beginEdit, retarget, type Staging } from "@/lib/spec-staging.ts";
-import type { NavigationContext } from "@/lib/unsaved-guard.ts";
 
 const SPEC_ROUTE_ID = "/authed/projects/$slug/issues/$number/spec";
 

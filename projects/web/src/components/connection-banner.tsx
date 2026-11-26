@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "@orz/ui/components/button";
 
 /**
  * A failed background refetch of account data (`/api/me`): the page keeps
@@ -33,7 +33,7 @@ export function ConnectionBanner({
   return (
     <div
       role="status"
-      className="border-t border-b bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-900/60"
+      className="border-t border-b border-warning/40 bg-[color-mix(in_oklab,var(--warning)_12%,var(--background))] text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]"
     >
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-1.5 text-xs">
         <span>

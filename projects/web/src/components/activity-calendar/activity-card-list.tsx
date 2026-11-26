@@ -1,3 +1,6 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import type { ActivitySelection } from "@todou/shared";
 import { useRef } from "react";
 import {
@@ -6,9 +9,6 @@ import {
   useIssueListGrid,
 } from "@/components/issue/issue-row.tsx";
 import { LoadMoreFooter } from "@/components/shared/load-more.tsx";
-import { Button } from "@/components/ui/button.tsx";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 
 /**
  * Placeholder rows for a day whose cards are still on the wire. Heights, not

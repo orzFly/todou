@@ -1,3 +1,5 @@
+import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -12,8 +14,6 @@ import { toast } from "sonner";
 import { attachmentReferencesQuery } from "@/api/attachments.ts";
 import { api, meQuery, projectQuery } from "@/api/queries.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Skeleton } from "@/components/ui/skeleton";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
 /**

@@ -655,16 +655,13 @@ async function load(page, url) {
       const font = await evaluate(page, async () => {
         await document.fonts.ready;
         return {
-          loaded: document.fonts.check('12px "Geist Variable"'),
+          loaded: document.fonts.check('12px "Noto Sans Variable"'),
           family: getComputedStyle(document.body).fontFamily,
         };
       });
-      return font.loaded && font.family.includes("Geist Variable")
+      return font.loaded && font.family.includes("Noto Sans Variable")
         ? state.errors
-        : [
-            ...state.errors,
-            `production Geist font unavailable (${font.family})`,
-          ];
+        : [...state.errors, `production UI font unavailable (${font.family})`];
     }
     await sleep(100);
   }
@@ -1513,19 +1510,19 @@ async function specRouteRun(
           if (!author || !peer || !idPart || !timePart)
             return { ready: false, text: candidate.outerHTML.slice(0, 600) };
           await document.fonts.ready;
-          if (!document.fonts.check('12px "Geist Variable"')) {
-            return { ready: true, error: "Geist Variable did not load" };
+          if (!document.fonts.check('12px "Noto Sans Variable"')) {
+            return { ready: true, error: "Noto Sans Variable did not load" };
           }
           // pierre draws an annotation as slot content inside its code view,
           // so a header can inherit the code font, which is whatever
           // monospace the machine has. The baselines and the self-test's
-          // proof assume Geist, so a header in another font is a fixture
+          // proof assume the UI font, so a header in another font is a fixture
           // failure naming the font it got: the clean pages report it, where
           // a self-test row would only read NOT PROVEN. The row is still
           // marked and measured, so it is not reported as missing too.
           const offFont = [author, peer, idPart, timePart]
             .map((part) => getComputedStyle(part).fontFamily)
-            .find((family) => !family.includes("Geist Variable"));
+            .find((family) => !family.includes("Noto Sans Variable"));
           candidate.dataset.baselineCase = caseId;
           author.dataset.baselineParticipant = "author";
           peer.dataset.baselineParticipant = "peer";
@@ -1599,7 +1596,7 @@ async function specRouteRun(
             ready: true,
             ...(offFont
               ? {
-                  error: `${caseId} header renders in ${offFont}, not Geist Variable`,
+                  error: `${caseId} header renders in ${offFont}, not Noto Sans Variable`,
                 }
               : {}),
             overflow: {
@@ -1852,8 +1849,9 @@ async function scopeRun(
     const rows = await evaluate(
       page,
       ([faultKind, colorScheme]) => {
-        // The `.dark` class is how `lib/theme.ts` itself switches palettes,
-        // so this is the product's own switch rather than a second one.
+        // The `.dark` class is how @orz/ui's stylesheet switches its default
+        // theme's two palettes, the ones a store paints with too; the
+        // fixture has no store of its own to ask.
         document.documentElement.classList.toggle(
           "dark",
           colorScheme === "dark",
@@ -2219,7 +2217,7 @@ try {
   const browserVersion = await browser.send("Browser.getVersion");
   console.log(
     `ENV source=${stack.versions.source} chromium=${browserVersion.product} userAgent=${browserVersion.userAgent} ` +
-      `dpr=1 font="Geist Variable" epsilon=${EPSILON}`,
+      `dpr=1 font="Noto Sans Variable" epsilon=${EPSILON}`,
   );
   const cleanRuns = [];
   for (const viewport of VIEWPORTS) {

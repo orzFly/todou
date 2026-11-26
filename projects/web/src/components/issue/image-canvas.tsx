@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -8,7 +9,6 @@ import {
 import { ZoomControls } from "@/components/issue/zoom-controls.tsx";
 import { useImageLook } from "@/lib/image-look.ts";
 import { fitScale } from "@/lib/image-zoom.ts";
-import { cn } from "@/lib/utils";
 
 // In screen pixels, never scaled with the image: at 800% a scaled checker
 // would be squares bigger than the pixels it is meant to show through.

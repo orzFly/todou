@@ -1,8 +1,8 @@
+import { cn } from "@orz/ui";
 import { Link } from "@tanstack/react-router";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "@/lib/segment-styles.ts";
 import type { SpecSearch, SpecView } from "@/lib/spec-search.ts";
-import { cn } from "@/lib/utils.ts";
 
 const OPTIONS: Array<{
   value: SpecView;

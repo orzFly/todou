@@ -1,4 +1,18 @@
 import type { EditorView } from "@codemirror/view";
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@orz/ui/components/dialog";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@orz/ui/components/tabs";
+import { useDirtySource } from "@orz/ui/lib/unsaved-guard";
 import { useQuery } from "@tanstack/react-query";
 import type { IssueMetadataWriteEntry } from "@todou/shared";
 import { type ComponentProps, useRef, useState } from "react";
@@ -15,14 +29,6 @@ import { MetadataBrowse } from "@/components/issue/metadata-browse.tsx";
 import { MetadataEditorTab } from "@/components/issue/metadata-editor-tab.tsx";
 import type { CodeEditorHandle } from "@/components/shared/code-editor.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { metadataJsonSupport } from "@/lib/editor/json-lang.ts";
 import {
   appendNewEntry,
@@ -41,7 +47,6 @@ import {
   readDocument,
 } from "@/lib/metadata-diff.ts";
 import { parseJsonDoc, serializeJsonDoc } from "@/lib/metadata-json.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 type TabName = "browse" | "bulk" | "json";
 

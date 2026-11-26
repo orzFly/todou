@@ -1,6 +1,6 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import type { ReactNode, Ref } from "react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 /**
  * `LoadFailure` occupies a surface that has nothing to display;
@@ -117,7 +117,7 @@ export function RefreshFailure({
       retrying={retrying}
       size={size}
       className={className}
-      textClassName="text-amber-800 dark:text-amber-200"
+      textClassName="text-warning"
     />
   );
 }

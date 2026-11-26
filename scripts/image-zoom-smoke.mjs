@@ -176,7 +176,11 @@ function readState() {
     cursor: getComputedStyle(canvas).cursor,
     readout: readout?.textContent ?? null,
     zoomButtonsShown: [button("zoom out"), button("zoom in")].map(shown),
-    titleTruncated: title.scrollWidth > title.clientWidth,
+    // The ellipsis sits on the text's own box inside the title, beside the
+    // title's marker, so the title itself never overflows.
+    titleTruncated: [title, ...title.querySelectorAll("*")].some(
+      (el) => el.scrollWidth > el.clientWidth,
+    ),
     look: {
       canvasBackground: getComputedStyle(canvas).backgroundColor,
       checker: box(canvas.querySelector("[data-testid=image-checker]")),
@@ -800,8 +804,11 @@ async function desktopCases(page, fixture) {
 
   // The middle of the canvas: off-centre, the zoomed image would rightly be
   // pulled flush to an edge and the pointer anchor would move with it.
-  const px = s0.rect.x + s0.rect.w * 0.5;
-  const py = s0.rect.y + s0.rect.h * 0.4;
+  // On whole pixels, because a wheel event's clientX/clientY are integers:
+  // a dialog of odd height is centred onto a half pixel, and a pointer put
+  // there is read half a pixel away, which each zoom step then magnifies.
+  const px = Math.round(s0.rect.x + s0.rect.w * 0.5);
+  const py = Math.round(s0.rect.y + s0.rect.h * 0.4);
   const before = pixelAt(s0, px, py);
   // Deep enough that the image still outgrows the dialog once it has widened
   // to the viewport (T-774), so the drag below has room on both axes.

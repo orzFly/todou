@@ -51,7 +51,7 @@ pnpm workspace, packages under `projects/*`:
 | Package | Description |
 | --- | --- |
 | `projects/server` | Backend API server (clipanion entry) |
-| `projects/web` | React + Vite frontend (shadcn/ui) |
+| `projects/web` | React + Vite frontend (@orz/ui) |
 | `projects/cli` | `todou` client CLI, for humans and agents (clipanion) |
 | `projects/shared` | Shared schemas, types, and API client |
 

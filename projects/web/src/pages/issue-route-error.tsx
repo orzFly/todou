@@ -1,3 +1,4 @@
+import { Button } from "@orz/ui/components/button";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   type ErrorComponentProps,
@@ -11,7 +12,6 @@ import { api } from "@/api/queries.ts";
 import { SpecReadError } from "@/api/spec.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
-import { Button } from "@/components/ui/button.tsx";
 import { isQuestionLandingHash } from "@/lib/question-landing.ts";
 import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
 

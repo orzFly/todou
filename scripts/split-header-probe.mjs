@@ -120,8 +120,8 @@ export async function probeSplitHeader(options = {}) {
     };
   });
   await document.fonts.ready;
-  if (!document.fonts.check('12px "Geist Variable"')) {
-    return { status: "error", reason: "Geist Variable did not load" };
+  if (!document.fonts.check('12px "Noto Sans Variable"')) {
+    return { status: "error", reason: "Noto Sans Variable did not load" };
   }
 
   const visible = (element) => {

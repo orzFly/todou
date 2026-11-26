@@ -1,11 +1,11 @@
+import { cn } from "@orz/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+} from "@orz/ui/components/select";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

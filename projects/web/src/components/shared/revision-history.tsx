@@ -1,3 +1,16 @@
+import {
+  Dialog,
+  DialogCloseButton,
+  DialogContent,
+  DialogTitle,
+  DialogTitleBar,
+} from "@orz/ui/components/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
+import { Toggle } from "@orz/ui/components/toggle";
 import { hashKey, useQuery } from "@tanstack/react-query";
 import type { Revision, RevisionPage } from "@todou/shared";
 import { WrapTextIcon } from "lucide-react";
@@ -15,20 +28,7 @@ import {
   useSyntaxTheme,
 } from "@/components/shared/pierre.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import {
-  Dialog,
-  DialogCloseButton,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
-import { cn } from "@/lib/utils.ts";
 
 /**
  * Its own key, not the spec diff's `todou-spec-diff-wrap`: the two surfaces
@@ -220,36 +220,29 @@ function RevisionDialog({
   const [wrap, setWrap] = useState(readHistoryWrap);
   return (
     <>
-      <DialogHeader className="flex-row items-center gap-3 text-left">
+      <DialogTitleBar className="gap-3">
         <DialogTitle className="min-w-0 flex-1">
           Edit history — {label}
         </DialogTitle>
-        <button
-          type="button"
-          aria-pressed={wrap}
+        {/* The close button's height, so the title bar's row keeps one
+            centre and one height (T-562). */}
+        <Toggle
+          pressed={wrap}
           aria-label="wrap long lines"
           title="Wrap long lines instead of scrolling horizontally"
-          onClick={() => {
+          onPressedChange={(next) => {
             // State first: a storage write that throws must not cost the
             // reader the toggle they just asked for.
-            setWrap(!wrap);
-            writeHistoryWrap(!wrap);
+            setWrap(next);
+            writeHistoryWrap(next);
           }}
-          // The spec diff toolbar's `wrap` pill, spelled out again rather than
-          // imported: its home is a module the whole heavyweight spec page
-          // hangs off, and this dialog is reachable from every issue.
-          className={cn(
-            "inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border px-2.5 text-xs",
-            wrap
-              ? "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400"
-              : "text-muted-foreground hover:border-foreground/50",
-          )}
+          className="h-control-sm shrink-0"
         >
-          <WrapTextIcon className="size-3.5" />
+          <WrapTextIcon />
           wrap
-        </button>
+        </Toggle>
         <DialogCloseButton />
-      </DialogHeader>
+      </DialogTitleBar>
       <RevisionDiff revision={revision} filename={filename} wrap={wrap} />
     </>
   );

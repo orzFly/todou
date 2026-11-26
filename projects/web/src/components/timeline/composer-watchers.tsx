@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { formatRef, type Watcher } from "@todou/shared";
 import { useState } from "react";
 import { useRefPrefix } from "@/api/references.ts";
@@ -9,7 +10,6 @@ import {
   WatcherStack,
   watchingSentence,
 } from "@/components/shared/watcher-stack.tsx";
-import { cn } from "@/lib/utils";
 
 /** "Comment — watched by Claude Agent (2 sessions) and Bot One". */
 export function openerLabel(watchers: readonly Watcher[]): string {

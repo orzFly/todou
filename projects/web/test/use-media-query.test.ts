@@ -1,6 +1,7 @@
+import { useMediaQuery } from "@orz/ui/hooks/use-media-query";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MD_UP, useMediaQuery } from "../src/lib/use-media-query.ts";
+import { MD_UP } from "../src/lib/breakpoints.ts";
 
 /** happy-dom's viewport, which is what its `matchMedia` answers from. */
 const happyDom = globalThis as unknown as {

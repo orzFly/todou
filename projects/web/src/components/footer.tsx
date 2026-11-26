@@ -21,7 +21,7 @@ export function VersionFooter() {
         rel="noreferrer"
         className={
           mismatch
-            ? "text-amber-700 hover:underline dark:text-amber-400"
+            ? "text-warning hover:underline"
             : "text-muted-foreground hover:underline"
         }
         title={

@@ -1,9 +1,9 @@
+import { cn } from "@orz/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { membersQuery } from "@/api/queries.ts";
 import { MENTION_CHIP_STRUCTURE } from "@/components/shared/rich-chip.ts";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
-import { cn } from "@/lib/utils.ts";
 
 /**
  * A stored @mention, rendered as a chip: the member's CURRENT login and

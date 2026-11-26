@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import type { Project } from "@todou/shared";
 import { CheckIcon } from "lucide-react";
@@ -16,7 +17,6 @@ import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { ProjectRow } from "@/components/shared/project-row.tsx";
 import { matchProject, type ProjectMatch } from "@/lib/project-match.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
-import { cn } from "@/lib/utils";
 
 /** Below this the search box is noise (T-76 design §3). */
 const SEARCH_THRESHOLD = 8;

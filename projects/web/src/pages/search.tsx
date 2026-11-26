@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import {
   Link,
@@ -39,14 +41,13 @@ import {
   useRegisterReturnLane,
   useReturnLinkState,
 } from "@/components/shared/return-context.tsx";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SM_UP } from "@/lib/breakpoints.ts";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
+import { useShellHeader } from "@/lib/shell-header.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
-import { SM_UP } from "@/lib/use-media-query.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
-import { cn } from "@/lib/utils";
 
 const DOMAIN_LABELS: Array<{ value: SearchDomain; label: string }> = [
   { value: "issues", label: "Issues" },
@@ -169,6 +170,7 @@ export function SearchResults({
   // decision and not an omission somebody restores by hand: every hit it will
   // ever show arrives in one read, and `has_more` only renders a `+`.
   useRegisterReturnLane(null);
+  const header = useShellHeader();
   // The shell header, plus the results heading once it pins (T-454). The
   // domain chips scroll away with everything else, so they are not in it.
   // Measured when it is asked for rather than carried in state: the heading is
@@ -180,7 +182,7 @@ export function SearchResults({
     rows: () => returnRows(rootRef.current),
     inset: () =>
       resultsStickyTop(
-        headerBottom(),
+        headerBottom(header.current),
         headingRef.current?.getBoundingClientRect().height ?? 0,
         // `SM_UP` is the same breakpoint the heading's `sm:sticky` names.
         window.matchMedia(SM_UP).matches,
@@ -335,13 +337,13 @@ export function resultsStickyTop(
 function Diagnostics({ items }: { items: SearchDiagnostic[] }) {
   if (items.length === 0) return null;
   return (
-    <ul className="space-y-1 rounded-lg border border-amber-500/60 bg-amber-500/10 px-4 py-3 text-sm">
+    <ul className="space-y-1 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
       {items.map((item) => (
         <li
           key={`${item.key}:${item.value ?? ""}:${item.message}`}
           className={
             item.severity === "error"
-              ? "text-amber-700 dark:text-amber-400"
+              ? "text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]"
               : "text-muted-foreground"
           }
         >

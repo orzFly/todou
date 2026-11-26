@@ -1,3 +1,10 @@
+import { Button } from "@orz/ui/components/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@orz/ui/components/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { IssueMuteMode } from "@todou/shared";
@@ -10,13 +17,6 @@ import {
   useUnmuteIssue,
 } from "@/api/mutes.ts";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 /**
  * The notification control itself (T-372): one dropdown, three settings —
