@@ -1,8 +1,8 @@
+import { Button } from "@orz/ui/components/button";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { InboxIcon } from "lucide-react";
 import { inboxQuery, unreadTotal } from "@/api/inbox.ts";
-import { Button } from "@/components/ui/button";
 import { UnreadBadge } from "@/components/unread-badge.tsx";
 
 /**

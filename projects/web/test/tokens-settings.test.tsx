@@ -286,9 +286,9 @@ describe("personal tokens by holder (T-560)", () => {
 
 describe("token scopes (T-693)", () => {
   const scopeBox = (view: Awaited<ReturnType<typeof page>>, scope: string) =>
-    view.queryByRole("checkbox", {
-      name: new RegExp(`^${scope}`),
-    }) as HTMLInputElement | null;
+    view.queryByRole("checkbox", { name: new RegExp(`^${scope}`) });
+  const ticked = (box: Element | null) =>
+    box?.getAttribute("aria-checked") === "true";
   const created = (scopes: TokenCreated["scopes"]): TokenCreated => ({
     id: 98,
     token: "todou_pat_fallback",
@@ -306,14 +306,15 @@ describe("token scopes (T-693)", () => {
     const view = await page();
     const act = await waitFor(() => {
       const found = scopeBox(view, "agents:act");
-      expect(found?.checked).toBe(false);
-      return found as HTMLInputElement;
+      expect(found).not.toBeNull();
+      expect(ticked(found)).toBe(false);
+      return found as HTMLElement;
     });
-    expect(scopeBox(view, "agents:create")?.checked).toBe(false);
+    expect(ticked(scopeBox(view, "agents:create"))).toBe(false);
 
     // Creating implies acting: ticking it ticks agents:act too.
-    fireEvent.click(scopeBox(view, "agents:create") as HTMLInputElement);
-    expect(act.checked).toBe(true);
+    fireEvent.click(scopeBox(view, "agents:create") as HTMLElement);
+    expect(ticked(act)).toBe(true);
     fireEvent.change(view.getByRole("textbox", { name: "Name" }), {
       target: { value: "proxy" },
     });
@@ -332,21 +333,25 @@ describe("token scopes (T-693)", () => {
     expect(dialog.getByText("x-todou-act-as: <agent login>")).toBeTruthy();
     // Reset for the next token, once the reveal is dismissed.
     fireEvent.click(dialog.getByRole("button", { name: "Close" }));
-    await waitFor(() =>
-      expect(scopeBox(view, "agents:act")?.checked).toBe(false),
-    );
+    await waitFor(() => {
+      expect(scopeBox(view, "agents:act")).not.toBeNull();
+      expect(ticked(scopeBox(view, "agents:act"))).toBe(false);
+    });
   });
 
   it("unticking agents:act unticks agents:create", async () => {
     mountAt("/settings/tokens");
     const view = await page();
-    const create = await waitFor(
-      () => scopeBox(view, "agents:create") as HTMLInputElement,
-    );
+    const create = await waitFor(() => {
+      const found = scopeBox(view, "agents:create");
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
     fireEvent.click(create);
-    fireEvent.click(scopeBox(view, "agents:act") as HTMLInputElement);
-    expect(scopeBox(view, "agents:act")?.checked).toBe(false);
-    expect(create.checked).toBe(false);
+    expect(ticked(scopeBox(view, "agents:act"))).toBe(true);
+    fireEvent.click(scopeBox(view, "agents:act") as HTMLElement);
+    expect(ticked(scopeBox(view, "agents:act"))).toBe(false);
+    expect(ticked(create)).toBe(false);
   });
 
   it("hides the scopes while issuing for an agent, and forgets them", async () => {
@@ -359,8 +364,13 @@ describe("token scopes (T-693)", () => {
     const createMine = vi.spyOn(api, "createMyToken");
     const view = await page();
     fireEvent.click(
-      await waitFor(() => scopeBox(view, "agents:act") as HTMLInputElement),
+      await waitFor(() => {
+        const found = scopeBox(view, "agents:act");
+        expect(found).not.toBeNull();
+        return found as HTMLElement;
+      }),
     );
+    expect(ticked(scopeBox(view, "agents:act"))).toBe(true);
 
     fireEvent.click(view.getByRole("button", { name: /^Issue for/ }));
     fireEvent.click(await screen.findByRole("option", { name: /@bot-two/ }));
@@ -382,9 +392,10 @@ describe("token scopes (T-693)", () => {
     });
     fireEvent.click(view.getByRole("button", { name: /^Issue for/ }));
     fireEvent.click(await screen.findByRole("option", { name: /@user/ }));
-    await waitFor(() =>
-      expect(scopeBox(view, "agents:act")?.checked).toBe(false),
-    );
+    await waitFor(() => {
+      expect(scopeBox(view, "agents:act")).not.toBeNull();
+      expect(ticked(scopeBox(view, "agents:act"))).toBe(false);
+    });
     expect(createMine).not.toHaveBeenCalled();
   });
 

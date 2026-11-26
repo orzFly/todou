@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import { Link } from "@tanstack/react-router";
 import { formatRef } from "@todou/shared";
 import { ArrowLeftIcon } from "lucide-react";
@@ -10,9 +12,7 @@ import {
   useReturnLinkState,
   useReturnOrigin,
 } from "@/components/shared/return-context.tsx";
-import { Button } from "@/components/ui/button";
 import { type ReturnView, returnAccessibleName } from "@/lib/return-view.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * The one back control, worn identically by the issue page and the spec page

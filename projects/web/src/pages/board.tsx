@@ -10,6 +10,11 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
+import { cn } from "@orz/ui";
+import { Badge } from "@orz/ui/components/badge";
+import { Button } from "@orz/ui/components/button";
+import { Checkbox } from "@orz/ui/components/checkbox";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQueries, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import {
@@ -73,10 +78,6 @@ import {
   useRegisterReturnArea,
   useReturnLinkState,
 } from "@/components/shared/return-context.tsx";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
 import { openBlockCount } from "@/lib/blocks.ts";
 import {
   BOARD_CANVAS_REGION,
@@ -91,7 +92,6 @@ import {
   useSelection,
 } from "@/lib/use-selection.ts";
 import { useSweepSelect } from "@/lib/use-sweep-select.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * What a card needs to edit its own labels and assignees (T-533). Absent on
@@ -501,6 +501,8 @@ const BoardColumn = memo(function BoardColumn({
     [column.data],
   );
   const columnState = select?.stateOf(numbers) ?? "none";
+  // The select-all box shows while a mouse is on the header row.
+  const [headHover, setHeadHover] = useState(false);
   // One project-wide read that every column shares, not one per card.
   const watchers = useQuery(projectWatchersQuery(slug)).data?.issues;
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
@@ -528,7 +530,11 @@ const BoardColumn = memo(function BoardColumn({
       // is still the column the canvas has to find again (T-407).
       data-return-id={String(status.id)}
     >
-      <div className="group/colhead flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm">
+      <div
+        className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm"
+        onPointerEnter={(e) => setHeadHover(e.pointerType !== "touch")}
+        onPointerLeave={() => setHeadHover(false)}
+      >
         <StatusHeading
           status={status}
           select={
@@ -539,6 +545,7 @@ const BoardColumn = memo(function BoardColumn({
                   disabled: numbers.length === 0,
                   onChange: () => select.onSelectColumn(numbers),
                   label: `select every issue in ${status.name}`,
+                  revealed: headHover,
                 }
               : undefined
           }
@@ -679,12 +686,11 @@ const CardSelectBox = memo(function CardSelectBox({
       <Checkbox
         aria-label={`select ${ref}`}
         checked={selected}
-        // onClick rather than onChange: only the click carries shiftKey, and
-        // it fires for Space as well.
+        // onClick rather than onCheckedChange: only the click carries
+        // shiftKey, and it fires for Space as well.
         onClick={(e) => onSelect(number, e.shiftKey)}
-        onChange={() => {}}
         onPointerDown={keepOffDrag}
-        className="bg-background opacity-0 group-hover/card:opacity-100 group-data-[selecting]/select:opacity-100 checked:opacity-100 focus-visible:opacity-100 touch:hidden"
+        className="bg-background opacity-0 group-hover/card:opacity-100 group-data-[selecting]/select:opacity-100 data-[state=checked]:opacity-100 focus-visible:opacity-100 touch:hidden"
       />
     </span>
   );

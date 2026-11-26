@@ -1,3 +1,10 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
 import type {
   CodeViewItem,
   FileDiffMetadata,
@@ -27,18 +34,11 @@ import {
   patchCommitId,
   patchFileId,
 } from "@/components/shared/pierre.tsx";
-import { Button } from "@/components/ui/button.tsx";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover.tsx";
 import {
   formatCommitDate,
   type PatchCommit,
   parsePatchCommit,
 } from "@/lib/patch-commit.ts";
-import { cn } from "@/lib/utils";
 
 type Parsed =
   | { kind: "pending" }

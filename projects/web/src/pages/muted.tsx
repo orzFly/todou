@@ -1,3 +1,5 @@
+import { Button } from "@orz/ui/components/button";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { formatRef, type MutedIssue, type MutedProject } from "@todou/shared";
@@ -12,8 +14,6 @@ import { IssueTitle } from "@/components/shared/issue-title.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 
 export function MutedPage() {
   const {

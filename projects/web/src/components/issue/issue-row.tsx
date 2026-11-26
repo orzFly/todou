@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Checkbox } from "@orz/ui/components/checkbox";
 import { Link } from "@tanstack/react-router";
 import {
   formatRef,
@@ -28,8 +30,6 @@ import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { groupWatchers } from "@/components/shared/watcher-stack.tsx";
-import { Checkbox } from "@/components/ui/checkbox";
-import { cn } from "@/lib/utils";
 
 /**
  * The columns of a list of `IssueRow`s — read marker, ref, everything else —
@@ -213,11 +213,10 @@ export function IssueRow({
             id={`issue-select-${issue.id}`}
             aria-label={`select ${ref}`}
             checked={select.checked}
-            // onClick rather than onChange: only the click carries shiftKey,
-            // and it fires for Space as well.
+            // onClick rather than onCheckedChange: only the click carries
+            // shiftKey, and it fires for Space as well.
             onClick={(e) => select.onToggle(e.shiftKey)}
-            onChange={() => {}}
-            className="bg-background opacity-0 group-hover/row:opacity-100 group-data-[selecting]/select:opacity-100 checked:opacity-100 focus-visible:opacity-100"
+            className="bg-background opacity-0 group-hover/row:opacity-100 group-data-[selecting]/select:opacity-100 data-[state=checked]:opacity-100 focus-visible:opacity-100"
           />
         </label>
       )}

@@ -1,5 +1,4 @@
-import { ChevronDownIcon, MinusIcon, PlusIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@orz/ui/components/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +9,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@orz/ui/components/dropdown-menu";
+import { ChevronDownIcon, MinusIcon, PlusIcon } from "lucide-react";
 import {
   type ImageLook,
   setImageLook,

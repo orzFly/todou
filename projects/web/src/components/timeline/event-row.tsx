@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -69,7 +70,6 @@ import {
   TIMELINE_ROW_NARROW,
   TIMELINE_TIME_NARROW,
 } from "@/lib/timeline-time.ts";
-import { cn } from "@/lib/utils";
 
 /** Entity emphasis inside an event sentence, one notch below the actor's. */
 export const IN_SENTENCE = "font-medium text-foreground/75";

@@ -1,3 +1,10 @@
+import { cn } from "@orz/ui";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@orz/ui/components/dropdown-menu";
 import type { Status } from "@todou/shared";
 import { ChevronDownIcon, CircleDotIcon } from "lucide-react";
 import { useBulkIssueMutation } from "@/api/issues.ts";
@@ -8,13 +15,6 @@ import {
 } from "@/components/issue/bulk-button.tsx";
 import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
 
 /**
  * Moves a selection of cards to one status (T-707). Knows nothing about the

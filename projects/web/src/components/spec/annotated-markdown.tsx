@@ -1,3 +1,11 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
 import { formatAnchorRange, type SpecCommentItem } from "@todou/shared";
 import {
   CheckIcon,
@@ -34,13 +42,6 @@ import {
   DEFAULT_COMPARE_LABELS,
 } from "@/components/shared/media-compare.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverClose,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   INS_BLOCK_CLASS,
   MARK_KEY_ATTR,
@@ -77,7 +78,6 @@ import {
   sourceOffsetOfRendered,
 } from "@/lib/spec-source-index.ts";
 import { POINTER_FINE, useMediaQuery } from "@/lib/use-media-query.ts";
-import { cn } from "@/lib/utils";
 
 type RehypePlugins = ComponentProps<typeof Markdown>["rehypePlugins"];
 

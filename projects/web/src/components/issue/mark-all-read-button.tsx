@@ -1,8 +1,8 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import { CheckCheckIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useMarkAllReadAction } from "@/api/reads.ts";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 /**
  * "Mark all read" (T-100). One button for both scopes of `PUT /me/read`:

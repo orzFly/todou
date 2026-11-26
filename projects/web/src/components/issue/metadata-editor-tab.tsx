@@ -1,5 +1,6 @@
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
+import { Button } from "@orz/ui/components/button";
 import type { IssueMetadataWriteEntry } from "@todou/shared";
 import { type RefObject, useState } from "react";
 import {
@@ -12,7 +13,6 @@ import {
   CodeEditor,
   type CodeEditorHandle,
 } from "@/components/shared/code-editor.tsx";
-import { Button } from "@/components/ui/button";
 import {
   diffMetadata,
   METADATA_ENTRIES_PER_WRITE,

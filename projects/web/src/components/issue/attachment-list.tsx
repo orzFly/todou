@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { SelectSlot } from "@orz/ui/components/checkbox";
 import { useQuery } from "@tanstack/react-query";
 import {
   AppWindowIcon,
@@ -13,7 +15,13 @@ import {
   ImageIcon,
   PaperclipIcon,
 } from "lucide-react";
-import { type MouseEvent, type ReactNode, useMemo, useState } from "react";
+import {
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+  useMemo,
+  useState,
+} from "react";
 import { attachmentsQuery, useAttachmentDeleted } from "@/api/attachments.ts";
 import { useBoxedRefLinks } from "@/api/prefs.ts";
 import { AttachmentBulkActions } from "@/components/issue/attachment-bulk.tsx";
@@ -30,7 +38,6 @@ import {
   RICH_CHIP_SKIN,
   RICH_CHIP_STRUCTURE,
 } from "@/components/shared/rich-chip.ts";
-import { SelectSlot } from "@/components/ui/checkbox";
 import {
   formatSize,
   isArchiveFile,
@@ -44,7 +51,6 @@ import {
 import { attachmentAnchorHref, attachmentHref } from "@/lib/attachment-refs.ts";
 import { useSelection } from "@/lib/use-selection.ts";
 import { useSweepSelect } from "@/lib/use-sweep-select.ts";
-import { cn } from "@/lib/utils.ts";
 
 /** Modifier-clicks (new tab, forced download) keep native link behavior. */
 function isPlainLeftClick(e: MouseEvent): boolean {
@@ -110,6 +116,15 @@ export function AttachmentList({
   const [viewer, setViewer] = useState<ViewerState | null>(null);
   // Not persisted anywhere: expanding is "show me now", not a preference.
   const [expanded, setExpanded] = useState(false);
+  // Where a mouse is, which shows that row's box (or the header's), as the
+  // icon gives way to it.
+  const [hovered, setHovered] = useState<number | "head" | null>(null);
+  const hover = (key: number | "head") => ({
+    onPointerEnter: (e: PointerEvent) => {
+      if (e.pointerType !== "touch") setHovered(key);
+    },
+    onPointerLeave: () => setHovered((now) => (now === key ? null : now)),
+  });
   const items = attachments.data ?? [];
   const ids = useMemo(
     () => (attachments.data ?? []).map((a) => a.id),
@@ -139,15 +154,23 @@ export function AttachmentList({
       {/* The paperclip's cell is 16px, `px-3` and `gap-x-2` like a row's
           icon cell and the label's padding, so the clip, every file icon and
           every box sit on one vertical line (T-732). */}
-      <div className="group/att-head flex flex-wrap items-center gap-x-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
+      <div
+        className="flex flex-wrap items-center gap-x-2 border-b bg-muted/40 px-3 py-1.5 text-sm"
+        {...hover("head")}
+      >
         {selectable ? (
           <SelectSlot
             icon={<PaperclipIcon className="size-3.5 text-muted-foreground" />}
-            hoverGroup="att-head"
+            revealed={hovered === "head"}
             aria-label="select all attachments"
-            checked={selection.state === "all"}
-            indeterminate={selection.state === "some"}
-            onChange={selection.toggleAll}
+            checked={
+              selection.state === "all"
+                ? true
+                : selection.state === "some"
+                  ? "indeterminate"
+                  : false
+            }
+            onCheckedChange={selection.toggleAll}
           />
         ) : (
           <span className="inline-grid size-4 shrink-0 place-items-center">
@@ -208,8 +231,9 @@ export function AttachmentList({
             <li
               key={attachment.id}
               data-sweep-key={selectable ? attachment.id : undefined}
+              {...hover(attachment.id)}
               className={cn(
-                "group/att flex items-center hover:bg-muted/40",
+                "flex items-center hover:bg-muted/40",
                 selection.isSelected(attachment.id) &&
                   "bg-primary/10 hover:bg-primary/10",
               )}
@@ -226,16 +250,15 @@ export function AttachmentList({
                 >
                   <SelectSlot
                     icon={icon}
-                    hoverGroup="att"
+                    revealed={hovered === attachment.id}
                     id={`attachment-select-${attachment.id}`}
                     aria-label={`select ${attachment.filename}`}
                     checked={selection.isSelected(attachment.id)}
-                    // onClick rather than onChange: only the click carries
-                    // shiftKey, and it fires for Space as well.
+                    // onClick rather than onCheckedChange: only the click
+                    // carries shiftKey, and it fires for Space as well.
                     onClick={(e) =>
                       selection.toggle(attachment.id, { extend: e.shiftKey })
                     }
-                    onChange={() => {}}
                   />
                 </label>
               )}

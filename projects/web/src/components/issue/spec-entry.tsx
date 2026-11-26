@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { enumLookup, type SpecReviewStatus } from "@todou/shared";
@@ -10,7 +11,6 @@ import {
   StatNumbers,
 } from "@/components/timeline/spec-version-card.tsx";
 import { eventAnchor } from "@/lib/timeline-anchors.ts";
-import { cn } from "@/lib/utils.ts";
 
 const STATUS_STYLE: Record<SpecReviewStatus, string> = {
   unreviewed:

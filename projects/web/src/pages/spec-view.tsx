@@ -1,3 +1,10 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
 import type { SelectedLineRange } from "@pierre/diffs";
 // Imported directly rather than through the lazy wrapper in pierre.tsx: this
 // whole page is route-lazy, so pierre never reaches the main bundle through
@@ -107,12 +114,6 @@ import {
   DiffstatBar,
   StatNumbers,
 } from "@/components/timeline/spec-version-card.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   holdRevealed,
   type RevealMode,
@@ -151,7 +152,6 @@ import {
   useHeaderHeight,
 } from "@/lib/use-header-height.ts";
 import { LG_UP, SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
-import { cn } from "@/lib/utils.ts";
 import { VIEWPORT_CHROME_EVENT } from "@/lib/viewport-chrome.ts";
 
 /** What ↑↓ stops on: both kinds of "changed since the baseline" mark (T-158). */

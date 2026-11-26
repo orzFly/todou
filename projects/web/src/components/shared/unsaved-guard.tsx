@@ -1,6 +1,4 @@
-import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
-import { useCallback } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@orz/ui/components/button";
 import {
   Dialog,
   DialogContent,
@@ -8,7 +6,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@orz/ui/components/dialog";
+import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
+import { useCallback } from "react";
 import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
 
 /**

@@ -1,7 +1,7 @@
+import { cn } from "@orz/ui";
 import type { ProjectIconFallback } from "@todou/shared";
 import { useId, useLayoutEffect, useRef } from "react";
 import { projectTint } from "@/lib/project-tint.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * As a share of the box. The text is sized in the box's own units, so it

@@ -1,8 +1,8 @@
+import { Button } from "@orz/ui/components/button";
 import { useRouterState } from "@tanstack/react-router";
 import { SearchIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { SearchBox } from "@/components/search-box.tsx";
-import { Button } from "@/components/ui/button";
 import { useSlashShortcut } from "@/lib/use-slash-shortcut.ts";
 
 /**

@@ -1,3 +1,9 @@
+import { cn } from "@orz/ui";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
 import type { IssueListItem } from "@todou/shared";
 import {
   type KeyboardEvent,
@@ -11,13 +17,7 @@ import { useRefCandidates } from "@/api/ref-candidates.ts";
 import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { IssueTitle } from "@/components/shared/issue-title.tsx";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { parsesAsRef } from "@/lib/ref-completion.ts";
-import { cn } from "@/lib/utils";
 
 type PickerRow =
   | { kind: "project"; key: string; ref: string; name: string }

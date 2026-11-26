@@ -1,3 +1,9 @@
+import { cn } from "@orz/ui";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Label } from "@todou/shared";
 import { CheckIcon, MinusIcon } from "lucide-react";
@@ -7,17 +13,11 @@ import { api, useCan } from "@/api/queries.ts";
 import { LabelChip, LabelChips } from "@/components/issue/label-chip.tsx";
 import { PICKER_ROW, usePickerOrder } from "@/components/issue/picker-row.ts";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   canonicalizeLabelName,
   labelColorFor,
   labelNearKey,
   splitLabelName,
 } from "@/lib/labels.ts";
-import { cn } from "@/lib/utils";
 
 export function useCanCreateLabels(slug: string): boolean {
   return useCan(slug, "label.create");

@@ -1,3 +1,4 @@
+import { Button } from "@orz/ui/components/button";
 import { useQuery } from "@tanstack/react-query";
 import {
   Link,
@@ -10,7 +11,6 @@ import {
 import { useEffect } from "react";
 import { projectQuery } from "@/api/queries.ts";
 import { useRecordProjectVisit } from "@/api/useProjectOrder.ts";
-import { Button } from "@/components/ui/button";
 import { statusOf } from "@/lib/http-status.ts";
 
 // No project-name heading here: the shell's breadcrumb already carries it

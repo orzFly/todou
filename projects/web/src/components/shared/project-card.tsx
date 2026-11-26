@@ -1,14 +1,14 @@
-import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
-import { ProjectIcon } from "@/components/shared/project-icon.tsx";
+import { cn } from "@orz/ui";
 import {
   Card,
   CardAction,
-  CardDescription,
+  CardContent,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+} from "@orz/ui/components/card";
+import { Link } from "@tanstack/react-router";
+import type { ReactNode } from "react";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 
 /**
  * The project card and the grid it stands in — one definition for the
@@ -61,38 +61,13 @@ export function ProjectCard({
           the row's height down to the card. `relative` anchors the `sr-only`
           REF below to the card rather than to the page. */}
       <Card className="relative h-full transition-colors hover:bg-accent/50">
-        {/* With a corner the header takes the card's full height and its
-            second row the slack, so the corner's `self-end` lands on the
-            card's bottom padding. The corner sits in the action's column
-            rather than out of flow: the column narrows the title and the
-            description, which is what keeps a three-line description from
-            running under it. `minmax(0,1fr)`, not the base `1fr`: that
-            column's floor is the title's min-content, so a long name pushed
-            the whole second column out past the card's clip, unread badge
-            included. */}
-        <CardHeader
-          className={cn(
-            "has-data-[slot=card-action]:grid-cols-[minmax(0,1fr)_auto]",
-            corner !== undefined &&
-              "flex-1 grid-cols-[minmax(0,1fr)_auto] has-data-[slot=card-description]:grid-rows-[auto_1fr]",
-          )}
-        >
+        <CardHeader>
           <CardTitle
             className={cn(
-              "flex items-center gap-2.5 text-base",
+              "flex min-w-0 flex-1 items-center gap-2",
               muted && "text-muted-foreground",
             )}
           >
-            <ProjectIcon
-              aria-hidden="true"
-              project={{
-                slug: project.slug,
-                name: project.name,
-                prefix: project.prefix,
-                icon_url: project.icon_url,
-              }}
-              className="size-10"
-            />
             {/* No `min-w-0`: `truncate` brings `overflow-hidden`, which
                 already resolves this flex item's `min-width: auto` to 0, so a
                 long name gives way and the badge keeps its place. */}
@@ -106,20 +81,38 @@ export function ProjectCard({
               </span>
             )}
           </CardTitle>
+          {action !== undefined && <CardAction>{action}</CardAction>}
+        </CardHeader>
+        {/* The content takes the card's slack, so the corner's `self-end`
+            lands on the card's bottom padding. The corner sits in the row
+            rather than out of flow: it narrows the description, which is
+            what keeps a three-line description from running under it. */}
+        <CardContent className="flex flex-1 items-start gap-3">
+          <ProjectIcon
+            aria-hidden="true"
+            project={{
+              slug: project.slug,
+              name: project.name,
+              prefix: project.prefix,
+              icon_url: project.icon_url,
+            }}
+            className="size-10 shrink-0"
+          />
           {/* Without the clamp every card on the page pays the tallest card's
               height: measured, one five-line description takes every card to
               176px against the 136px the clamp holds them to. */}
-          <CardDescription className="line-clamp-3">{children}</CardDescription>
-          {action !== undefined && <CardAction>{action}</CardAction>}
+          <p
+            data-slot="project-card-description"
+            className="line-clamp-3 min-w-0 flex-1 text-muted-foreground"
+          >
+            {children}
+          </p>
           {corner !== undefined && (
-            <div
-              data-slot="project-card-corner"
-              className="col-start-2 row-span-2 row-start-1 flex self-end justify-self-end"
-            >
+            <div data-slot="project-card-corner" className="flex self-end">
               {corner}
             </div>
           )}
-        </CardHeader>
+        </CardContent>
         {/* The REF for a screen reader, which the drawn one never reaches: the
             icon is `aria-hidden`, and an uploaded icon draws no REF at all.
             Last in DOM order, so it is read after the name. */}

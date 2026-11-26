@@ -1,3 +1,9 @@
+import { cn } from "@orz/ui";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@orz/ui/components/hover-card";
 import {
   formatAnchorRange,
   isHidden,
@@ -20,12 +26,6 @@ import {
 } from "@/components/shared/hover-preview.ts";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card.tsx";
-import { cn } from "@/lib/utils";
 
 /**
  * A spec annotation, previewed off the row that names it (T-406). What a

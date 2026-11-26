@@ -369,7 +369,9 @@ describe("Statuses settings (T-712)", () => {
           .getAttribute("aria-pressed"),
       ).toBe("false");
     }
-    fireEvent.click(screen.getByLabelText("New issues start here"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "New issues start here" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(writes(calls)).toHaveLength(1));
     expect(bodyOf(writes(calls)[0])).toEqual({ is_default: true });

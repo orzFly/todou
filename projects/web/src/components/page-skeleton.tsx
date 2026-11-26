@@ -1,6 +1,6 @@
+import { cn } from "@orz/ui";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useMatches } from "@tanstack/react-router";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 
 /** Which shape the shell draws in `<main>` while a route's data is in flight. */
 export type PageSkeletonKind =

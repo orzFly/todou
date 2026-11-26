@@ -1,3 +1,4 @@
+import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
 import type { QueryClient } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import {
@@ -19,7 +20,6 @@ import {
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { ICONS, renderEvent } from "../src/components/timeline/event-row.tsx";
 import { NO_ENTITIES } from "../src/components/timeline/use-event-entities.ts";
-import { ConfirmDialog } from "../src/components/ui/confirm-dialog.tsx";
 import { TrashView } from "../src/pages/issue-list.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 

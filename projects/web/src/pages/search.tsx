@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import {
   Link,
@@ -39,14 +41,12 @@ import {
   useRegisterReturnLane,
   useReturnLinkState,
 } from "@/components/shared/return-context.tsx";
-import { Skeleton } from "@/components/ui/skeleton";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
 import { SM_UP } from "@/lib/use-media-query.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
-import { cn } from "@/lib/utils";
 
 const DOMAIN_LABELS: Array<{ value: SearchDomain; label: string }> = [
   { value: "issues", label: "Issues" },

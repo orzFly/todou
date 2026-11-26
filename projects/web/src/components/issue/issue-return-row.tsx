@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import type { Issue } from "@todou/shared";
 import {
   type CSSProperties,
@@ -13,7 +14,6 @@ import {
 } from "@/components/shared/return-link.tsx";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
 import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * The title mirror, which appears once the real heading has scrolled away and

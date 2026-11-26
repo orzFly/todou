@@ -1,3 +1,9 @@
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@orz/ui/components/dropdown-menu";
 import { Link } from "@tanstack/react-router";
 import type { SpecVersionInfo } from "@todou/shared";
 import { ChevronDownIcon } from "lucide-react";
@@ -7,12 +13,6 @@ import {
   SpecVersionMenuRow,
   VersionChip,
 } from "@/components/spec/spec-version-picker.tsx";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { SpecSearch } from "@/lib/spec-search.ts";
 
 /**

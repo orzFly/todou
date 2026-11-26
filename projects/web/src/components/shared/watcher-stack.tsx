@@ -8,7 +8,7 @@ import {
 
 export { LiveDot };
 
-import { cn } from "@/lib/utils";
+import { cn } from "@orz/ui";
 
 /** One account and every session it watches with. */
 export type WatcherGroup = { user: UserRef; sessions: Watcher[] };

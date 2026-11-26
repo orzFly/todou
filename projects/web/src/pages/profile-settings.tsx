@@ -1,3 +1,15 @@
+import { Avatar, AvatarFallback } from "@orz/ui/components/avatar";
+import { Button } from "@orz/ui/components/button";
+import { Input } from "@orz/ui/components/input";
+import { Label } from "@orz/ui/components/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@orz/ui/components/select";
+import { Switch } from "@orz/ui/components/switch";
 import {
   useMutation,
   useQuery,
@@ -40,18 +52,6 @@ import {
 } from "@/components/shared/fallback-glyph.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { UserAvatar } from "@/components/shared/user-chip.tsx";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import {
   setPlainTextEditor,
   usePlainTextEditor,

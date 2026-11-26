@@ -48,9 +48,9 @@ vi.mock(
   },
 );
 
-vi.mock("../src/components/ui/popover.tsx", async (importOriginal) => {
+vi.mock("@orz/ui/components/popover", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../src/components/ui/popover.tsx")>();
+    await importOriginal<typeof import("@orz/ui/components/popover")>();
   const Original = actual.Popover;
   return {
     ...actual,

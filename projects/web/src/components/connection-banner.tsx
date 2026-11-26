@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "@orz/ui/components/button";
 
 /**
  * A failed background refetch of account data (`/api/me`): the page keeps

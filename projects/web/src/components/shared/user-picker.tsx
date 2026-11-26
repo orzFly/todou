@@ -1,14 +1,14 @@
+import { cn } from "@orz/ui";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
 import type { UserKind } from "@todou/shared";
 import { CheckIcon, ChevronDownIcon, MinusIcon } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { PICKER_ROW, usePickerOrder } from "@/components/issue/picker-row.ts";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
 
 /** What every user picker needs to know about a candidate. */
 export type PickerUser = {

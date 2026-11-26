@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { Link } from "@tanstack/react-router";
 import type { Label, TimelineEvent } from "@todou/shared";
 import {
@@ -50,7 +51,6 @@ import {
   TIMELINE_ROW_NARROW,
   TIMELINE_TIME_NARROW,
 } from "@/lib/timeline-time.ts";
-import { cn } from "@/lib/utils";
 
 type ListRow = {
   key: string | number;

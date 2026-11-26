@@ -1,3 +1,4 @@
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
@@ -7,7 +8,6 @@ import {
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 

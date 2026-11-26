@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { useQuery } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
 import { FileTextIcon } from "lucide-react";
@@ -16,7 +17,6 @@ import {
   textPreviewGate,
 } from "@/lib/attachment-preview.ts";
 import { attachmentAnchorHref } from "@/lib/attachment-refs.ts";
-import { cn } from "@/lib/utils";
 
 /** Card-shaped stand-in for the states that have no document body to show. */
 function EmbedShell({

@@ -1,3 +1,4 @@
+import { Button } from "@orz/ui/components/button";
 import { useTheme } from "@orz/ui/theme";
 import { Maximize2Icon } from "lucide-react";
 import {
@@ -24,7 +25,6 @@ import {
   MediaCompare,
 } from "@/components/shared/media-compare.tsx";
 import { CodeBlock, CodeDiffBlock } from "@/components/shared/pierre.tsx";
-import { Button } from "@/components/ui/button.tsx";
 import {
   type DiagramPalette,
   type DiagramResult,

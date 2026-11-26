@@ -1,8 +1,8 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import { useQuery } from "@tanstack/react-query";
 import { BellOffIcon, BellRingIcon } from "lucide-react";
 import { mutesQuery, useMuteProject, useUnmuteProject } from "@/api/mutes.ts";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 /**
  * Project-wide mute (T-372), shaped after MarkAllReadButton: the same

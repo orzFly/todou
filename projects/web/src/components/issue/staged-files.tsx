@@ -1,3 +1,4 @@
+import { Button } from "@orz/ui/components/button";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
 import { FileIcon, Maximize2Icon, PaperclipIcon, XIcon } from "lucide-react";
@@ -8,7 +9,6 @@ import type {
   EditorFileStaging,
   StagingSurface,
 } from "@/components/shared/markdown-editor.tsx";
-import { Button } from "@/components/ui/button";
 import {
   formatSize,
   isPreviewableImage,

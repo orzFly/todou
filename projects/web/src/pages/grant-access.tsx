@@ -1,3 +1,14 @@
+import { Button } from "@orz/ui/components/button";
+import { Card, CardContent } from "@orz/ui/components/card";
+import { Checkbox } from "@orz/ui/components/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@orz/ui/components/select";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import type {
@@ -31,17 +42,6 @@ import {
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { RolePermissionsDialog } from "@/components/shared/role-permissions-table.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { type GrantTarget, resolveGrantTarget } from "@/lib/grant-target.ts";
 import {
   type ProjectRefOption,
@@ -526,7 +526,7 @@ function TargetRow({
         <Checkbox
           aria-label={`include ${slug}`}
           checked={included}
-          onChange={(e) => onInclude(slug, e.target.checked)}
+          onCheckedChange={(checked) => onInclude(slug, checked === true)}
         />
       ) : null}
       <div className="flex min-w-40 flex-1 items-center gap-2">

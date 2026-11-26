@@ -1,3 +1,12 @@
+import { Button } from "@orz/ui/components/button";
+import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@orz/ui/components/dropdown-menu";
 import { useNavigate } from "@tanstack/react-router";
 import { formatRef, type Issue } from "@todou/shared";
 import {
@@ -13,15 +22,6 @@ import { MoveIssueDialog } from "@/components/issue/move-issue-dialog.tsx";
 import { IssueReferencesDialog } from "@/components/issue/references-dialog.tsx";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { IssueTitle } from "@/components/shared/issue-title.tsx";
-import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 /**
  * The sidebar's overflow menu (T-248), holding what acts on the card as a

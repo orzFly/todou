@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { SpecPushedPayload } from "@todou/shared";
@@ -17,10 +19,8 @@ import {
 } from "@/api/spec.ts";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import { Button } from "@/components/ui/button";
 import { diffstatCells, type SpecFileStat } from "@/lib/spec-version-stats.ts";
 import { formatTimelineTime } from "@/lib/timeline-time.ts";
-import { cn } from "@/lib/utils.ts";
 
 const CHANGE_BADGE: Record<
   SpecFileStat["change"],

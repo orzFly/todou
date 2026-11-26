@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { useQuery } from "@tanstack/react-query";
 import type { Watcher } from "@todou/shared";
 import { projectQuery, projectWatchersQuery } from "@/api/queries.ts";
@@ -7,7 +8,6 @@ import {
   WatcherStack,
   watchingLabel,
 } from "@/components/shared/watcher-stack.tsx";
-import { cn } from "@/lib/utils";
 
 /** A project's project-level watchers as a stack that opens the session list. */
 export function ProjectWatchersButton({

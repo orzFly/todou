@@ -1,3 +1,4 @@
+import { Button } from "@orz/ui/components/button";
 import { useQueryClient } from "@tanstack/react-query";
 import { PlusIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -6,7 +7,6 @@ import { api } from "@/api/queries.ts";
 import { RefPicker } from "@/components/issue/ref-picker.tsx";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
-import { Button } from "@/components/ui/button";
 
 type Direction = "blocked_by" | "blocks";
 

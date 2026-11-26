@@ -1,10 +1,6 @@
+import { Dialog, DialogContent, DialogTitle } from "@orz/ui/components/dialog";
 import { fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "../src/components/ui/dialog.tsx";
 
 /**
  * The release `dialog.tsx` performs for a finger (T-450, T-471) needs two

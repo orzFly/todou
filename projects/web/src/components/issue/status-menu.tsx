@@ -1,14 +1,14 @@
-import type { Status } from "@todou/shared";
-import { CheckIcon } from "lucide-react";
-import { PICKER_ROW } from "@/components/issue/picker-row.ts";
-import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { cn } from "@orz/ui";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
+} from "@orz/ui/components/dropdown-menu";
+import type { Status } from "@todou/shared";
+import { CheckIcon } from "lucide-react";
+import { PICKER_ROW } from "@/components/issue/picker-row.ts";
+import { StatusPill } from "@/components/issue/status-pill.tsx";
 
 /**
  * A status pill that opens the project's statuses — the sidebar's and a

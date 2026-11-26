@@ -1,8 +1,8 @@
+import { Button } from "@orz/ui/components/button";
 import { formatAnchorRange } from "@todou/shared";
 import { FileTextIcon, XIcon } from "lucide-react";
 import { type RefObject, useState } from "react";
 import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
-import { Button } from "@/components/ui/button";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 
 /** Longest quote preview before the rest folds into a "+N lines" note. */

@@ -1,3 +1,15 @@
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@orz/ui/components/dialog";
+import { Input } from "@orz/ui/components/input";
+import { Label } from "@orz/ui/components/label";
+import { Textarea } from "@orz/ui/components/textarea";
 import {
   useMutation,
   useQuery,
@@ -17,18 +29,6 @@ import {
   ProjectCardGrid,
 } from "@/components/shared/project-card.tsx";
 import { ProjectWatchersButton } from "@/components/shared/project-watchers.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { UnreadBadge } from "@/components/unread-badge.tsx";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 

@@ -1,9 +1,9 @@
+import { Separator } from "@orz/ui/components/separator";
 import { useRevealedRuns } from "@/components/timeline/revealed-runs.tsx";
 import {
   RevealLink,
   TimelineRule,
 } from "@/components/timeline/timeline-rule.tsx";
-import { Separator } from "@/components/ui/separator";
 
 /**
  * The line between the card and its timeline, carrying the card's hidden

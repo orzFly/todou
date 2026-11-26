@@ -1,3 +1,4 @@
+import { Dialog, DialogContent, DialogTitle } from "@orz/ui/components/dialog";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -49,11 +50,6 @@ import { userQuery, userSearchSchema } from "../src/api/users.ts";
 import type * as CalendarSectionModule from "../src/components/activity-calendar/activity-calendar-section.tsx";
 import * as returnContext from "../src/components/shared/return-context.tsx";
 import { ReturnViewProvider } from "../src/components/shared/return-context.tsx";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "../src/components/ui/dialog.tsx";
 import {
   RETURN_VIEW_VERSION,
   type ReturnView,

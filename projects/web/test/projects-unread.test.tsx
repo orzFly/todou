@@ -246,7 +246,7 @@ describe("ProjectsPage unread badges (T-382)", () => {
     );
     expect(alpha.getAttribute("aria-label")).toBeNull();
     expect(
-      screen.getByRole("link", { name: /Alpha description.*2 unread/ }),
+      screen.getByRole("link", { name: /2 unread.*Alpha description/ }),
     ).toBe(alpha);
     expect(actionOf(quiet)).toBeNull();
     expect(quiet.textContent).not.toContain("unread");

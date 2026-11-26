@@ -1,9 +1,9 @@
+import { cn } from "@orz/ui";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { formatTimelineTime } from "@/lib/timeline-time.ts";
-import { cn } from "@/lib/utils";
 
 const TEXT = "text-xs whitespace-nowrap text-muted-foreground";
 

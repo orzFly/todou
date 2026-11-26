@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import {
   CheckIcon,
   CopyIcon,
@@ -6,9 +8,7 @@ import {
   UnfoldVerticalIcon,
 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button.tsx";
 import { writeClipboard } from "@/lib/clipboard.ts";
-import { cn } from "@/lib/utils";
 
 const COPIED_MS = 1500;
 

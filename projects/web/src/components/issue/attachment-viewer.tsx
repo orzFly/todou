@@ -1,3 +1,11 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogCloseButton,
+  DialogContent,
+  DialogTitle,
+} from "@orz/ui/components/dialog";
 import { useQuery } from "@tanstack/react-query";
 import {
   CheckIcon,
@@ -24,13 +32,6 @@ import {
   DocumentView,
 } from "@/components/shared/document-card.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogCloseButton,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   documentKind,
   formatSize,
@@ -42,7 +43,6 @@ import {
 } from "@/lib/attachment-preview.ts";
 import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 import { writeClipboard } from "@/lib/clipboard.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * Where the footer's "Open in new tab" goes, if anywhere. An object URL is

@@ -153,7 +153,7 @@ describe("the REF on a project card", () => {
     );
     expect(card.className).toContain("h-full");
     expect(
-      card.querySelector('[data-slot="card-description"]')?.className,
+      card.querySelector('[data-slot="project-card-description"]')?.className,
     ).toContain("line-clamp-3");
   });
 });

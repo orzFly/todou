@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "@orz/ui/components/button";
 
 /**
  * The folded-middle divider (T-30), GitHub-style: sits in the seam between

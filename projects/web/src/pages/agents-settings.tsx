@@ -1,3 +1,23 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@orz/ui/components/dialog";
+import { Input } from "@orz/ui/components/input";
+import { Label } from "@orz/ui/components/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@orz/ui/components/table";
 import {
   useMutation,
   useQueryClient,
@@ -19,26 +39,6 @@ import {
   AgentProjectsSummary,
 } from "@/components/shared/agent-projects.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { cn } from "@/lib/utils";
 
 type AgentSegment = "active" | "deactivated";
 

@@ -1,8 +1,8 @@
+import { cn } from "@orz/ui";
 import { type ComponentProps, useLayoutEffect, useRef, useState } from "react";
 import { REF_TITLE_CAP_EM } from "@/components/shared/rich-chip.ts";
 import { canvasMeasurer, pixels } from "@/lib/ref-text-metrics.ts";
 import { cutTitle, type TitleCut } from "@/lib/ref-title-cap.ts";
-import { cn } from "@/lib/utils.ts";
 
 /**
  * A reference chip's title inside a markdown body: inline text, so it breaks

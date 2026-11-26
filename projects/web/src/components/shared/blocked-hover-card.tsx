@@ -1,3 +1,8 @@
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@orz/ui/components/hover-card";
 import type { BlockRef } from "@todou/shared";
 import type { ReactNode } from "react";
 import {
@@ -8,11 +13,6 @@ import {
 } from "@/components/shared/hover-preview.ts";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { TrashedBlocker } from "@/components/shared/trashed-blocker.tsx";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card.tsx";
 
 /** The badge and this list receive the same unresolved edges (T-423). */
 export function BlockedHoverCard({

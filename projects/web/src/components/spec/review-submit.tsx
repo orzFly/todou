@@ -1,3 +1,10 @@
+import { Button } from "@orz/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@orz/ui/components/dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   formatAnchorRange,
@@ -22,13 +29,6 @@ import {
   type ReviewCompletion,
   useReviewCompletion,
 } from "@/components/spec/use-review-completion.ts";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import {
   confirmSubmittedSpecReviewDrafts,

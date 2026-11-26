@@ -1,8 +1,8 @@
+import { cn } from "@orz/ui";
+import { Avatar, AvatarFallback, AvatarImage } from "@orz/ui/components/avatar";
 import { useProjectIconFallback } from "@/api/prefs.ts";
 import { FallbackGlyph } from "@/components/shared/fallback-glyph.tsx";
 import { initialsOf } from "@/components/shared/user-chip.tsx";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { cn } from "@/lib/utils";
 
 /**
  * A project's icon — `UserAvatar`'s opposite number, square where people are

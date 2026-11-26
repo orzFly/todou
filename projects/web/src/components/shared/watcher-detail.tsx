@@ -1,3 +1,9 @@
+import { cn } from "@orz/ui";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@orz/ui/components/popover";
 import type { Watcher } from "@todou/shared";
 import {
   type ComponentProps,
@@ -14,12 +20,6 @@ import {
   OPEN_DELAY_MS,
 } from "@/components/shared/hover-preview.ts";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover.tsx";
-import { cn } from "@/lib/utils";
 
 /** What one session holds open, in the words of the command that opened it. */
 export function watchingWhat(watcher: Watcher): string {

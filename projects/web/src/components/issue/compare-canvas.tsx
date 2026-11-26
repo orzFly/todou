@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { ChevronsLeftRightIcon } from "lucide-react";
 import {
   type CSSProperties,
@@ -29,7 +30,6 @@ import {
 import { type CompareMode, useCompareMode } from "@/lib/compare-mode.ts";
 import { useImageLook } from "@/lib/image-look.ts";
 import { fitScale, type Pane, sideBySidePanes } from "@/lib/image-zoom.ts";
-import { cn } from "@/lib/utils";
 
 const GAP = 8;
 

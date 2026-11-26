@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn } from "@orz/ui";
 
 /**
  * The unread count, wherever it is shown (T-202). Shared rather than copied

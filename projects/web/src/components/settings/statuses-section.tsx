@@ -15,6 +15,12 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import { Checkbox } from "@orz/ui/components/checkbox";
+import { ConfirmDialog } from "@orz/ui/components/confirm-dialog";
+import { Input } from "@orz/ui/components/input";
+import { Label } from "@orz/ui/components/label";
 import {
   useMutation,
   useQuery,
@@ -51,11 +57,6 @@ import {
 } from "@/api/queries.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { ColorSwatches } from "@/components/settings/color-swatches.tsx";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { labelColorFor } from "@/lib/labels.ts";
 import {
   arrangementOf,
@@ -68,7 +69,6 @@ import {
   orderRequest,
   roleException,
 } from "@/lib/status-arrangement.ts";
-import { cn } from "@/lib/utils";
 
 type Category = "open" | "closed";
 
@@ -933,8 +933,8 @@ function StatusEditor({
             <Label className="flex items-center gap-2 font-normal">
               <Checkbox
                 checked={draft.isDefault}
-                onChange={(e) =>
-                  onDraft({ ...draft, isDefault: e.target.checked })
+                onCheckedChange={(checked) =>
+                  onDraft({ ...draft, isDefault: checked === true })
                 }
               />
               New issues start here

@@ -1,5 +1,5 @@
+import { cn } from "@orz/ui";
 import { GitCompareIcon, SlashIcon } from "lucide-react";
-import { cn } from "@/lib/utils.ts";
 
 /**
  * Whether the document on screen is read against an earlier version — the

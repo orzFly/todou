@@ -1,3 +1,5 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { formatAnchorRange, type SpecCommentComponent } from "@todou/shared";
@@ -8,8 +10,6 @@ import { api } from "@/api/queries.ts";
 import { specFilesQuery } from "@/api/spec.ts";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import type { Target } from "@/components/timeline/comment-item.tsx";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils.ts";
 
 const CONTEXT_LINES = 8;
 

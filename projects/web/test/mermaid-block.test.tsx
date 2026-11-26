@@ -1,3 +1,4 @@
+import { ThemeProvider, type ThemeStore } from "@orz/ui/theme";
 import {
   act,
   fireEvent,
@@ -10,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { errorSummary, viewBoxSize } from "../src/lib/mermaid.ts";
 import { rehypeSourceLines } from "../src/lib/rehype-source-lines.ts";
+import { createTodouThemeStore } from "../src/lib/theme-store.ts";
 import { renderWithProviders } from "./render.tsx";
 
 vi.mock("@pierre/diffs/react", () => ({
@@ -57,14 +59,21 @@ beforeEach(() => {
   render.bySource.clear();
 });
 
-async function mount(source: string, fenceBaselines?: Map<number, string>) {
-  const { container } = renderWithProviders(
+async function mount(
+  source: string,
+  fenceBaselines?: Map<number, string>,
+  themes?: ThemeStore,
+) {
+  const view = (
     <MarkdownView
       rehypePlugins={[rehypeSourceLines]}
       fenceBaselines={fenceBaselines}
     >
       {source}
-    </MarkdownView>,
+    </MarkdownView>
+  );
+  const { container } = renderWithProviders(
+    themes ? <ThemeProvider store={themes}>{view}</ThemeProvider> : view,
   );
   await waitFor(() => {
     expect(container.querySelector(".markdown-body")).not.toBeNull();
@@ -157,17 +166,22 @@ describe("mermaid fences (T-523)", () => {
 
   it("re-renders when the resolved theme changes", async () => {
     render.next = { ok: true, svg: SVG, width: 1360, height: 164 };
-    const container = await mount(FENCE);
-    await waitFor(() => {
-      expect(container.querySelector(".mermaid-diagram svg")).not.toBeNull();
-    });
-    const calls = renderDiagram.mock.calls.length;
-    await act(async () => {
-      document.documentElement.dataset.theme = "solarized-dark";
-    });
-    await waitFor(() => {
-      expect(renderDiagram.mock.calls.length).toBe(calls + 1);
-    });
+    const themes = createTodouThemeStore();
+    try {
+      const container = await mount(FENCE, undefined, themes);
+      await waitFor(() => {
+        expect(container.querySelector(".mermaid-diagram svg")).not.toBeNull();
+      });
+      const calls = renderDiagram.mock.calls.length;
+      await act(async () => {
+        themes.setPref({ ui: { theme: "solarized", mode: "dark" } });
+      });
+      await waitFor(() => {
+        expect(renderDiagram.mock.calls.length).toBe(calls + 1);
+      });
+    } finally {
+      themes.dispose();
+    }
   });
 
   it("leaves other fences as code", async () => {

@@ -1,3 +1,7 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import { Input } from "@orz/ui/components/input";
+import { Label } from "@orz/ui/components/label";
 import {
   useQuery,
   useQueryClient,
@@ -53,9 +57,6 @@ import {
 } from "@/components/shared/markdown-editor.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { useCommandRegistry } from "@/components/timeline/composer.tsx";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
 import {
   completionWith,
@@ -73,7 +74,6 @@ import {
 } from "@/lib/slash-commands.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
-import { cn } from "@/lib/utils";
 
 // Mirrors the server's choice when no status is sent with a new issue.
 export function pickDefaultStatus(statuses: Status[]): Status | undefined {

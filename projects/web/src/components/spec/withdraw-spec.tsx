@@ -1,16 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
-import { can, enumLookup, type SpecInfo } from "@todou/shared";
-import { useState } from "react";
-import { projectQuery } from "@/api/queries.ts";
-import { useWithdrawSpec } from "@/api/spec.ts";
-import { Button } from "@/components/ui/button";
+import { Button } from "@orz/ui/components/button";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
+} from "@orz/ui/components/dialog";
+import { Textarea } from "@orz/ui/components/textarea";
+import { useQuery } from "@tanstack/react-query";
+import { can, enumLookup, type SpecInfo } from "@todou/shared";
+import { useState } from "react";
+import { projectQuery } from "@/api/queries.ts";
+import { useWithdrawSpec } from "@/api/spec.ts";
 
 const reviewDisabledReasons = {
   unreviewed: null,

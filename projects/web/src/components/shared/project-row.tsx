@@ -1,7 +1,7 @@
+import { cn } from "@orz/ui";
 import type { ReactNode } from "react";
 import { MatchHighlight } from "@/components/shared/match-highlight.tsx";
 import type { ProjectMatch } from "@/lib/project-match.ts";
-import { cn } from "@/lib/utils";
 
 export type ProjectRowProject = {
   name: string;

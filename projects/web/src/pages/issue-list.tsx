@@ -1,3 +1,7 @@
+import { cn } from "@orz/ui";
+import { Button } from "@orz/ui/components/button";
+import { Checkbox } from "@orz/ui/components/checkbox";
+import { Skeleton } from "@orz/ui/components/skeleton";
 import {
   keepPreviousData,
   useQuery,
@@ -94,9 +98,6 @@ import {
   useRegisterReturnArea,
   useRegisterReturnLane,
 } from "@/components/shared/return-context.tsx";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
 import { headerBottom, useHeaderHeight } from "@/lib/use-header-height.ts";
 import { usePagedAppend } from "@/lib/use-paged-append.ts";
@@ -108,7 +109,6 @@ import {
   useSelection,
 } from "@/lib/use-selection.ts";
 import { useSweepSelect } from "@/lib/use-sweep-select.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * The list route serves two pages: the issue list and the trash (T-145).
@@ -624,9 +624,14 @@ function IssueSelectionBar({
     <div className="flex items-center gap-2 touch:hidden">
       <Checkbox
         aria-label="select all issues"
-        checked={selection.state === "all"}
-        indeterminate={selection.state === "some"}
-        onChange={selection.toggleAll}
+        checked={
+          selection.state === "all"
+            ? true
+            : selection.state === "some"
+              ? "indeterminate"
+              : false
+        }
+        onCheckedChange={selection.toggleAll}
       />
       {count > 0 && (
         <>
@@ -1022,6 +1027,9 @@ function IssueGroup({
     loadMore: loadNextPage,
   });
 
+  // The group's select-all box shows while a mouse is on its header row.
+  const [headHover, setHeadHover] = useState(false);
+
   return (
     <section aria-label={status.name}>
       {/* Outside the header's rounded top corners sit two transparent notches;
@@ -1036,14 +1044,21 @@ function IssueGroup({
           top: "calc(var(--group-sticky-top, 56px) + var(--vv-top, 0px) - var(--header-hide, 0px))",
         }}
       >
-        <div className="group/colhead flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm">
+        <div
+          className="flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm"
+          onPointerEnter={(e) => setHeadHover(e.pointerType !== "touch")}
+          onPointerLeave={() => setHeadHover(false)}
+        >
           {/* The dot doubles as the group's select-all, as a board column's
               does (T-768). */}
           <StatusHeading
             status={status}
             select={
               selection
-                ? selectAllOf(selection, numbers, status.name)
+                ? {
+                    ...selectAllOf(selection, numbers, status.name),
+                    revealed: headHover,
+                  }
                 : undefined
             }
           />

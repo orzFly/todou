@@ -1,3 +1,4 @@
+import { Skeleton } from "@orz/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Navigate } from "@tanstack/react-router";
 import type { UserIssueRole, UserIssueState } from "@todou/shared";
@@ -12,7 +13,6 @@ import {
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
-import { Skeleton } from "@/components/ui/skeleton";
 import { UserIssuesSection } from "@/components/user/user-issues-section.tsx";
 import { UserProjectsSection } from "@/components/user/user-projects-section.tsx";
 import {

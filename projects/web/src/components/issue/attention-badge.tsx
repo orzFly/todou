@@ -1,3 +1,4 @@
+import { cn } from "@orz/ui";
 import { Link } from "@tanstack/react-router";
 import type { BlockRef } from "@todou/shared";
 import {
@@ -10,7 +11,6 @@ import type { ReactNode } from "react";
 import { BlockedHoverCard } from "@/components/shared/blocked-hover-card.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UNANSWERED_QUESTIONS_HASH } from "@/lib/question-landing.ts";
-import { cn } from "@/lib/utils";
 
 /**
  * The amber "waiting on you" pill worn by issue rows, board cards and inbox
