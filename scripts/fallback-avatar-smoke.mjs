@@ -13,10 +13,11 @@
  * Exit: 0 every case as expected; 1 an icon or fault assertion; 2 coverage or
  * infrastructure failure.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { projectTint } from "../projects/web/src/lib/project-tint.ts";
 import { probeFallbacks } from "./browser/fallback-avatar-probe.mjs";
 import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
@@ -94,15 +95,23 @@ const PAGES = [
 /** Only one generator exists for people so far (T-555). */
 const USER_GENERATOR = "monochrome_text";
 
-/** Every theme the picker offers, with the kind that decides `.dark`. */
-function themes() {
-  const source = readFileSync(
-    resolve(ROOT, "projects/web/src/lib/theme.ts"),
-    "utf8",
+/**
+ * Every palette the theme menu offers: each theme of @orz/ui's default style,
+ * in each scheme it has. Read from @orz/themes itself, resolved where the web
+ * package installed it, so the list is the one the app ships.
+ */
+async function themes() {
+  const require = createRequire(resolve(ROOT, "projects/web/package.json"));
+  const { builtinThemes, schemesOf, themesForStyle } = await import(
+    pathToFileURL(require.resolve("@orz/themes")).href
   );
-  const found = [
-    ...source.matchAll(/value: "([^"]+)",[\s\S]*?kind: "(light|dark)"/g),
-  ].map(([, value, kind]) => ({ value, kind }));
+  const found = themesForStyle(builtinThemes, "default").flatMap((theme) =>
+    schemesOf(theme).map((scheme) => ({
+      value: theme.id,
+      kind: scheme,
+      label: `${theme.id}/${scheme}`,
+    })),
+  );
   if (found.length < 4) throw new Error("could not read the theme list");
   return found;
 }
@@ -183,16 +192,17 @@ async function openPage(context, fixture, url, { square, circle }) {
   }
 }
 
+/** Through the app's own theme store, as the theme menu picks. */
 async function applyTheme(page, theme) {
   await evaluate(
     page,
-    ({ value, kind }) =>
-      new Promise((done) => {
-        const root = document.documentElement;
-        root.dataset.theme = value;
-        root.classList.toggle("dark", kind === "dark");
-        requestAnimationFrame(() => requestAnimationFrame(() => done()));
-      }),
+    async ({ value, kind }) => {
+      const { themeStore } = await import("/src/lib/theme-store.ts");
+      themeStore.setPref({ ui: { theme: value, mode: kind } });
+      await new Promise((done) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => done())),
+      );
+    },
     theme,
   );
 }
@@ -286,7 +296,7 @@ async function main() {
   };
 
   try {
-    const themeList = themes();
+    const themeList = await themes();
     stack = await createBrowserStack({
       root: ROOT,
       prefix: "fallback-avatar-smoke-",
@@ -341,7 +351,7 @@ async function main() {
                 result.coverageErrors.push("missing-WW");
               if (shape === "square") results.push(result);
               record(
-                `${projectGenerator} ${shape} ${target.path} ${theme.value}`,
+                `${projectGenerator} ${shape} ${target.path} ${theme.label}`,
                 result,
               );
             }

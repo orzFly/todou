@@ -110,8 +110,8 @@ export async function probeIssueHeaderWidth(options = {}, fault = {}) {
   }
   const style = getComputedStyle(timestamp);
   if (
-    !style.fontFamily.includes("Geist") ||
-    !document.fonts.check(`${style.fontSize} "Geist Variable"`)
+    !style.fontFamily.includes("Noto Sans Variable") ||
+    !document.fonts.check(`${style.fontSize} "Noto Sans Variable"`)
   ) {
     coverageErrors.push("timestamp-font-not-loaded");
   }
