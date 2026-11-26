@@ -25,18 +25,24 @@ const STYLE_NODES = 'style, link[rel="stylesheet"]';
 /**
  * The PiP window opens as a blank document: nothing from this one is
  * inherited. Copy the stylesheets, and keep copying — a lazily loaded chunk
- * injects its CSS into this head after the window opened — and mirror the
- * root element's attributes, which is where the theme lives (`.dark`,
- * `data-theme`), so switching theme repaints the window too.
+ * injects its CSS into this head after the window opened, and the theme store
+ * repaints by rewriting the text of one `<style data-orz-theme>` in place, so
+ * a copy follows its original's text and goes when the original does — and
+ * mirror the root element's attributes, which is where the theme's scheme,
+ * id, variant and style live, so switching theme repaints the window too.
  *
  * Except `style`: it carries this page's scroll-padding, sized to its own
  * header and composer (`useScrollInsets`), and would push every
  * `scrollIntoView` in the window off by that much.
  */
-function mirrorDocument(target: Document): () => void {
-  for (const node of document.head.querySelectorAll(STYLE_NODES)) {
-    target.head.append(node.cloneNode(true));
-  }
+export function mirrorDocument(target: Document): () => void {
+  const copies = new WeakMap<Node, Element>();
+  const copy = (node: Element) => {
+    const clone = node.cloneNode(true) as Element;
+    copies.set(node, clone);
+    target.head.append(clone);
+  };
+  for (const node of document.head.querySelectorAll(STYLE_NODES)) copy(node);
   const copyRoot = () => {
     const from = document.documentElement;
     const to = target.documentElement;
@@ -52,16 +58,34 @@ function mirrorDocument(target: Document): () => void {
   copyRoot();
   const rootObserver = new MutationObserver(copyRoot);
   rootObserver.observe(document.documentElement, { attributes: true });
+  // A change inside a copied element: its text node edited, or replaced
+  // wholesale by a `textContent` write.
+  const follow = (node: Node) => {
+    const original = node instanceof Element ? node : node.parentElement;
+    const clone = original && copies.get(original);
+    if (clone && clone.textContent !== original.textContent)
+      clone.textContent = original.textContent;
+  };
   const headObserver = new MutationObserver((records) => {
     for (const record of records) {
+      if (record.target !== document.head) {
+        follow(record.target);
+        continue;
+      }
+      for (const node of record.removedNodes) {
+        copies.get(node)?.remove();
+        copies.delete(node);
+      }
       for (const node of record.addedNodes) {
-        if (node instanceof Element && node.matches(STYLE_NODES)) {
-          target.head.append(node.cloneNode(true));
-        }
+        if (node instanceof Element && node.matches(STYLE_NODES)) copy(node);
       }
     }
   });
-  headObserver.observe(document.head, { childList: true });
+  headObserver.observe(document.head, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
   return () => {
     rootObserver.disconnect();
     headObserver.disconnect();

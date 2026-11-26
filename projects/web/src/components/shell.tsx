@@ -1,3 +1,4 @@
+import { ThemeMenu } from "@orz/ui/components/theme-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
@@ -23,7 +24,6 @@ import { NavBackControl } from "@/components/shared/return-link.tsx";
 import { UnsavedChangesGuard } from "@/components/shared/unsaved-guard.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { SpecReviewSessionProvider } from "@/components/spec/spec-review-session-provider.tsx";
-import { ThemeMenu } from "@/components/theme-menu.tsx";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

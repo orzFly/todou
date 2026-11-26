@@ -9,12 +9,11 @@ import {
   keymap,
   placeholder as placeholderExt,
 } from "@codemirror/view";
+import { useTheme } from "@orz/ui/theme";
 import { useEffect, useImperativeHandle, useRef } from "react";
-
 import { compositionSafeMeasure } from "@/lib/editor/composition-safe-measure.ts";
 import { parkedTooltip } from "@/lib/editor/parked-tooltip.ts";
 import { tooltipSpace } from "@/lib/editor/tooltip-space.ts";
-import { useThemeKind } from "@/lib/theme.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { cn } from "@/lib/utils";
 
@@ -207,7 +206,7 @@ export function CodeEditor({
   // CodeMirror's base theme picks its light or dark set of colours (snippet
   // fields and the like) by this facet; nobody telling it the app is dark
   // leaves it on the light set under a dark theme too.
-  const dark = useThemeKind() === "dark";
+  const dark = useTheme().colorScheme === "dark";
   const darkSlot = useRef(new Compartment()).current;
 
   // Read through the ref rather than the closure: the EditorView is a
