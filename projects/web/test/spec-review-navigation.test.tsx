@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -1073,7 +1074,13 @@ describe("real review rows, MarkdownView permalinks and highlight lifetime", () 
     // The issue has already been fetched for the real destination page: an
     // invalid enhancer cannot pass solely because its metadata was missing.
     expect(view.client.getQueryData(["issue", "demo", 7])).toBeDefined();
-    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    // The flash is @orz/ui's, which the app's stylesheet imports.
+    const css = readFileSync(
+      createRequire(resolve(process.cwd(), "package.json")).resolve(
+        "@orz/ui/styles.css",
+      ),
+      "utf8",
+    );
     expect(css).toMatch(
       /\.anchor-flash\s*\{\s*animation:\s*anchor-flash\s+2s\s+ease-out\s+both\s*;/,
     );

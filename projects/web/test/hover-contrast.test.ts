@@ -1,13 +1,20 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import {
+  builtinThemes,
+  resolvePalette,
+  schemesOf,
+  themesForStyle,
+  variantsOf,
+} from "@orz/themes";
 import { describe, expect, it } from "vitest";
-import { THEMES } from "../src/lib/theme.ts";
 
-const read = (rel: string) =>
-  readFileSync(new URL(rel, import.meta.url), "utf8");
-
-const STYLES = read("../src/styles.css");
-const CARD = read("../src/components/timeline/questions-card.tsx");
+// Not `import.meta.url`: under this setup that is not a `file:` URL.
+const CARD = readFileSync(
+  resolve(process.cwd(), "src/components/timeline/questions-card.tsx"),
+  "utf8",
+);
 // Resolved, not transcribed: a pasted amber would keep reporting the contrast
 // of whatever Tailwind's palette held on the day somebody copied it, and the
 // whole point of these numbers is that they track the real dependency.
@@ -20,10 +27,20 @@ type Rgb = [number, number, number];
 
 /** CSS Color 4's Oklab matrices, then the sRGB transfer function. */
 function oklch(spec: string): Rgb {
+  const hexMatch = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(spec.trim());
+  if (hexMatch) {
+    const digits =
+      hexMatch[1].length === 3
+        ? [...hexMatch[1]].map((d) => d + d).join("")
+        : hexMatch[1];
+    return [0, 2, 4].map((i) =>
+      Number.parseInt(digits.slice(i, i + 2), 16),
+    ) as Rgb;
+  }
   const m = /^oklch\(\s*([\d.]+)(%?)\s+([\d.]+)\s+([\d.]+)\s*\)$/.exec(
     spec.trim(),
   );
-  if (!m) throw new Error(`not a plain oklch() colour: ${spec}`);
+  if (!m) throw new Error(`not a hex or plain oklch() colour: ${spec}`);
   const lightness = m[2] === "%" ? Number(m[1]) / 100 : Number(m[1]);
   const chroma = Number(m[3]);
   const hue = (Number(m[4]) * Math.PI) / 180;
@@ -66,26 +83,23 @@ function contrast(x: Rgb, y: Rgb): number {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
-function tokensOf(selector: string): Record<string, string> | null {
-  const head = `${selector} {`;
-  const start = STYLES.indexOf(head);
-  if (start < 0) return null;
-  const body = STYLES.slice(start + head.length, STYLES.indexOf("\n}", start));
-  const out: Record<string, string> = {};
-  for (const m of body.matchAll(/(--[\w-]+):\s*([^;]+);/g))
-    out[m[1]] = m[2].trim();
-  return out;
-}
-
-const themeBlock = (value: string) => tokensOf(`:root[data-theme="${value}"]`);
-
-function tokensFor(value: string, kind: string): Record<string, string> {
-  return {
-    ...tokensOf(":root"),
-    ...(kind === "dark" ? tokensOf(".dark") : {}),
-    ...(themeBlock(value) ?? {}),
-  };
-}
+// Every palette a user can pick under the default style: each theme's light
+// and dark side, in each variant that side defines. Read from @orz/themes
+// itself, so a theme or variant added upstream is measured the day it lands.
+const THEMES = themesForStyle(builtinThemes, "default");
+const measured = THEMES.flatMap((theme) =>
+  schemesOf(theme).flatMap((scheme) =>
+    variantsOf(theme).flatMap(({ id }) => {
+      const palette = resolvePalette(theme, scheme, id);
+      if (palette === null || palette.variant !== id) return [];
+      const tokens: Record<string, string> = {};
+      for (const [name, value] of Object.entries(palette.tokens))
+        tokens[`--${name}`] = value;
+      const label = `${theme.id}/${scheme}${id === "default" ? "" : `/${id}`}`;
+      return [{ label, tokens }];
+    }),
+  ),
+);
 
 const AMBER = oklch(
   (/--color-amber-500:\s*([^;]+);/.exec(TAILWIND) as RegExpExecArray)[1].trim(),
@@ -159,11 +173,6 @@ function surfaces(tokens: Record<string, string>, classes: string[]) {
   };
 }
 
-const measured = THEMES.map((theme) => ({
-  theme,
-  tokens: tokensFor(theme.value, theme.kind),
-}));
-
 // The minima design.md measured, less a hair of rounding headroom. Raising a
 // threshold above its measured value is how this test is meant to be proven
 // capable of failing.
@@ -180,11 +189,9 @@ describe("question row hover contrast", () => {
     // Three independent sources agree on this pixel (design.md): the model
     // below, Chrome's own engine in the mockup, and the reported screenshot.
     // Every other number here rides on the same two formulas, so when one of
-    // them is mistyped this is the assertion that says so.
-    const light = measured.find(
-      (m) => m.theme.value === "light",
-    ) as (typeof measured)[number];
-    const card = over(AMBER, oklch(light.tokens["--card"]), 0.05);
+    // them is mistyped this is the assertion that says so. The card the
+    // screenshot was taken on is the light --card todou had before @orz/ui.
+    const card = over(AMBER, oklch("oklch(1 0 0)"), 0.05);
     expect(hex(card)).toBe("#fffaf2");
   });
 
@@ -196,17 +203,14 @@ describe("question row hover contrast", () => {
 
   it("draws an unselected row's hover edge clear of the row beside it", () => {
     const failures = [];
-    for (const { theme, tokens } of measured) {
+    for (const { label, tokens } of measured) {
       for (const row of ROWS) {
         const { card, edge } = surfaces(tokens, classesOf(row.base, row.plain));
         if (edge === null) {
-          failures.push({
-            theme: `${theme.value} (no hover border)`,
-            ratio: 0,
-          });
+          failures.push({ theme: `${label} (no hover border)`, ratio: 0 });
           continue;
         }
-        failures.push({ theme: theme.value, ratio: contrast(edge, card) });
+        failures.push({ theme: label, ratio: contrast(edge, card) });
       }
     }
     expect(worstFirst(failures.filter((f) => f.ratio < MIN_EDGE))).toEqual([]);
@@ -214,13 +218,13 @@ describe("question row hover contrast", () => {
 
   it("deepens a selected or declined row's own fill on hover", () => {
     const rows = [];
-    for (const { theme, tokens } of measured) {
+    for (const { label, tokens } of measured) {
       for (const row of ROWS) {
         const { rest, hover } = surfaces(
           tokens,
           classesOf(row.base, row.marked),
         );
-        rows.push({ theme: theme.value, ratio: contrast(hover, rest) });
+        rows.push({ theme: label, ratio: contrast(hover, rest) });
       }
     }
     expect(worstFirst(rows.filter((r) => r.ratio < MIN_STATE_FILL))).toEqual(
@@ -228,17 +232,28 @@ describe("question row hover contrast", () => {
     );
   });
 
-  it("has a token block for every theme, so a new one cannot go unmeasured", () => {
-    const unmeasured = THEMES.filter(
-      (t) =>
-        themeBlock(t.value) === null &&
-        t.value !== "light" &&
-        t.value !== "dark",
+  it("measures every theme a todou-theme preference can map to", () => {
+    // The themes the old todou-theme values land on (design.md, theme
+    // table). Each must be offered by the default style and measured above,
+    // light and dark where it has both.
+    const legacy = [
+      "default",
+      "picotera",
+      "solarized",
+      "vs",
+      "github",
+      "catppuccin",
+      "gruvbox",
+      "dracula",
+      "nord",
+      "tokyo-night",
+      "one-dark",
+      "monokai",
+    ];
+    const ids = new Set(measured.map((m) => m.label.split("/")[0]));
+    expect(legacy.filter((id) => !ids.has(id))).toEqual([]);
+    expect(measured.map((m) => m.label)).toEqual(
+      expect.arrayContaining(["default/light", "default/dark"]),
     );
-    expect(unmeasured.map((t) => t.value)).toEqual([]);
-    // The two themes with no data-theme block of their own are the defaults,
-    // and they are only measurable because these blocks carry the full palette.
-    expect(tokensOf(":root")).toHaveProperty("--card");
-    expect(tokensOf(".dark")).toHaveProperty("--card");
   });
 });

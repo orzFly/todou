@@ -400,18 +400,18 @@ describe("QuestionsCard (unanswered)", () => {
         ?.closest("button") as HTMLButtonElement;
 
     const unselected = optionButton(view, "New entity").className;
-    expect(unselected).toContain("enabled:hover:border-foreground/40");
+    expect(unselected).toContain("enabled:hover:border-foreground/45");
     expect(unselected).toContain("enabled:hover:bg-foreground/6");
 
     fireEvent.click(optionButton(view, "New entity"));
     const selected = optionButton(view, "New entity").className;
-    expect(selected).toContain("enabled:hover:bg-primary/20");
+    expect(selected).toContain("enabled:hover:bg-primary/30");
     // The border is what marks a row selected; hover deepens the fill instead,
     // so that hovering never reads as a change of state.
     expect(selected).not.toContain("hover:border-foreground");
 
     const undeclared = declineButton().className;
-    expect(undeclared).toContain("enabled:hover:border-foreground/40");
+    expect(undeclared).toContain("enabled:hover:border-foreground/45");
     expect(undeclared).toContain("enabled:hover:bg-foreground/6");
 
     // Exclusive with the selection above, which is why `selected` is read first.
