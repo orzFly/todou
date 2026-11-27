@@ -185,6 +185,18 @@ filter controls that rewrite the current page's own search params.
 
 ## Interface text says what the screen cannot
 
+**No explanation ships without the user's approval of its exact wording.** An explanation is text
+whose job is to tell the user how something works, why it is the way it is, or what will happen:
+helper text under a control, an ⓘ or popover, a tooltip or `title` that says more than the control's
+name, a sentence in an empty state, dialog or banner. Ask for each one as its own question on the
+card (`/todou-cli`, "Asking the user questions"), giving the text and where it appears; text the
+user dictated on the card is already approved. A line in a spec is not approval — T-795's spec
+listed the ⓘ beside the footer version as one item among many, and it shipped without the user ever
+having been asked (T-809). Moving an explanation somewhere more visible counts as adding it: a
+`title` turned into an ⓘ is new text to everyone who never hovered. Not explanations: a control's
+own name (its label, its `aria-label`, a tooltip that repeats it) and an error message naming what
+failed. The rest of this section decides what is worth proposing; it never licenses adding anything.
+
 Every sentence rendered to a user has to pass one question, asked against the screen it sits on:
 
 > The thing this says — if the user never reads it and just clicks, how soon do they find out?
