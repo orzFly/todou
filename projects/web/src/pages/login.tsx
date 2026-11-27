@@ -1,11 +1,11 @@
 import { Button } from "@orz/ui/components/button";
 import { Card, CardContent } from "@orz/ui/components/card";
+import { LoadFailure } from "@orz/ui/components/load-failure";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { isSameSitePath } from "@todou/shared";
 import { useEffect, useRef } from "react";
 import { api, authModeQuery } from "@/api/queries.ts";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
 
 /** Only same-site paths may be resumed after login (no open redirects). */
 export function safeRedirect(value: unknown): string | undefined {
@@ -100,22 +100,22 @@ export function LoginPage() {
               className="justify-center"
             />
           ) : modeName === "forward" ? (
-            <p className="text-center text-sm text-destructive">
+            <p className="text-center text-ui text-destructive">
               The reverse proxy did not send an identity header. Check the
               forward-auth setup (auth.forward.user_header and
               http.trusted_proxies).
             </p>
           ) : modeName === "oidc" && oidcError ? (
             <>
-              <p className="text-center text-sm text-destructive">
+              <p className="text-center text-ui text-destructive">
                 {oidcErrorText(oidcError)}
               </p>
               {oidcSubject ? (
-                <div className="flex flex-col items-center gap-1">
-                  <code className="break-all rounded bg-muted px-2 py-1 text-xs">
+                <div className="flex w-full flex-col items-center gap-1">
+                  <code className="block w-full rounded-md bg-muted px-2 py-1 font-mono text-ui-sm break-all">
                     {oidcSubject}
                   </code>
-                  <p className="text-center text-xs text-muted-foreground">
+                  <p className="text-center text-ui-sm text-muted-foreground">
                     This is the subject your identity provider asserted. If you
                     believe you should have access, send it to your
                     administrator — it is what they need to link or create your
@@ -131,7 +131,7 @@ export function LoginPage() {
             </>
           ) : modeName === "oidc" && loggedOut ? (
             <>
-              <p className="text-center text-sm text-muted-foreground">
+              <p className="text-center text-ui text-muted-foreground">
                 Your identity provider may still have you signed in. On a shared
                 computer, sign out there too.
               </p>
@@ -141,13 +141,13 @@ export function LoginPage() {
             </>
           ) : login.isError ? (
             <>
-              <p className="text-center text-sm text-destructive">
+              <p className="text-center text-ui text-destructive">
                 Could not sign in: {login.error.message}
               </p>
               <Button onClick={() => login.mutate()}>Try again</Button>
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-ui text-muted-foreground">
               Signing in to todou…
             </p>
           )}

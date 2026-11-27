@@ -7,10 +7,20 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { ProjectSettingsLayout } from "../src/pages/project-settings.tsx";
 import { UserSettingsLayout } from "../src/pages/user-settings-layout.tsx";
+
+const happyDom = globalThis as unknown as {
+  happyDOM: { setViewport: (viewport: { width?: number }) => void };
+};
 
 const USER = [
   ["Profile", "/settings/profile"],
@@ -67,7 +77,7 @@ function renderAt(url: string) {
     routeTree: rootRoute.addChildren([
       authed.addChildren([
         user.addChildren(
-          ["profile", "appearance", "inbox", "tokens"]
+          ["profile", "appearance", "inbox", "tokens", "agents/$login"]
             .map((path) => child(user, path))
             .concat(
               child(user, "agents", {
@@ -87,12 +97,18 @@ function renderAt(url: string) {
     history: createMemoryHistory({ initialEntries: [url] }),
   });
   render(<RouterProvider router={router} />);
+  return router;
 }
 
 async function navLinks(label: string) {
   const nav = await screen.findByRole("navigation", { name: label });
   return within(nav).getAllByRole("link");
 }
+
+const marked = (links: HTMLElement[]) =>
+  links
+    .filter((a) => a.hasAttribute("aria-current"))
+    .map((a) => [a.textContent, a.getAttribute("aria-current")]);
 
 describe("settings categories are links (T-557)", () => {
   for (const [label, items] of [
@@ -111,21 +127,90 @@ describe("settings categories are links (T-557)", () => {
       for (const [name, href] of items) {
         it(`marks only ${name} as current at ${href}`, async () => {
           renderAt(href);
-          const links = await navLinks(label);
-          const current = links.filter(
-            (a) => a.getAttribute("aria-current") === "page",
-          );
-          expect(current.map((a) => a.textContent)).toEqual([name]);
+          expect(marked(await navLinks(label))).toEqual([[name, "page"]]);
         });
       }
+
+      it("puts one nav in the page", async () => {
+        renderAt(items[0][1]);
+        await navLinks(label);
+        expect(
+          document.querySelectorAll(`nav[aria-label="${label}"]`),
+        ).toHaveLength(1);
+      });
     });
   }
 
-  it("keeps Agents current on its Deactivated segment", async () => {
+  it("keeps Agents the current page on its Deactivated segment, a search param", async () => {
     renderAt("/settings/agents?state=deactivated");
-    const current = (await navLinks("Account settings")).filter(
-      (a) => a.getAttribute("aria-current") === "page",
+    expect(marked(await navLinks("Account settings"))).toEqual([
+      ["Agents", "page"],
+    ]);
+  });
+
+  it("marks Agents as the location on one agent's page beneath it", async () => {
+    renderAt("/settings/agents/bot-one");
+    expect(marked(await navLinks("Account settings"))).toEqual([
+      ["Agents", "location"],
+    ]);
+  });
+});
+
+describe("below md the categories are in a sheet", () => {
+  afterEach(() => happyDom.happyDOM.setViewport({ width: 1024 }));
+
+  function renderNarrow(url: string) {
+    happyDom.happyDOM.setViewport({ width: 700 });
+    return renderAt(url);
+  }
+
+  const button = () => screen.findByRole("button", { name: /Members/ });
+
+  it("names the current category on the button, and keeps the nav out of the page until opened", async () => {
+    renderNarrow("/projects/p/settings/members");
+    expect((await button()).textContent).toBe("Members");
+    expect(screen.queryByRole("navigation")).toBeNull();
+  });
+
+  it("opens a sheet holding the same links", async () => {
+    renderNarrow("/projects/p/settings/members");
+    fireEvent.click(await button());
+    const sheet = await screen.findByRole("dialog", {
+      name: "Project settings",
+    });
+    const links = within(
+      within(sheet).getByRole("navigation", { name: "Project settings" }),
+    ).getAllByRole("link");
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual(
+      PROJECT.map(([name, href]) => [name, href]),
     );
-    expect(current.map((a) => a.textContent)).toEqual(["Agents"]);
+    expect(marked(links)).toEqual([["Members", "page"]]);
+  });
+
+  it("goes to a category on a plain click and closes the sheet", async () => {
+    const router = renderNarrow("/projects/p/settings/members");
+    fireEvent.click(await button());
+    const sheet = await screen.findByRole("dialog");
+    fireEvent.click(within(sheet).getByRole("link", { name: "Labels" }));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        "/projects/p/settings/labels",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      (await screen.findByRole("button", { name: /Labels/ })).textContent,
+    ).toBe("Labels");
+  });
+
+  it("leaves a modified click to the browser and keeps the sheet open", async () => {
+    const router = renderNarrow("/projects/p/settings/members");
+    fireEvent.click(await button());
+    const sheet = await screen.findByRole("dialog");
+    fireEvent.click(within(sheet).getByRole("link", { name: "Labels" }), {
+      ctrlKey: true,
+    });
+    expect(screen.getByRole("dialog")).toBe(sheet);
+    expect(router.state.location.pathname).toBe("/projects/p/settings/members");
   });
 });

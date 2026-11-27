@@ -285,7 +285,7 @@ const projectsRoute = createRoute({
     search.new === true || search.new === 1 || search.new === "1"
       ? { new: true }
       : {},
-  staticData: { pageSkeleton: "sections" },
+  staticData: { pageSkeleton: "projects" },
 });
 
 const projectRoute = createRoute({

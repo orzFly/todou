@@ -58,7 +58,7 @@ export async function probeLongNameOverflow(options = {}) {
   const viewport = document.documentElement.clientWidth;
 
   const header = document.querySelector("header");
-  const row = header?.querySelector(":scope > div");
+  const row = header?.querySelector('[data-shell-row="primary"]');
   const account = row
     ? [...row.querySelectorAll("button")].find((button) =>
         button.querySelector('[data-slot="avatar"]'),

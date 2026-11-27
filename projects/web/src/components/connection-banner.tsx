@@ -3,10 +3,11 @@ import { Button } from "@orz/ui/components/button";
 /**
  * A failed background refetch of account data (`/api/me`): the page keeps
  * running on cached data and heals on its own once the server answers again
- * (a 15s retry interval, or a manual retry). Like `VersionFooter`'s version
- * mismatch — the same class of self-recovering, transient state — this is
- * colour and a sentence, not a border or an icon, and it never interrupts
- * with a toast.
+ * (a 15s retry interval, or a manual retry). Drawn as orz's `RefreshFailure`
+ * line is — the warning colour on the text and a Retry beside it, on the
+ * header's own surface — but not that component: its sentence says the
+ * failure will not fix itself, and this one will. Like `VersionFooter`'s
+ * version mismatch, it never interrupts with a toast.
  *
  * The button exists because waiting out the interval is the worst part of an
  * outage that has already ended: one click refetches now.
@@ -33,17 +34,15 @@ export function ConnectionBanner({
   return (
     <div
       role="status"
-      className="border-t border-b border-warning/40 bg-[color-mix(in_oklab,var(--warning)_12%,var(--background))] text-[color-mix(in_oklab,var(--warning),var(--foreground)_65%)]"
+      className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-t px-4 py-1.5 text-ui-sm text-warning touch:items-center"
     >
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-1.5 text-xs">
-        <span>
-          Couldn't reach the todou server ({message}) — showing saved data until
-          it answers again.
-        </span>
-        <Button variant="ghost" size="xs" onClick={onRetry}>
-          Retry now
-        </Button>
-      </div>
+      <span>
+        Couldn't reach the todou server ({message}) — showing saved data until
+        it answers again.
+      </span>
+      <Button variant="outline" size="xs" onClick={onRetry}>
+        Retry now
+      </Button>
     </div>
   );
 }

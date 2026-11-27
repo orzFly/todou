@@ -1,3 +1,4 @@
+import { TooltipProvider } from "@orz/ui/components/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -16,13 +17,19 @@ import {
 } from "@testing-library/react";
 import type { Me } from "@todou/shared";
 import type { ReactElement } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { NewIssueButton, ProjectNav } from "../src/components/project-nav.tsx";
 import { AppShell } from "../src/components/shell.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
+const happyDom = globalThis as unknown as {
+  happyDOM: { setViewport: (viewport: { width?: number }) => void };
+};
+
+afterEach(() => happyDom.happyDOM.setViewport({ width: 1024 }));
+
 /**
- * ProjectNav's active states depend on the URL, so the shim mounts it at the
+ * ProjectNav's current tab depends on the URL, so the shim mounts it at the
  * real paths. `ui` swaps in whatever the case is about — the nav alone, the
  * create button beside it, or the whole shell.
  */
@@ -30,7 +37,7 @@ function renderAt(url: string, ui: (slug: string) => ReactElement) {
   const rootRoute = createRootRoute();
   function AtSlug() {
     const { slug } = useParams({ strict: false });
-    return ui(slug ?? "");
+    return <TooltipProvider>{ui(slug ?? "")}</TooltipProvider>;
   }
   const projectRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -42,6 +49,7 @@ function renderAt(url: string, ui: (slug: string) => ReactElement) {
     "board",
     "insights",
     "settings",
+    "settings/members",
     "issues/new",
     "search",
   ].map((path) =>
@@ -49,7 +57,7 @@ function renderAt(url: string, ui: (slug: string) => ReactElement) {
       getParentRoute: () => projectRoute,
       path,
       component: AtSlug,
-      ...(path === "search"
+      ...(path === "search" || path === "insights"
         ? { validateSearch: (s: Record<string, unknown>) => s }
         : {}),
     }),
@@ -72,7 +80,8 @@ function renderNavAt(url: string, withCreate = false) {
 }
 
 /** The real header, for the cases about where things sit in it. */
-function renderShellAt(url: string) {
+function renderShellAt(url: string, width = 1024) {
+  happyDom.happyDOM.setViewport({ width });
   const client = testQueryClient();
   client.setQueryData(["auth-mode"], { mode: "single" });
   return renderAt(url, () => (
@@ -82,171 +91,100 @@ function renderShellAt(url: string) {
   ));
 }
 
-async function status(name: string) {
-  const el = await screen.findByRole("link", { name });
-  return el.getAttribute("data-status");
-}
+const nav = () => screen.getByRole("navigation", { name: "Project" });
 
-/** The labels standing on the row itself, in order; the `···` reads as "More". */
+/** The tabs on the row, in order, leaving out any the `⋯` holds. */
 function rowLabels() {
-  const nav = screen.getByRole("navigation");
-  return [...nav.children].map((el) =>
-    el.tagName === "BUTTON"
-      ? el.getAttribute("aria-label")
-      : el.textContent?.trim(),
-  );
+  return [
+    ...nav().querySelectorAll(
+      '[data-slot="tab-nav-link"]:not([data-overflowed])',
+    ),
+  ].map((el) => el.textContent?.trim());
 }
 
-/** Opens the `···`, and hands back what it offers. */
-async function openMore() {
-  fireEvent.pointerDown(await screen.findByRole("button", { name: "More" }), {
-    button: 0,
-    pointerType: "mouse",
-  });
-  const menu = await screen.findByRole("menu");
-  return within(menu);
+/** Each tab carrying `aria-current`, with its value. */
+async function currentTabs() {
+  await screen.findByRole("link", { name: "List" });
+  return [...nav().querySelectorAll("a[aria-current]")].map((a) => [
+    a.textContent?.trim(),
+    a.getAttribute("aria-current"),
+  ]);
 }
 
-describe("ProjectNav active states (T-79)", () => {
-  it("keeps List highlighted when filter search params are set", async () => {
+describe("ProjectNav marks the module you are in (T-79)", () => {
+  it("keeps List current when filter search params are set", async () => {
     renderNavAt("/projects/x?category=closed");
-    await waitFor(async () => expect(await status("List")).toBe("active"));
-    expect(await status("Board")).not.toBe("active");
+    expect(await currentTabs()).toEqual([["List", "page"]]);
   });
 
-  it("highlights List on the bare list URL", async () => {
+  it("marks List on the bare list URL", async () => {
     renderNavAt("/projects/x");
-    await waitFor(async () => expect(await status("List")).toBe("active"));
+    expect(await currentTabs()).toEqual([["List", "page"]]);
   });
 
-  it("highlights Board, not List, on the board page", async () => {
+  it("marks Board, not List, on the board page", async () => {
     renderNavAt("/projects/x/board");
-    await waitFor(async () => expect(await status("Board")).toBe("active"));
-    expect(await status("List")).not.toBe("active");
+    expect(await currentTabs()).toEqual([["Board", "page"]]);
   });
 
   it.each(["", "?range=30d&bucket=week"])(
-    "highlights Insights independently of search params (%s)",
+    "marks Insights independently of search params (%s)",
     async (search) => {
       renderNavAt(`/projects/x/insights${search}`);
-      await waitFor(async () =>
-        expect(await status("Insights")).toBe("active"),
-      );
-      expect(await status("List")).not.toBe("active");
-      expect(await status("Board")).not.toBe("active");
+      expect(await currentTabs()).toEqual([["Insights", "page"]]);
     },
   );
+
+  it("marks Settings on its own page", async () => {
+    renderNavAt("/projects/x/settings");
+    expect(await currentTabs()).toEqual([["Settings", "page"]]);
+  });
+
+  it("marks Settings as the location on a category beneath it", async () => {
+    renderNavAt("/projects/x/settings/members");
+    expect(await currentTabs()).toEqual([["Settings", "location"]]);
+  });
+
+  it("marks nothing on a page that is no module's", async () => {
+    renderNavAt("/projects/x/issues/new");
+    expect(await currentTabs()).toEqual([]);
+  });
 });
 
-describe("the ··· menu (T-454)", () => {
-  it("leaves only List and Board on the row", async () => {
-    renderNavAt("/projects/x");
-    await screen.findByRole("link", { name: "List" });
-    expect(rowLabels()).toEqual(["List", "Board", "More"]);
-  });
-
-  it("keeps Insights and Settings reachable behind it", async () => {
+describe("the project tabs (T-795)", () => {
+  it("stands every module on the row, in order, each a link to it", async () => {
     renderNavAt("/projects/beta");
-    const menu = await openMore();
+    await screen.findByRole("link", { name: "List" });
+    expect(rowLabels()).toEqual(["List", "Board", "Insights", "Settings"]);
     expect(
-      menu.getAllByRole("menuitem").map((el) => el.textContent?.trim()),
-    ).toEqual(["Insights", "Settings"]);
-    expect(
-      menu.getByRole("menuitem", { name: "Insights" }).getAttribute("href"),
-    ).toBe("/projects/beta/insights");
-  });
-
-  it("pulls the module you are in onto the row, and marks it in both places", async () => {
-    renderNavAt("/projects/x/settings");
-    await waitFor(async () => expect(await status("Settings")).toBe("active"));
-    // Between Board and the `···`, as its own tab rather than in place of one.
-    expect(rowLabels()).toEqual(["List", "Board", "Settings", "More"]);
-
-    const menu = await openMore();
-    const entry = menu.getByRole("menuitem", { name: "Settings" });
-    expect(entry.getAttribute("data-status")).toBe("active");
-    expect(entry.getAttribute("aria-current")).toBe("page");
-    // Still offered, alongside the one you are not in.
-    expect(
-      menu.getByRole("menuitem", { name: "Insights" }).getAttribute("href"),
-    ).toBe("/projects/x/insights");
-  });
-
-  /**
-   * Tailwind is not loaded here, so the width bands are only readable as class
-   * names — these evaluate the variant chains the component actually ships.
-   */
-  const matchesVariant = (variant: string, width: number): boolean => {
-    const min = /^min-\[(\d+)px\]$/.exec(variant);
-    if (min) return width >= Number(min[1]);
-    const max = /^max-\[(\d+)px\]$/.exec(variant);
-    if (max) return width < Number(max[1]);
-    if (variant === "sm") return width >= 640;
-    if (variant === "max-sm") return width < 640;
-    throw new Error(
-      `the bands grew a variant this case cannot read: ${variant}`,
-    );
-  };
-
-  /** Does `className` land `utility` at `width`? Variants are ANDed, as Tailwind stacks them. */
-  const appliesAt = (
-    className: string,
-    utility: string,
-    width: number,
-  ): boolean =>
-    className
-      .split(/\s+/)
-      .filter(Boolean)
-      .some((entry) => {
-        const parts = entry.split(":");
-        // Only the utility under test is read, so `hover:` and friends never
-        // reach the variant reader — and a width variant it cannot read still
-        // throws rather than quietly answering false.
-        if (parts.pop() !== utility) return false;
-        return parts.every((v) => matchesVariant(v, width));
-      });
-
-  const WIDTHS = [320, 359, 360, 500, 639, 640, 700, 800, 863, 864, 1000, 1400];
-
-  it("never leaves the row with nothing lit, and never lights two things", async () => {
-    renderNavAt("/projects/x/settings");
-    const tab = await screen.findByRole("link", { name: "Settings" });
-    const more = screen.getByRole("button", { name: "More" });
-
-    const both = WIDTHS.map((width) => ({
-      width,
-      // A later variant rule beats the bare `hidden`, as the cascade does.
-      onRow: appliesAt(tab.className, "block", width),
-      marked: appliesAt(more.className, "bg-accent", width),
-    }));
-    // The two bands have to partition the width axis: wherever the module is
-    // not standing on the row, the `···` is what says the reader is inside it.
-    expect(both.filter((b) => b.onRow === b.marked)).toEqual([]);
-    expect(both.filter((b) => b.onRow).map((b) => b.width)).toEqual([
-      360, 500, 639, 864, 1000, 1400,
+      within(nav())
+        .getAllByRole("link")
+        .map((a) => a.getAttribute("href")),
+    ).toEqual([
+      "/projects/beta",
+      "/projects/beta/board",
+      "/projects/beta/insights",
+      "/projects/beta/settings",
     ]);
   });
 
-  it("leaves the ··· unmarked while nothing of its own is active", async () => {
-    renderNavAt("/projects/x/board");
-    const more = await screen.findByRole("button", { name: "More" });
-    expect(more.className).not.toContain("bg-accent");
+  it("keeps the ⋯ out of the way while nothing is folded into it", async () => {
+    // Folding needs widths, which happy-dom does not lay out; the real
+    // browser sweep covers it. Here: nothing folded, nothing to open.
+    renderNavAt("/projects/x");
+    await screen.findByRole("link", { name: "List" });
+    expect(screen.queryByRole("button", { name: /More sections/ })).toBeNull();
   });
 
-  it("pulls nothing out for a module that stands on the row anyway", async () => {
-    renderNavAt("/projects/x/board");
-    await waitFor(async () => expect(await status("Board")).toBe("active"));
-    expect(rowLabels()).toEqual(["List", "Board", "More"]);
-  });
-
-  it("navigates from the menu into the current project", async () => {
+  it("navigates into the current project", async () => {
     const router = renderNavAt("/projects/beta");
-    const menu = await openMore();
-    fireEvent.click(menu.getByRole("menuitem", { name: "Insights" }));
+    fireEvent.click(await screen.findByRole("link", { name: "Insights" }));
     await waitFor(() =>
       expect(router.state.location.pathname).toBe("/projects/beta/insights"),
     );
-    await waitFor(async () => expect(await status("Insights")).toBe("active"));
+    await waitFor(async () =>
+      expect(await currentTabs()).toEqual([["Insights", "page"]]),
+    );
   });
 });
 
@@ -259,42 +197,51 @@ describe("New issue entry (T-104)", () => {
     );
   });
 
-  it("keeps its name where the label is hidden", async () => {
-    // Below `sm` the label is display:none, which no screen reader reads —
-    // the accessible name has to come from somewhere else (T-215).
+  it("is named by its visible label", async () => {
     renderNavAt("/projects/x", true);
     const link = await screen.findByRole("link", { name: "New issue" });
+    expect(link.getAttribute("aria-label")).toBeNull();
+    expect(link.textContent).toBe("New issue");
+  });
+
+  it("is named by aria-label as an icon (T-215)", async () => {
+    renderAt("/projects/x", (slug) => <NewIssueButton slug={slug} iconOnly />);
+    const link = await screen.findByRole("link", { name: "New issue" });
     expect(link.getAttribute("aria-label")).toBe("New issue");
-    expect(link.querySelector("span")?.className).toContain("hidden");
+    expect(link.textContent).toBe("");
   });
 });
 
 describe("where the create button sits (T-232)", () => {
-  /**
-   * Both rows are in the DOM at once — which one a reader sees is CSS, and
-   * no CSS is loaded here — so each case reads the row it is about.
-   */
-  async function rowsOf(url: string) {
-    const view = renderShellAt(url);
-    await view.findAllByLabelText("Search this project");
-    const header = view.container.querySelector("header") as Element;
-    return { first: header.children[0], second: header.children[1] };
-  }
+  const row = (view: { container: HTMLElement }, name: string) =>
+    view.container.querySelector(`header [data-shell-row="${name}"]`);
 
-  it("keeps it after the search box on the first row", async () => {
-    const { first } = await rowsOf("/projects/x");
+  it("keeps it after the search box on the one row", async () => {
+    const view = renderShellAt("/projects/x");
+    await view.findAllByLabelText("Search this project");
+    const first = row(view, "primary") as Element;
     const box = first.querySelector("input[name='q']") as Element;
-    const create = first.querySelector('a[aria-label="New issue"]') as Element;
+    const create = within(first as HTMLElement).getByRole("link", {
+      name: "New issue",
+    });
     expect(
       box.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    expect(row(view, "project")).toBeNull();
   });
 
-  it("moves it down to the project row, which has no box to share with", async () => {
-    const { second } = await rowsOf("/projects/x");
-    expect(second.querySelector("nav")).not.toBeNull();
-    expect(second.querySelector('a[aria-label="New issue"]')).not.toBeNull();
-    expect(second.querySelector("input[name='q']")).toBeNull();
+  it("moves it down to the project row below sm, with the tabs", async () => {
+    const view = renderShellAt("/projects/x", 390);
+    await view.findAllByRole("link", { name: "List" });
+    const first = row(view, "primary") as HTMLElement;
+    const second = row(view, "project") as HTMLElement;
+    expect(second.querySelector('nav[aria-label="Project"]')).not.toBeNull();
+    expect(
+      within(second).getByRole("link", { name: "New issue" }),
+    ).toBeTruthy();
+    expect(first.querySelector("nav")).toBeNull();
+    expect(within(first).queryByRole("link", { name: "New issue" })).toBeNull();
+    expect(view.container.querySelectorAll("input[name='q']")).toHaveLength(0);
   });
 });
 
@@ -323,21 +270,20 @@ describe("AppShell off any project (T-104)", () => {
 });
 
 describe("ProjectNav for a guest (T-788)", () => {
-  it("offers neither Insights nor Settings, nor an empty ···", async () => {
+  it("offers neither Insights nor Settings", async () => {
     renderAt("/projects/x", (slug) => (
       <ProjectNav slug={slug} viewerRole="guest" />
     ));
     await screen.findByRole("link", { name: "List" });
     expect(rowLabels()).toEqual(["List", "Board"]);
-    expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+    expect(nav().querySelectorAll("a")).toHaveLength(2);
   });
 
   it("keeps both for a reader", async () => {
     renderAt("/projects/x", (slug) => (
       <ProjectNav slug={slug} viewerRole="reader" />
     ));
-    const more = await openMore();
-    expect(more.getByRole("menuitem", { name: "Insights" })).toBeTruthy();
-    expect(more.getByRole("menuitem", { name: "Settings" })).toBeTruthy();
+    await screen.findByRole("link", { name: "List" });
+    expect(rowLabels()).toEqual(["List", "Board", "Insights", "Settings"]);
   });
 });

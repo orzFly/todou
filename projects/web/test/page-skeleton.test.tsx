@@ -24,6 +24,7 @@ const KINDS: PageSkeletonKind[] = [
   "board",
   "insights",
   "sections",
+  "projects",
 ];
 
 describe("PageSkeleton", () => {

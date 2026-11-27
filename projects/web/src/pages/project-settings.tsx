@@ -44,17 +44,8 @@ import {
   roleRankOf,
   type TodouError,
 } from "@todou/shared";
-import {
-  ChevronDownIcon,
-  CircleDotIcon,
-  HashIcon,
-  PlusIcon,
-  SettingsIcon,
-  TagIcon,
-  Trash2Icon,
-  UsersIcon,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDownIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   accessDenialsQuery,
@@ -73,11 +64,8 @@ import { userQuery } from "@/api/users.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { ColorSwatches } from "@/components/settings/color-swatches.tsx";
 import { StatusesSection } from "@/components/settings/statuses-section.tsx";
-import {
-  SettingsLayout,
-  SettingsNavGroup,
-  SettingsNavLink,
-} from "@/components/settings-layout.tsx";
+import { projectSettings } from "@/components/settings-categories.ts";
+import { SettingsLayout } from "@/components/settings-layout.tsx";
 import { AddAgentPicker } from "@/components/shared/add-agent-picker.tsx";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import { projectIconFallback } from "@/components/shared/project-icon.tsx";
@@ -96,57 +84,9 @@ export { PRESET_COLORS };
 /** Everything under /projects/$slug/settings, one category per route (T-557). */
 export function ProjectSettingsLayout() {
   const slug = useSettingsSlug();
+  const categories = useMemo(() => projectSettings(slug), [slug]);
   return (
-    <SettingsLayout
-      label="Project settings"
-      nav={
-        <>
-          <SettingsNavGroup>
-            <SettingsNavLink
-              to="/projects/$slug/settings"
-              params={{ slug }}
-              icon={SettingsIcon}
-              // Every other category lives under this one's address.
-              activeOptions={{ exact: true }}
-            >
-              General
-            </SettingsNavLink>
-          </SettingsNavGroup>
-          <SettingsNavGroup label="Access">
-            <SettingsNavLink
-              to="/projects/$slug/settings/members"
-              params={{ slug }}
-              icon={UsersIcon}
-            >
-              Members
-            </SettingsNavLink>
-          </SettingsNavGroup>
-          <SettingsNavGroup label="Issues">
-            <SettingsNavLink
-              to="/projects/$slug/settings/statuses"
-              params={{ slug }}
-              icon={CircleDotIcon}
-            >
-              Statuses
-            </SettingsNavLink>
-            <SettingsNavLink
-              to="/projects/$slug/settings/labels"
-              params={{ slug }}
-              icon={TagIcon}
-            >
-              Labels
-            </SettingsNavLink>
-            <SettingsNavLink
-              to="/projects/$slug/settings/references"
-              params={{ slug }}
-              icon={HashIcon}
-            >
-              References
-            </SettingsNavLink>
-          </SettingsNavGroup>
-        </>
-      }
-    >
+    <SettingsLayout label="Project settings" categories={categories}>
       <Outlet />
     </SettingsLayout>
   );

@@ -1,3 +1,4 @@
+import { TooltipProvider } from "@orz/ui/components/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -146,6 +147,10 @@ function renderSwitcher(
     getParentRoute: () => projectRoute,
     path: "settings",
   });
+  const membersRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: "members",
+  });
   const issueRoute = createRoute({
     getParentRoute: () => projectRoute,
     path: "issues/$number",
@@ -157,7 +162,7 @@ function renderSwitcher(
       projectRoute.addChildren([
         projectIndexRoute,
         boardRoute,
-        settingsRoute,
+        settingsRoute.addChildren([membersRoute]),
         issueRoute,
       ]),
     ]),
@@ -165,7 +170,9 @@ function renderSwitcher(
   });
   render(
     <QueryClientProvider client={c}>
-      <RouterProvider router={router} />
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
   return router;
@@ -177,6 +184,14 @@ async function openSwitcher() {
   await waitFor(() => expect(screen.getByRole("listbox")).toBeTruthy());
   return trigger;
 }
+
+const optionFor = (name: string) => {
+  const option = screen
+    .getAllByRole("option")
+    .find((el) => el.textContent?.includes(name));
+  if (!option) throw new Error(`no option for ${name}`);
+  return option;
+};
 
 // Distinct ages: same-age projects would tie on created_at and leave the
 // zero-score tail order at the mercy of module-load millisecond boundaries.
@@ -206,10 +221,12 @@ describe("ProjectSwitcher", () => {
   it("opens a listbox with the current project checked", async () => {
     renderSwitcher(fewProjects);
     await openSwitcher();
-    const current = screen
+    const checked = screen
       .getAllByRole("option")
-      .find((el) => el.textContent?.includes("alpha"));
-    expect(current?.getAttribute("aria-selected")).toBe("true");
+      .filter((el) => el.hasAttribute("data-selected"));
+    expect(checked.map((el) => el.textContent)).toEqual([
+      expect.stringContaining("alpha"),
+    ]);
   });
 
   it("orders by frecency: a visit beats newer creation dates", async () => {
@@ -220,10 +237,12 @@ describe("ProjectSwitcher", () => {
     expect(names[0]).toContain("alpha");
   });
 
-  it("hides the search box below 8 projects, shows it at 8", async () => {
+  it("shows the filter box below 8 projects too", async () => {
     renderSwitcher(fewProjects);
     await openSwitcher();
-    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(
+      screen.getByRole("combobox", { name: "Search projects" }),
+    ).toBeTruthy();
   });
 
   it("filters by name/slug and shows an empty state on no match", async () => {
@@ -241,12 +260,15 @@ describe("ProjectSwitcher", () => {
   it("walks with arrows and navigates with Enter to the project home", async () => {
     const router = renderSwitcher(fewProjects);
     await openSwitcher();
-    const listbox = screen.getByRole("listbox");
-    fireEvent.keyDown(listbox, { key: "ArrowDown" });
-    fireEvent.keyDown(listbox, { key: "Enter" });
+    const box = screen.getByRole("combobox");
+    // Unvisited, newest first: gamma, beta, alpha.
+    fireEvent.keyDown(box, { key: "Home" });
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() =>
       expect(router.state.location.pathname).toBe("/projects/beta"),
     );
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
   });
 
   it("floats fresh projects by creation bonus, with no badge (T-87)", async () => {
@@ -296,15 +318,51 @@ describe("ProjectSwitcher options are links (T-117)", () => {
     expect(beta?.getAttribute("href")).toBe("/projects/beta/board");
   });
 
-  it("keeps the picker open when a modified click opens a new tab", async () => {
-    renderSwitcher(fewProjects);
+  it.each([["metaKey"], ["ctrlKey"]])(
+    "keeps the picker open when a %s click opens a new tab",
+    async (modifier) => {
+      const router = renderSwitcher(fewProjects);
+      await openSwitcher();
+      fireEvent.click(optionFor("beta"), { [modifier]: true });
+      expect(screen.queryByRole("listbox")).toBeTruthy();
+      expect(router.state.location.pathname).toBe("/");
+    },
+  );
+
+  it("goes there on a plain click and closes", async () => {
+    const router = renderSwitcher(fewProjects);
     await openSwitcher();
-    const beta = screen
-      .getAllByRole("option")
-      .find((el) => el.textContent?.includes("beta"));
-    if (!beta) throw new Error("no option for beta");
-    fireEvent.click(beta, { metaKey: true });
+    fireEvent.click(optionFor("beta"));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/beta"),
+    );
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  });
+
+  it("links the footer to the projects page and to a new project", async () => {
+    renderSwitcher(fewProjects, "/projects/alpha/board");
+    await openSwitcher();
+    const all = screen.getByRole("link", { name: "All projects" });
+    expect(all.getAttribute("href")).toBe("/projects");
+    // A prefix of every project page, which is not the projects page.
+    expect(all.hasAttribute("aria-current")).toBe(false);
+    expect(
+      screen.getByRole("link", { name: "New project" }).getAttribute("href"),
+    ).toBe("/projects?new=true");
+  });
+
+  it("closes on a plain click in the footer, not on a modified one", async () => {
+    const router = renderSwitcher(fewProjects);
+    await openSwitcher();
+    fireEvent.click(screen.getByRole("link", { name: "All projects" }), {
+      ctrlKey: true,
+    });
     expect(screen.queryByRole("listbox")).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: "All projects" }));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects"),
+    );
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
   });
 });
 
@@ -325,6 +383,33 @@ describe("ProjectSwitcher keeps the nav module (T-94)", () => {
     await waitFor(() =>
       expect(router.state.location.pathname).toBe("/projects/beta/settings"),
     );
+  });
+
+  it("switches from a settings category to the other project's settings", async () => {
+    const router = renderSwitcher(
+      fewProjects,
+      "/projects/alpha/settings/members",
+    );
+    await openSwitcher();
+    expect(optionFor("beta").getAttribute("href")).toBe(
+      "/projects/beta/settings",
+    );
+    await pickProject("beta");
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/beta/settings"),
+    );
+  });
+
+  it("links the list without the old search params", async () => {
+    renderSwitcher(fewProjects, "/projects/alpha?category=closed&q=x");
+    await openSwitcher();
+    expect(optionFor("beta").getAttribute("href")).toBe("/projects/beta");
+  });
+
+  it("links the list from an issue detail page", async () => {
+    renderSwitcher(fewProjects, "/projects/alpha/issues/7");
+    await openSwitcher();
+    expect(optionFor("beta").getAttribute("href")).toBe("/projects/beta");
   });
 
   it("switches list to list without the old search params", async () => {

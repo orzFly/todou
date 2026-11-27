@@ -41,7 +41,11 @@ describe("VersionFooter", () => {
     render(wrap(<VersionFooter />));
     const link = await screen.findByText("todou web v0.2.0 · server v0.2.1");
     expect(link.className).toContain("text-warning");
-    expect(link.getAttribute("title")).toBeTruthy();
+    // Behind an (i) a touch screen can open, not in a title it never shows.
+    expect(link.getAttribute("title")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "About the version mismatch" }),
+    ).toBeTruthy();
     vi.unstubAllGlobals();
   });
 

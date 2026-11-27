@@ -185,10 +185,14 @@ const boxes = (root: ParentNode) => root.querySelectorAll("input[name='q']");
 const toggle = (root: ParentNode) =>
   root.querySelector('button[aria-label="Search"]');
 
-/** Both rows are always in the DOM; which one is shown is CSS, and there is none here. */
+/** The header's rows; the project row is mounted below `sm` only. */
 function rows(view: { container: HTMLElement }) {
-  const header = view.container.querySelector("header") as Element;
-  return { first: header.children[0], project: header.children[1] };
+  const row = (name: string) =>
+    view.container.querySelector(`header [data-shell-row="${name}"]`);
+  return {
+    first: row("primary") as Element,
+    project: row("project") ?? document.createElement("div"),
+  };
 }
 
 afterEach(() => {
@@ -201,9 +205,14 @@ describe("the header's search, wide", () => {
     const view = renderShellAt(1280);
     await view.findByLabelText("Search this project");
 
-    const row = view.container.querySelector("header > div") as Element;
+    const row = rows(view).first;
     const search = row.querySelector("search") as Element;
+    // A sibling of the tabs, which is what lets the row's flex give way in
+    // order: the box grows into what the tabs leave.
     expect(search.parentElement).toBe(row);
+    expect(row.querySelector('nav[aria-label="Project"]')?.parentElement).toBe(
+      row,
+    );
     const name = row.querySelector('a[href="/projects/todou"]') as Element;
     const inbox = row.querySelector('a[href="/inbox"]') as Element;
     const follows = (a: Element, b: Element) =>
@@ -467,14 +476,13 @@ describe("the header's project row", () => {
     await view.findAllByRole("link", { name: "List" });
     const { first, project } = rows(view);
 
-    // Insights and Settings ride behind the `···` on the phone row too (T-454).
+    // Every module, in order; which of them fold into the `⋯` is the tabs'
+    // own measurement, which needs a layout this DOM does not have.
     const labels = [...project.querySelectorAll("nav a")].map((a) =>
       a.textContent?.trim(),
     );
-    expect(labels).toEqual(["List", "Board"]);
-    expect(
-      project.querySelector('nav button[aria-label="More"]'),
-    ).not.toBeNull();
+    expect(labels).toEqual(["List", "Board", "Insights", "Settings"]);
+    expect(first.querySelector("nav")).toBeNull();
     // The search is this project's, so it keeps the project's own company
     // rather than the account cluster's.
     const icon = toggle(project) as Element;
@@ -499,7 +507,12 @@ describe("the header's project row", () => {
     const icon = toggle(first) as Element;
     expect(icon).not.toBeNull();
     expect(toggle(project)).toBeNull();
-    const create = first.querySelector('a[aria-label="New issue"]') as Element;
+    expect(
+      view.container.querySelector('[data-shell-row="project"]'),
+    ).toBeNull();
+    const create = first.querySelector(
+      'a[href="/projects/todou/issues/new"]',
+    ) as Element;
     expect(
       icon.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();

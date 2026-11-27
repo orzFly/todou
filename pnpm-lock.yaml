@@ -391,11 +391,11 @@ importers:
         specifier: ^1.94.0
         version: 1.94.0
       '@orz/themes':
-        specifier: 0.1.2-master.20261126061418.gf2622ab
-        version: 0.1.2-master.20261126061418.gf2622ab
+        specifier: 0.1.2-master.20261127155246.ge1ab406
+        version: 0.1.2-master.20261127155246.ge1ab406
       '@orz/ui':
-        specifier: 0.1.2-master.20261126061418.gf2622ab
-        version: 0.1.2-master.20261126061418.gf2622ab(@fontsource-variable/noto-sans-mono@5.3.0)(@fontsource-variable/noto-sans@5.3.0)(lucide-react@1.31.0(react@19.2.8))(overlayscrollbars@2.16.0)(radix-ui@1.6.7(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sonner@2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
+        specifier: 0.1.2-master.20261127155246.ge1ab406
+        version: 0.1.2-master.20261127155246.ge1ab406(@fontsource-variable/noto-sans-mono@5.3.0)(@fontsource-variable/noto-sans@5.3.0)(lucide-react@1.31.0(react@19.2.8))(overlayscrollbars@2.16.0)(radix-ui@1.6.7(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sonner@2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
       '@pierre/diffs':
         specifier: ^1.3.5
         version: 1.3.5(@shikijs/themes@4.4.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1257,14 +1257,14 @@ packages:
     resolution: {integrity: sha512-j37dj/h6p6pots1L7pLPPNuABEEu9WP4OYg9pW1g+nYG331j0+3canE9OagtYdytYvdSAMG+2fKU5cxep6LgjA==}
     engines: {node: '>=22.12.0'}
 
-  '@orz/query@0.1.2-master.20261126061418.gf2622ab':
-    resolution: {integrity: sha512-N4HEHNQI5HKIFfCTiisl+8hnWWEvBw+BbuT8R62J6jCyVI1wjsKgHjC047QRcSagF3N8MYelmj4z7sDHTr02Cw==}
+  '@orz/query@0.1.2-master.20261127155246.ge1ab406':
+    resolution: {integrity: sha512-uGQY2mSv8PYVxr6qIAOVGdBIdZpWzU8CRqFBd8RcvDsUxutwxwusN1Zo5bTnlgk3uIbld1hdL9LQIJB0/yHVQg==}
 
-  '@orz/themes@0.1.2-master.20261126061418.gf2622ab':
-    resolution: {integrity: sha512-yBZzwkOjUPOebFEEelRDXgRBvYWq9wHpOQu4bJVKt1/BZxf6S/PaNcdHhjZx2r7a7Y/twjFzYBEDh8oBcB7OfA==}
+  '@orz/themes@0.1.2-master.20261127155246.ge1ab406':
+    resolution: {integrity: sha512-yJ1UgN7v+ONNcyRnibd991qrDS1e5zWL2sz9JwMO9xm8Dbjru/PU6asW+gkhEXa31K2guObsvdTYu+1mCZBQDQ==}
 
-  '@orz/ui@0.1.2-master.20261126061418.gf2622ab':
-    resolution: {integrity: sha512-m4lxdh+0XcQctQyDAPWVEtSzqBiraEwiH7Me/ameau27k1v/JDOKy2Lf4L3yTX8u4AyRghot/CF1FLDQI7lnQA==}
+  '@orz/ui@0.1.2-master.20261127155246.ge1ab406':
+    resolution: {integrity: sha512-eqC/hbg9sXDqFd18aeJKCdaM9jndhIe1VFbknO9UiQPVSSoFzlRyW4CR0uZusiinb1fvWLod2iCTqVjyOPTatg==}
     peerDependencies:
       '@fontsource-variable/noto-sans': ^5
       '@fontsource-variable/noto-sans-mono': ^5
@@ -4928,14 +4928,14 @@ snapshots:
     dependencies:
       '@chevrotain/types': 13.2.0
 
-  '@orz/query@0.1.2-master.20261126061418.gf2622ab': {}
+  '@orz/query@0.1.2-master.20261127155246.ge1ab406': {}
 
-  '@orz/themes@0.1.2-master.20261126061418.gf2622ab': {}
+  '@orz/themes@0.1.2-master.20261127155246.ge1ab406': {}
 
-  '@orz/ui@0.1.2-master.20261126061418.gf2622ab(@fontsource-variable/noto-sans-mono@5.3.0)(@fontsource-variable/noto-sans@5.3.0)(lucide-react@1.31.0(react@19.2.8))(overlayscrollbars@2.16.0)(radix-ui@1.6.7(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sonner@2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))':
+  '@orz/ui@0.1.2-master.20261127155246.ge1ab406(@fontsource-variable/noto-sans-mono@5.3.0)(@fontsource-variable/noto-sans@5.3.0)(lucide-react@1.31.0(react@19.2.8))(overlayscrollbars@2.16.0)(radix-ui@1.6.7(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sonner@2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))':
     dependencies:
-      '@orz/query': 0.1.2-master.20261126061418.gf2622ab
-      '@orz/themes': 0.1.2-master.20261126061418.gf2622ab
+      '@orz/query': 0.1.2-master.20261127155246.ge1ab406
+      '@orz/themes': 0.1.2-master.20261127155246.ge1ab406
       class-variance-authority: 0.7.1
       clsx: 2.1.1
       culori: 4.0.2
