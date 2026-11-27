@@ -42,9 +42,11 @@ export function canvasMeasurer(
   const style = getComputedStyle(element);
   const context = document.createElement("canvas").getContext("2d");
   if (!context) return null;
+  // No fontStretch among these: computed style spells it as a percentage,
+  // which canvas's keyword-only attribute drops with a console warning
+  // (T-822), and `font` already carries every width a keyword can name.
   context.font = style.font;
   context.fontKerning = style.fontKerning as CanvasFontKerning;
-  context.fontStretch = style.fontStretch as CanvasFontStretch;
   context.fontVariantCaps = style.fontVariantCaps as CanvasFontVariantCaps;
   context.textRendering = style.textRendering as CanvasTextRendering;
   context.letterSpacing =
