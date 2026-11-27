@@ -20,14 +20,14 @@ describe("UnreadBadge", () => {
     );
   });
 
-  it("keeps the pill classes and merges the caller's placement", () => {
+  it("is the library's badge at the count's size, and merges the caller's placement", () => {
     const badge = render(
       <UnreadBadge count={3} className="ml-auto shrink-0" />,
     ).container.querySelector("span");
+    expect(badge?.getAttribute("data-slot")).toBe("badge");
+    expect(badge?.classList.contains("h-4")).toBe(true);
     expect(badge?.classList.contains("ml-auto")).toBe(true);
     expect(badge?.classList.contains("shrink-0")).toBe(true);
-    expect(badge?.classList.contains("bg-primary")).toBe(true);
-    expect(badge?.classList.contains("rounded-full")).toBe(true);
   });
 
   it("stays out of the accessibility tree", () => {

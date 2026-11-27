@@ -1,3 +1,4 @@
+import { TooltipProvider } from "@orz/ui/components/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -151,10 +152,12 @@ function renderProjects({
     return (
       <>
         {includeNav && (
-          <nav>
-            <InboxButton />
-            <ProjectSwitcher slug="alpha" />
-          </nav>
+          <TooltipProvider>
+            <nav>
+              <InboxButton />
+              <ProjectSwitcher slug="alpha" />
+            </nav>
+          </TooltipProvider>
         )}
         <ProjectsPage />
         {includeInbox && <InboxPageView />}

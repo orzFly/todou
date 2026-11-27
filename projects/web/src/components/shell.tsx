@@ -10,6 +10,7 @@ import {
 } from "@orz/ui/components/dropdown-menu";
 import { Skeleton } from "@orz/ui/components/skeleton";
 import { ThemeMenu } from "@orz/ui/components/theme-menu";
+import { TooltipProvider } from "@orz/ui/components/tooltip";
 import { useMediaQuery } from "@orz/ui/hooks/use-media-query";
 import {
   useAutoHideHeader,
@@ -152,34 +153,37 @@ export function AppShell({
   const maySearch = viewerRole === undefined || can(viewerRole, "search.run");
 
   return (
-    <ShellHeaderContext.Provider value={headerRef}>
-      <SpecReviewSessionProvider>
-        {/* Outside the header/`<main>` split on purpose: the collection pages
+    // Around the header and `<main>` alike, and here rather than in main.tsx:
+    // every test that mounts the shell does so without main.tsx.
+    <TooltipProvider>
+      <ShellHeaderContext.Provider value={headerRef}>
+        <SpecReviewSessionProvider>
+          {/* Outside the header/`<main>` split on purpose: the collection pages
           that offer a return origin are inside `<main>`, while the search box
           that consumes one is chrome. A provider around the routed page would
           leave a card opened from the search box with no way back (T-407). */}
-        <ReturnViewProvider viewerId={me?.id}>
-          <div
-            className={cn(
-              "bg-background",
-              fillsViewport ? "flex h-dvh flex-col" : "min-h-dvh",
-            )}
-          >
-            <UnsavedChangesGuard />
-            {/* Pinned to the visual viewport's top rather than the layout's, so a
+          <ReturnViewProvider viewerId={me?.id}>
+            <div
+              className={cn(
+                "bg-background",
+                fillsViewport ? "flex h-dvh flex-col" : "min-h-dvh",
+              )}
+            >
+              <UnsavedChangesGuard />
+              {/* Pinned to the visual viewport's top rather than the layout's, so a
               keyboard-panned page keeps it on screen; `--header-hide` is
               the share it has slid away on a phone (T-585, T-594). */}
-            <header
-              ref={headerRef}
-              data-header-follow=""
-              className="sticky z-40 border-b bg-background/95 backdrop-blur"
-              style={{
-                top: "calc(var(--vv-top, 0px) - var(--header-hide, 0px))",
-              }}
-            >
-              {/* `relative` is the anchor the collapsed search expands against. */}
-              <div className="relative mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
-                {/* Sized by its own content (`flex-auto`, not `flex-1`), which
+              <header
+                ref={headerRef}
+                data-header-follow=""
+                className="sticky z-40 border-b bg-background/95 backdrop-blur"
+                style={{
+                  top: "calc(var(--vv-top, 0px) - var(--header-hide, 0px))",
+                }}
+              >
+                {/* `relative` is the anchor the collapsed search expands against. */}
+                <div className="relative mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
+                  {/* Sized by its own content (`flex-auto`, not `flex-1`), which
               is what lets the row notice that this cluster is running out of
               room and take the width off the search box first — with a basis
               of 0 the browser cannot see what this wants, so the deficit fell
@@ -187,48 +191,48 @@ export function AppShell({
               lets that name truncate once the box has nothing left to give,
               and `overflow-hidden` makes what is left over clip rather than
               lie on top of the box. */}
-                <div className="flex min-w-0 flex-auto shrink-[1000] items-center gap-2 overflow-hidden">
-                  <Link
-                    to="/projects"
-                    className="flex shrink-0 items-center gap-2 font-semibold"
-                  >
-                    <span aria-hidden>🥔</span>
-                    {slug == null && <span>todou</span>}
-                  </Link>
-                  {slug != null && (
-                    <>
-                      <span aria-hidden className="text-muted-foreground/50">
-                        /
-                      </span>
-                      <Link
-                        to="/projects/$slug"
-                        params={{ slug }}
-                        className="flex min-w-0 items-center gap-1.5 font-semibold hover:underline"
-                      >
-                        <ProjectIcon
-                          aria-hidden="true"
-                          project={{
-                            slug,
-                            name: project.data?.name ?? slug,
-                            prefix: refs.get(slug)?.prefix ?? null,
-                            icon_url: project.data?.icon_url,
-                          }}
-                          className="size-5"
-                        />
-                        <span className="truncate">
-                          {project.data?.name ?? slug}
+                  <div className="flex min-w-0 flex-auto shrink-[1000] items-center gap-2 overflow-hidden">
+                    <Link
+                      to="/projects"
+                      className="flex shrink-0 items-center gap-2 font-semibold"
+                    >
+                      <span aria-hidden>🥔</span>
+                      {slug == null && <span>todou</span>}
+                    </Link>
+                    {slug != null && (
+                      <>
+                        <span aria-hidden className="text-muted-foreground/50">
+                          /
                         </span>
-                      </Link>
-                      <ProjectSwitcher slug={slug} />
-                      <ProjectNav
-                        slug={slug}
-                        viewerRole={viewerRole}
-                        className="ml-2 hidden sm:flex"
-                      />
-                    </>
-                  )}
-                </div>
-                {/* Docked against the account cluster rather than centred, so
+                        <Link
+                          to="/projects/$slug"
+                          params={{ slug }}
+                          className="flex min-w-0 items-center gap-1.5 font-semibold hover:underline"
+                        >
+                          <ProjectIcon
+                            aria-hidden="true"
+                            project={{
+                              slug,
+                              name: project.data?.name ?? slug,
+                              prefix: refs.get(slug)?.prefix ?? null,
+                              icon_url: project.data?.icon_url,
+                            }}
+                            className="size-5"
+                          />
+                          <span className="truncate">
+                            {project.data?.name ?? slug}
+                          </span>
+                        </Link>
+                        <ProjectSwitcher slug={slug} />
+                        <ProjectNav
+                          slug={slug}
+                          viewerRole={viewerRole}
+                          className="ml-2 hidden sm:flex"
+                        />
+                      </>
+                    )}
+                  </div>
+                  {/* Docked against the account cluster rather than centred, so
               that idle, focused and mid-resize all grow the box in the same
               direction — leftwards, over the nav (T-454). The shrink weight
               is what orders the two give-ways: against the left cluster's
@@ -243,14 +247,14 @@ export function AppShell({
               0.09px inside its own text, ellipsised itself to `Tod…` across
               every width where the box was mid-shrink. At 99999 the residue
               rounds away to nothing. */}
-                {wide && slug != null && maySearch && (
-                  <SearchBox
-                    slug={slug}
-                    className="w-80 min-w-32 shrink-[99999]"
-                    focusWidth="w-80"
-                  />
-                )}
-                {/* Content-sized, and shrinkable only because one thing in here
+                  {wide && slug != null && maySearch && (
+                    <SearchBox
+                      slug={slug}
+                      className="w-80 min-w-32 shrink-[99999]"
+                      focusWidth="w-80"
+                    />
+                  )}
+                  {/* Content-sized, and shrinkable only because one thing in here
               does have a smaller form: the account button's name ellipsises
               (T-486). The rest are icons with nothing to give, and every
               `Button` is `shrink-0`, so a deficit that reaches this cluster
@@ -269,140 +273,143 @@ export function AppShell({
               Below the search box's weight, above the account button's: equal
               to the search box it would take half of what T-454 gives the
               project name first. */}
-                <div className="flex min-w-0 items-center gap-1">
-                  {!wide && !hasProjectRow && slug != null && maySearch && (
-                    <SearchToggle slug={slug} />
-                  )}
-                  {slug != null && (
-                    <NewIssueButton
-                      slug={slug}
-                      className="hidden sm:inline-flex"
-                    />
-                  )}
-                  <InboxButton />
-                  <ThemeMenu />
-                  {me === undefined ? (
-                    accountUnavailable ? (
-                      /* No result is coming: say so, in the skeleton's own
+                  <div className="flex min-w-0 items-center gap-1">
+                    {!wide && !hasProjectRow && slug != null && maySearch && (
+                      <SearchToggle slug={slug} />
+                    )}
+                    {slug != null && (
+                      <NewIssueButton
+                        slug={slug}
+                        className="hidden sm:inline-flex"
+                      />
+                    )}
+                    <InboxButton />
+                    <ThemeMenu />
+                    {me === undefined ? (
+                      accountUnavailable ? (
+                        /* No result is coming: say so, in the skeleton's own
                    footprint, rather than spin. The text is the assertion
                    contract — a bare div would be indistinguishable from
                    "nothing was rendered at all". */
-                      <span className="text-muted-foreground flex h-7 items-center px-2.5 text-sm">
-                        Account unavailable
-                      </span>
-                    ) : (
-                      /* The account button's own footprint (`size="sm"` is h-7
+                        <span className="text-muted-foreground flex h-7 items-center px-2.5 text-sm">
+                          Account unavailable
+                        </span>
+                      ) : (
+                        /* The account button's own footprint (`size="sm"` is h-7
                    px-2.5), so the row does not reshuffle when /api/me lands.
                    No menu hangs off it: there is no account to act on yet. */
-                      <div className="flex h-7 items-center gap-1 px-2.5">
-                        <Skeleton className="size-5 rounded-full" />
-                        <Skeleton className="h-4 w-16" />
-                      </div>
-                    )
-                  ) : (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        {/* The one control in the cluster that may narrow, and
+                        <div className="flex h-7 items-center gap-1 px-2.5">
+                          <Skeleton className="size-5 rounded-full" />
+                          <Skeleton className="h-4 w-16" />
+                        </div>
+                      )
+                    ) : (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          {/* The one control in the cluster that may narrow, and
                       the `title` is what a reader gets back when it does: the
                       ellipsis is CSS, so the accessible name is still the
                       whole display name, but a sighted reader has only the
                       tooltip to recover it from (T-500). */}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="min-w-0 shrink"
-                          title={displayNameOf(me)}
-                        >
-                          <UserChip user={me} link={false} />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {/* The chip in the trigger already carries the display name;
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="min-w-0 shrink"
+                            title={displayNameOf(me)}
+                          >
+                            <UserChip user={me} link={false} />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {/* The chip in the trigger already carries the display name;
                       the label is what tells you which account that is. */}
-                        <DropdownMenuLabel>@{me.login}</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem asChild>
-                          <Link to="/settings/profile">Profile</Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                          <Link to="/settings/agents">Agents</Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                          <Link to="/settings/tokens">Personal tokens</Link>
-                        </DropdownMenuItem>
-                        {canLogout && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onSelect={() => logout.mutate()}>
-                              Log out
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
+                          <DropdownMenuLabel>@{me.login}</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem asChild>
+                            <Link to="/settings/profile">Profile</Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem asChild>
+                            <Link to="/settings/agents">Agents</Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem asChild>
+                            <Link to="/settings/tokens">Personal tokens</Link>
+                          </DropdownMenuItem>
+                          {canLogout && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onSelect={() => logout.mutate()}
+                              >
+                                Log out
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
                 </div>
-              </div>
-              {/* The project row, and the only thing that makes the header two
+                {/* The project row, and the only thing that makes the header two
             rows tall. It ends at `sm`: from there on the first row seats the
             nav, the search and the create button itself. `relative` because
             the search expands over this row while it lives here. */}
-              {slug != null && (
-                <div className="relative mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 sm:hidden">
-                  {/* Mounted rather than hidden by a class, because "exactly one
+                {slug != null && (
+                  <div className="relative mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 sm:hidden">
+                    {/* Mounted rather than hidden by a class, because "exactly one
                     back control on screen" is the rule this and the page's own
                     copy have to keep between them, and a copy CSS has hidden
                     is still a copy (T-461). */}
-                  {hasProjectRow && backControl !== undefined && (
-                    <div className="flex shrink-0 items-center gap-1">
-                      <NavBackControl
-                        kind={backControl}
-                        slug={slug}
-                        number={number}
-                      />
-                      <span aria-hidden className="text-muted-foreground/50">
-                        |
-                      </span>
-                    </div>
-                  )}
-                  <ProjectNav
-                    slug={slug}
-                    viewerRole={viewerRole}
-                    className="flex-1"
-                  />
-                  {hasProjectRow && maySearch && <SearchToggle slug={slug} />}
-                  <NewIssueButton slug={slug} iconOnly />
-                </div>
-              )}
-              {/* The connection banner lives INSIDE the header, not after it: the
+                    {hasProjectRow && backControl !== undefined && (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <NavBackControl
+                          kind={backControl}
+                          slug={slug}
+                          number={number}
+                        />
+                        <span aria-hidden className="text-muted-foreground/50">
+                          |
+                        </span>
+                      </div>
+                    )}
+                    <ProjectNav
+                      slug={slug}
+                      viewerRole={viewerRole}
+                      className="flex-1"
+                    />
+                    {hasProjectRow && maySearch && <SearchToggle slug={slug} />}
+                    <NewIssueButton slug={slug} iconOnly />
+                  </div>
+                )}
+                {/* The connection banner lives INSIDE the header, not after it: the
             header is sticky, so a bar after it either scrolls away behind the
             backdrop-blur or — pinned sticky — lands on the same strip the
             page's own toolbars pin to and gets covered by them. In here it
             rides the sticky chrome; the header grows, and every pinned
             toolbar shifts down with it because they all measure this same
             element through useHeaderHeight(). */}
-              {notice}
-            </header>
-            {/* Drawn below the chrome on purpose: the router's own boundary wraps
+                {notice}
+              </header>
+              {/* Drawn below the chrome on purpose: the router's own boundary wraps
           the root `<Outlet/>` (`Match.js:144`) above everything here, so a
           page waiting on a cold `useSuspenseQuery` used to take the whole
           shell down with it (T-265). Pages draw further boundaries inside
           this one. Component identity across a card switch comes from keys
           (`issue-detail.tsx`, T-324). */}
-            <main
-              className={cn(
-                "px-4 pt-6",
-                fillsViewport
-                  ? "flex min-h-0 flex-1 flex-col pb-4"
-                  : "mx-auto max-w-6xl pb-6",
-              )}
-            >
-              <Suspense fallback={<PagePending />}>{children}</Suspense>
-            </main>
-            {!fillsViewport && <VersionFooter />}
-          </div>
-        </ReturnViewProvider>
-      </SpecReviewSessionProvider>
-    </ShellHeaderContext.Provider>
+              <main
+                className={cn(
+                  "px-4 pt-6",
+                  fillsViewport
+                    ? "flex min-h-0 flex-1 flex-col pb-4"
+                    : "mx-auto max-w-6xl pb-6",
+                )}
+              >
+                <Suspense fallback={<PagePending />}>{children}</Suspense>
+              </main>
+              {!fillsViewport && <VersionFooter />}
+            </div>
+          </ReturnViewProvider>
+        </SpecReviewSessionProvider>
+      </ShellHeaderContext.Provider>
+    </TooltipProvider>
   );
 }

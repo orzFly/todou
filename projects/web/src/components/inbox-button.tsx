@@ -1,4 +1,9 @@
 import { Button } from "@orz/ui/components/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@orz/ui/components/tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { InboxIcon } from "lucide-react";
@@ -16,18 +21,22 @@ export function InboxButton() {
   const label = count > 0 ? `Inbox — ${count} unread` : "Inbox";
 
   return (
-    <Button
-      asChild
-      variant="ghost"
-      size="sm"
-      className="relative"
-      aria-label={label}
-      title={label}
-    >
-      <Link to="/inbox">
-        <InboxIcon />
-        <UnreadBadge count={count} className="absolute top-0.5 right-0.5" />
-      </Link>
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          asChild
+          variant="ghost"
+          size="icon-sm"
+          className="relative"
+          aria-label={label}
+        >
+          <Link to="/inbox">
+            <InboxIcon />
+            <UnreadBadge count={count} className="absolute top-0.5 right-0.5" />
+          </Link>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
