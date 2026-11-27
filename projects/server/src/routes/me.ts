@@ -3,6 +3,8 @@ import {
   AccessHint,
   AgentMemberships,
   BulkReadInput,
+  BulkReadResult,
+  BulkReadUndoInput,
   IssueReadInput,
   IssuesReadInput,
   Me,
@@ -34,6 +36,7 @@ import {
   bulkMarkRead,
   markIssueRead,
   markIssuesRead,
+  undoBulkMarkRead,
 } from "../services/reads.ts";
 import { referenceDirectory } from "../services/reference-directory.ts";
 import { resolveRefLocator } from "../services/reference-resolve.ts";
@@ -215,7 +218,29 @@ const bulkReadRoute = createRoute({
   request: {
     body: { content: { "application/json": { schema: BulkReadInput } } },
   },
-  responses: { 204: { description: "Positions advanced" } },
+  responses: {
+    200: {
+      description:
+        'Positions advanced; pass "undo" to POST /me/read/undo to put them back',
+      content: { "application/json": { schema: BulkReadResult } },
+    },
+  },
+});
+
+const bulkReadUndoRoute = createRoute({
+  method: "post",
+  path: "/me/read/undo",
+  summary:
+    "Put back the read positions a PUT /me/read moved, where nothing has " +
+    "moved them since",
+  request: {
+    body: { content: { "application/json": { schema: BulkReadUndoInput } } },
+  },
+  responses: {
+    204: {
+      description: "Positions restored where they still stood at the sweep",
+    },
+  },
 });
 
 const referenceDirectoryRoute = createRoute({
@@ -399,13 +424,28 @@ export function meRoutes() {
     const ctx = c.get("appCtx");
     const user = c.get("user");
     const input = c.req.valid("json");
-    await bulkMarkRead(ctx, user, input);
+    const undo = await bulkMarkRead(ctx, user, input);
     notifyReadsSwept(
       ctx,
       user,
       input.projects,
       originOf(c.req.header(ORIGIN_HEADER)),
     );
+    return c.json({ undo }, 200);
+  });
+
+  app.openapi(bulkReadUndoRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const user = c.get("user");
+    const projects = await undoBulkMarkRead(ctx, user, c.req.valid("json"));
+    if (projects.length > 0) {
+      notifyReadsSwept(
+        ctx,
+        user,
+        projects,
+        originOf(c.req.header(ORIGIN_HEADER)),
+      );
+    }
     return c.body(null, 204);
   });
 

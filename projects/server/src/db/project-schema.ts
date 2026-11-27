@@ -559,6 +559,8 @@ export const pendingUploads = pgTable(
 // plus the activity tables — deliberately NOT denormalized onto issues: the
 // flag is per-viewer and comments are deletable, so live computation stays
 // correct with no counter discipline (contrast open_questions above).
+// `previous_seen_at` is the position the latest Mark all read pushed away,
+// kept only for that sweep's undo (T-814).
 export const issueReads = pgTable(
   "issue_reads",
   {
@@ -569,6 +571,7 @@ export const issueReads = pgTable(
       .references(() => issues.id, { onDelete: "cascade" }),
     userId: bigint("user_id", { mode: "number" }).notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+    previousSeenAt: timestamp("previous_seen_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("issue_reads_issue_user_idx").on(t.issueId, t.userId)],
 );
@@ -576,7 +579,8 @@ export const issueReads = pgTable(
 // A user's unread epoch in a project, created lazily on their first unread
 // computation: anything older is treated as read, so enabling the feature
 // (or joining a project) never lights up history — same bootstrap semantics
-// as the CLI's local state (T-35).
+// as the CLI's local state (T-35). `previous_frontier_at` is the frontier the
+// latest Mark all read pushed away, kept only for that sweep's undo (T-814).
 export const readFrontiers = pgTable(
   "read_frontiers",
   {
@@ -584,6 +588,9 @@ export const readFrontiers = pgTable(
     projectId: projectId(),
     userId: bigint("user_id", { mode: "number" }).notNull(),
     frontierAt: timestamp("frontier_at", { withTimezone: true }).notNull(),
+    previousFrontierAt: timestamp("previous_frontier_at", {
+      withTimezone: true,
+    }),
   },
   (t) => [
     uniqueIndex("read_frontiers_project_user_idx").on(t.projectId, t.userId),

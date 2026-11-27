@@ -19,6 +19,7 @@ import type {
   Status,
   Watcher,
 } from "@todou/shared";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { inboxQuery } from "../src/api/inbox.ts";
 import { mutesQuery } from "../src/api/mutes.ts";
@@ -529,7 +530,9 @@ describe("InboxPage", () => {
   it("clears Mentions after Mark all read refetches, retaining other reasons in All", async () => {
     const item = makeItem("a", 1, { mentions_you: true, open_questions: 1 });
     mockInbox({ items: [item], truncated: false, unread_counts: { a: 1 } });
-    const mark = vi.spyOn(api, "markAllRead").mockResolvedValue(undefined);
+    const mark = vi
+      .spyOn(api, "markAllRead")
+      .mockResolvedValue({ undo: "tok" });
     const view = renderInbox("/inbox?tab=mentions");
     await view.findByText("issue 1");
     vi.mocked(api.getInbox).mockResolvedValue(
@@ -551,6 +554,41 @@ describe("InboxPage", () => {
     fireEvent.click(view.getByRole("tab", { name: "All" }));
     await view.findByText("issue 1");
     expect(view.getByTitle("1 unanswered question(s)")).toBeTruthy();
+  });
+
+  it("toasts a group header's sweep with Undo after the group has gone (T-814)", async () => {
+    mockInbox({
+      items: [makeItem("a", 1)],
+      truncated: false,
+      unread_counts: { a: 1 },
+    });
+    const success = vi.spyOn(toast, "success");
+    let release: (result: { undo: string }) => void = () => {};
+    vi.spyOn(api, "markAllRead").mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    const view = renderInbox();
+    await view.findByText("issue 1");
+    vi.mocked(api.getInbox).mockResolvedValue(
+      inboxFixture({ items: [], truncated: false }),
+    );
+    const name = "Mark Project a as read";
+    fireEvent.click(view.getByRole("button", { name }));
+    // The optimistic clear empties the group, and its header's button goes
+    // with it, before the request is back.
+    await waitFor(() =>
+      expect(view.queryByRole("button", { name })).toBeNull(),
+    );
+    release({ undo: "tok" });
+    await waitFor(() => expect(success).toHaveBeenCalled());
+    expect(success).toHaveBeenCalledWith(
+      "Marked Project a as read",
+      expect.objectContaining({
+        action: expect.objectContaining({ label: "Undo" }),
+      }),
+    );
   });
 
   it("shows only the full empty state when opening Mentions on an empty inbox", async () => {

@@ -519,7 +519,12 @@ describe("the guest role", () => {
       expect((await send("DELETE", `/projects/${P}/mute`, one)).status).toBe(
         204,
       );
-      expect((await send("PUT", "/me/read", one, {})).status).toBe(204);
+      const swept = await send("PUT", "/me/read", one, {});
+      expect(swept.status).toBe(200);
+      const { undo } = await json(swept);
+      expect((await send("POST", "/me/read/undo", one, { undo })).status).toBe(
+        204,
+      );
     });
 
     cover("the project's watchers", async () => {

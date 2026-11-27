@@ -1,7 +1,6 @@
 import { cn } from "@orz/ui";
 import { Button } from "@orz/ui/components/button";
 import { CheckCheckIcon } from "lucide-react";
-import { toast } from "sonner";
 import { useMarkAllReadAction } from "@/api/reads.ts";
 
 /**
@@ -13,7 +12,7 @@ import { useMarkAllReadAction } from "@/api/reads.ts";
  * knows about the rows it has loaded, so "is there anything unread here?"
  * is not a question the client can answer, and a button that comes and
  * goes is worse than one that occasionally does nothing. Sweeping twice is
- * harmless: every write on the server is a `greatest`.
+ * harmless: positions only move forward.
  */
 export function MarkAllReadButton({
   slug,
@@ -36,21 +35,12 @@ export function MarkAllReadButton({
   return (
     <Button
       variant="ghost"
-      size="sm"
+      size={compact ? "icon-sm" : "sm"}
       className={cn("text-muted-foreground", className)}
       disabled={isPending}
       title={label}
       aria-label={label}
-      onClick={() =>
-        mutate(
-          { slug },
-          {
-            // Nothing visibly changes when the scope was already clean, so
-            // say so — otherwise the click reads as a dead button.
-            onSuccess: () => toast.success(`Marked ${scope} as read`),
-          },
-        )
-      }
+      onClick={() => mutate({ slug, scope })}
     >
       <CheckCheckIcon className="size-3.5" />
       {!compact && <span>Mark all read</span>}

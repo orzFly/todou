@@ -1,4 +1,8 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type { InboxPage, IssueListPage } from "@todou/shared";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
@@ -22,8 +26,11 @@ const readInvalidations = (
 /** What a single-issue mark-read was aimed at, fixed at its `mutate()` call. */
 export type ReadTarget = { slug: string; number: number };
 
-/** The bulk sweep's scope; an absent slug is every project. */
-export type BulkReadTarget = { slug: string | undefined };
+/**
+ * The bulk sweep's scope; an absent slug is every project. `scope` names it
+ * in the toast.
+ */
+export type BulkReadTarget = { slug: string | undefined; scope: string };
 
 /**
  * Advance my last-seen position on an issue (T-46). Best-effort by design:
@@ -99,7 +106,8 @@ export function clearInboxUnread(page: InboxPage, slug?: string): InboxPage {
  * (T-100) — one endpoint, two scopes. Patches the same caches the
  * single-issue action does, plus the inbox itself: without it the page
  * would keep rendering rows the sweep just emptied until the refetch
- * lands.
+ * lands. Success toasts the scope with an Undo that puts the sweep back
+ * (T-814).
  */
 export function useMarkAllReadAction() {
   const queryClient = useQueryClient();
@@ -138,12 +146,52 @@ export function useMarkAllReadAction() {
       }
       toast.error(`Could not mark as read: ${error.message}`);
     },
+    // Here rather than in a `mutate()` callback: TanStack calls those only
+    // while the calling component is mounted, and an inbox group header's
+    // button leaves with its group as soon as the optimistic clear empties
+    // it, before the request is back. Nothing visibly changes when the scope
+    // was already clean either, so the toast also keeps the click from
+    // reading as a dead button.
+    onSuccess: (result, vars) => {
+      toast.success(`Marked ${vars.scope} as read`, {
+        action: {
+          label: "Undo",
+          onClick: () =>
+            void undoMarkAllRead(queryClient, vars.slug, result.undo),
+        },
+      });
+    },
     onSettled: (_data, _error, vars) => {
       for (const queryKey of readInvalidations(vars.slug)) {
         queryClient.invalidateQueries({ queryKey });
       }
     },
   });
+}
+
+/**
+ * Put back a Mark all read (T-814). A plain function, not a hook: by the time
+ * Undo is clicked the button that swept may have unmounted, or the user may be
+ * on another page. No optimistic restore — the sweep's snapshot may be stale
+ * by then (another tab read a card, a comment arrived), so the refetch is
+ * what shows the real state.
+ */
+export async function undoMarkAllRead(
+  queryClient: QueryClient,
+  slug: string | undefined,
+  undo: string,
+): Promise<void> {
+  try {
+    await api.undoMarkAllRead({ undo });
+  } catch (error) {
+    toast.error(
+      `Could not undo: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    for (const queryKey of readInvalidations(slug)) {
+      queryClient.invalidateQueries({ queryKey });
+    }
+  }
 }
 
 /** A selection's mark-read (T-775): useMarkReadAction for several cards. */

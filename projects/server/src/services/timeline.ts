@@ -69,13 +69,13 @@ const KIND_COMMENT = 0 as const;
 const KIND_EVENT = 1 as const;
 
 /**
- * `created_at` rendered at postgres's full microsecond precision. The
+ * A timestamp rendered at postgres's full microsecond precision. The
  * driver's Dates only hold milliseconds, so cursors and the merge order are
  * built from this text form instead (fixed-width, so lexicographic order is
  * chronological).
  */
-export function microIso(createdAt: AnyPgColumn): SQL<string> {
-  return sql<string>`to_char(${createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+export function microIso(at: AnyPgColumn | SQL): SQL<string> {
+  return sql<string>`to_char(${at} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
 
 /** Comma-separated `types` filter → validated set (null = no filter). */

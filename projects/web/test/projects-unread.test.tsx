@@ -389,7 +389,7 @@ describe("Mark all read badge coherence (T-444)", () => {
   }
 
   it("clears all three badge surfaces before the sweep responds and accepts later server counts", async () => {
-    const sweep = deferred<void>();
+    const sweep = deferred<{ undo: string }>();
     const refresh = deferred<InboxPage>();
     const mark = vi.spyOn(api, "markAllRead").mockReturnValue(sweep.promise);
     const { container, client, inboxSpy } = renderProjects({
@@ -423,7 +423,7 @@ describe("Mark all read badge coherence (T-444)", () => {
         .hasAttribute("disabled"),
     ).toBe(true);
 
-    await act(async () => sweep.resolve());
+    await act(async () => sweep.resolve({ undo: "tok" }));
     await waitFor(() => expect(inboxSpy).toHaveBeenCalledTimes(1));
     // The success response alone must not resurrect the old counts while
     // its invalidated GET is still pending.
@@ -445,7 +445,7 @@ describe("Mark all read badge coherence (T-444)", () => {
   });
 
   it("rolls back rows and all badges on failure, preserving other projects and cached inbox variants", async () => {
-    const sweep = deferred<void>();
+    const sweep = deferred<{ undo: string }>();
     const refresh = deferred<InboxPage>();
     const mark = vi.spyOn(api, "markAllRead").mockReturnValue(sweep.promise);
     const original = page({ alpha: 3, beta: 1 }, [

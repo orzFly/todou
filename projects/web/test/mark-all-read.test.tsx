@@ -5,6 +5,7 @@ import type {
   IssueListItem,
   IssueListPage,
 } from "@todou/shared";
+import type { Action } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { clearAllUnread, clearInboxUnread } from "../src/api/reads.ts";
@@ -83,7 +84,7 @@ const inboxItem = (
 
 describe("MarkAllReadButton (T-100)", () => {
   it("sweeps one project when given a slug", async () => {
-    const spy = vi.spyOn(api, "markAllRead").mockResolvedValue(undefined);
+    const spy = vi.spyOn(api, "markAllRead").mockResolvedValue({ undo: "tok" });
     const view = renderWithProviders(
       <MarkAllReadButton slug="greenhouse" scopeName="this project" />,
     );
@@ -91,11 +92,16 @@ describe("MarkAllReadButton (T-100)", () => {
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ projects: ["greenhouse"] }),
     );
-    expect(toast.success).toHaveBeenCalledWith("Marked this project as read");
+    expect(toast.success).toHaveBeenCalledWith(
+      "Marked this project as read",
+      expect.objectContaining({
+        action: expect.objectContaining({ label: "Undo" }),
+      }),
+    );
   });
 
   it("sweeps everything readable when the slug is omitted", async () => {
-    const spy = vi.spyOn(api, "markAllRead").mockResolvedValue(undefined);
+    const spy = vi.spyOn(api, "markAllRead").mockResolvedValue({ undo: "tok" });
     const view = renderWithProviders(
       <MarkAllReadButton scopeName="the inbox" />,
     );
@@ -107,8 +113,8 @@ describe("MarkAllReadButton (T-100)", () => {
   it("clears the markers it can reach before the request settles", async () => {
     let release: () => void = () => {};
     vi.spyOn(api, "markAllRead").mockReturnValue(
-      new Promise<void>((resolve) => {
-        release = resolve;
+      new Promise((resolve) => {
+        release = () => resolve({ undo: "tok" });
       }),
     );
     const client = testQueryClient();
@@ -131,7 +137,7 @@ describe("MarkAllReadButton (T-100)", () => {
   });
 
   it("leaves neighbouring projects' caches alone", async () => {
-    vi.spyOn(api, "markAllRead").mockResolvedValue(undefined);
+    vi.spyOn(api, "markAllRead").mockResolvedValue({ undo: "tok" });
     const client = testQueryClient();
     const other = ["issues", "orchard", {}];
     client.setQueryData<IssueListPage>(other, {
@@ -171,7 +177,7 @@ describe("MarkAllReadButton (T-100)", () => {
   });
 
   it("refreshes the inbox badge, which no event ever would (T-112)", async () => {
-    vi.spyOn(api, "markAllRead").mockResolvedValue(undefined);
+    vi.spyOn(api, "markAllRead").mockResolvedValue({ undo: "tok" });
     const client = testQueryClient();
     const spy = vi.spyOn(client, "invalidateQueries");
     const view = renderWithProviders(
@@ -186,7 +192,7 @@ describe("MarkAllReadButton (T-100)", () => {
   });
 
   it("invalidates every project's list on a global sweep", async () => {
-    vi.spyOn(api, "markAllRead").mockResolvedValue(undefined);
+    vi.spyOn(api, "markAllRead").mockResolvedValue({ undo: "tok" });
     const client = testQueryClient();
     const spy = vi.spyOn(client, "invalidateQueries");
     const view = renderWithProviders(<MarkAllReadButton />, client);
@@ -194,6 +200,74 @@ describe("MarkAllReadButton (T-100)", () => {
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] }),
     );
+  });
+
+  describe("Undo (T-814)", () => {
+    const listKey = ["issues", "greenhouse", {}];
+    const inboxKey = ["inbox"];
+
+    /** Sweeps, then returns the toast's Undo with both caches fresh again. */
+    async function sweepForUndo() {
+      vi.spyOn(api, "markAllRead").mockResolvedValue({ undo: "tok" });
+      const client = testQueryClient();
+      const fill = () => {
+        client.setQueryData<IssueListPage>(listKey, {
+          items: [listItem(1)],
+          next_cursor: null,
+        });
+        client.setQueryData<InboxPage>(inboxKey, {
+          items: [inboxItem("greenhouse", 1)],
+          truncated: false,
+          unread_counts: { greenhouse: 1 },
+        });
+      };
+      fill();
+      const view = renderWithProviders(
+        <MarkAllReadButton slug="greenhouse" />,
+        client,
+      );
+      fireEvent.click(
+        await view.findByRole("button", { name: /mark .* read/i }),
+      );
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      // The sweep's own invalidation lands after its toast; refill so only
+      // the undo's can mark the caches stale again.
+      await waitFor(() =>
+        expect(client.getQueryState(listKey)?.isInvalidated).toBe(true),
+      );
+      fill();
+      const action = vi.mocked(toast.success).mock.calls[0]?.[1]
+        ?.action as Action;
+      return {
+        client,
+        undo: () => action.onClick({} as Parameters<Action["onClick"]>[0]),
+      };
+    }
+
+    const stale = (client: ReturnType<typeof testQueryClient>) => [
+      client.getQueryState(listKey)?.isInvalidated,
+      client.getQueryState(inboxKey)?.isInvalidated,
+    ];
+
+    it("hands the sweep's token back and refreshes what it touched", async () => {
+      const spy = vi.spyOn(api, "undoMarkAllRead").mockResolvedValue(undefined);
+      const { client, undo } = await sweepForUndo();
+      expect(stale(client)).toEqual([false, false]);
+      undo();
+      await waitFor(() => expect(stale(client)).toEqual([true, true]));
+      expect(spy).toHaveBeenCalledWith({ undo: "tok" });
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("toasts a failed undo and still refreshes", async () => {
+      vi.spyOn(api, "undoMarkAllRead").mockRejectedValue(new Error("boom"));
+      const { client, undo } = await sweepForUndo();
+      undo();
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith("Could not undo: boom"),
+      );
+      await waitFor(() => expect(stale(client)).toEqual([true, true]));
+    });
   });
 });
 

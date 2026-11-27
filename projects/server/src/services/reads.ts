@@ -1,11 +1,25 @@
-import type {
-  BulkReadInput,
-  IssueReadInput,
-  IssuesReadInput,
-  MuteReason,
+import {
+  type BulkReadInput,
+  type BulkReadUndoInput,
+  type IssueReadInput,
+  type IssuesReadInput,
+  type MuteReason,
+  Timestamp,
 } from "@todou/shared";
-import { and, eq, gt, inArray, max, ne, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  lt,
+  max,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
+import { z } from "zod";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -17,7 +31,7 @@ import {
   issues,
   readFrontiers,
 } from "../db/project-schema.ts";
-import { NotFoundError } from "../errors.ts";
+import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import {
   accessibleProjectRows,
   type ProjectRow,
@@ -30,6 +44,7 @@ import {
   type VisibleProjects,
 } from "./cross-references.ts";
 import { endedSnoozes, type MuteContext, silenced } from "./mutes.ts";
+import { microIso } from "./timeline.ts";
 import { cardInScope, live } from "./trash.ts";
 
 /**
@@ -429,6 +444,10 @@ export async function markIssueRead(
       target: [issueReads.issueId, issueReads.userId],
       set: {
         lastSeenAt: sql`greatest(${issueReads.lastSeenAt}, excluded.last_seen_at)`,
+        // Read since the sweep, so its undo must leave this card alone — and
+        // the position alone cannot say so: `upTo` may predate the sweep's
+        // `at` (the CLI's `up_to`, or this server's millisecond Date).
+        previousSeenAt: null,
       },
     });
 }
@@ -482,6 +501,10 @@ export async function markIssuesRead(
       target: [issueReads.issueId, issueReads.userId],
       set: {
         lastSeenAt: sql`greatest(${issueReads.lastSeenAt}, excluded.last_seen_at)`,
+        // As in markIssueRead: read since the sweep, so its undo must leave
+        // these cards alone, and `now()` still predates a sweep sent a later
+        // `up_to`.
+        previousSeenAt: null,
       },
     });
 }
@@ -498,16 +521,23 @@ export async function markIssuesRead(
  * stays unread behind a moved frontier — hence both layers, in one
  * transaction per database.
  *
+ * Positions only move forward, and each one the sweep moves keeps the value
+ * it pushed away in `previous_*` for undoBulkMarkRead (T-814). The result is
+ * the undo token: every project whose frontier this sweep created or moved,
+ * with the sweep's `at` there.
+ *
  * Not atomic across databases: no transaction spans them, so a failure can
  * leave some databases swept and others untouched, and the error does not
- * say which. Retrying is safe — every write is a `greatest`, so replaying
- * it changes nothing.
+ * say which. Retrying is safe: a database the failed attempt already swept
+ * stands at that attempt's `at`, earlier than the retry's, so it is pushed
+ * again and `previous_*` becomes the failed attempt's `at` — undoing that row
+ * then reaches back only that far, one level as always.
  */
 export async function bulkMarkRead(
   ctx: AppContext,
   actor: UserRow,
   input: BulkReadInput,
-): Promise<void> {
+): Promise<string> {
   let scope: ProjectRow[];
   if (input.projects === undefined) {
     // Card-scoped projects included (T-788) with no per-card filter: both
@@ -533,50 +563,174 @@ export async function bulkMarkRead(
   const at =
     input.up_to === undefined ? sql`now()` : sql`${input.up_to}::timestamptz`;
 
+  const moved = await ctx.router.perDatabase(
+    scope,
+    routeInfoOf,
+    async (db, group) => {
+      // Deduplicated because one project can reach `scope` twice — its id
+      // and its slug both resolve to it (T-266), as does a retired slug — and
+      // one INSERT may not name the same conflict key twice. Ascending
+      // because this transaction now holds several of the caller's frontier
+      // rows at once and `ensureFrontiers` inserts in the same order: two
+      // callers taking them in opposite orders deadlock on real postgres.
+      const ids = [...new Set(group.map((p) => p.id))].sort((a, b) => a - b);
+      return db.transaction(async (tx) => {
+        // project_id is not redundant: several projects may share one
+        // database (placement=shared), and marking these read must not touch
+        // their neighbours. A row already at or past `at` keeps its
+        // `previous_seen_at` too: this sweep moved nothing there to undo.
+        // Postgres evaluates every SET expression against the old row, so
+        // `previous_seen_at` takes the position being overwritten.
+        await tx
+          .update(issueReads)
+          .set({
+            previousSeenAt: sql`${issueReads.lastSeenAt}`,
+            lastSeenAt: at,
+          })
+          .where(
+            and(
+              inArray(issueReads.projectId, ids),
+              eq(issueReads.userId, actor.id),
+              lt(issueReads.lastSeenAt, at),
+            ),
+          );
+        // `at` comes back as the database's text rather than a Date: the
+        // undo matches positions exactly, and a Date would drop the
+        // microseconds (T-278).
+        return tx
+          .insert(readFrontiers)
+          .values(
+            ids.map((projectId) => ({
+              projectId,
+              userId: actor.id,
+              // A frontier born here floors at now(): seeding it from an
+              // older `up_to` would let a mark-read call *create* unread
+              // history for someone who had never opened the project,
+              // inverting the lazy bootstrap ensureFrontier promises (T-35).
+              frontierAt: sql`greatest(now(), ${at})`,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [readFrontiers.projectId, readFrontiers.userId],
+            // `at`, not `excluded.frontier_at`: the floor above applies only
+            // to a frontier that did not exist yet. An existing one honours
+            // the requested position exactly, so `up_to` in the past marks
+            // only up to there.
+            set: {
+              previousFrontierAt: sql`${readFrontiers.frontierAt}`,
+              frontierAt: at,
+            },
+            setWhere: lt(readFrontiers.frontierAt, at),
+          })
+          .returning({ projectId: readFrontiers.projectId, at: microIso(at) });
+      });
+    },
+  );
+  return encodeUndo(moved.flat().map((row) => [row.projectId, row.at]));
+}
+
+/**
+ * Put back what one bulkMarkRead moved (T-814), in each project of its token
+ * the caller can still read; the rest are skipped. Returns those projects'
+ * slugs for the route's `reads_swept` notification.
+ *
+ * A row goes back only while its position still equals the sweep's `at`
+ * and its `previous_*` is still set, and both conditions are needed. The
+ * position alone would take back a card read since the sweep: the CLI's
+ * `up_to` and markIssueRead's millisecond Date can both predate `at`, and
+ * `greatest` leaves such a read at `at` — so every read clears
+ * `previous_seen_at` instead. `previous_*` alone would let an earlier
+ * sweep's token undo a later one, whose `previous_*` that row now holds.
+ *
+ * Like the sweep, not atomic across databases. Retrying is safe: a row
+ * already put back has its `previous_*` cleared.
+ */
+export async function undoBulkMarkRead(
+  ctx: AppContext,
+  actor: UserRow,
+  input: BulkReadUndoInput,
+): Promise<string[]> {
+  const wanted = decodeUndo(input.undo);
+  const scope = (
+    await accessibleProjectRows(ctx, actor, { cardScoped: "filter" })
+  ).filter((p) => wanted.has(p.id));
+  if (scope.length === 0) return [];
+
   await ctx.router.perDatabase(scope, routeInfoOf, async (db, group) => {
-    // Deduplicated because one project can reach `scope` twice — its id and
-    // its slug both resolve to it (T-266), as does a retired slug — and one
-    // INSERT may not name the same conflict key twice. Ascending because
-    // this transaction now holds several of the caller's frontier rows at
-    // once and `ensureFrontiers` inserts in the same order: two callers
-    // taking them in opposite orders deadlock on real postgres.
-    const ids = [...new Set(group.map((p) => p.id))].sort((a, b) => a - b);
+    const ats = [...new Set(group.map((p) => p.id))].map((id) => ({
+      id,
+      at: sql`${wanted.get(id)}::timestamptz`,
+    }));
     await db.transaction(async (tx) => {
-      // project_id is not redundant: several projects may share one
-      // database (placement=shared), and marking these read must not touch
-      // their neighbours.
       await tx
         .update(issueReads)
-        .set({ lastSeenAt: sql`greatest(${issueReads.lastSeenAt}, ${at})` })
+        .set({
+          lastSeenAt: sql`${issueReads.previousSeenAt}`,
+          previousSeenAt: null,
+        })
         .where(
           and(
-            inArray(issueReads.projectId, ids),
             eq(issueReads.userId, actor.id),
+            isNotNull(issueReads.previousSeenAt),
+            or(
+              ...ats.map(({ id, at }) =>
+                and(
+                  eq(issueReads.projectId, id),
+                  eq(issueReads.lastSeenAt, at),
+                ),
+              ),
+            ),
           ),
         );
       await tx
-        .insert(readFrontiers)
-        .values(
-          ids.map((projectId) => ({
-            projectId,
-            userId: actor.id,
-            // A frontier born here floors at now(): seeding it from an older
-            // `up_to` would let a mark-read call *create* unread history for
-            // someone who had never opened the project, inverting the lazy
-            // bootstrap ensureFrontier promises (T-35).
-            frontierAt: sql`greatest(now(), ${at})`,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: [readFrontiers.projectId, readFrontiers.userId],
-          // `at`, not `excluded.frontier_at`: the floor above applies only
-          // to a frontier that did not exist yet. An existing one honours
-          // the requested position exactly, so `up_to` in the past marks
-          // only up to there.
-          set: {
-            frontierAt: sql`greatest(${readFrontiers.frontierAt}, ${at})`,
-          },
-        });
+        .update(readFrontiers)
+        .set({
+          frontierAt: sql`${readFrontiers.previousFrontierAt}`,
+          previousFrontierAt: null,
+        })
+        .where(
+          and(
+            eq(readFrontiers.userId, actor.id),
+            isNotNull(readFrontiers.previousFrontierAt),
+            or(
+              ...ats.map(({ id, at }) =>
+                and(
+                  eq(readFrontiers.projectId, id),
+                  eq(readFrontiers.frontierAt, at),
+                ),
+              ),
+            ),
+          ),
+        );
     });
   });
+  return scope.map((p) => p.slug);
+}
+
+/** What a sweep's undo token carries; see encodeUndo. */
+const ReadUndoToken = z.strictObject({
+  v: z.literal(1),
+  at: z.array(z.tuple([z.number().int().positive(), Timestamp])),
+});
+
+/**
+ * base64url JSON, opaque to clients. Each project carries the `at` its own
+ * database wrote, as microsecond text: databases date a sweep by their own
+ * clocks, and the undo needs the exact value.
+ */
+function encodeUndo(at: [number, string][]): string {
+  return Buffer.from(JSON.stringify({ v: 1, at })).toString("base64url");
+}
+
+/** Project id → the sweep's `at` there; any malformed token is a 422. */
+function decodeUndo(raw: string): Map<number, string> {
+  let token: z.infer<typeof ReadUndoToken>;
+  try {
+    token = ReadUndoToken.parse(
+      JSON.parse(Buffer.from(raw, "base64url").toString("utf8")),
+    );
+  } catch {
+    throw new ValidationFailedError("malformed undo token");
+  }
+  return new Map(token.at);
 }

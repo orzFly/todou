@@ -1047,7 +1047,7 @@ describe("user-level SSE stream (T-122)", () => {
         headers: { "content-type": "application/json", ...ivy.headers },
         body: JSON.stringify({ projects: ["alpha"] }),
       });
-      expect(scoped.status).toBe(204);
+      expect(scoped.status).toBe(200);
       expect(JSON.parse((await stream.nextFrame()).data)).toMatchObject({
         kind: "reads_swept",
         projects: ["alpha"],
@@ -1058,10 +1058,36 @@ describe("user-level SSE stream (T-122)", () => {
         headers: { "content-type": "application/json", ...ivy.headers },
         body: "{}",
       });
-      expect(all.status).toBe(204);
+      expect(all.status).toBe(200);
       const event = JSON.parse((await stream.nextFrame()).data);
       expect(event).toMatchObject({ kind: "reads_swept" });
       expect("projects" in event).toBe(false);
+      stream.abort();
+    });
+
+    it("reports an undone sweep as a sweep of what it put back (T-814)", async () => {
+      await readInbox(ivy.headers);
+      const stream = await SseReader.open("/api/events?inbox=1", ivy.headers);
+
+      const swept = await t.app.request("/api/me/read", {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...ivy.headers },
+        body: JSON.stringify({ projects: ["alpha"] }),
+      });
+      expect(swept.status).toBe(200);
+      const { undo } = (await swept.json()) as { undo: string };
+      await stream.nextFrame();
+
+      const undone = await t.app.request("/api/me/read/undo", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...ivy.headers },
+        body: JSON.stringify({ undo }),
+      });
+      expect(undone.status).toBe(204);
+      expect(JSON.parse((await stream.nextFrame()).data)).toMatchObject({
+        kind: "reads_swept",
+        projects: ["alpha"],
+      });
       stream.abort();
     });
 

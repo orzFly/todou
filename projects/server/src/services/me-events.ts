@@ -91,7 +91,8 @@ export async function notifyIssueRead(
 }
 
 /**
- * Everything in a scope of projects was marked read. No fingerprints: a
+ * Everything in a scope of projects was marked read, or such a sweep was
+ * undone (T-814) — the receivers refetch either way. No fingerprints: a
  * sweep is something a person clicked, so the receivers can afford the
  * refetch, and a row-by-row judgement of a whole project could not.
  */

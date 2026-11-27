@@ -152,7 +152,7 @@ describe.skipIf(!PG_URL)("bulk mark-as-read on real postgres", () => {
     expect(await stateOf(issue)).toEqual({ unread: true, count: 2 });
 
     expect((await bulkRead({ projects: [slug], up_to: US_CUT })).status).toBe(
-      204,
+      200,
     );
     // Truncating US_CUT to the millisecond would clear neither comment and
     // rounding it up would clear both; only a microsecond-exact position
@@ -162,7 +162,7 @@ describe.skipIf(!PG_URL)("bulk mark-as-read on real postgres", () => {
     // …and the position never walks back, not even by 500µs.
     expect(
       (await bulkRead({ projects: [slug], up_to: US_BEFORE })).status,
-    ).toBe(204);
+    ).toBe(200);
     expect(await stateOf(issue)).toEqual({ unread: true, count: 1 });
   });
 
@@ -173,18 +173,18 @@ describe.skipIf(!PG_URL)("bulk mark-as-read on real postgres", () => {
     expect(await stateOf(issue)).toEqual({ unread: true, count: 2 });
 
     expect((await bulkRead({ projects: [slug], up_to: MS_CUT })).status).toBe(
-      204,
+      200,
     );
     expect(await stateOf(issue)).toEqual({ unread: true, count: 1 });
 
     expect((await bulkRead({ projects: [slug], up_to: MS_AFTER })).status).toBe(
-      204,
+      200,
     );
     expect(await stateOf(issue)).toEqual({ unread: false, count: 0 });
 
     // Backwards stays backwards on the frontier too.
     expect((await bulkRead({ projects: [slug], up_to: EPOCH })).status).toBe(
-      204,
+      200,
     );
     expect(await stateOf(issue)).toEqual({ unread: false, count: 0 });
   });
@@ -270,7 +270,7 @@ describe.skipIf(!PG_URL)("bulk mark-as-read on real postgres", () => {
       });
     expect(
       (await asBob({ projects: [after, String(projectId), before] })).status,
-    ).toBe(204);
+    ).toBe(200);
     expect(await unreadFor(bob.headers)).toBe(false);
 
     const refused = await asBob({ projects: [after, foreign] });
@@ -360,8 +360,118 @@ describe.skipIf(!PG_URL)("bulk mark-as-read on real postgres", () => {
 
     // No up_to: postgres dates the sweep itself, and both layers land after
     // everything planted.
-    expect((await bulkRead({ projects: [slug] })).status).toBe(204);
+    expect((await bulkRead({ projects: [slug] })).status).toBe(200);
     expect(await stateOf(opened)).toEqual({ unread: false, count: 0 });
     expect(await stateOf(untouched)).toEqual({ unread: false, count: 0 });
+  });
+
+  describe("undo (T-814)", () => {
+    const issueOf = (number: number) =>
+      sql`(select id from issues where number = ${number}
+             and project_id = (select id from projects where slug = ${slug}))`;
+
+    async function text(query: ReturnType<typeof sql>): Promise<string> {
+      const got = await t.ctx.router.system().execute(query);
+      const rows = Array.isArray(got)
+        ? got
+        : (got as unknown as { rows: Record<string, unknown>[] }).rows;
+      expect(rows).toHaveLength(1);
+      return rows[0]?.at as string;
+    }
+
+    const positionOf = (number: number) =>
+      text(
+        sql`select to_char(last_seen_at at time zone 'UTC',
+                           'YYYY-MM-DD HH24:MI:SS.US') as at
+            from issue_reads
+            where user_id = ${meId} and issue_id = ${issueOf(number)}`,
+      );
+
+    const frontierOf = () =>
+      text(
+        sql`select to_char(frontier_at at time zone 'UTC',
+                           'YYYY-MM-DD HH24:MI:SS.US') as at
+            from read_frontiers
+            where user_id = ${meId}
+              and project_id = (select id from projects where slug = ${slug})`,
+      );
+
+    /** A card read up to US_CUT: one of its two planted comments unread. */
+    async function readToCut(title: string): Promise<number> {
+      const issue = await createIssue(title);
+      await plant(issue, [US_BEFORE, US_AFTER]);
+      // The single-issue endpoint would round US_CUT to the millisecond.
+      const positioned = await t.app.request(
+        `/api/projects/${slug}/issues/${issue}/read`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ up_to: EPOCH }),
+        },
+      );
+      expect(positioned.status).toBe(204);
+      await t.ctx.router.system().execute(
+        sql`update issue_reads set last_seen_at = ${US_CUT}::timestamptz
+              where user_id = ${meId} and issue_id = ${issueOf(issue)}`,
+      );
+      expect(await stateOf(issue)).toEqual({ unread: true, count: 1 });
+      return issue;
+    }
+
+    async function sweep(upTo: string): Promise<string> {
+      const res = await bulkRead({ projects: [slug], up_to: upTo });
+      expect(res.status).toBe(200);
+      return (await json(res)).undo;
+    }
+
+    async function undo(token: string): Promise<void> {
+      const res = await t.app.request("/api/me/read/undo", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ undo: token }),
+      });
+      expect(res.status).toBe(204);
+    }
+
+    it("puts both layers back to the microsecond", async () => {
+      const opened = await readToCut("swept, then undone");
+      const fresh = await createIssue("never opened, swept, then undone");
+      await plant(fresh, [MS_BEFORE, MS_AFTER]);
+      await backdateFrontier(MS_CUT);
+      expect(await stateOf(fresh)).toEqual({ unread: true, count: 1 });
+
+      const token = await sweep("2026-03-03T10:00:03.000123Z");
+      expect(await stateOf(opened)).toEqual({ unread: false, count: 0 });
+      expect(await stateOf(fresh)).toEqual({ unread: false, count: 0 });
+
+      await undo(token);
+      expect(await positionOf(opened)).toBe("2026-03-03 10:00:01.000500");
+      expect(await frontierOf()).toBe("2026-03-03 10:00:02.200000");
+      expect(await stateOf(opened)).toEqual({ unread: true, count: 1 });
+      expect(await stateOf(fresh)).toEqual({ unread: true, count: 1 });
+    });
+
+    it("keeps a card read a microsecond before the sweep's position", async () => {
+      const issue = await readToCut("read again just behind the sweep");
+      const at = "2026-03-03T10:00:04.000123Z";
+      const token = await sweep(at);
+
+      // An `up_to` behind the sweep leaves the position where the sweep put
+      // it, which is exactly what the undo looks for.
+      const reread = await t.app.request(
+        `/api/projects/${slug}/issues/${issue}/read`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ up_to: "2026-03-03T10:00:04.000122Z" }),
+        },
+      );
+      expect(reread.status).toBe(204);
+      expect(await positionOf(issue)).toBe("2026-03-03 10:00:04.000123");
+
+      await undo(token);
+      expect(await positionOf(issue)).toBe("2026-03-03 10:00:04.000123");
+      expect(await stateOf(issue)).toEqual({ unread: false, count: 0 });
+    });
   });
 });

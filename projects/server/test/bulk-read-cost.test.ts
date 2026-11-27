@@ -43,6 +43,8 @@ import {
 /** Statements this endpoint sends once per database, never once per project. */
 const SWEEP_UPDATE = /update "issue_reads"/;
 const SWEEP_UPSERT = /insert into "read_frontiers"/;
+/** The undo's second statement; its first is SWEEP_UPDATE's shape. */
+const UNDO_FRONTIERS = /update "read_frontiers"/;
 
 /** Per project database: the sweep's UPDATE and its frontier upsert. */
 const STATEMENTS_PER_GROUP = 2;
@@ -78,12 +80,12 @@ async function measure(
     // throttle (auth/pat.ts, 60s): the first call of a window would other-
     // wise carry an extra `update "tokens"` the second one does not.
     const warm = await call(body);
-    expect(warm.status).toBe(204);
+    expect(warm.status).toBe(200);
     let status = 0;
     const log = await countStatements(t, async () => {
       status = (await call(body)).status;
     });
-    expect(status).toBe(204);
+    expect(status).toBe(200);
     return log;
   };
 
@@ -256,6 +258,29 @@ describe.each(PLACEMENTS)(
       // nothing about the cost.
       expect(await frontierRows(t, big.rows, bob.user.id)).toBe(8);
     });
+
+    it("undoes a sweep in two statements per database (T-814)", async () => {
+      const swept = await t.app.request("/api/me/read", {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: "{}",
+      });
+      expect(swept.status).toBe(200);
+      const { undo } = (await swept.json()) as { undo: string };
+      let status = 0;
+      const log = await countStatements(t, async () => {
+        status = (
+          await t.app.request("/api/me/read/undo", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...bob.headers },
+            body: JSON.stringify({ undo }),
+          })
+        ).status;
+      });
+      expect(status).toBe(204);
+      expect(matching(log, SWEEP_UPDATE)).toHaveLength(big.k);
+      expect(matching(log, UNDO_FRONTIERS)).toHaveLength(big.k);
+    });
   },
 );
 
@@ -308,7 +333,7 @@ describe("read_frontiers is written in one row order everywhere", () => {
         // multi-row upsert — so only this shape can witness the sort.
         body: JSON.stringify({ projects: ["brl-p2", "brl-p1", "brl-p0"] }),
       });
-      expect(res.status).toBe(204);
+      expect(res.status).toBe(200);
     });
     const upserts = matching(log, SWEEP_UPSERT);
     expect(upserts).toHaveLength(1);

@@ -213,7 +213,7 @@ describe.skipIf(!PG_URL)("inbox unread candidates on real postgres", () => {
         headers: headers(),
         body: JSON.stringify({ projects: [slug2], up_to: FRONTIER }),
       });
-      expect(marked.status).toBe(204);
+      expect(marked.status).toBe(200);
 
       const page = await json(
         await t.app.request("/api/me/inbox", { headers: { cookie } }),

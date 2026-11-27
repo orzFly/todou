@@ -81,3 +81,16 @@ export const BulkReadInput = z.strictObject({
   up_to: Timestamp.optional(),
 });
 export type BulkReadInput = z.infer<typeof BulkReadInput>;
+
+/** Response of PUT /me/read (T-814): the sweep's undo token. */
+export const BulkReadResult = z.object({
+  /** Opaque; hand it to POST /me/read/undo unchanged. */
+  undo: z.string(),
+});
+export type BulkReadResult = z.infer<typeof BulkReadResult>;
+
+/** Body of POST /me/read/undo (T-814). */
+export const BulkReadUndoInput = z.strictObject({
+  undo: z.string().min(1),
+});
+export type BulkReadUndoInput = z.infer<typeof BulkReadUndoInput>;

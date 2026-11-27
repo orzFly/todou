@@ -912,7 +912,7 @@ describe("a sweep aimed at a scope the header then left", () => {
   it("sweeps the scope the button was pressed on", async () => {
     const markAllRead = vi
       .spyOn(api, "markAllRead")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue({ undo: "tok" });
     function MarkAllReadButtonRow() {
       const [onNext, setOnNext] = useState(false);
       return (

@@ -21,6 +21,8 @@ import type {
   AutolinkCreateInput,
   BlockRef,
   BulkReadInput,
+  BulkReadResult,
+  BulkReadUndoInput,
   BurnQuery,
   BurnResponse,
   CliAuthApproveInput,
@@ -640,7 +642,9 @@ export class TodouClient {
   getInbox = (query?: Query) =>
     this.request<InboxPage>("GET", "/me/inbox", { query });
   markAllRead = (input: BulkReadInput = {}) =>
-    this.request<void>("PUT", "/me/read", { json: input });
+    this.request<BulkReadResult>("PUT", "/me/read", { json: input });
+  undoMarkAllRead = (input: BulkReadUndoInput) =>
+    this.request<void>("POST", "/me/read/undo", { json: input });
   createMyToken = (input: TokenCreateInput) =>
     this.request<TokenCreated>("POST", "/me/tokens", { json: input });
   /**
