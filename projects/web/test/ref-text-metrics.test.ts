@@ -42,13 +42,25 @@ const CANVAS_ENUMS: Record<string, readonly string[]> = {
   ],
 };
 
+/**
+ * Each character advances by the font size the canvas holds, so text measured
+ * in canvas's default font comes out at 10px a character.
+ */
 function installCanvas() {
   const rejected: string[] = [];
   const context = new Proxy<Record<string, unknown>>(
-    { measureText: (text: string) => ({ width: text.length }) },
+    {
+      font: "10px sans-serif",
+      measureText(this: { font: string }, text: string) {
+        const size = Number.parseFloat(this.font.match(/[\d.]+px/)?.[0] ?? "");
+        return { width: text.length * size };
+      },
+    },
     {
       set(target, key, value) {
         const allowed = CANVAS_ENUMS[String(key)];
+        // Canvas keeps its current font when the new one does not parse.
+        if (key === "font" && value === "") return true;
         if (allowed && !allowed.includes(value)) {
           rejected.push(`${String(key)} = ${value}`);
         } else {
@@ -99,6 +111,65 @@ describe("canvasMeasurer", () => {
       expect(rejected).toEqual([]);
       // The shorthand is what carries the width to the canvas.
       expect(context.font).toBe(font);
+    },
+  );
+});
+
+/**
+ * What Chromium 156 and Firefox 153 compute for a chip whose font a shorthand
+ * cannot spell: `font` is "", and only the longhands still carry it.
+ */
+const UNSPELLED = {
+  ...CHIP_STYLE,
+  font: "",
+  fontStyle: "italic",
+  fontWeight: "500",
+  fontStretch: "100%",
+  fontSize: "14px",
+  fontFamily: '"Noto Sans Variable", sans-serif',
+  fontVariantNumeric: "tabular-nums",
+};
+
+describe("canvasMeasurer where the computed font shorthand is empty", () => {
+  it("measures in the element's own size and family", () => {
+    vi.stubGlobal("getComputedStyle", () => UNSPELLED);
+    const { context, rejected } = installCanvas();
+
+    const measure = canvasMeasurer(document.createElement("span"));
+
+    expect(measure?.("1234")).toBe(4 * 14);
+    expect(context.font).toBe(
+      'italic 500 14px "Noto Sans Variable", sans-serif',
+    );
+    expect(rejected).toEqual([]);
+  });
+
+  it.each([
+    { fontStretch: "40%", keyword: "ultra-condensed" },
+    { fontStretch: "50%", keyword: "ultra-condensed" },
+    { fontStretch: "80%", keyword: "condensed" },
+    { fontStretch: "95%", keyword: "semi-condensed" },
+    { fontStretch: "100%", keyword: null },
+    { fontStretch: "105%", keyword: "semi-expanded" },
+    { fontStretch: "120%", keyword: "expanded" },
+    { fontStretch: "250%", keyword: "ultra-expanded" },
+  ])(
+    "names a $fontStretch width by the keyword away from normal: $keyword",
+    ({ fontStretch, keyword }) => {
+      vi.stubGlobal("getComputedStyle", () => ({
+        ...UNSPELLED,
+        fontStyle: "normal",
+        fontWeight: "400",
+        fontStretch,
+        fontFamily: "Probe",
+      }));
+      const { context } = installCanvas();
+
+      canvasMeasurer(document.createElement("span"));
+
+      expect(context.font).toBe(
+        ["400", keyword, "14px Probe"].filter(Boolean).join(" "),
+      );
     },
   );
 });
