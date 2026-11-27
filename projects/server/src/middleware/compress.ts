@@ -163,6 +163,9 @@ export function compressMiddleware() {
     );
     c.res = new Response(Readable.toWeb(encoder) as ReadableStream, res);
     c.res.headers.delete("Content-Length");
+    // The byte ranges on offer are offsets into the unencoded file; this
+    // response is no longer that, so it must not invite range requests.
+    c.res.headers.delete("Accept-Ranges");
     c.res.headers.set("Content-Encoding", encoding);
     const etag = c.res.headers.get("ETag");
     if (etag && !etag.startsWith("W/")) {

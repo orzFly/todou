@@ -349,6 +349,139 @@ describe("attachments (fs backend)", () => {
     const res = await upload("nope.txt", "x", reader.headers);
     expect(res.status).toBe(403);
   });
+
+  describe("byte ranges (T-806)", () => {
+    // 597 bytes, the size the card measured with; no two neighbours repeat,
+    // so a slice taken from the wrong offset cannot match by accident.
+    const content = Array.from({ length: 597 }, (_, i) =>
+      String.fromCharCode(97 + (i % 26)),
+    ).join("");
+    let download = "";
+    let addresses: string[] = [];
+
+    beforeAll(async () => {
+      download = (await json(await upload("ranged.txt", content))).url;
+      const bare = download.replace(/\/download\/.*$/, "");
+      addresses = [
+        download,
+        `${bare}/download`,
+        download.replace("/download/", "/view/"),
+        `${bare}/view`,
+      ];
+    });
+
+    const get = (url: string, extra: Record<string, string> = {}) =>
+      t.app.request(url, { headers: { cookie, ...extra } });
+
+    it("answers one range with 206 on all four addresses", async () => {
+      for (const url of addresses) {
+        const whole = await get(url);
+        await whole.body?.cancel();
+        const res = await get(url, { range: "bytes=0-9" });
+        expect(res.status).toBe(206);
+        expect(res.headers.get("content-range")).toBe("bytes 0-9/597");
+        expect(res.headers.get("content-length")).toBe("10");
+        expect(res.headers.get("accept-ranges")).toBe("bytes");
+        expect(await res.text()).toBe(content.slice(0, 10));
+        for (const name of [
+          "content-type",
+          "content-disposition",
+          "x-content-type-options",
+          "cross-origin-resource-policy",
+          "content-security-policy",
+        ]) {
+          expect(res.headers.get(name), `${url} ${name}`).toBe(
+            whole.headers.get(name),
+          );
+        }
+      }
+    });
+
+    it.each<[string, number, number]>([
+      ["bytes=590-", 590, 596],
+      ["bytes=-7", 590, 596],
+      ["bytes=590-9999", 590, 596],
+      ["bytes=0-0", 0, 0],
+      ["BYTES=0-1", 0, 1],
+    ])("serves %s as bytes %i-%i", async (range, start, end) => {
+      const res = await get(download, { range });
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-range")).toBe(
+        `bytes ${start}-${end}/597`,
+      );
+      expect(await res.text()).toBe(content.slice(start, end + 1));
+    });
+
+    it("sends the whole file with Accept-Ranges when no range is asked", async () => {
+      const res = await get(download);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("accept-ranges")).toBe("bytes");
+      expect(res.headers.get("content-range")).toBeNull();
+      expect(await res.text()).toBe(content);
+    });
+
+    it.each(["bytes=597-", "bytes=-0"])(
+      "refuses %s with 416 and the size",
+      async (range) => {
+        const res = await get(download, { range });
+        expect(res.status).toBe(416);
+        expect(res.headers.get("content-range")).toBe("bytes */597");
+        expect((await json(res)).error.code).toBe("range_not_satisfiable");
+      },
+    );
+
+    it.each(["bytes=0-1,5-6", "bytes=5-2", "bytes=a-b", "bytes=", "items=0-1"])(
+      "serves the whole file for %s",
+      async (range) => {
+        const res = await get(download, { range });
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-range")).toBeNull();
+        expect(await res.text()).toBe(content);
+      },
+    );
+
+    // These responses carry no validator, so no If-Range can match one.
+    it("serves the whole file when an If-Range comes along", async () => {
+      const res = await get(download, {
+        range: "bytes=0-9",
+        "if-range": '"some-etag"',
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(content);
+    });
+
+    it("answers HEAD with 200 and Accept-Ranges, whatever the range", async () => {
+      const res = await t.app.request(download, {
+        method: "HEAD",
+        headers: { cookie, range: "bytes=0-9" },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("accept-ranges")).toBe("bytes");
+      expect(res.headers.get("content-range")).toBeNull();
+    });
+
+    it("serves an empty file whole", async () => {
+      const empty = await json(await upload("empty.txt", ""));
+      const res = await get(empty.url, { range: "bytes=0-9" });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("");
+    });
+
+    it("declares 206 and 416 on the four streaming addresses", async () => {
+      const doc = await json(await t.app.request("/api/openapi.json"));
+      for (const tail of [
+        "download",
+        "download/{name}",
+        "view",
+        "view/{name}",
+      ]) {
+        const path = `/api/projects/{slug}/attachments/{id}/${tail}`;
+        expect(Object.keys(doc.paths[path].get.responses), path).toEqual(
+          expect.arrayContaining(["206", "416"]),
+        );
+      }
+    });
+  });
 });
 
 describe("filenames are unique within one card (T-269)", () => {
@@ -819,6 +952,25 @@ describe("attachments (s3 backend)", () => {
     expect(view.headers.get("content-security-policy")).toBe(
       "sandbox allow-scripts; frame-ancestors 'self'",
     );
+  });
+
+  it("serves a range of the view route from a ranged GetObject (T-806)", async () => {
+    const attachment = await json(
+      await multipartUpload("ranged.html", "0123456789abcdef"),
+    );
+    const view = await t.app.request(
+      attachment.url.replace("/download/", "/view/"),
+      { headers: { cookie, range: "bytes=0-9" } },
+    );
+    expect(view.status).toBe(206);
+    expect(view.headers.get("content-range")).toBe("bytes 0-9/16");
+    expect(view.headers.get("content-length")).toBe("10");
+    expect(view.headers.get("accept-ranges")).toBe("bytes");
+    expect(await view.text()).toBe("0123456789");
+    expect(fake.requests.at(-1)).toMatchObject({
+      method: "GET",
+      range: "bytes=0-9",
+    });
   });
 
   it("completes the direct-upload handshake end to end", async () => {

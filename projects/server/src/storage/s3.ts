@@ -4,7 +4,7 @@ import { AwsClient, AwsV4Signer } from "aws4fetch";
 import { type Config, ConfigError, type S3Credentials } from "../config.ts";
 import { NotFoundError, UpstreamError } from "../errors.ts";
 import { contentDisposition } from "../http/content-disposition.ts";
-import type { StorageBackend, StoredObject } from "./types.ts";
+import type { ByteSpan, StorageBackend, StoredObject } from "./types.ts";
 
 type S3Settings = Config["storage"]["s3"];
 
@@ -186,8 +186,23 @@ export class S3Storage implements StorageBackend {
     }
   }
 
-  async getStream(key: string) {
-    const res = await this.#call("get", key, { method: "GET" });
+  async getStream(key: string, range?: ByteSpan) {
+    const res = await this.#call("get", key, {
+      method: "GET",
+      ...(range
+        ? { headers: { range: `bytes=${range.start}-${range.end}` } }
+        : {}),
+    });
+    // A store that ignored the Range answers 200 with the whole object, and
+    // relaying that as the requested part would hand the client the wrong
+    // bytes under a Content-Range that claims otherwise.
+    if (range && res.status !== 206) {
+      await res.body?.cancel();
+      throw new UpstreamError("storage get ignored the range", {
+        op: "get",
+        upstream: `HTTP ${res.status}`,
+      });
+    }
     if (!res.body) throw new UpstreamError("storage get returned no body");
     return {
       stream: Readable.fromWeb(

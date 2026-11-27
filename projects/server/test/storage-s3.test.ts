@@ -70,6 +70,39 @@ describe("S3Storage against fake S3", () => {
     expect(await storage.head("aa/bb/roundtrip")).toBeNull();
   });
 
+  it("reads one span of an object by Range (T-806)", async () => {
+    await storage.put("aa/bb/span", new TextEncoder().encode("hello blob"));
+    const { stream, size } = await storage.getStream("aa/bb/span", {
+      start: 1,
+      end: 3,
+    });
+    expect(size).toBe(3);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    expect(Buffer.concat(chunks).toString()).toBe("ell");
+    expect(fake.requests.at(-1)).toEqual({
+      method: "GET",
+      key: "aa/bb/span",
+      range: "bytes=1-3",
+    });
+  });
+
+  // Relaying a 200 as the requested span would send the whole object under a
+  // Content-Range naming three bytes of it.
+  it("refuses a store that answers a ranged get with the whole object", async () => {
+    const whole = createServer((_req, res) => {
+      res.writeHead(200, { "content-length": "10" });
+      res.end("hello blob");
+    });
+    await new Promise<void>((r) => whole.listen(0, "127.0.0.1", r));
+    const { port } = whole.address() as AddressInfo;
+    const storage = makeStorage(`http://127.0.0.1:${port}`, { retries: "0" });
+    await expect(
+      storage.getStream("aa/bb/ignored", { start: 0, end: 1 }),
+    ).rejects.toBeInstanceOf(UpstreamError);
+    whole.close();
+  });
+
   it("maps a missing object to NotFoundError on get", async () => {
     await expect(storage.getStream("aa/bb/ghost")).rejects.toBeInstanceOf(
       NotFoundError,

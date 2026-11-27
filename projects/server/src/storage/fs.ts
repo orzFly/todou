@@ -2,7 +2,7 @@ import { createReadStream, type Dir } from "node:fs";
 import { mkdir, opendir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
 import { NotFoundError } from "../errors.ts";
-import type { StorageBackend, StoredObject } from "./types.ts";
+import type { ByteSpan, StorageBackend, StoredObject } from "./types.ts";
 
 export class FsStorage implements StorageBackend {
   #root: string;
@@ -27,13 +27,19 @@ export class FsStorage implements StorageBackend {
     await writeFile(path, data);
   }
 
-  async getStream(key: string) {
+  async getStream(key: string, range?: ByteSpan) {
     const path = this.#resolve(key);
     let size: number;
     try {
       size = (await stat(path)).size;
     } catch {
       throw new NotFoundError("attachment blob not found");
+    }
+    if (range) {
+      return {
+        stream: createReadStream(path, range),
+        size: range.end - range.start + 1,
+      };
     }
     return { stream: createReadStream(path), size };
   }

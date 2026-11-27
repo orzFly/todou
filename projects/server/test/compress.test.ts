@@ -176,6 +176,45 @@ describe("response compression", () => {
     expect(res.headers.get("content-encoding")).toBe("gzip");
     expect(gunzipSync(await buffer(res)).toString()).toBe(text);
   });
+
+  describe("byte ranges on a text attachment (T-806)", () => {
+    const text = "ranged line that repeats itself\n".repeat(200);
+    let url = "";
+
+    beforeAll(async () => {
+      const form = new FormData();
+      form.set("file", new File([text], "ranged.txt", { type: "text/plain" }));
+      form.set("issue_number", "1");
+      const uploaded = await t.app.request(
+        `/api/projects/${slug}/attachments`,
+        { method: "POST", headers: { cookie }, body: form },
+      );
+      expect(uploaded.status).toBe(201);
+      url = (await json(uploaded)).url;
+    });
+
+    it("drops Accept-Ranges from the compressed whole file", async () => {
+      const identity = await t.app.request(url, { headers: { cookie } });
+      expect(identity.headers.get("accept-ranges")).toBe("bytes");
+      await identity.body?.cancel();
+
+      const res = await t.app.request(url, {
+        headers: { cookie, "accept-encoding": "gzip" },
+      });
+      expect(res.headers.get("content-encoding")).toBe("gzip");
+      expect(res.headers.get("accept-ranges")).toBeNull();
+      expect(gunzipSync(await buffer(res)).toString()).toBe(text);
+    });
+
+    it("leaves a 206 uncompressed", async () => {
+      const res = await t.app.request(url, {
+        headers: { cookie, "accept-encoding": "gzip", range: "bytes=0-9" },
+      });
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-encoding")).toBeNull();
+      expect(await res.text()).toBe(text.slice(0, 10));
+    });
+  });
 });
 
 describe("response compression: config switch", () => {
