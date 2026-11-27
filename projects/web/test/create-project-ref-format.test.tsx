@@ -6,8 +6,19 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { Project, ProjectCreateInput } from "@todou/shared";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import {
+  type Project,
+  type ProjectCreateInput,
+  TodouError,
+} from "@todou/shared";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { ProjectsPage } from "../src/pages/projects.tsx";
@@ -118,5 +129,100 @@ describe("create-project reference format (T-148)", () => {
 
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0].ref_prefix).toBeUndefined();
+  });
+});
+
+describe("create-project refusals land under their fields (T-795)", () => {
+  const errorUnder = (label: string) => {
+    const control = screen.getByLabelText(label);
+    const ids = control.getAttribute("aria-describedby")?.split(" ") ?? [];
+    return ids
+      .map((id) => document.getElementById(id))
+      .find((el) => el?.getAttribute("data-slot") === "field-error")
+      ?.textContent;
+  };
+
+  async function refuse(error: Error) {
+    const toastError = vi.spyOn(toast, "error");
+    const { create } = renderDialog();
+    create.mockRejectedValueOnce(error);
+    await fillRequiredFields();
+    submit();
+    return { toastError };
+  }
+
+  it("puts a taken slug under Slug, and focuses it", async () => {
+    const { toastError } = await refuse(
+      new TodouError(409, "conflict", 'slug "potato" is already taken'),
+    );
+    await waitFor(() =>
+      expect(errorUnder("Slug")).toBe('slug "potato" is already taken'),
+    );
+    expect(screen.getByLabelText("Slug").getAttribute("aria-invalid")).toBe(
+      "true",
+    );
+    expect(document.activeElement).toBe(screen.getByLabelText("Slug"));
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("puts a rejected prefix under the reference format", async () => {
+    const { toastError } = await refuse(
+      new TodouError(422, "validation_failed", "✖ Invalid prefix", [
+        { path: ["ref_prefix"], message: "Invalid prefix" },
+      ]),
+    );
+    await waitFor(() =>
+      expect(errorUnder("reference format prefix")).toBe("Invalid prefix"),
+    );
+    expect(errorUnder("Slug")).toBeUndefined();
+    expect(document.activeElement).toBe(
+      screen.getByLabelText("reference format prefix"),
+    );
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("puts anything else at the foot of the form", async () => {
+    const { toastError } = await refuse(
+      new TodouError(500, "internal", "the server fell over"),
+    );
+    // Right above the buttons, after every field.
+    const message = await screen.findByText("the server fell over");
+    expect(message.nextElementSibling?.getAttribute("data-slot")).toBe(
+      "dialog-footer",
+    );
+    expect(
+      within(message.nextElementSibling as HTMLElement).getByRole("button", {
+        name: "Create",
+      }),
+    ).toBeTruthy();
+    expect(errorUnder("Slug")).toBeUndefined();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("drops a field's refusal once that field is edited", async () => {
+    await refuse(
+      new TodouError(409, "conflict", 'slug "potato" is already taken'),
+    );
+    await waitFor(() => expect(errorUnder("Slug")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Slug"), {
+      target: { value: "potato-2" },
+    });
+    expect(errorUnder("Slug")).toBeUndefined();
+    expect(screen.getByLabelText("Slug").hasAttribute("aria-invalid")).toBe(
+      false,
+    );
+  });
+
+  it("states the slug's and the prefix's characters before anything is typed", async () => {
+    renderDialog();
+    await screen.findByRole("dialog");
+    expect(
+      screen.getByText("Lowercase letters, digits and dashes."),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Capital letters, digits and _, up to 20; empty uses #\./,
+      ),
+    ).toBeTruthy();
   });
 });

@@ -1,4 +1,5 @@
 import { cn } from "@orz/ui";
+import { ModuleGrid } from "@orz/ui/components/card";
 import { Skeleton } from "@orz/ui/components/skeleton";
 import { useMatches } from "@tanstack/react-router";
 
@@ -9,7 +10,8 @@ export type PageSkeletonKind =
   | "spec"
   | "board"
   | "insights"
-  | "sections";
+  | "sections"
+  | "projects";
 
 /**
  * What a route gets when it declares nothing: a title bar over bordered
@@ -32,6 +34,8 @@ export function PageSkeleton({ kind }: { kind: PageSkeletonKind }) {
       return <InsightsSkeleton />;
     case "sections":
       return <SectionsSkeleton />;
+    case "projects":
+      return <ProjectsSkeleton />;
   }
 }
 
@@ -512,6 +516,41 @@ function SectionsSkeleton() {
           </div>
         </section>
       ))}
+    </div>
+  );
+}
+
+const PROJECT_CARDS = ["p1", "p2", "p3", "p4", "p5", "p6"];
+
+/**
+ * The projects page: its title row over a grid of cards, in the grid's own
+ * columns, so the cards land where the skeleton's did.
+ */
+function ProjectsSkeleton() {
+  return (
+    <div className="space-y-6" data-testid="page-skeleton" data-kind="projects">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-7 w-28" />
+        <Skeleton className="h-7 w-28" />
+      </div>
+      <ModuleGrid className="auto-rows-fr p-0! sm:grid-cols-2 lg:grid-cols-3">
+        {PROJECT_CARDS.map((id) => (
+          <div
+            key={id}
+            data-testid="projects-skeleton-card"
+            className="space-y-3 rounded-surface border p-3"
+          >
+            <Skeleton className="h-4 w-2/5" />
+            <div className="flex gap-3">
+              <Skeleton className="size-10 shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/5" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </ModuleGrid>
     </div>
   );
 }

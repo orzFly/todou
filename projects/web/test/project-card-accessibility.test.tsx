@@ -16,7 +16,8 @@ describe("ProjectCard accessible name", () => {
     // The screen-reader copy names the REF once; the decorative icon must
     // not prepend a duplicate prefix to that accessible name.
     expect(link.querySelector(".sr-only")?.textContent).toBe("XYZ");
-    const fallback = within(link).getByText("XYZ", {
+    const card = link.closest<HTMLElement>('[data-slot="card"]') as HTMLElement;
+    const fallback = within(card).getByText("XYZ", {
       selector: '[data-slot="avatar-fallback"] [data-glyph-text]',
     });
     expectVisible(fallback);
@@ -38,20 +39,21 @@ describe("ProjectCard accessible name", () => {
       <ProjectCard project={{ ...project, icon_url: iconUrl }} />,
     );
     const link = await view.findByRole("link", { name: "Atlas Lab XYZ" });
+    const card = link.closest<HTMLElement>('[data-slot="card"]') as HTMLElement;
 
     await waitFor(() => {
-      const image = link.querySelector("img");
+      const image = card.querySelector("img");
       expect(image?.getAttribute("src")).toBe(iconUrl);
       expectVisible(image as HTMLImageElement);
       expect(
-        within(link).queryByText("XYZ", {
+        within(card).queryByText("XYZ", {
           selector: '[data-slot="avatar-fallback"] [data-glyph-text]',
         }),
       ).toBeNull();
     });
     expect(view.getByRole("link", { name: "Atlas Lab XYZ" })).toBe(link);
-    // Empty alt already keeps a loaded image out of the link's name;
+    // Empty alt already keeps a loaded image out of the card's reading;
     // the fallback test above is the guard for this placement's hide.
-    expect(within(link).queryAllByRole("img")).toEqual([]);
+    expect(within(card).queryAllByRole("img")).toEqual([]);
   });
 });

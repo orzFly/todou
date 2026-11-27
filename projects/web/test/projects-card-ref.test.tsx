@@ -94,10 +94,13 @@ function renderProjects(projects: Project[], directory?: ReferenceDirectory) {
   );
 }
 
-/** The card element for a project, by the link wrapping it. */
+/** The link naming a project on its card. */
+const linkOf = (slug: string) =>
+  document.querySelector<HTMLElement>(`a[href="/projects/${slug}"]`);
+
+/** The card element for a project, around the link that names it. */
 function cardOf(slug: string): HTMLElement {
-  const link = document.querySelector(`a[href="/projects/${slug}"]`);
-  return link?.firstElementChild as HTMLElement;
+  return linkOf(slug)?.closest('[data-slot="card"]') as HTMLElement;
 }
 
 afterEach(() => {
@@ -135,8 +138,8 @@ describe("the REF on a project card", () => {
       "REFRACT",
     );
     expect(cardOf("plain").querySelector(".sr-only")).toBeNull();
-    // Read after the name, as the watermark was.
-    expect(cardOf("homelab").lastElementChild?.className).toBe("sr-only");
+    // Part of the link's name, read after the name, as the watermark was.
+    expect(linkOf("homelab")?.lastElementChild?.className).toBe("sr-only");
   });
 
   it("stands on cards the page has made the same height", async () => {
@@ -148,9 +151,7 @@ describe("the REF on a project card", () => {
     renderProjects([project("homelab"), project("plain")], DIRECTORY);
     await waitFor(() => expect(cardOf("homelab")).toBeTruthy());
     const card = cardOf("homelab");
-    expect(card.parentElement?.parentElement?.className).toContain(
-      "auto-rows-fr",
-    );
+    expect(card.parentElement?.className).toContain("auto-rows-fr");
     expect(card.className).toContain("h-full");
     expect(
       card.querySelector('[data-slot="project-card-description"]')?.className,

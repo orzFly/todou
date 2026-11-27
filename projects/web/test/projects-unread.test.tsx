@@ -197,18 +197,21 @@ function renderProjects({
   return { ...view, client, inboxSpy, router };
 }
 
-/** The whole linked ProjectCard, not the page heading or the switcher row. */
-function cardOf(container: HTMLElement, slug: string): HTMLAnchorElement {
-  const card = container.querySelector<HTMLAnchorElement>(
-    `a[href="/projects/${slug}"]`,
+/** The link naming a project on its card, not the switcher's row. */
+function linkOf(container: HTMLElement, slug: string): HTMLAnchorElement {
+  const link = container.querySelector<HTMLAnchorElement>(
+    `[data-slot="card-title"] a[href="/projects/${slug}"]`,
   );
-  if (!card?.querySelector('[data-slot="card-header"]')) {
-    throw new Error(`missing project card: ${slug}`);
-  }
-  return card;
+  if (!link) throw new Error(`missing project card: ${slug}`);
+  return link;
 }
 
-function actionOf(card: HTMLAnchorElement) {
+/** The whole ProjectCard, around the link that names it. */
+function cardOf(container: HTMLElement, slug: string): HTMLElement {
+  return linkOf(container, slug).closest('[data-slot="card"]') as HTMLElement;
+}
+
+function actionOf(card: HTMLElement) {
   return card.querySelector(
     '[data-slot="card-header"] [data-slot="card-action"]',
   );
@@ -220,7 +223,7 @@ afterEach(() => {
 });
 
 describe("ProjectsPage unread badges (T-382)", () => {
-  it("places positive counts in ProjectCard header actions, preserves description in the accessible link name, and omits quiet actions", async () => {
+  it("places positive counts in ProjectCard header actions, names the link by the project alone, and omits quiet actions", async () => {
     const { container } = renderProjects({
       projects: [
         project("alpha", "Alpha description"),
@@ -247,10 +250,16 @@ describe("ProjectsPage unread badges (T-382)", () => {
     expect(actionOf(alpha)?.parentElement?.getAttribute("data-slot")).toBe(
       "card-header",
     );
-    expect(alpha.getAttribute("aria-label")).toBeNull();
-    expect(
-      screen.getByRole("link", { name: /2 unread.*Alpha description/ }),
-    ).toBe(alpha);
+    // The link carries the name; the description and the count are read
+    // from the card around it, the count right after the name.
+    const link = linkOf(container, "alpha");
+    expect(link.getAttribute("aria-label")).toBeNull();
+    expect(screen.getByRole("link", { name: "alpha" })).toBe(link);
+    expect(actionOf(alpha)?.querySelector(".sr-only")?.textContent).toBe(
+      "2 unread",
+    );
+    expect(alpha.textContent).toContain("Alpha description");
+    expect(link.textContent).not.toContain("Alpha description");
     expect(actionOf(quiet)).toBeNull();
     expect(quiet.textContent).not.toContain("unread");
   });
@@ -261,7 +270,7 @@ describe("ProjectsPage unread badges (T-382)", () => {
     });
     await waitFor(() => expect(cardOf(container, "alpha")).toBeTruthy());
     for (const slug of ["alpha", "beta"]) {
-      expect(cardOf(container, slug).getAttribute("href")).toBe(
+      expect(linkOf(container, slug).getAttribute("href")).toBe(
         `/projects/${slug}`,
       );
       expect(actionOf(cardOf(container, slug))).toBeNull();
@@ -277,7 +286,7 @@ describe("ProjectsPage unread badges (T-382)", () => {
       expect(client.getQueryState(["inbox"])?.status).toBe("error"),
     );
     for (const slug of ["alpha", "beta"]) {
-      expect(cardOf(container, slug).getAttribute("href")).toBe(
+      expect(linkOf(container, slug).getAttribute("href")).toBe(
         `/projects/${slug}`,
       );
       expect(actionOf(cardOf(container, slug))).toBeNull();
@@ -517,6 +526,25 @@ describe("ProjectsPage watchers (T-540)", () => {
         '[data-slot="project-card-corner"]',
       ),
     ).toBeNull();
+  });
+
+  it("nests no control inside a link, the watchers' button included", async () => {
+    const { container } = renderProjects({
+      projects: [project("alpha"), project("beta")],
+      inbox: page({ alpha: 2 }),
+      watchers: {
+        projects: { alpha: [watcher(BOT, { scope: "all_projects" })] },
+      },
+    });
+    await waitFor(() =>
+      expect(
+        cardOf(container, "alpha").querySelector(
+          '[data-slot="project-card-corner"] button',
+        ),
+      ).not.toBeNull(),
+    );
+    expect(actionOf(cardOf(container, "alpha"))).not.toBeNull();
+    expect(document.querySelectorAll("a button, a a")).toHaveLength(0);
   });
 
   it("opens the session list from the corner without following the card's link", async () => {
