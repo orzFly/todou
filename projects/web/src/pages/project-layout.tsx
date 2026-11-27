@@ -1,4 +1,5 @@
 import { Button } from "@orz/ui/components/button";
+import { EmptyState } from "@orz/ui/components/empty-state";
 import { useQuery } from "@tanstack/react-query";
 import {
   Link,
@@ -8,6 +9,7 @@ import {
   useParams,
   useRouterState,
 } from "@tanstack/react-router";
+import { FolderXIcon } from "lucide-react";
 import { useEffect } from "react";
 import { projectQuery } from "@/api/queries.ts";
 import { useRecordProjectVisit } from "@/api/useProjectOrder.ts";
@@ -77,13 +79,15 @@ export function ProjectLayout() {
 export function ProjectRouteError({ error }: { error: Error }) {
   if (statusOf(error) !== 404) throw error;
   return (
-    <div className="rounded-lg border border-dashed p-10 text-center">
-      <p className="text-muted-foreground">
-        This project does not exist, or you do not have access to it.
-      </p>
-      <Button asChild size="sm" className="mt-4">
-        <Link to="/projects">All projects</Link>
-      </Button>
-    </div>
+    <EmptyState
+      orientation="vertical"
+      icon={FolderXIcon}
+      title="This project does not exist, or you do not have access to it."
+      action={
+        <Button asChild size="sm">
+          <Link to="/projects">All projects</Link>
+        </Button>
+      }
+    />
   );
 }
