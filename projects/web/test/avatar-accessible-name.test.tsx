@@ -70,6 +70,29 @@ describe("UserChip's accessible name (T-817)", () => {
     ).toBeTruthy();
   });
 
+  // A browser joins two inline elements' text with nothing between them, and
+  // a gap drawn by a margin is not text, so the login ran into the name:
+  // "Alice Liddell@alice" (T-823). The text is compared and not the
+  // accessible name, because happy-dom reports no `display`, and the name
+  // computed here then puts a space between every two elements and passes
+  // without one.
+  it("keeps a space between the name and the login under showLogin", async () => {
+    const view = renderWithProviders(<UserChip user={alice} showLogin />);
+    const name = await view.findByText("Alice Liddell");
+    expect(name.parentElement?.textContent).toBe("Alice Liddell @alice");
+  });
+
+  // The space is drawn at zero size so the margin alone still sets the gap.
+  // happy-dom lays nothing out, so only the classes carrying that are seen.
+  it("leaves the gap to the login's margin", async () => {
+    const view = renderWithProviders(<UserChip user={alice} showLogin />);
+    const name = await view.findByText("Alice Liddell");
+    const space = name.nextElementSibling;
+    expect(space?.textContent).toBe(" ");
+    expect(space?.className).toContain("text-[0px]");
+    expect(view.getByText("@alice").className).toContain("ml-1.5");
+  });
+
   // A compact chip is the avatar alone. Its name comes from the link's own
   // label, which hiding the avatar beside a name must not have taken away.
   it("still names a compact chip by its label", async () => {

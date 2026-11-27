@@ -200,10 +200,17 @@ export function UserChip({
           <span className={cn("ml-1.5 text-sm", nameClassName)}>
             {displayNameOf(user)}
           </span>
+          {/* A screen reader and the clipboard take the text alone, where a
+          margin is nothing: "Alice Liddell@user" (T-823). The space is for
+          them; at zero size it leaves the gap to the margin, the same 6px
+          as before the name. */}
           {showLogin && (
-            <span className="ml-1.5 text-muted-foreground text-sm">
-              @{user.login}
-            </span>
+            <>
+              <span className="text-[0px]"> </span>
+              <span className="ml-1.5 text-muted-foreground text-sm">
+                @{user.login}
+              </span>
+            </>
           )}
         </span>
       )}
