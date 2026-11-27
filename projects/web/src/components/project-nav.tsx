@@ -1,28 +1,27 @@
-import { cn } from "@orz/ui";
 import { Button } from "@orz/ui/components/button";
+import { TabNav, TabNavLink } from "@orz/ui/components/tab-nav";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@orz/ui/components/dropdown-menu";
-import { Link, useMatchRoute } from "@tanstack/react-router";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@orz/ui/components/tooltip";
+import { Link } from "@tanstack/react-router";
 import { type CapabilityId, can, type MemberRole } from "@todou/shared";
-import { CheckIcon, EllipsisIcon, PlusIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
+import { useNavCurrent } from "@/lib/nav-current.ts";
 
 /**
- * Shared with the project switcher, which keeps the active tab across a
- * switch — so this stays the whole list, `behind` and all. `behind` says the
- * tab rides in the `···` menu rather than on the row (T-454).
+ * The project's modules, in the order they give up their room on the row:
+ * the last one waits in the `⋯` first. Shared with the project switcher, which
+ * keeps the current module across a switch.
  */
 export const projectTabs = [
-  { to: "/projects/$slug", label: "List", exact: true, behind: false },
-  { to: "/projects/$slug/board", label: "Board", exact: false, behind: false },
+  { to: "/projects/$slug", label: "List", exact: true },
+  { to: "/projects/$slug/board", label: "Board", exact: false },
   {
     to: "/projects/$slug/insights",
     label: "Insights",
     exact: false,
-    behind: true,
     cap: "insights.read",
   },
   {
@@ -32,14 +31,12 @@ export const projectTabs = [
     to: "/projects/$slug/settings",
     label: "Settings",
     exact: false,
-    behind: true,
     cap: "member.list",
   },
 ] as const satisfies readonly {
   to: string;
   label: string;
   exact: boolean;
-  behind: boolean;
   cap?: CapabilityId;
 }[];
 
@@ -54,79 +51,9 @@ const shows = (tab: ProjectTab, role: MemberRole | null | undefined) =>
   !("cap" in tab) || role === undefined || can(role, tab.cap);
 
 /**
- * The row's shape, worn by the tabs and by the `···` alike. One padding at
- * every width: T-389 halved it below `sm` to fit a fourth tab onto the phone
- * row, and the `···` is what bought that room back (T-454).
- */
-const TAB =
-  "rounded-md px-2 py-1 text-ui text-muted-foreground hover:text-foreground sm:px-2.5";
-
-/** What being on this page looks like, wherever the row chooses to say it. */
-const MARK = "bg-accent text-foreground font-medium";
-
-/**
- * The two bands where the row has room for the active module to stand on it,
- * measured on this header with the shortest project name (T-454). Below `sm`
- * the tabs share a row with two icon buttons and fit from 360px; from `sm` the
- * same tabs share one row with the project name, the search box and the create
- * button, and do not fit again until 864.
- *
- * Two bands rather than a threshold, because the room does not grow with the
- * viewport: at 700 the pulled-out tab squeezed the project name from 46px to
- * 4px, while at 390 — a narrower screen — it fits with room to spare. No
- * single `min-width` can say that, which is why this is not one.
- *
- * The widths are approximate by construction: 864 is where a project called
- * "Todou" stops paying for the tab out of the search box's slack, and a longer
- * name moves that edge right. Being wrong costs a few pixels of project name,
- * which is why measuring it exactly is not worth a ResizeObserver here.
- */
-const ON_THE_ROW = "hidden min-[360px]:max-sm:block min-[864px]:block";
-
-/**
- * Exactly the widths `ON_THE_ROW` hides at. The mark has to be in one place or
- * the other: a row reading `List Board ···` with nothing lit says the reader is
- * nowhere.
- */
-const MARK_ON_MORE =
-  "max-[360px]:bg-accent max-[360px]:font-medium max-[360px]:text-foreground sm:max-[864px]:bg-accent sm:max-[864px]:font-medium sm:max-[864px]:text-foreground";
-
-function NavTab({
-  tab,
-  slug,
-  className,
-}: {
-  tab: ProjectTab;
-  slug: string;
-  className?: string;
-}) {
-  return (
-    <Link
-      to={tab.to}
-      params={{ slug }}
-      // includeSearch off: exact mode deep-equals the whole search object,
-      // so filter params like ?category=closed would drop the highlight (T-79).
-      activeOptions={{ exact: tab.exact, includeSearch: false }}
-      className={cn(TAB, className)}
-      activeProps={{ className: MARK }}
-    >
-      {tab.label}
-    </Link>
-  );
-}
-
-/**
- * Project-level navigation (T-62). Lives in the floating header: inline on
- * wide screens, on its own second row below `sm`, where it shares the row
- * with the create button.
- *
- * Only List and Board stand on the row; Insights and Settings ride behind the
- * `···`, which is what gave the row back the width Insights had taken (T-454).
- * The module you are actually in comes back out onto the row where there is
- * room for it (`ON_THE_ROW`), and where there is not, the `···` wears the mark
- * instead — either way something on the row says where the reader is. It stays
- * in the menu as well, still marked: the menu is the list of what is there,
- * not the list of where you are not.
+ * Project-level navigation (T-62), in the header: on the one row from `sm`,
+ * on the project row below it. What does not fit goes into the `⋯` from the
+ * end, the current module last.
  */
 export function ProjectNav({
   slug,
@@ -137,77 +64,34 @@ export function ProjectNav({
   className?: string;
   viewerRole?: MemberRole | null;
 }) {
-  const matchRoute = useMatchRoute();
-  const onTheRow = projectTabs.filter(
-    (tab) => !tab.behind && shows(tab, viewerRole),
-  );
-  const behindMore = projectTabs.filter(
-    (tab) => tab.behind && shows(tab, viewerRole),
-  );
-  // `fuzzy` is `exact` inverted, so the pulled-out tab and its menu twin
-  // decide by the same rule the `Link`s below highlight by.
-  const pulledOut = behindMore.find((tab) =>
-    matchRoute({ to: tab.to, params: { slug }, fuzzy: !tab.exact }),
-  );
-
+  const current = useNavCurrent();
   return (
-    // nowrap so a squeezed header truncates the project name instead of
-    // wrapping the tabs, which would push the create button off its row.
-    <nav className={cn("flex items-center gap-1 whitespace-nowrap", className)}>
-      {onTheRow.map((tab) => (
-        <NavTab key={tab.label} tab={tab} slug={slug} />
-      ))}
-      {pulledOut && (
-        <NavTab tab={pulledOut} slug={slug} className={ON_THE_ROW} />
-      )}
-      {behindMore.length > 0 && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="More"
-              className={cn(TAB, "flex", pulledOut && MARK_ON_MORE)}
+    <TabNav aria-label="Project" className={className}>
+      {projectTabs
+        .filter((tab) => shows(tab, viewerRole))
+        .map((tab) => (
+          <TabNavLink
+            key={tab.label}
+            asChild
+            current={current({ ...tab, params: { slug } }) || undefined}
+          >
+            <Link
+              to={tab.to}
+              params={{ slug }}
+              activeOptions={{ exact: true, includeSearch: false }}
             >
-              <EllipsisIcon className="size-4" aria-hidden />
-            </button>
-          </DropdownMenuTrigger>
-          {/* The trigger is one glyph wide and the content takes the trigger's
-            width, so the floor is the whole measurement here. */}
-          <DropdownMenuContent align="start" className="min-w-36">
-            {behindMore.map((tab) => (
-              <DropdownMenuItem key={tab.label} asChild>
-                <Link
-                  to={tab.to}
-                  params={{ slug }}
-                  activeOptions={{ exact: tab.exact, includeSearch: false }}
-                  // Not the row's `bg-accent`: that is also what a menu item
-                  // wears under the pointer, and two rows that look alike stop
-                  // saying which one is the page you are on.
-                  activeProps={{ className: "font-medium text-foreground" }}
-                >
-                  {tab.label}
-                  {tab === pulledOut && (
-                    <CheckIcon className="ml-auto" aria-hidden />
-                  )}
-                </Link>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-    </nav>
+              {tab.label}
+            </Link>
+          </TabNavLink>
+        ))}
+    </TabNav>
   );
 }
 
 /**
  * Creating an issue, one click from every project module and absent exactly
- * where there is no project to file into (T-104). From `sm` up it sits in
- * the header's account cluster, after the search box; below that it moves
- * to the project row, which has room the first row does not.
- *
- * It stays an icon on that row to leave room for the tabs and the search
- * toggle on narrow phones. aria-label rather than the visible text, because
- * a `display: none` label is not announced either.
+ * where there is no project to file into (T-104). Labelled on the one row;
+ * an icon on the phone's project row, which the tabs and the search share.
  */
 export function NewIssueButton({
   slug,
@@ -216,19 +100,34 @@ export function NewIssueButton({
 }: {
   slug: string;
   className?: string;
-  /** The phone's project row: the icon alone, at an icon button's size. */
   iconOnly?: boolean;
 }) {
+  const link = (
+    <Link to="/projects/$slug/issues/new" params={{ slug }}>
+      <PlusIcon />
+      {!iconOnly && "New issue"}
+    </Link>
+  );
+  if (!iconOnly) {
+    return (
+      <Button size="sm" asChild className={className}>
+        {link}
+      </Button>
+    );
+  }
   return (
-    <Button size={iconOnly ? "icon-sm" : "sm"} asChild className={className}>
-      <Link
-        to="/projects/$slug/issues/new"
-        params={{ slug }}
-        aria-label="New issue"
-      >
-        <PlusIcon />
-        <span className="hidden sm:inline">New issue</span>
-      </Link>
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          size="icon-sm"
+          asChild
+          className={className}
+          aria-label="New issue"
+        >
+          {link}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>New issue</TooltipContent>
+    </Tooltip>
   );
 }
