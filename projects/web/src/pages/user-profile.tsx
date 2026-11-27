@@ -216,6 +216,7 @@ export function UserProfilePage({
             <UserAvatar
               user={me}
               className="size-20 shrink-0 text-2xl lg:size-64 lg:text-7xl [&_[data-slot=avatar-fallback]]:text-[length:inherit]"
+              aria-hidden
             />
             <div className="min-w-0">
               <h1 className="truncate text-xl font-semibold lg:text-2xl">

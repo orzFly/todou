@@ -65,7 +65,12 @@ export function WatcherDetail({
             key={`${watcher.user.id}/${watcher.agent_context.session_id ?? watcher.since}/${watcher.kind}/${watcher.scope}`}
             className="flex min-w-0 items-center gap-2 px-2 py-1 text-sm"
           >
-            <UserAvatar user={watcher.user} badge className="shrink-0" />
+            <UserAvatar
+              user={watcher.user}
+              badge
+              className="shrink-0"
+              aria-hidden
+            />
             <span className="min-w-0 shrink truncate">
               {displayNameOf(watcher.user)}
             </span>

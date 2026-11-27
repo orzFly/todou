@@ -81,7 +81,7 @@ export function NewerVersionCard({
   return (
     <div className="grid w-full gap-2 rounded-lg border bg-popover px-3.5 pt-3 pb-3.5 text-popover-foreground text-sm shadow-lg ring-1 ring-foreground/5">
       <div className="flex min-w-0 items-center gap-2">
-        <UserAvatar user={version.author} className="shrink-0" />
+        <UserAvatar user={version.author} className="shrink-0" aria-hidden />
         <p className="min-w-0 flex-1 truncate">
           <span className="font-semibold">{displayNameOf(version.author)}</span>
           {" pushed "}

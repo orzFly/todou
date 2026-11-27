@@ -70,6 +70,12 @@ export function LiveDot({ className }: { className?: string }) {
 /**
  * Separate from UserChip so a row that lays out its own name still takes the
  * chip's avatar size from here instead of picking one of its own.
+ *
+ * Beside a name, pass `aria-hidden`. The initials fallback is an image
+ * labelled with its own text, so an avatar left in the accessibility tree is
+ * read in front of the name: "AL Alice Liddell" (T-817). The attribute lands
+ * on the `Avatar` alone; the badge is its sibling and keeps its "agent"
+ * label, the one thing telling an agent from a person.
  */
 export function UserAvatar({
   user,
@@ -173,7 +179,7 @@ export function UserChip({
         // "the avatar's centre is the name's centre" and not an offset that
         // happens to come out right at one font size.
         <span className="absolute inset-y-0 start-0 flex items-center">
-          <UserAvatar user={user} badge />
+          <UserAvatar user={user} badge aria-hidden />
         </span>
       )}
       {!compact && (

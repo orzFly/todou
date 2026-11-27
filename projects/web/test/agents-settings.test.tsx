@@ -176,6 +176,20 @@ describe("one agent's page (T-704)", () => {
     expect(view.getByText("@helper-bot")).toBeTruthy();
   });
 
+  // The heading beside it says who this is; left in the accessibility tree,
+  // the initials fallback is read as an image named "PB" first (T-817). The
+  // badge sits outside the avatar and keeps its label.
+  it("draws the avatar's initials without exposing them", async () => {
+    const { view } = renderAgent([PROBE], "probe-bot");
+    await view.findByRole("heading", { level: 1 });
+    expect(view.getByText("PB")).toBeTruthy();
+    expect(view.queryByRole("img", { name: "PB" })).toBeNull();
+    // lucide's SVG has no `img` role in testing-library: found by label.
+    expect(
+      view.getByLabelText("agent").closest('[aria-hidden="true"]'),
+    ).toBeNull();
+  });
+
   it("lays out projects, tokens and Disable for an active agent", async () => {
     const disable = vi.spyOn(api, "disableAgent").mockResolvedValue(undefined);
     const { view } = renderAgent([PROBE], "probe-bot");

@@ -50,7 +50,12 @@ export function MentionLink({
       {/* The avatar's fallback is the reader's initials as real text, and the
           badge is a second box beside it — both are picture, not identity. */}
       <span data-mention-decoration>
-        <UserAvatar user={user} badge className="mr-0.5 inline-flex" />
+        <UserAvatar
+          user={user}
+          badge
+          className="mr-0.5 inline-flex"
+          aria-hidden
+        />
       </span>
       <span data-mention-token>{`@${user.login}`}</span>
     </Link>

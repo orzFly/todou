@@ -75,7 +75,12 @@ export function AgentSettings({ login }: { login: string }) {
       <div className="space-y-4">
         <BackToAgents deactivated={disabled} />
         <div className="flex min-w-0 items-center gap-3.5">
-          <UserAvatar user={agent} badge className="size-10 shrink-0" />
+          <UserAvatar
+            user={agent}
+            badge
+            className="size-10 shrink-0"
+            aria-hidden
+          />
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-xl font-semibold">
               <Link

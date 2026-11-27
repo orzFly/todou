@@ -189,6 +189,15 @@ describe("UserProfilePage (T-373)", () => {
     expect(await view.findByText(/agent · belongs to @alice/)).toBeTruthy();
   });
 
+  // The heading beside it says who this is; left in the accessibility tree,
+  // the initials fallback is read as an image named "AP" first (T-817).
+  it("draws the avatar's initials without exposing them", async () => {
+    const view = renderAt("/users/alice", clientWith(alice));
+    await view.findByRole("heading", { name: "Alice Potato" });
+    expect(view.getByText("AP")).toBeTruthy();
+    expect(view.queryByRole("img", { name: "AP" })).toBeNull();
+  });
+
   it("shows an explanation on 404, not a blank page", async () => {
     vi.spyOn(api, "getUser").mockRejectedValue(
       Object.assign(new Error("not found"), { status: 404 }),
