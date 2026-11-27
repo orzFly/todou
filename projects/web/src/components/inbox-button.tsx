@@ -32,7 +32,7 @@ export function InboxButton() {
         >
           <Link to="/inbox">
             <InboxIcon />
-            <UnreadBadge count={count} className="absolute top-0.5 right-0.5" />
+            <UnreadBadge count={count} className="absolute -top-1 -right-1" />
           </Link>
         </Button>
       </TooltipTrigger>
