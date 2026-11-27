@@ -8,9 +8,9 @@ import { projectQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { issueTitleText } from "@/components/shared/issue-title.tsx";
 
-const FALLBACK = "todou 🥔";
+export const FALLBACK = "todou 🥔";
 
-function titleFor(
+export function titleFor(
   routeId: string | undefined,
   ctx: {
     projectName: string;
@@ -34,6 +34,10 @@ function titleFor(
       return `${ctx.projectName} · issues`;
     case "/authed/projects/$slug/board":
       return `${ctx.projectName} · board`;
+    case "/authed/projects/$slug/insights":
+      return `${ctx.projectName} · insights`;
+    case "/authed/projects/$slug/search":
+      return `${ctx.projectName} · search`;
     case "/authed/projects/$slug/settings/":
       return `${ctx.projectName} · settings`;
     case "/authed/projects/$slug/settings/members":
