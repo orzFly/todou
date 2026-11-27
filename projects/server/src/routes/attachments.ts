@@ -12,6 +12,7 @@ import {
 import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ValidationFailedError } from "../errors.ts";
+import { byteRangeOf } from "../http/byte-range.ts";
 import { contentDisposition } from "../http/content-disposition.ts";
 import { servedContentType } from "../http/content-type.ts";
 import {
@@ -32,9 +33,20 @@ type AttachmentRow = Awaited<ReturnType<typeof openAttachment>>["row"];
  * Shared by the four blob routes. The 404 is declared because it is a
  * deliberate answer rather than the ambient one: on an address whose file
  * has moved, a reader who can read neither project gets it instead of the
- * 410, which would confirm the address existed.
+ * 410, which would confirm the address existed. The 206 and 416 answer a
+ * `Range` request on whichever of them streams the file itself (T-806).
  */
 const blobResponses = {
+  206: {
+    description:
+      "The requested byte range. One range only: several ranges, or an " +
+      "If-Range, get the whole file as 200",
+  },
+  416: {
+    description:
+      "The range starts past the end of the file; Content-Range carries " +
+      "the size",
+  },
   301: { description: "The card moved; the attachment lives elsewhere now" },
   410: { description: "Moved to a project the reader cannot see" },
   404: { description: "No such address, or neither project is readable" },
@@ -384,7 +396,33 @@ export function attachmentRoutes() {
     disposition: "attachment" | "inline",
   ) => {
     const ctx = c.get("appCtx");
-    const { stream, size } = await ctx.storage.getStream(row.storageKey);
+    // Ranges are defined for GET alone (RFC 9110 §14.2). An If-Range counts
+    // only when its validator matches, and these responses send none, so the
+    // request can never qualify and gets the whole file.
+    const range =
+      c.req.method === "GET" && c.req.header("if-range") === undefined
+        ? byteRangeOf(c.req.header("range"), row.size)
+        : ({ kind: "whole" } as const);
+    if (range.kind === "unsatisfiable") {
+      // Answered here rather than thrown: the error handler has no way to
+      // attach the Content-Range this status is required to carry.
+      c.header("content-range", `bytes */${row.size}`);
+      return c.json(
+        {
+          error: {
+            code: "range_not_satisfiable",
+            message: `the range selects no byte of this ${row.size}-byte file`,
+          },
+        },
+        416,
+      );
+    }
+    const { stream, size } = await ctx.storage.getStream(
+      row.storageKey,
+      range.kind === "part"
+        ? { start: range.start, end: range.end }
+        : undefined,
+    );
 
     c.header(
       "content-type",
@@ -416,7 +454,16 @@ export function attachmentRoutes() {
       // renders from a download.
       c.header("content-security-policy", "sandbox allow-scripts");
     }
-    return c.body(Readable.toWeb(stream) as ReadableStream);
+    c.header("accept-ranges", "bytes");
+    const body = Readable.toWeb(stream) as ReadableStream;
+    if (range.kind === "part") {
+      c.header(
+        "content-range",
+        `bytes ${range.start}-${range.end}/${row.size}`,
+      );
+      return c.body(body, 206);
+    }
+    return c.body(body);
   };
 
   // Downloads 302 to a presigned URL when the backend offers one; filename
