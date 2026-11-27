@@ -7,7 +7,15 @@ import type { Readable } from "node:stream";
  */
 export type StorageBackend = {
   put(key: string, data: Uint8Array): Promise<void>;
-  getStream(key: string): Promise<{ stream: Readable; size: number }>;
+  /**
+   * With `range`, the stream carries bytes `start` through `end` inclusive
+   * and `size` counts those bytes, not the object's. The caller has already
+   * resolved the range against the object's size; nothing here re-checks it.
+   */
+  getStream(
+    key: string,
+    range?: ByteSpan,
+  ): Promise<{ stream: Readable; size: number }>;
   delete(key: string): Promise<void>;
   /** Size probe; null when the blob does not exist. */
   head(key: string): Promise<{ size: number } | null>;
@@ -25,3 +33,5 @@ export type StorageBackend = {
 };
 
 export type StoredObject = { key: string; size: number; modifiedAt: Date };
+
+export type ByteSpan = { start: number; end: number };

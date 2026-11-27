@@ -22,8 +22,11 @@ export type FakeS3 = {
    * backdate an entry. An object set in `objects` directly lists as now.
    */
   modified: Map<string, Date>;
-  /** Every request observed, oldest first — for retry/traffic assertions. */
-  requests: Array<{ method: string; key: string }>;
+  /**
+   * Every request observed, oldest first — for retry/traffic assertions.
+   * `range` is present only on a request that carried the header.
+   */
+  requests: Array<{ method: string; key: string; range?: string }>;
   /** Make the next `n` object requests fail with `status`. */
   failNext(n: number, status?: number): void;
   close(): Promise<void>;
@@ -67,7 +70,8 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
         return;
       }
       const key = path.slice(bucket.length + 1);
-      requests.push({ method, key });
+      const range = req.headers.range;
+      requests.push({ method, key, ...(range ? { range } : {}) });
 
       if (failures > 0) {
         failures--;
@@ -130,6 +134,19 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
             "response-content-disposition",
           );
           if (disposition) headers["content-disposition"] = disposition;
+          // Only the `bytes=S-E` shape S3Storage sends; S3 itself parses more.
+          const span = /^bytes=(\d+)-(\d+)$/.exec(range ?? "");
+          if (method === "GET" && span) {
+            const start = Number(span[1]);
+            const end = Math.min(Number(span[2]), data.byteLength - 1);
+            const part = data.subarray(start, end + 1);
+            headers["content-length"] = String(part.byteLength);
+            headers["content-range"] =
+              `bytes ${start}-${end}/${data.byteLength}`;
+            res.writeHead(206, headers);
+            res.end(part);
+            return;
+          }
           res.writeHead(200, headers);
           res.end(method === "GET" ? data : undefined);
           return;
