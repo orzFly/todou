@@ -110,6 +110,31 @@ describe("create-project reference format (T-148)", () => {
     expect(preview()).toBe("T-1");
   });
 
+  it("leaves an IME composition in the prefix alone until it commits (T-818)", async () => {
+    renderDialog();
+    await fillRequiredFields();
+
+    fireEvent.compositionStart(prefixInput());
+    fireEvent.input(prefixInput(), {
+      target: { value: "to" },
+      isComposing: true,
+    });
+    expect(prefixInput().value).toBe("to");
+    fireEvent.compositionEnd(prefixInput());
+    expect(prefixInput().value).toBe("TO");
+    expect(preview()).toBe("TO-1");
+  });
+
+  it("asks an on-screen keyboard for capitals and no corrections (T-818)", async () => {
+    renderDialog();
+    await fillRequiredFields();
+    const input = prefixInput();
+    expect(input.getAttribute("autocapitalize")).toBe("characters");
+    expect(input.getAttribute("autocomplete")).toBe("off");
+    expect(input.getAttribute("autocorrect")).toBe("off");
+    expect(input.getAttribute("spellcheck")).toBe("false");
+  });
+
   it("sends the prefix with the creation request", async () => {
     const { calls } = renderDialog();
     await fillRequiredFields();

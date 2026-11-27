@@ -31,6 +31,7 @@ import {
 } from "@/components/shared/project-card.tsx";
 import { ProjectWatchersButton } from "@/components/shared/project-watchers.tsx";
 import { UnreadBadge } from "@/components/unread-badge.tsx";
+import { useComposedInput } from "@/lib/composed-input.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 
 export function ProjectsPage() {
@@ -222,6 +223,14 @@ function CreateProjectDialog({ children }: { children: ReactNode }) {
         {errors.fields[name]}
       </FieldError>
     );
+  const refPrefixInput = useComposedInput(
+    refPrefix,
+    (next) => {
+      setRefPrefix(next);
+      edited("ref_prefix");
+    },
+    (raw) => raw.toUpperCase().trim(),
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -294,11 +303,11 @@ function CreateProjectDialog({ children }: { children: ReactNode }) {
             <div className="flex items-center gap-2">
               <Input
                 id="project-ref-prefix"
-                value={refPrefix}
-                onChange={(e) => {
-                  setRefPrefix(e.target.value.toUpperCase().trim());
-                  edited("ref_prefix");
-                }}
+                {...refPrefixInput}
+                autoCapitalize="characters"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
                 pattern="[A-Z][A-Z0-9_]{0,19}"
                 placeholder="#"
                 aria-label="reference format prefix"
