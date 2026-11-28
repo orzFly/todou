@@ -368,7 +368,7 @@ function IssueHits({
               className="flex items-baseline gap-x-2 bg-muted/40 px-4 py-2 hover:bg-accent"
             >
               {refLeads && ref}
-              <span className="min-w-0 font-medium wrap-break-word">
+              <span className="min-w-0 text-base font-medium wrap-break-word">
                 {titled === undefined ? (
                   <IssueTitle item={group.issue} />
                 ) : (

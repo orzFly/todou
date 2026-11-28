@@ -119,11 +119,16 @@ function renderValue({
   if (spec.source === "member" && "user" in option) {
     return {
       leading: (
-        <UserAvatar
-          user={(option as MemberOption).user}
-          badge
-          className="size-4.5"
-        />
+        // The agent badge hangs 6px past the avatar's edge, more than the gap
+        // the icon column leaves before the words: the end padding gives it
+        // that room, every person's row alike so the avatars stay in line.
+        <span className="inline-flex pe-1.5">
+          <UserAvatar
+            user={(option as MemberOption).user}
+            badge
+            className="size-4.5"
+          />
+        </span>
       ),
       body: <span className="shrink-0">{option.value}</span>,
     };
