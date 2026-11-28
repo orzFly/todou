@@ -1,5 +1,6 @@
+import { parseQuery } from "@orz/query";
 import type { SearchDiagnostic, SearchItem, TodouClient } from "@todou/shared";
-import { enumValue, formatRef, parseSearchQuery } from "@todou/shared";
+import { enumValue, formatRef, SEARCH_SCHEMA } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { makePainter, type Painter, plural, table } from "../format.ts";
@@ -31,7 +32,7 @@ export function joinSearchTerms(terms: string[]): string {
 
 function quoteSearchTerm(term: string): string {
   if (!/\s/.test(term)) return term;
-  const first = parseSearchQuery(term)[0];
+  const first = parseQuery(SEARCH_SCHEMA, term)[0];
   if (first?.kind !== "filter") return `"${term}"`;
   // One argv element that opens with a qualifier: whatever follows the colon
   // is the value the user kept together, however many spaces it has.

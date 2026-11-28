@@ -292,6 +292,19 @@ function steps(side) {
       ],
     },
     {
+      // A qualifier whose value carries a space goes back to the server
+      // re-quoted, which runs the query parser inside the bundle.
+      label: "search",
+      argv: [
+        "search",
+        "-p",
+        "diff",
+        "--",
+        "-status:In Progress",
+        "renamed",
+      ],
+    },
+    {
       label: "comment add",
       argv: ["comment", "add", "-p", "diff", "1", "--body", "A plain comment."],
       subset: true,

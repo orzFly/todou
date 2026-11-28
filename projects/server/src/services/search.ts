@@ -1,29 +1,34 @@
+import {
+  canonicalValue,
+  parseQuery,
+  type QueryFilter,
+  queryFilters,
+  queryTerms,
+  specialValue,
+} from "@orz/query";
 import type {
   SearchDiagnostic,
   SearchDomain,
   SearchField,
-  SearchFilter,
   SearchItem,
   SearchKind,
   SearchPage,
+  SearchQualifier,
   SearchQuery,
   SearchSnippet,
   Status,
 } from "@todou/shared";
 import {
-  canonicalQualifierValue,
   HARNESS_IDS,
-  isSpecialQualifierValue,
   MetadataKey,
   MetadataNamespace,
-  parseSearchQuery,
   SEARCH_DOMAINS,
+  SEARCH_IS_VALUES,
   SEARCH_MAX_FILTERS,
   SEARCH_MAX_TERMS,
-  SEARCH_QUALIFIERS,
-  searchFiltersOf,
+  SEARCH_SCHEMA,
+  SEARCH_STATE_VALUES,
   searchIsDomains,
-  searchTermsOf,
 } from "@todou/shared";
 import {
   and,
@@ -200,6 +205,19 @@ type QualifierPlan = {
 };
 
 /**
+ * Every accepted spelling of an `is:` value, the candidates a misspelt one is
+ * corrected to. Within each pair sharing a prefix (`comment`/`comments`) the
+ * singular comes first, so it is the one suggested.
+ */
+const IS_SPELLINGS: readonly string[] = (() => {
+  const spec = SEARCH_SCHEMA.qualifiers.is.value;
+  return [
+    ...SEARCH_IS_VALUES,
+    ...Object.keys(spec.kind === "enum" ? (spec.aliases ?? {}) : {}),
+  ];
+})();
+
+/**
  * The candidate sharing the longest prefix with what was typed, at least two
  * characters, case-insensitively — or null.
  *
@@ -234,6 +252,12 @@ const anyOf = (column: AnyPgColumn, ids: number[]): SQL =>
   ids.length === 0 ? sql`false` : inArray(column, ids);
 
 /** `-` inverts the whole expression, values and all. */
+type SearchFilter = QueryFilter<SearchQualifier>;
+
+/** Whether a value stands for itself (`@me`, `none`) rather than naming a row. */
+const isSpecial = (key: SearchQualifier, value: string): boolean =>
+  specialValue(SEARCH_SCHEMA.qualifiers[key].value, value) !== null;
+
 const applyNegation = (filter: SearchFilter, condition: SQL): SQL =>
   filter.negated ? not(condition) : condition;
 
@@ -258,12 +282,10 @@ function agentContextCondition(
       ? sql`${column} ->> 'agent'`
       : sql`${column} ->> 'session_id'`;
   const alternatives: SQL[] = [];
-  const named = values.filter(
-    (v) => v !== "" && !isSpecialQualifierValue(key, v),
-  );
+  const named = values.filter((v) => v !== "" && !isSpecial(key, v));
   // `harness:none` is the writes that carry no agent context at all — the
   // web UI, a person at a terminal, a client that does not report one.
-  if (values.some((v) => isSpecialQualifierValue(key, v))) {
+  if (values.some((v) => isSpecial(key, v))) {
     alternatives.push(sql`${field} is null`);
   }
   for (const value of named) alternatives.push(sql`${field} = ${value}`);
@@ -427,8 +449,8 @@ async function planQualifiers(
     fail(
       "is",
       value,
-      `"${value}" is not searchable (${SEARCH_QUALIFIERS.is.values.join(", ")})`,
-      didYouMean(value, Object.keys(SEARCH_QUALIFIERS.is.aliases)),
+      `"${value}" is not searchable (${SEARCH_IS_VALUES.join(", ")})`,
+      didYouMean(value, IS_SPELLINGS),
     );
   }
 
@@ -456,13 +478,16 @@ async function planQualifiers(
       case "state": {
         const categories = new Set<string>();
         for (const value of filter.values) {
-          const canonical = canonicalQualifierValue("state", value);
+          const canonical = canonicalValue(
+            SEARCH_SCHEMA.qualifiers.state.value,
+            value,
+          );
           if (canonical === null) {
             fail(
               "state",
               value,
-              `"${value}" is not a state (${SEARCH_QUALIFIERS.state.values.join(", ")})`,
-              didYouMean(value, SEARCH_QUALIFIERS.state.values),
+              `"${value}" is not a state (${SEARCH_STATE_VALUES.join(", ")})`,
+              didYouMean(value, SEARCH_STATE_VALUES),
             );
             continue;
           }
@@ -538,7 +563,7 @@ async function planQualifiers(
       case "assignee": {
         const ids: number[] = [];
         for (const value of filter.values) {
-          if (isSpecialQualifierValue("assignee", value)) {
+          if (isSpecial("assignee", value)) {
             ids.push(actor.id);
             continue;
           }
@@ -577,7 +602,7 @@ async function planQualifiers(
 
       case "harness": {
         for (const value of filter.values) {
-          if (isSpecialQualifierValue("harness", value)) continue;
+          if (isSpecial("harness", value)) continue;
           if ((HARNESS_IDS as readonly string[]).includes(value)) continue;
           // A note, not an error: any client may report any string, so an
           // unfamiliar one is matched as written and only flagged.
@@ -653,9 +678,9 @@ export async function searchProject(
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
-  const parts = parseSearchQuery(query.q);
-  const terms = searchTermsOf(parts);
-  const filters = searchFiltersOf(parts);
+  const parts = parseQuery(SEARCH_SCHEMA, query.q);
+  const terms = queryTerms(parts);
+  const filters = queryFilters(parts);
   if (terms.length === 0 && filters.length === 0) {
     throw new ValidationFailedError(
       "q must contain at least one search term or qualifier",
