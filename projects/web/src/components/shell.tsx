@@ -224,7 +224,7 @@ export function AppShell({
                     {searchBox && (
                       <SearchBox
                         slug={slug}
-                        className="ml-auto max-w-80 min-w-32 shrink-0 grow basis-32 self-center"
+                        className="ml-auto max-w-80 min-w-32 shrink-0 grow basis-32"
                         focusWidth="w-80"
                       />
                     )}

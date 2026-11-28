@@ -430,38 +430,6 @@
       "guarded": false
     },
     {
-      "id": "projects/web/src/components/search-box.tsx :: mapping COMPLETION_ICON #1",
-      "guarded": true
-    },
-    {
-      "id": "projects/web/src/components/search-box.tsx :: read COMPLETION_ICON[row.row.icon] #1",
-      "guarded": false
-    },
-    {
-      "id": "projects/web/src/components/search/highlight.tsx :: mapping VALUE_CLASS #1",
-      "guarded": true
-    },
-    {
-      "id": "projects/web/src/components/search/highlight.tsx :: read SEARCH_QUALIFIERS[key] #1",
-      "guarded": false
-    },
-    {
-      "id": "projects/web/src/components/search/highlight.tsx :: read VALUE_CLASS[verdictOf(part.key, value.value, known)] #1",
-      "guarded": false
-    },
-    {
-      "id": "projects/web/src/components/search/suggestions.ts :: mapping KEY_HINT #1",
-      "guarded": true
-    },
-    {
-      "id": "projects/web/src/components/search/suggestions.ts :: read KEY_HINT[key] #1",
-      "guarded": false
-    },
-    {
-      "id": "projects/web/src/components/search/suggestions.ts :: read SEARCH_QUALIFIERS[key] #1",
-      "guarded": false
-    },
-    {
       "id": "projects/web/src/components/shared/agent-projects.tsx :: read ROLE_RANK[option] #1",
       "guarded": false
     },
@@ -756,11 +724,6 @@
     "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[t] #1",
     "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[tab] #1",
     "projects/web/src/components/page-skeleton.tsx :: switch kind #1",
-    "projects/web/src/components/search-box.tsx :: read COMPLETION_ICON[row.row.icon] #1",
-    "projects/web/src/components/search/highlight.tsx :: read SEARCH_QUALIFIERS[key] #1",
-    "projects/web/src/components/search/highlight.tsx :: read VALUE_CLASS[verdictOf(part.key, value.value, known)] #1",
-    "projects/web/src/components/search/suggestions.ts :: read KEY_HINT[key] #1",
-    "projects/web/src/components/search/suggestions.ts :: read SEARCH_QUALIFIERS[key] #1",
     "projects/web/src/components/shared/agent-projects.tsx :: read ROLE_RANK[option] #1",
     "projects/web/src/components/shared/return-link.tsx :: switch view.target.kind #1",
     "projects/web/src/components/shared/role-permissions-table.tsx :: read ROLE_RANK[highest] #1",

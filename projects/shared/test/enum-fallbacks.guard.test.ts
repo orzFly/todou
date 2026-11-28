@@ -146,16 +146,6 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Closed client tabs: local Radix triggers emit browse/bulk/json; both parser lookups exclude browse before indexing the bulk/json parser table.",
   "projects/web/src/components/page-skeleton.tsx :: switch kind #1":
     "Closed router metadata: PagePending reads route staticData.pageSkeleton authored in this client, falling back to DEFAULT_KIND; it is not a server value.",
-  "projects/web/src/components/search-box.tsx :: read COMPLETION_ICON[row.row.icon] #1":
-    "Closed CompletionRow.icon producer: suggestions.ts constructs only qualifier/value/project literal icons; HTTP fields supply text, not this discriminator.",
-  "projects/web/src/components/search/highlight.tsx :: read SEARCH_QUALIFIERS[key] #1":
-    "Closed qualifier producer: highlighted parts come from parseSearchQuery and its hasOwn-checked SEARCH_QUALIFIER_KEYS registry.",
-  "projects/web/src/components/search/highlight.tsx :: read VALUE_CLASS[verdictOf(part.key, value.value, known)] #1":
-    "Closed local result: verdictOf computes valid/special/invalid/unknown literals from parsed search qualifiers; the returned verdict indexes VALUE_CLASS.",
-  "projects/web/src/components/search/suggestions.ts :: read KEY_HINT[key] #1":
-    "Closed qualifier producer: KEYS = Object.keys(SEARCH_QUALIFIERS), or parsed search parts accepted by the hasOwn-checked qualifier registry; key selects labels/specs.",
-  "projects/web/src/components/search/suggestions.ts :: read SEARCH_QUALIFIERS[key] #1":
-    "Closed qualifier producer: KEYS = Object.keys(SEARCH_QUALIFIERS), or parsed search parts accepted by the hasOwn-checked qualifier registry; key selects labels/specs.",
   "projects/web/src/components/shared/agent-projects.tsx :: read ROLE_RANK[option] #1":
     "Closed UI options: option comes from MemberRole.options. Current API role and ceiling are separately checked with roleRankOf; neither is the raw map key here.",
   "projects/web/src/components/shared/return-link.tsx :: read ARROW[back.scale] #1":
@@ -369,16 +359,19 @@ describe("repository enum fallback source guard", () => {
     ]);
   });
 
-  it("preserves the measured 5db8c5c sites and 86 provenance declarations", () => {
+  it("preserves the measured 5db8c5c sites and 81 provenance declarations", () => {
     // The previously quoted 85 was not the current baseline. Freeze identities,
     // not the final total: new audited sites may be added without hiding losses.
     // One site fewer than the census recorded because T-512 deleted
     // refs-migrate.ts outright, not because the census missed it, and one
-    // more because T-704 deleted the ROLE_DOT mapping with the role dots. The
-    // revision stays at the commit the census was measured on.
+    // more because T-704 deleted the ROLE_DOT mapping with the role dots.
+    // Eight sites and five declarations fewer because T-796 deleted the web
+    // search box's own highlighter and completion sources, whose job
+    // @orz/ui's QueryBox took over. The revision stays at the commit the
+    // census was measured on.
     expect(baseline.revision).toBe("5db8c5c");
-    expect(baseline.sites).toHaveLength(175);
-    expect(baseline.declared).toHaveLength(86);
+    expect(baseline.sites).toHaveLength(167);
+    expect(baseline.declared).toHaveLength(81);
     const sites = new Map(scanSources(sources).map((site) => [site.id, site]));
     expect(
       baseline.sites.map(({ id }) => {

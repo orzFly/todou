@@ -32,6 +32,7 @@ import {
   api,
   labelsQuery,
   membersQuery,
+  meQuery,
   projectQuery,
   projectsQuery,
   statusesQuery,
@@ -445,10 +446,11 @@ function renderBox(
   };
 }
 
+/** Enter in the box: it is no form of its own, so nothing is submitted. */
 function submit(container: HTMLElement) {
-  const form = container.querySelector("form");
-  if (!form) throw new Error("no search form rendered");
-  fireEvent.submit(form);
+  const input = container.querySelector<HTMLInputElement>('input[name="q"]');
+  if (!input) throw new Error("no search box rendered");
+  fireEvent.keyDown(input, { key: "Enter" });
 }
 
 /** The box only offers anything while it has focus, so a test has to give it some. */
@@ -1670,16 +1672,13 @@ describe("SearchBox · qualifier completion", () => {
     const client = seedPeek(seedPools(seedBox()));
     const utils = renderBox(client);
     const input = await typeInto(utils, "m");
-    // `metadata:` shares this first letter (T-282) and qualifier keys are the
-    // earlier completion source, so the project ref is the second row now.
-    await waitFor(() =>
-      expect(rowTexts(utils.container)[0]).toContain("metadata:"),
-    );
-    expect(rowTexts(utils.container)[1]).toContain("M-");
+    // `metadata:` shares this first letter (T-282). The box puts the app's
+    // rows before the schema's, so the project ref leads and the key follows.
+    await waitFor(() => expect(rowTexts(utils.container)[0]).toContain("M-"));
+    expect(rowTexts(utils.container)[1]).toContain("metadata:");
 
     // Nothing is highlighted until the first ArrowDown, which lands on row
-    // zero; the second reaches the project ref.
-    fireEvent.keyDown(input, { key: "ArrowDown" });
+    // zero: the project ref.
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Tab" });
     // No trailing space: what follows a prefix is the number, and Tab must
@@ -2643,5 +2642,228 @@ describe("the syntax help", () => {
       expect(parts[0], example).toMatchObject({ kind: "filter", key });
       expect(diagnoseQuery(SEARCH_SCHEMA, parts), example).toEqual([]);
     }
+  });
+});
+
+describe("SearchBox · todou's own rows on QueryBox (T-796)", () => {
+  it("finishes a project's prefix on Enter and stays in the box", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "m");
+    await waitFor(() => expect(rowTexts(utils.container)[0]).toContain("M-"));
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(input.value).toBe("M-"));
+    expect(input.selectionStart).toBe(2);
+    expect(utils.where().pathname).toBe("/");
+    // Still being written, so the panel stays open on what it now names.
+    expect(listboxOf(utils.container)).not.toBeNull();
+  });
+
+  it("finishes a project's prefix on a click too, without submitting", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "m");
+    const row = await waitFor(() => {
+      const found = optionsOf(utils.container).find((o) =>
+        o.textContent?.startsWith("M-"),
+      );
+      expect(found).toBeDefined();
+      return found as HTMLElement;
+    });
+    fireEvent.click(row);
+    await waitFor(() => expect(input.value).toBe("M-"));
+    expect(utils.where().pathname).toBe("/");
+  });
+
+  it("follows a plain click on a jump the way Enter does, and leaves a modified one to the browser", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "T-141");
+    const card = await waitFor(() => {
+      const found = listboxOf(utils.container)?.querySelector(
+        'a[href="/projects/todou/issues/141"]',
+      );
+      expect(found).not.toBeNull();
+      return found as HTMLAnchorElement;
+    });
+
+    fireEvent.click(card, { metaKey: true });
+    expect(utils.where().pathname).toBe("/");
+    expect(listboxOf(utils.container)).not.toBeNull();
+    expect(input.value).toBe("T-141");
+
+    fireEvent.click(card);
+    await waitFor(() =>
+      expect(utils.where().pathname).toBe("/projects/todou/issues/141"),
+    );
+  });
+
+  it("empties itself once a jump has taken the reader to a card", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client);
+    await typeInto(utils, "T-141");
+    submit(utils.container);
+    await waitFor(() =>
+      expect(utils.where().pathname).toBe("/projects/todou/issues/141"),
+    );
+    await waitFor(() =>
+      expect(
+        (utils.getByLabelText("Search this project") as HTMLInputElement).value,
+      ).toBe(""),
+    );
+  });
+
+  it("draws labels as chips and statuses as pills, with no tag in front", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "label:");
+    input.setSelectionRange(6, 6);
+    fireEvent.select(input);
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("area:web"),
+    );
+    const [web] = optionsOf(utils.container);
+    expect(web?.querySelector("svg")).toBeNull();
+    expect(web?.querySelector(".font-mono")).toBeNull();
+
+    fireEvent.change(input, { target: { value: "status:" } });
+    input.setSelectionRange(7, 7);
+    fireEvent.select(input);
+    await waitFor(() => expect(rowTexts(utils.container)[0]).toBe("Next"));
+    const [next] = optionsOf(utils.container);
+    expect(next?.querySelector("svg")).toBeNull();
+    expect(next?.querySelector(".rounded-full")).not.toBeNull();
+  });
+
+  it("offers `@me` once, as the viewer, and a member with their avatar", async () => {
+    const client = seedPools(seedBox());
+    client.setQueryData(meQuery.queryKey, {
+      id: 1,
+      login: "alice",
+      display_name: "Alice",
+      kind: "human",
+      avatar_url: null,
+      owner: null,
+      email: null,
+      is_instance_admin: false,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "assignee:");
+    input.setSelectionRange(9, 9);
+    fireEvent.select(input);
+    const mine = () =>
+      optionsOf(utils.container).filter((o) => o.textContent?.includes("@me"));
+    await waitFor(() => expect(mine()).toHaveLength(1));
+    // Drawn as the viewer: their avatar, and their name beside `@me`.
+    const [me] = mine();
+    expect(me?.querySelector('[data-slot="avatar"]')?.textContent).toBe("A");
+    expect(me?.textContent).toContain("Alice");
+
+    fireEvent.change(input, { target: { value: "assignee:al" } });
+    input.setSelectionRange(11, 11);
+    fireEvent.select(input);
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("alice"),
+    );
+    const alice = optionsOf(utils.container)[0];
+    expect(alice?.querySelector('[data-slot="avatar"]')?.textContent).toBe("A");
+    expect(alice?.textContent).toContain("Alice");
+  });
+
+  it("reads the history a reader kept before the box moved to QueryBox", async () => {
+    localStorage.setItem(
+      "todou:search-history:v1:1",
+      JSON.stringify({
+        todou: [{ q: "label:kind:bug", t: Date.now() - 60_000 }],
+      }),
+    );
+    const client = seedBox();
+    client.setQueryData(meQuery.queryKey, {
+      id: 1,
+      login: "alice",
+      display_name: "Alice",
+      kind: "human",
+      avatar_url: null,
+      owner: null,
+      email: null,
+      is_instance_admin: false,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    const utils = renderBox(client);
+    const input = (await utils.findByLabelText(
+      "Search this project",
+    )) as HTMLInputElement;
+    input.focus();
+    fireEvent.focusIn(input);
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toBe("label:kind:bug"),
+    );
+  });
+
+  it("shows `/` on an empty box nobody is in, and names the shortcut", async () => {
+    const utils = renderBox(seedBox());
+    const input = (await utils.findByLabelText(
+      "Search this project",
+    )) as HTMLInputElement;
+    expect(input.getAttribute("aria-keyshortcuts")).toBe("/");
+    const kbd = () => utils.container.querySelector("kbd");
+    expect(kbd()?.textContent).toBe("/");
+    expect(kbd()?.getAttribute("aria-hidden")).toBe("true");
+
+    input.focus();
+    fireEvent.focusIn(input);
+    await waitFor(() => expect(kbd()).toBeNull());
+    fireEvent.blur(input);
+    await waitFor(() => expect(kbd()).not.toBeNull());
+    fireEvent.change(input, { target: { value: "x" } });
+    await waitFor(() => expect(kbd()).toBeNull());
+  });
+});
+
+describe("the search page's box after a submit", () => {
+  it("keeps its panel shut over the results it just asked for", async () => {
+    vi.spyOn(api, "search").mockResolvedValue({
+      diagnostics: [],
+      items: [hit()],
+      has_more: false,
+    });
+    const utils = renderPage({ items: [], has_more: false }, { q: "alpha" });
+    const input = (await utils.findByLabelText(
+      "Search this project",
+    )) as HTMLInputElement;
+    input.focus();
+    fireEvent.focusIn(input);
+    fireEvent.change(input, { target: { value: "全文搜索" } });
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(utils.where().search).toEqual({ q: "全文搜索" }),
+    );
+    await utils.findByText("1 hit");
+    expect(document.activeElement).toBe(input);
+    expect(listboxOf(utils.container)).toBeNull();
+  });
+
+  it("arrives from another page with the query in it, unfocused and shut", async () => {
+    const utils = renderPage(
+      { items: [hit()], has_more: false },
+      { q: "全文" },
+    );
+    const input = (await utils.findByLabelText(
+      "Search this project",
+    )) as HTMLInputElement;
+    await utils.findByText("1 hit");
+    expect(input.value).toBe("全文");
+    expect(document.activeElement).not.toBe(input);
+    expect(listboxOf(utils.container)).toBeNull();
   });
 });

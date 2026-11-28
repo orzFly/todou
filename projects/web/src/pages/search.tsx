@@ -1,4 +1,3 @@
-import { parseQuery, queryFilters } from "@orz/query";
 import { EmptyState } from "@orz/ui/components/empty-state";
 import { FieldDescription, FieldError } from "@orz/ui/components/field";
 import { LinkCard } from "@orz/ui/components/link-card";
@@ -31,6 +30,7 @@ import { useRefPrefix } from "@/api/references.ts";
 import {
   correctedQuery,
   domainsOf,
+  hasQualifier,
   type SearchPageSearch,
   searchQuery,
   withDomains,
@@ -304,10 +304,6 @@ export function SearchResults({
       )}
     </div>
   );
-}
-
-function hasQualifier(q: string): boolean {
-  return queryFilters(parseQuery(SEARCH_SCHEMA, q)).length > 0;
 }
 
 function hitKey(hit: SearchItem): string {

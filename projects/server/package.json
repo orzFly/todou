@@ -15,7 +15,7 @@
     "@electric-sql/pglite": "^0.5.4",
     "@hono/node-server": "^2.1.0",
     "@hono/zod-openapi": "^1.5.2",
-    "@orz/query": "0.1.2-master.20261127155246.ge1ab406",
+    "@orz/query": "0.1.2-master.20261128080005.gbc63686",
     "@todou/shared": "workspace:*",
     "aws4fetch": "^1.0.20",
     "clipanion": "4.0.0-rc.4",

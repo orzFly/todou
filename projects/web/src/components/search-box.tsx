@@ -1,20 +1,26 @@
+import { type CompletionValue, parseQuery, type ValueOption } from "@orz/query";
 import { cn } from "@orz/ui";
+import { Kbd } from "@orz/ui/components/kbd";
+import {
+  type OptionProps,
+  QueryBox,
+  type RowSource,
+  type ValueRowContent,
+} from "@orz/ui/components/query-box";
 import { Skeleton } from "@orz/ui/components/skeleton";
+import { useQueryHistory } from "@orz/ui/hooks/use-query-history";
 import { useSlashShortcut } from "@orz/ui/hooks/use-slash-shortcut";
+import { isPlainClick } from "@orz/ui/lib/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { parseSearchQuery } from "@todou/shared";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { type Label, SEARCH_SCHEMA, type Status } from "@todou/shared";
 import {
   ArrowRightIcon,
-  ClockIcon,
   ExternalLinkIcon,
-  FilterIcon,
   FolderIcon,
   SearchIcon,
-  TagIcon,
-  XIcon,
 } from "lucide-react";
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   labelsQuery,
   membersQuery,
@@ -32,62 +38,45 @@ import {
   useProjectPeek,
 } from "@/api/ref-jump.ts";
 import { referenceDirectoryQuery } from "@/api/references.ts";
-import { searchFacetsQuery } from "@/api/search.ts";
-import { useSearchHistory } from "@/api/search-history.ts";
+import { hasQualifier, searchFacetsQuery } from "@/api/search.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
-import { PICKER_ROW } from "@/components/issue/picker-row.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import {
-  highlightParts,
-  type KnownValues,
-} from "@/components/search/highlight.tsx";
 import { JumpRowBody } from "@/components/search/jump-row.tsx";
-import {
-  type CaretPosition,
-  QualifierInput,
-} from "@/components/search/qualifier-input.tsx";
-import {
-  type CompletionRow,
-  hasQualifier,
-  orderRows,
-  projectRefSource,
-  qualifierKeySource,
-  qualifierValueSource,
-  type ValuePools,
-} from "@/components/search/suggestions.ts";
 import { IssueTitle } from "@/components/shared/issue-title.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
-import { AVATAR_SLOT } from "@/components/shared/user-picker.tsx";
+import type { PickerUser } from "@/components/shared/user-picker.tsx";
+import {
+  type ProjectRefRow,
+  projectRefCompletions,
+} from "@/lib/project-ref-completion.ts";
 import { projectSpellings } from "@/lib/project-spellings.ts";
-import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
-/** The last row, always present: what the box did before it understood refs. */
-type SearchRow = { kind: "search" };
-type CompletionBoxRow = { kind: "completion"; row: CompletionRow };
-/** A query searched here before (T-270). */
-type HistoryBoxRow = { kind: "history"; q: string };
-type BoxRow =
-  | JumpRow
-  | ProjectPeekRow
-  | SearchRow
-  | CompletionBoxRow
-  | HistoryBoxRow;
-
-const historyRow = (entry: SearchHistoryEntry): BoxRow => ({
-  kind: "history",
-  q: entry.q,
-});
+/** What the app adds to the panel: jumps, a project's cards, project names. */
+type BoxRow = JumpRow | ProjectPeekRow | ProjectRefRow;
 
 type Destination =
   | { to: "card"; target: JumpTarget }
   | { to: "project"; slug: string }
   | { to: "external"; href: string }
-  // The query travels with the destination because a history row searches for
-  // its own text, not for what is in the box.
   | { to: "search"; q: string };
+
+/** What the value providers carry beyond the value, for `renderValue`. */
+type LabelOption = ValueOption & { label: Label };
+type StatusOption = ValueOption & { status: Status };
+type MemberOption = ValueOption & { user: PickerUser };
+
+/**
+ * Where todou keeps a viewer's past searches (T-270), bucketed by project
+ * because a query written against one project's labels matches nothing in
+ * another. The key predates `useQueryHistory`, whose format is the one it
+ * was written in, so what a reader searched before the move is still there.
+ */
+export function historyKey(userId: number | string): string {
+  return `todou:search-history:v1:${userId}`;
+}
 
 /** Would this row leave the project? The search row then says where it searches. */
 function pointsElsewhere(row: JumpRow, slug: string): boolean {
@@ -96,56 +85,61 @@ function pointsElsewhere(row: JumpRow, slug: string): boolean {
   return row.state === "ready" ? row.crossProject : row.candidate.slug !== slug;
 }
 
-/**
- * `w-full` because a `<button>` row resolves `width: auto` to fit-content and
- * would otherwise shrink to a pill beside its full-width neighbours; on the
- * `<a>` and `<div>` rows, which are block already, it changes nothing.
- * The geometry is every picker's, so a status here is the height it is in the
- * card's status menu (T-739).
- */
-const OPTION = cn("flex w-full items-center rounded-md", PICKER_ROW);
+const ICON = "size-3.5 shrink-0 text-muted-foreground";
 
 /**
- * A row's leading glyph, centred where an avatar would sit and in a column as
- * wide as an avatar's (T-677). People appear in this panel as avatars, and a
- * column fitted to the 14px icons would start their text 12px right of every
- * other row's.
+ * The icon column left empty, so a chip or a pill starts where every row's
+ * words do without a tag drawn in front of it (T-753).
  */
-function Glyph({ children }: { children: React.ReactNode }) {
-  return (
-    <span className={AVATAR_SLOT}>
-      <span className="flex w-5 justify-center">{children}</span>
-    </span>
-  );
+const NO_ICON = <span />;
+
+/**
+ * A value drawn as the rest of the app draws it. A chip or a pill stands in
+ * the value's words; a person keeps their login and takes the icon's place
+ * with their avatar, login first because it is the value being completed
+ * (T-677).
+ */
+function renderValue({
+  option,
+  spec,
+}: CompletionValue): ValueRowContent | undefined {
+  if (spec.kind !== "named") return undefined;
+  if (spec.source === "label" && "label" in option) {
+    return {
+      leading: NO_ICON,
+      body: <LabelChip label={(option as LabelOption).label} />,
+    };
+  }
+  if (spec.source === "status" && "status" in option) {
+    return {
+      leading: NO_ICON,
+      body: <StatusPill status={(option as StatusOption).status} />,
+    };
+  }
+  if (spec.source === "member" && "user" in option) {
+    return {
+      leading: (
+        <UserAvatar
+          user={(option as MemberOption).user}
+          badge
+          className="size-4.5"
+        />
+      ),
+      body: <span className="shrink-0">{option.value}</span>,
+    };
+  }
+  return undefined;
 }
 
-/** Nothing highlighted. Enter then submits what was typed, not an offer. */
-const NONE = -1;
-
 /**
- * One glyph per kind of offer. Most rows are a short run of monospace and a few
- * grey words, so the icon carries the whole distinction between a key, a
- * value and a project.
- */
-const COMPLETION_ICON = {
-  qualifier: FilterIcon,
-  value: TagIcon,
-  project: FolderIcon,
-} satisfies Record<CompletionRow["icon"], typeof FilterIcon>;
-
-/**
- * The project's search box, in the header on every project page (T-141),
- * with the qualifier syntax and its completions (T-262).
+ * The project's search box: in the header on every project page (T-141),
+ * in the narrow header's overlay, and on the search page itself. The syntax,
+ * its completions, the colours and the keyboard are `QueryBox`'s; what is
+ * todou's is the rows it adds (a jump to what the query names, a project's
+ * name) and where a submitted query goes.
  *
- * A form, not a button with a handler: Enter submits it the way every search
- * box on the web does. The destination is a page, so submitting navigates
- * there rather than searching in place — which is also what makes a result
- * URL shareable.
- *
- * The listbox is hand-rolled rather than a radix popover because focus has to
- * stay in the input and `Content` wants to take it. Nothing is ever
- * preselected: the reader is typing a query, so Enter belongs to the query
- * unless they arrowed onto something else. Tab is the key that takes an offer.
+ * The destination is a page, so submitting navigates there rather than
+ * searching in place — which is also what makes a result URL shareable.
  */
 export function SearchBox({
   slug,
@@ -191,31 +185,29 @@ export function SearchBox({
   describedBy?: string;
 }) {
   const navigate = useNavigate();
+  const router = useRouter();
   const queryClient = useQueryClient();
   // Read at render, never after `decide()`'s await: the box is chrome that
   // outlives the page under it, and the origin a card is opened with is the
   // one that was on screen when the reader asked for it (T-407).
   const returnState = useReturnLinkState();
-  const urlQuery = shown;
-  const [value, setValue] = useState(urlQuery);
-  const [focused, setFocused] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  const [highlight, setHighlight] = useState(NONE);
-  const [waiting, setWaiting] = useState(false);
-  const [position, setPosition] = useState<CaretPosition>({ caret: 0 });
-  const lastSeen = useRef(urlQuery);
-  if (lastSeen.current !== urlQuery) {
-    lastSeen.current = urlQuery;
-    setValue(urlQuery);
-    setDismissed(false);
-    setHighlight(NONE);
+  const [value, setValue] = useState(shown);
+  const lastShown = useRef(shown);
+  if (lastShown.current !== shown) {
+    lastShown.current = shown;
+    setValue(shown);
   }
+  const [focused, setFocused] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const [caret, setCaret] = useState(shown.length);
+  const slot = useRef<HTMLDivElement>(null);
+  // `QueryBox` keeps its input to itself; the slot is where to find it.
+  const input = () => slot.current?.querySelector("input") ?? null;
 
-  const input = useRef<HTMLInputElement>(null);
-  const list = useRef<HTMLDivElement>(null);
-  const listId = useId();
   const project = useQuery(projectQuery(slug));
-  const parts = useMemo(() => parseSearchQuery(value), [value]);
+  const parts = useMemo(() => parseQuery(SEARCH_SCHEMA, value), [value]);
+  const qualified = parts.some((part) => part.kind === "filter");
 
   // Only once the box is in use: it is mounted on every project page, and
   // four lists nobody has asked for is four requests nobody wanted.
@@ -231,43 +223,57 @@ export function SearchBox({
   const projects = useQuery({ ...projectsQuery, enabled: asked });
   const directory = useQuery({ ...referenceDirectoryQuery, enabled: asked });
 
-  const pools: ValuePools = useMemo(
-    () => ({
-      label: labels.data?.map((l) => ({ value: l.name, label: l })),
-      status: statuses.data?.map((s) => ({ value: s.name, status: s })),
-      // `@me` drawn as the viewer, so its row lines up with the people below.
-      assignee: members.data?.flatMap((m) => [
-        ...(m.user.id === me.data?.id
-          ? [{ value: "@me", hint: displayNameOf(m.user), user: m.user }]
-          : []),
-        { value: m.user.login, hint: displayNameOf(m.user), user: m.user },
-      ]),
-      harness: facets.data?.harnesses
-        .filter((h) => h.agent !== null)
-        .map((h) => ({ value: h.agent as string, hint: String(h.count) })),
-      session: facets.data?.sessions.map((s) => ({
-        value: s.session_id,
-        ...(s.agent === null ? {} : { hint: s.agent }),
-      })),
-    }),
-    [labels.data, statuses.data, members.data, facets.data, me.data],
-  );
-  const known: KnownValues = useMemo(
-    () => ({
-      label: labels.data?.map((l) => l.name),
-      status: statuses.data?.map((s) => s.name),
-      assignee: members.data?.map((m) => m.user.login),
-    }),
-    [labels.data, statuses.data, members.data],
-  );
+  // Undefined until asked for and answered, which the box paints as unknown
+  // rather than flashing every value as wrong while a list loads.
+  const providers = useMemo(() => {
+    const options = (list: readonly ValueOption[] | undefined) => ({
+      options: list,
+    });
+    const viewer: MemberOption[] =
+      me.data === undefined
+        ? []
+        : [{ value: "@me", hint: displayNameOf(me.data), user: me.data }];
+    return {
+      label: options(
+        labels.data?.map((l): LabelOption => ({ value: l.name, label: l })),
+      ),
+      status: options(
+        statuses.data?.map((s): StatusOption => ({ value: s.name, status: s })),
+      ),
+      // `@me` restated as the viewer, so the schema's own `@me` is drawn with
+      // their avatar and name in its place rather than offered twice.
+      member: options(
+        members.data === undefined
+          ? undefined
+          : [
+              ...viewer,
+              ...members.data.map(
+                (m): MemberOption => ({
+                  value: m.user.login,
+                  hint: displayNameOf(m.user),
+                  user: m.user,
+                }),
+              ),
+            ],
+      ),
+      harness: options(
+        facets.data?.harnesses.flatMap((h) =>
+          h.agent === null ? [] : [{ value: h.agent, hint: String(h.count) }],
+        ),
+      ),
+      session: options(
+        facets.data?.sessions.map((s) => ({
+          value: s.session_id,
+          ...(s.agent === null ? {} : { hint: s.agent }),
+        })),
+      ),
+    };
+  }, [labels.data, statuses.data, members.data, facets.data, me.data]);
 
   // Only resolve while the offer is visible. A retained value after blur or
   // Escape must not leave hidden reference observers polling in the header.
   // A qualified query still belongs to ordinary search.
-  const jumpRows = useJumpRows(
-    slug,
-    focused && !dismissed && !hasQualifier(parts) ? value : "",
-  );
+  const jumpRows = useJumpRows(slug, open && !qualified ? value : "");
   const named = jumpRows.find((row) => row.kind === "project");
   // A project named without a card is a weaker aim than a card: the reader
   // may well be on their way to one whose number they do not remember.
@@ -276,141 +282,51 @@ export function SearchBox({
     () => projectSpellings(projects.data, directory.data),
     [projects.data, directory.data],
   );
-  const completions = useMemo(() => {
-    const ctx = { slug, query: value, caret: position.caret, parts };
-    return [
-      qualifierKeySource(ctx),
-      qualifierValueSource(pools)(ctx),
-      projectRefSource(projectRefs)(ctx),
-    ];
-  }, [slug, value, position.caret, parts, pools, projectRefs]);
-
-  const history = useSearchHistory(slug);
-  // Matched against the whole query rather than the word under the caret: an
-  // entry is one entire past search, which is not the kind of thing a
-  // completion is.
-  const past = useMemo(
-    () => matchHistory(history.entries, value),
-    [history.entries, value],
+  const completing = useMemo(
+    () => projectRefCompletions(projectRefs, parts, value, caret),
+    [projectRefs, parts, value, caret],
   );
-
-  const rows: BoxRow[] = orderRows<BoxRow>(
-    [
-      // One source, so one budget covers the peek too: the home row is what
-      // the reader named and the cards below it come out of the same
-      // allowance as everything else (T-268).
-      { matched: true, rows: [...jumpRows, ...peek] },
-      ...completions.map((result) => ({
-        matched: result.matched,
-        rows: result.rows.map(
-          (row): BoxRow => ({ kind: "completion" as const, row }),
-        ),
-      })),
-      { matched: true, yields: true, rows: past.starts.map(historyRow) },
-      { matched: false, yields: true, rows: past.contains.map(historyRow) },
-    ],
-    { kind: "search" },
-  );
-  const query = value.trim();
-  const open = focused && !dismissed && (query !== "" || rows.length > 1);
-  const hl = highlight >= rows.length ? NONE : highlight;
   const elsewhere = jumpRows.some((row) => pointsElsewhere(row, slug));
-  const optionId = (idx: number) => `${listId}-${idx}`;
+
+  const history = useQueryHistory({
+    // The login gate reads `me` before any project page renders, so this is
+    // the real id rather than a guess that would later change keys under it.
+    storageKey: historyKey(me.data?.id ?? "anon"),
+    scope: slug,
+  });
+  const searchHref = (q: string) =>
+    router.buildLocation({
+      to: "/projects/$slug/search",
+      params: { slug },
+      search: { q },
+    }).href;
 
   useSlashShortcut(() => {
-    input.current?.focus();
-    input.current?.select();
-  });
-
-  // Ten rows already keep the panel short in an ordinary window; this is the
-  // floor under a short one, where even a few rows reach past the bottom.
-  // Measured rather than a `calc(100vh - …)`, because the same box also grows
-  // out of the narrow-screen overlay and the height above it is not a
-  // constant. Before paint, or there is a frame of the too-tall panel.
-  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure whenever the panel opens or changes length
-  useLayoutEffect(() => {
-    const panel = list.current;
-    if (panel === null) {
-      setMaxHeight(undefined);
-      return;
-    }
-    const measure = () => {
-      setMaxHeight(window.innerHeight - panel.getBoundingClientRect().top - 8);
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [open, rows.length]);
-
-  // A scroll container can hold the highlight out of sight, and then the
-  // arrow keys are moving something the reader cannot see. The rows are the
-  // panel's only children, so the index is the child.
-  useLayoutEffect(() => {
-    if (hl === NONE) return;
-    list.current?.children[hl]?.scrollIntoView({ block: "nearest" });
-  }, [hl]);
-
-  /** Accepting an offer rewrites the query; the caret goes where it says. */
-  const pendingCaret = useRef<number | null>(null);
-  const accept = (apply: { value: string; caret: number }) => {
-    setValue(apply.value);
-    setHighlight(NONE);
-    setDismissed(false);
-    pendingCaret.current = apply.caret;
-  };
-  useLayoutEffect(() => {
-    const caret = pendingCaret.current;
-    if (caret === null) return;
-    pendingCaret.current = null;
-    const el = input.current;
-    if (el === null) return;
-    el.focus();
-    el.setSelectionRange(caret, caret);
+    const el = input();
+    el?.focus();
+    el?.select();
   });
 
   /**
-   * What Tab takes — the search row and a jump are not offers.
-   *
-   * A highlighted history row loads its whole query into the box, which is
-   * what T-262's Tab already means: take the offer and keep editing. With
-   * nothing highlighted Tab still falls back to the first *completion* and
-   * never to history — an unaimed Tab means "finish the word I am typing",
-   * and a whole past query is a long way from that.
-   *
-   * Only a completion above the search row counts, one the typed word really
-   * matches. The key table under an empty word is there to be read; taking
-   * it unaimed turned a held Tab into `is:body is:body …` forever and left
-   * the box a focus trap (T-615). Without a match Tab moves focus on.
+   * Whether the submit about to arrive asked for a plain search rather than
+   * a lookup: the reader picked the search row, or Escape had hidden the
+   * offer — hiding it has to mean something, so Enter then does the plain
+   * thing rather than chasing a jump nobody can see. `QueryBox` reports both
+   * as "nothing chosen", as it does an Enter with nothing highlighted, so the
+   * box notes which it was on the way in (orzui UI-289 asks for it to say).
    */
-  const acceptable = (
-    from: number,
-  ): { value: string; caret: number } | null => {
-    const at = rows[from];
-    if (at?.kind === "completion") return at.row.apply;
-    if (at?.kind === "history") return { value: at.q, caret: at.q.length };
-    for (const row of rows) {
-      if (row.kind === "search") return null;
-      if (row.kind === "completion") return row.row.apply;
-    }
-    return null;
-  };
+  const plain = useRef(false);
 
-  /**
-   * Where Enter goes. A selected comment still needs current confirmation:
-   * invalidation can arrive before React removes its ready row. A row that is
-   * loading, or a list that has not appeared yet, is also waited for — pasting
-   * a ref and hitting Enter must reach the same place as waiting for its row.
-   */
-  const decide = async (): Promise<Destination> => {
-    // Esc hid the offer, and hiding it has to mean something: Enter then
-    // does the plain thing rather than following an invisible highlight.
-    if (dismissed) return { to: "search", q: query };
-    const chosen = open && hl !== NONE ? rows[hl] : undefined;
-    if (chosen?.kind === "search") return { to: "search", q: query };
-    if (chosen?.kind === "history") return { to: "search", q: chosen.q };
-    if (chosen?.kind === "external")
+  const decide = async (
+    query: string,
+    chosen: BoxRow | undefined,
+    fromHistory: boolean,
+  ): Promise<Destination> => {
+    // Searched before, and searched again as it was.
+    if (fromHistory) return { to: "search", q: query };
+    if (chosen?.kind === "external") {
       return { to: "external", href: chosen.href };
+    }
     if (
       chosen?.kind === "issue" &&
       chosen.state === "ready" &&
@@ -425,35 +341,54 @@ export function SearchBox({
         target: { slug: chosen.slug, number: chosen.number },
       };
     }
-    if (chosen?.kind === "completion") return { to: "search", q: query };
-    if (hasQualifier(parts)) return { to: "search", q: query };
+    if (chosen === undefined && plain.current) {
+      return { to: "search", q: query };
+    }
+    if (hasQualifier(query)) return { to: "search", q: query };
+    // A selected comment still needs current confirmation: invalidation can
+    // arrive before React removes its ready row. A row that is loading, or a
+    // list that has not appeared yet, is also waited for — pasting a ref and
+    // hitting Enter must reach the same place as waiting for its row.
     setWaiting(true);
     try {
-      const found = await jumpDestinationPromise(queryClient, slug, value);
+      const found = await jumpDestinationPromise(queryClient, slug, query);
       if (found?.kind === "issue") return { to: "card", target: found.target };
       if (found?.kind === "project") return { to: "project", slug: found.slug };
-      if (found?.kind === "external")
+      if (found?.kind === "external") {
         return { to: "external", href: found.href };
+      }
     } finally {
       setWaiting(false);
     }
     return { to: "search", q: query };
   };
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const chosen = open && hl !== NONE ? rows[hl] : undefined;
-    // Enter on a completion takes it and stays put; the reader is still
-    // building the query, not asking for it.
-    if (chosen?.kind === "completion") {
-      accept(chosen.row.apply);
+  const submit = async (
+    query: string,
+    chosen: BoxRow | undefined,
+    fromHistory: boolean,
+  ) => {
+    // The search row of an empty box: the search page itself, where the
+    // syntax help is. Nothing was searched, so nothing is remembered.
+    if (query === "") {
+      plain.current = false;
+      navigate({ to: "/projects/$slug/search", params: { slug } });
       return;
     }
-    // An empty box has nothing to submit — unless a history row is what is
-    // being submitted, which is the whole point of offering them there.
-    if (query === "" && chosen?.kind !== "history") return;
-    const destination = await decide();
-    setDismissed(true);
+    const destination = await decide(query, chosen, fromHistory);
+    plain.current = false;
+    if (destination.to === "search") {
+      history.record(destination.q);
+      navigate({
+        to: "/projects/$slug/search",
+        params: { slug },
+        search: { q: destination.q },
+      });
+      return;
+    }
+    // A jump is not a search: the box empties rather than keep a ref that
+    // now names the page the reader is on.
+    setValue("");
     if (destination.to === "card") {
       const { target } = destination;
       navigate({
@@ -474,499 +409,331 @@ export function SearchBox({
         to: "/projects/$slug",
         params: { slug: destination.slug },
       });
-    } else if (destination.to === "external") {
+    } else {
       // A tab opened after an await can meet a popup blocker — the click
       // that authorised it is no longer the task at hand. The row is a real
       // link so there is always a way that cannot be blocked.
       window.open(destination.href, "_blank", "noreferrer");
-    } else {
-      history.record(destination.q);
-      navigate({
-        to: "/projects/$slug/search",
-        params: { slug },
-        search: { q: destination.q },
-      });
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      if (!open) {
-        onEscape?.();
-        return;
+  /**
+   * A row that goes somewhere is a real link. A plain click goes the way
+   * Enter does, through `onSubmit`; a modified, middle or right click, and
+   * any click on a link that opens elsewhere, is the browser's, and the panel
+   * stays as it was for the reader stacking tabs.
+   */
+  const follow =
+    (option: OptionProps, before?: () => void) => (e: React.MouseEvent) => {
+      if (!isPlainClick(e)) return;
+      e.preventDefault();
+      before?.();
+      option.onClick();
+    };
+
+  const jumpSource: RowSource<BoxRow> = {
+    id: "jump",
+    matched: true,
+    // One source, so one budget covers the peek too: the home row is what
+    // the reader named and the cards below it come out of the same
+    // allowance as everything else (T-268).
+    rows: [...jumpRows, ...peek],
+    key: (row) =>
+      row.kind === "project-issue" ? `peek-${row.number}` : row.kind,
+    render: (row, option) => {
+      if (row.kind === "project-ref") return null;
+      if (row.kind === "project") {
+        return (
+          <Link
+            to="/projects/$slug"
+            params={{ slug: row.slug }}
+            {...option}
+            onClick={follow(option)}
+          >
+            <JumpRowBody
+              icon={<ArrowRightIcon className={ICON} aria-hidden />}
+              spelled={row.spelled}
+              // What the reader typed, not a card: nothing to take apart, so
+              // the whole token is the one elidable run.
+              identity={null}
+              refClassName="text-muted-foreground"
+              lead={
+                <ProjectIcon
+                  project={{
+                    slug: row.slug,
+                    name: row.name,
+                    prefix: row.prefix,
+                    icon_url: row.icon_url,
+                  }}
+                  className="size-5 shrink-0"
+                  aria-hidden
+                />
+              }
+              text={row.name}
+            />
+          </Link>
+        );
       }
-      setDismissed(true);
-    } else if (e.key === "Tab" && open && !e.shiftKey) {
-      const apply = acceptable(hl);
-      if (apply === null) return;
-      accept(apply);
-    } else if (!open) {
-      return;
-    } else if (e.key === "Delete" && e.shiftKey) {
-      // The address bar's own gesture for the same thing. macOS has no
-      // Delete key of its own; the row's button is the path there.
-      const at = rows[hl];
-      if (at?.kind !== "history") return;
-      history.forget(at.q);
-    } else if (e.key === "ArrowDown") {
-      setHighlight(Math.min(hl + 1, rows.length - 1));
-    } else if (e.key === "ArrowUp") {
-      // Back past the first row is back to nothing selected, which is where
-      // the box started and what Enter means by default.
-      setHighlight(Math.max(hl - 1, NONE));
-    } else if (e.key === "Home") {
-      setHighlight(0);
-    } else if (e.key === "End") {
-      setHighlight(rows.length - 1);
-    } else {
-      return;
-    }
-    e.preventDefault();
+      if (row.kind === "project-issue") {
+        return (
+          <Link
+            to="/projects/$slug/issues/$number"
+            params={{ slug: row.slug, number: String(row.number) }}
+            state={returnState}
+            {...option}
+            onClick={follow(option)}
+          >
+            <JumpRowBody
+              icon={
+                /* Where the arrow goes on every other row. These cards are
+                   offered rather than asked for, and the empty column is
+                   what says so — one indent, no new glyph. */
+                <span className="w-3.5 shrink-0" aria-hidden />
+              }
+              spelled={row.spelled}
+              // The reader's own spelling carried on, not a format:
+              // `accel/1` and `ACC-1` are both this row's token.
+              identity={null}
+              refClassName="text-muted-foreground"
+              text={<IssueTitle item={row.item} />}
+              trailing={<StatusPill status={row.item.status} />}
+            />
+          </Link>
+        );
+      }
+      if (row.kind === "external") {
+        return (
+          // A new tab: this one leaves todou, unlike an autolink clicked
+          // mid-sentence, which the reader is reading through.
+          <a
+            href={row.href}
+            target="_blank"
+            rel="noreferrer"
+            {...option}
+            onClick={follow(option)}
+          >
+            <JumpRowBody
+              icon={<ExternalLinkIcon className={ICON} aria-hidden />}
+              spelled={row.text}
+              // An autolink's own text, which todou never spelled.
+              identity={null}
+              text={row.host}
+              textClassName="text-muted-foreground"
+            />
+          </a>
+        );
+      }
+      if (row.state === "pending") {
+        return (
+          // Not a link: there is nothing to point at yet. Enter still reaches
+          // the card, by waiting for the lookup it is on.
+          <div
+            {...option}
+            // Both already in `option`; the linter cannot see them inside a
+            // spread and reads this as an inert div.
+            role="option"
+            tabIndex={-1}
+            aria-label="Looking up the card…"
+          >
+            <ArrowRightIcon className={ICON} aria-hidden />
+            <Skeleton className="h-4 w-40" />
+          </div>
+        );
+      }
+      return (
+        <Link
+          to="/projects/$slug/issues/$number"
+          params={{ slug: row.slug, number: String(row.number) }}
+          hash={
+            row.commentId === undefined
+              ? undefined
+              : commentAnchor(row.commentId)
+          }
+          // The timeline owns anchor positioning; the router's own scroll
+          // races it.
+          hashScrollIntoView={false}
+          state={returnState}
+          {...option}
+          onClick={follow(option)}
+        >
+          <JumpRowBody
+            icon={<ArrowRightIcon className={ICON} aria-hidden />}
+            spelled={row.spelled}
+            identity={{
+              slug: row.slug,
+              prefix: row.prefix,
+              number: row.number,
+              ...(row.commentId === undefined
+                ? {}
+                : { commentId: row.commentId }),
+            }}
+            refClassName="text-muted-foreground"
+            text={<IssueTitle item={row.item} />}
+            author={row.commentBy}
+            trailing={<StatusPill status={row.item.status} />}
+          />
+        </Link>
+      );
+    },
   };
 
-  // A modified click hands the link to the browser (new tab, new window), so
-  // the box stays as it is — the reader is stacking tabs, not leaving.
-  const closeUnlessNewTab = (e: React.MouseEvent) => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    setDismissed(true);
+  const projectRefSource: RowSource<BoxRow> = {
+    id: "project-ref",
+    matched: completing.matched,
+    // Finishing a project's name is finishing the word, not a destination:
+    // Enter, a click and Tab all rewrite the query and keep the reader in
+    // the box, the caret ready for a number (T-268).
+    completes: true,
+    rows: completing.rows,
+    key: (row) => (row.kind === "project-ref" ? row.slug : row.kind),
+    apply: (row) => (row.kind === "project-ref" ? row.apply : null),
+    render: (row, option) =>
+      row.kind !== "project-ref" ? null : (
+        <button type="button" {...option}>
+          <FolderIcon className={ICON} aria-hidden />
+          <span className="truncate font-mono text-ui-sm">{row.spelling}</span>
+          <span className="truncate text-muted-foreground text-ui-sm">
+            {row.name}
+          </span>
+        </button>
+      ),
   };
 
-  const optionProps = (idx: number) => ({
-    id: optionId(idx),
-    role: "option",
-    // Focus never leaves the input; aria-activedescendant does the walking.
-    tabIndex: -1,
-    "aria-selected": idx === hl,
-    className: cn(OPTION, idx === hl && "bg-accent"),
-  });
+  const renderSubmitRow = (query: string, option: OptionProps) => {
+    // With nothing typed there is no search to offer, so the row stops
+    // pretending to be one: `Search for “”` searched for nothing, while the
+    // page it leads to is a real destination — the syntax help lives there.
+    const blank = query === "";
+    return (
+      <Link
+        to="/projects/$slug/search"
+        params={{ slug }}
+        search={blank ? {} : { q: query }}
+        {...option}
+        data-submit-row=""
+        onClick={follow(option, () => {
+          plain.current = true;
+        })}
+      >
+        {blank ? (
+          <ArrowRightIcon className={ICON} aria-hidden />
+        ) : (
+          <SearchIcon className={ICON} aria-hidden />
+        )}
+        <span className="truncate">
+          {blank ? (
+            "search page"
+          ) : (
+            <>
+              Search for “{query}”
+              {elsewhere && ` in ${project.data?.name ?? slug}`}
+            </>
+          )}
+        </span>
+      </Link>
+    );
+  };
+
+  const readCaret = (e: React.SyntheticEvent<HTMLInputElement>) =>
+    setCaret(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
 
   return (
-    // `h-8` because the control below is lifted out of the flow: the slot has
-    // to keep the height it had, or the header row reflows around a box that
-    // is still on screen.
-    <search className={cn("relative h-8", className)}>
-      {/* The control, anchored to the slot's right edge so that growing is
-          growing leftwards — over the project nav, which is the neighbour
-          that gave up the width in the first place. Absolute rather than a
-          width on the slot, so nothing beside it moves; it is also the
-          containing block the offer panel below hangs off, which is what
-          keeps the panel under the box it grew out of. */}
-      <div
-        className={cn(
-          "absolute inset-y-0 right-0 transition-[width] duration-150",
-          focusWidth !== undefined && focused
-            ? // Opaque and above: it is standing on the nav's text.
-              cn("z-30 rounded-lg bg-background", focusWidth)
-            : "w-full",
-        )}
-      >
-        <form onSubmit={onSubmit}>
-          <SearchIcon
-            className="pointer-events-none absolute top-1/2 left-2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <QualifierInput
-            inputRef={input}
-            autoFocus={autoFocus}
-            type="text"
-            name="q"
-            // T-262 kept the browser's own history for free; T-268 gives it
-            // back. This box now has a panel of its own, the two drop-downs
-            // cover each other, and the browser's knows neither the `label:`
-            // syntax nor which labels this project has.
-            autoComplete="off"
-            role="combobox"
-            aria-expanded={open}
-            aria-controls={listId}
-            aria-activedescendant={
-              open && hl !== NONE ? optionId(hl) : undefined
+    <div
+      ref={slot}
+      className={cn(
+        "relative",
+        // In the header the slot is the row's height and the box floats in
+        // it, so the box stands as tall as it likes on any pointer.
+        focusWidth !== undefined && "self-stretch",
+        className,
+      )}
+    >
+      <QueryBox<BoxRow>
+        schema={SEARCH_SCHEMA}
+        providers={providers}
+        value={value}
+        onValueChange={(next) => {
+          setValue(next);
+          // Typed: the input already holds `next`, caret and all. Taken from
+          // a row: the box puts the caret where the row says once `next` is
+          // in, and the select event that follows reports it; until then the
+          // end is where every completion leaves it.
+          const el = input();
+          setCaret(
+            el !== null && el.value === next
+              ? (el.selectionStart ?? next.length)
+              : next.length,
+          );
+        }}
+        onSubmit={(query, chosen, fromHistory) => {
+          void submit(query, chosen, fromHistory);
+        }}
+        onOpenChange={setOpen}
+        sources={[jumpSource, projectRefSource]}
+        history={history}
+        queryHref={searchHref}
+        renderSubmitRow={renderSubmitRow}
+        renderValue={renderValue}
+        busy={waiting}
+        listAlign={listAlign}
+        leading={<SearchIcon />}
+        onEscape={onEscape}
+        className={
+          focusWidth === undefined
+            ? "w-full"
+            : // Anchored to the slot's right edge so that growing is growing
+              // leftwards — over the project nav, which is the neighbour
+              // that gave up the width in the first place. Absolute rather
+              // than a width on the slot, so nothing beside it moves; it is
+              // also what the offer panel hangs off, which keeps the panel
+              // under the box it grew out of.
+              cn(
+                "absolute top-1/2 right-0 -translate-y-1/2 transition-[width] duration-150",
+                focused
+                  ? // Opaque and above: it is standing on the nav's text.
+                    cn("z-30 rounded-control bg-background", focusWidth)
+                  : "w-full",
+              )
+        }
+        inputProps={{
+          name: "q",
+          "aria-label": "Search this project",
+          placeholder: "Search…",
+          autoFocus,
+          "aria-keyshortcuts": "/",
+          "aria-invalid": invalid || undefined,
+          "aria-describedby": describedBy,
+          onFocus: () => setFocused(true),
+          onBlur: () => setFocused(false),
+          onSelect: readCaret,
+          onKeyUp: readCaret,
+          onClick: readCaret,
+          onKeyDown: (e) => {
+            if (
+              e.key !== "Enter" ||
+              e.nativeEvent.isComposing ||
+              e.keyCode === 229
+            ) {
+              return;
             }
-            aria-autocomplete="list"
-            aria-busy={waiting || undefined}
-            aria-invalid={invalid || undefined}
-            aria-describedby={describedBy}
-            value={value}
-            onValueChange={(next) => {
-              setValue(next);
-              setDismissed(false);
-              setHighlight(NONE);
-            }}
-            onCaretChange={setPosition}
-            render={(text) =>
-              highlightParts(text, parseSearchQuery(text), known)
-            }
-            onKeyDown={onKeyDown}
-            onFocus={() => {
-              setFocused(true);
-              setDismissed(false);
-            }}
-            onBlur={(e) => {
-              // Clicking a row blurs the input before the click lands; the
-              // listbox's own mousedown guard covers the pointer, this covers
-              // a focus that really did move into it.
-              if (list.current?.contains(e.relatedTarget)) return;
-              setFocused(false);
-            }}
-            aria-label="Search this project"
-            placeholder="Search…"
-            padding="pl-7"
-          />
-        </form>
-        {open && (
-          <div
-            ref={list}
-            id={listId}
-            role="listbox"
-            aria-label="Search suggestions"
-            // Without this, pressing on a row blurs the input first and the
-            // listbox is gone before the click arrives.
-            onMouseDown={(e) => e.preventDefault()}
-            style={{ maxHeight }}
-            className={cn(
-              "absolute top-full z-50 mt-1 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
-              listAlign === "start"
-                ? // The box starts at the edge of the screen, so the panel
-                  // takes its width and stops. A floor still applies, because
-                  // the narrowest phone squeezes the box down to ~250px and a
-                  // title has to survive (T-215) — but the floor stops at the
-                  // viewport, since a `min-width` beats a `max-width` and a
-                  // flat 20rem would push the page 16px wider at 320.
-                  "left-0 w-full min-w-[min(20rem,calc(100vw-2rem))]"
-                : // Centred on the box, not on the caret: the panel following
-                  // the caret across the line made the reader chase it (T-268).
-                  "left-1/2 w-[28rem] -translate-x-1/2",
-            )}
-          >
-            {rows.map((row, idx) => {
-              if (row.kind === "search") {
-                // With nothing typed there is no search to offer, so the row
-                // stops pretending to be one: `Search for “”` searched for
-                // nothing, while the page it leads to is a real destination —
-                // the syntax help and the domain chips live there.
-                const blank = query === "";
-                return (
-                  <Link
-                    key="search"
-                    to="/projects/$slug/search"
-                    params={{ slug }}
-                    search={blank ? {} : { q: query }}
-                    {...optionProps(idx)}
-                    onMouseMove={() => setHighlight(idx)}
-                    onClick={(e) => {
-                      // The blank row leads to the search page rather than to a
-                      // search, so there is nothing to remember.
-                      if (!blank) history.record(query);
-                      closeUnlessNewTab(e);
-                    }}
-                  >
-                    {blank ? (
-                      <Glyph>
-                        <ArrowRightIcon
-                          className="size-3.5 text-muted-foreground"
-                          aria-hidden
-                        />
-                      </Glyph>
-                    ) : (
-                      <Glyph>
-                        <SearchIcon
-                          className="size-3.5 text-muted-foreground"
-                          aria-hidden
-                        />
-                      </Glyph>
-                    )}
-                    <span className="truncate">
-                      {blank ? (
-                        "search page"
-                      ) : (
-                        <>
-                          Search for “{query}”
-                          {elsewhere && ` in ${project.data?.name ?? slug}`}
-                        </>
-                      )}
-                    </span>
-                  </Link>
-                );
-              }
-              if (row.kind === "completion") {
-                const Icon = COMPLETION_ICON[row.row.icon];
-                return (
-                  // A button, not a link: it goes nowhere, it rewrites the
-                  // query in place. Focus stays in the input regardless — the
-                  // listbox cancels the mousedown that would move it.
-                  <button
-                    type="button"
-                    key={row.row.key}
-                    {...optionProps(idx)}
-                    onMouseMove={() => setHighlight(idx)}
-                    onClick={() => accept(row.row.apply)}
-                  >
-                    {/* A person is drawn as in every user picker (T-677),
-                        login first: it is the value being completed. The
-                        avatar takes the glyph column the other rows' icons
-                        sit in, which is sized for it (Glyph). */}
-                    {row.row.user === undefined ? (
-                      <Glyph>
-                        <Icon
-                          className="size-3.5 text-muted-foreground"
-                          aria-hidden
-                        />
-                      </Glyph>
-                    ) : (
-                      <span className={AVATAR_SLOT}>
-                        <UserAvatar user={row.row.user} badge aria-hidden />
-                      </span>
-                    )}
-                    {row.row.label !== undefined ? (
-                      <LabelChip label={row.row.label} />
-                    ) : row.row.status !== undefined ? (
-                      <StatusPill status={row.row.status} />
-                    ) : (
-                      <span
-                        className={cn(
-                          row.row.user === undefined
-                            ? "truncate font-mono text-xs"
-                            : "shrink-0",
-                        )}
-                      >
-                        {row.row.text}
-                      </span>
-                    )}
-                    {row.row.hint !== undefined && (
-                      <span
-                        className={cn(
-                          "truncate text-muted-foreground",
-                          row.row.user === undefined && "text-xs",
-                        )}
-                      >
-                        {row.row.hint}
-                      </span>
-                    )}
-                  </button>
-                );
-              }
-              if (row.kind === "history") {
-                // The only row whose `role="option"` sits on a container rather
-                // than on the link: a delete button cannot live inside an `<a>`,
-                // so the two go side by side and the link takes the rest of the
-                // line so that nothing is lost from the click target.
-                const props = optionProps(idx);
-                return (
-                  <div
-                    key={`history:${row.q}`}
-                    {...props}
-                    // Both are already in `optionProps`; the linter cannot see
-                    // them inside a spread and reads this as an inert div.
-                    role="option"
-                    tabIndex={-1}
-                    className={cn(props.className, "group")}
-                    onMouseMove={() => setHighlight(idx)}
-                  >
-                    <Link
-                      to="/projects/$slug/search"
-                      params={{ slug }}
-                      search={{ q: row.q }}
-                      tabIndex={-1}
-                      className="flex min-w-0 flex-1 items-center gap-2"
-                      onClick={(e) => {
-                        history.record(row.q);
-                        closeUnlessNewTab(e);
-                      }}
-                    >
-                      <Glyph>
-                        <ClockIcon
-                          className="size-3.5 text-muted-foreground"
-                          aria-hidden
-                        />
-                      </Glyph>
-                      <span className="truncate">
-                        {highlightParts(row.q, parseSearchQuery(row.q), known)}
-                      </span>
-                    </Link>
-                    <button
-                      type="button"
-                      // Focus stays in the input, as everywhere else in the panel.
-                      tabIndex={-1}
-                      aria-label={`Forget “${row.q}”`}
-                      className={cn(
-                        "shrink-0 rounded-sm p-0.5 text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
-                        idx === hl && "opacity-100",
-                      )}
-                      onClick={() => history.forget(row.q)}
-                    >
-                      <XIcon className="size-3.5" aria-hidden />
-                    </button>
-                  </div>
-                );
-              }
-              if (row.kind === "project") {
-                return (
-                  <Link
-                    key="project"
-                    to="/projects/$slug"
-                    params={{ slug: row.slug }}
-                    {...optionProps(idx)}
-                    onMouseMove={() => setHighlight(idx)}
-                    onClick={closeUnlessNewTab}
-                  >
-                    <JumpRowBody
-                      icon={
-                        <Glyph>
-                          <ArrowRightIcon
-                            className="size-3.5 text-muted-foreground"
-                            aria-hidden
-                          />
-                        </Glyph>
-                      }
-                      spelled={row.spelled}
-                      // What the reader typed, not a card: nothing to take
-                      // apart, so the whole token is the one elidable run.
-                      identity={null}
-                      refClassName="text-muted-foreground"
-                      lead={
-                        <ProjectIcon
-                          project={{
-                            slug: row.slug,
-                            name: row.name,
-                            prefix: row.prefix,
-                            icon_url: row.icon_url,
-                          }}
-                          className="size-5 shrink-0"
-                          aria-hidden
-                        />
-                      }
-                      text={row.name}
-                    />
-                  </Link>
-                );
-              }
-              if (row.kind === "project-issue") {
-                return (
-                  <Link
-                    key={`peek-${row.number}`}
-                    to="/projects/$slug/issues/$number"
-                    params={{ slug: row.slug, number: String(row.number) }}
-                    state={returnState}
-                    {...optionProps(idx)}
-                    onMouseMove={() => setHighlight(idx)}
-                    onClick={closeUnlessNewTab}
-                  >
-                    <JumpRowBody
-                      icon={
-                        /* Where the arrow goes on every other row. These cards
-                           are offered rather than asked for, and the empty
-                           column is what says so — one indent, no new glyph. */
-                        <span className={AVATAR_SLOT} aria-hidden />
-                      }
-                      spelled={row.spelled}
-                      // The reader's own spelling carried on, not a format:
-                      // `accel/1` and `ACC-1` are both this row's token.
-                      identity={null}
-                      refClassName="text-muted-foreground"
-                      text={<IssueTitle item={row.item} />}
-                      trailing={<StatusPill status={row.item.status} />}
-                    />
-                  </Link>
-                );
-              }
-              if (row.kind === "external") {
-                return (
-                  // A new tab: this one leaves todou, unlike an autolink
-                  // clicked mid-sentence, which the reader is reading through.
-                  <a
-                    key="external"
-                    href={row.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    {...optionProps(idx)}
-                    onMouseMove={() => setHighlight(idx)}
-                    onClick={closeUnlessNewTab}
-                  >
-                    <JumpRowBody
-                      icon={
-                        <Glyph>
-                          <ExternalLinkIcon
-                            className="size-3.5 text-muted-foreground"
-                            aria-hidden
-                          />
-                        </Glyph>
-                      }
-                      spelled={row.text}
-                      // An autolink's own text, which todou never spelled.
-                      identity={null}
-                      text={row.host}
-                      textClassName="text-muted-foreground"
-                    />
-                  </a>
-                );
-              }
-              if (row.state === "pending") {
-                return (
-                  // Not a link: there is nothing to point at yet. Enter still
-                  // reaches the card, by waiting for the lookup it is on.
-                  <div
-                    key="card"
-                    id={optionId(idx)}
-                    role="option"
-                    tabIndex={-1}
-                    aria-selected={idx === hl}
-                    aria-label="Looking up the card…"
-                    className={cn(OPTION, idx === hl && "bg-accent")}
-                  >
-                    <Glyph>
-                      <ArrowRightIcon
-                        className="size-3.5 text-muted-foreground"
-                        aria-hidden
-                      />
-                    </Glyph>
-                    <Skeleton className="h-4 w-40" />
-                  </div>
-                );
-              }
-              return (
-                <Link
-                  key="card"
-                  to="/projects/$slug/issues/$number"
-                  params={{ slug: row.slug, number: String(row.number) }}
-                  hash={
-                    row.commentId === undefined
-                      ? undefined
-                      : commentAnchor(row.commentId)
-                  }
-                  hashScrollIntoView={false}
-                  state={returnState}
-                  {...optionProps(idx)}
-                  onMouseMove={() => setHighlight(idx)}
-                  onClick={closeUnlessNewTab}
-                >
-                  <JumpRowBody
-                    icon={
-                      <Glyph>
-                        <ArrowRightIcon
-                          className="size-3.5 text-muted-foreground"
-                          aria-hidden
-                        />
-                      </Glyph>
-                    }
-                    spelled={row.spelled}
-                    identity={{
-                      slug: row.slug,
-                      prefix: row.prefix,
-                      number: row.number,
-                      ...(row.commentId === undefined
-                        ? {}
-                        : { commentId: row.commentId }),
-                    }}
-                    refClassName="text-muted-foreground"
-                    text={<IssueTitle item={row.item} />}
-                    author={row.commentBy}
-                    trailing={<StatusPill status={row.item.status} />}
-                  />
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </search>
+            plain.current =
+              !open ||
+              slot.current?.querySelector(
+                '[data-submit-row][aria-selected="true"]',
+              ) != null;
+          },
+        }}
+      />
+      {/* Where `/` would take the reader, on a box nobody is in. A touch
+          screen has no `/` to press. */}
+      {!focused && value === "" && (
+        <Kbd
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 touch:hidden"
+        >
+          /
+        </Kbd>
+      )}
+    </div>
   );
 }

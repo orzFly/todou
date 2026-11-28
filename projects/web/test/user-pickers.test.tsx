@@ -3,11 +3,9 @@ import { EditorState } from "@codemirror/state";
 import { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { IssueCounts, Me, Member } from "@todou/shared";
-import { parseSearchQuery } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentsQuery, membersQuery, meQuery } from "../src/api/queries.ts";
 import { FilterBar } from "../src/components/issue/filter-bar.tsx";
-import { qualifierValueSource } from "../src/components/search/suggestions.ts";
 import { AVATAR_SLOT } from "../src/components/shared/user-picker.tsx";
 import { commandCompletionSource } from "../src/lib/editor/slash-commands.ts";
 import {
@@ -214,25 +212,6 @@ describe("person rows in text completion (T-677)", () => {
       ["user", 1, "User"],
       ["alice", 2, "Alice Example"],
       ["bot-one", 3, "Bot One"],
-    ]);
-  });
-
-  it("carries the person on the search box's assignee values", () => {
-    const query = "assignee:al";
-    const { rows } = qualifierValueSource({
-      assignee: MEMBERS.map((m) => ({
-        value: m.user.login,
-        hint: m.user.display_name,
-        user: m.user,
-      })),
-    })({
-      slug: "todou",
-      query,
-      caret: query.length,
-      parts: parseSearchQuery(query),
-    });
-    expect(rows.map((r) => [r.text, r.hint, r.user?.id])).toEqual([
-      ["alice", "Alice Example", 2],
     ]);
   });
 });

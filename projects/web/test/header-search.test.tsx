@@ -24,7 +24,7 @@ import type {
   Project,
   ReferenceDirectory,
 } from "@todou/shared";
-import { SEARCH_QUALIFIERS } from "@todou/shared";
+import { SEARCH_SCHEMA } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   api,
@@ -38,8 +38,8 @@ import {
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
 import { searchIssueRefQuery as issueRefQuery } from "../src/api/search-refs.ts";
+import { historyKey } from "../src/components/search-box.tsx";
 import { AppShell } from "../src/components/shell.tsx";
-import { historyKey, readHistory } from "../src/lib/search-history.ts";
 import { SearchResults } from "../src/pages/search.tsx";
 import { testQueryClient } from "./render.tsx";
 import {
@@ -213,7 +213,9 @@ describe("the header's search, wide", () => {
     await view.findByLabelText("Search this project");
 
     const row = rows(view).first;
-    const search = row.querySelector("search") as Element;
+    // The box's slot: the element the row lays out, the box floating in it.
+    const search = (row.querySelector("search") as Element)
+      .parentElement as Element;
     // A sibling of the tabs, which is what lets the row's flex give way in
     // order: the box grows into what the tabs leave.
     expect(search.parentElement).toBe(row);
@@ -528,11 +530,10 @@ describe("the header's search, a migrated comment (T-434)", () => {
 });
 
 /**
- * The control inside the box's slot — the element that floats. Tailwind is not
- * loaded here, so the width is only readable as a class name.
+ * The box inside its slot — the element that floats. Tailwind is not loaded
+ * here, so the width is only readable as a class name.
  */
-const control = (input: Element) =>
-  input.closest("search")?.firstElementChild as HTMLElement;
+const control = (input: Element) => input.closest("search") as HTMLElement;
 
 describe("the search box's focus float (T-454)", () => {
   it("borrows the nav's width while it is being typed into, and gives it back", async () => {
@@ -612,22 +613,30 @@ describe("the header's project row", () => {
   });
 });
 
-const NOW = Date.parse("2026-09-05T12:00:00Z");
-
+/**
+ * Seeded relative to now: the history keeps 90 days, and a fixed date would
+ * age out of it and leave every case below with nothing to offer.
+ */
 function seedHistory(entries: string[], slug = "todou") {
+  const now = Date.now();
   localStorage.setItem(
     historyKey(me.id),
     JSON.stringify({
-      [slug]: entries.map((q, i) => ({ q, t: NOW - i * 1000 })),
+      [slug]: entries.map((q, i) => ({ q, t: now - i * 1000 })),
     }),
   );
+}
+
+/** Every project's history as stored, in the format the box writes. */
+function readHistory(userId: number): Record<string, { q: string }[]> {
+  return JSON.parse(localStorage.getItem(historyKey(userId)) ?? "{}");
 }
 
 const remembered = (slug = "todou") =>
   (readHistory(me.id)[slug] ?? []).map((e) => e.q);
 
 /** The qualifier keys the box always offers, and `orderRows`' own limit. */
-const KEY_COUNT = Object.keys(SEARCH_QUALIFIERS).length;
+const KEY_COUNT = SEARCH_SCHEMA.keys.length;
 const ROW_BUDGET = 20;
 
 type View = { container: HTMLElement };
@@ -636,7 +645,9 @@ const options = (view: View) => [
   ...(panel(view)?.querySelectorAll('[role="option"]') ?? []),
 ];
 const historyRows = (view: View) =>
-  options(view).filter((o) => o.querySelector('button[aria-label^="Forget"]'));
+  options(view).filter((o) =>
+    o.querySelector('[data-slot="query-history-remove"]'),
+  );
 
 async function openedOn(entries: string[]) {
   seedHistory(entries);
@@ -712,7 +723,9 @@ describe("the search box's own history", () => {
   it("runs the remembered search, and moves that entry back to the front", async () => {
     const { view } = await openedOn(["bug", "spec"]);
 
-    const link = historyRows(view)[1]?.querySelector("a") as HTMLAnchorElement;
+    // The row is the link, so a modified click opens the results elsewhere.
+    const link = historyRows(view)[1] as HTMLAnchorElement;
+    expect(link.tagName).toBe("A");
     expect(link.getAttribute("href")).toBe("/projects/todou/search?q=spec");
     expect(link.textContent).toBe("spec");
     expect(link.textContent).not.toMatch(/#comment-|· by|comment by/);
@@ -752,8 +765,8 @@ describe("the search box's own history", () => {
     const { view } = await openedOn(["bug", "spec"]);
 
     const button = historyRows(view)[0]?.querySelector(
-      "button",
-    ) as HTMLButtonElement;
+      '[data-slot="query-history-remove"]',
+    ) as HTMLElement;
     fireEvent.click(button);
 
     await waitFor(() => expect(historyRows(view)).toHaveLength(1));
@@ -766,7 +779,7 @@ describe("the search box's own history", () => {
     const input = await view.findByLabelText("Search this project");
     fireEvent.focusIn(input);
     fireEvent.change(input, { target: { value: "全文搜索" } });
-    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(remembered()).toEqual(["全文搜索"]));
   });
@@ -778,7 +791,7 @@ describe("the search box's own history", () => {
     const input = await view.findByLabelText("Search this project");
     fireEvent.focusIn(input);
     fireEvent.change(input, { target: { value: "T-141" } });
-    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() =>
       expect(view.router.state.location.pathname).toBe(

@@ -56,6 +56,11 @@ export function withDomains(q: string, domains: SearchDomain[]): string {
   return rest === "" ? is : `${rest} ${is}`;
 }
 
+/** Whether the query carries a qualifier, which a jump would drop. */
+export function hasQualifier(q: string): boolean {
+  return queryFilters(parseQuery(SEARCH_SCHEMA, q)).length > 0;
+}
+
 /**
  * `q` with the value a diagnostic names replaced by its suggestion, or null
  * when there is nothing to put where: no suggestion, a diagnostic about a
