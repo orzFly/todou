@@ -33,6 +33,7 @@ import type Markdown from "react-markdown";
 import { CompareViewerProvider } from "@/components/issue/attachment-markdown.tsx";
 import {
   COMMENT_HEADER_ACTION,
+  COMMENT_HEADER_ANCHOR,
   COMMENT_HEADER_ROW,
   COMMENT_SURFACE,
   CommentHeaderIdentity,
@@ -1252,7 +1253,7 @@ const AnnotationChip = memo(function AnnotationChip({
                 <CommentHeaderLine>
                   <CommentHeaderIdentity>
                     <UserChip user={item.item.author} />
-                    <span>
+                    <span className={COMMENT_HEADER_ANCHOR}>
                       {locate(item)} · v{item.item.anchor.version}
                     </span>
                   </CommentHeaderIdentity>

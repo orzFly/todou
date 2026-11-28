@@ -432,6 +432,7 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
       identity: ["Alice", "v2"],
       actions: [row.querySelector("button")],
       spacer: true,
+      anchor: true,
     });
   });
 
@@ -444,7 +445,11 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
     // No button left, and the `resolved` mark stays on the text line beside
     // the time rather than taking the button's column.
     expect(row.querySelector("button")).toBeNull();
-    expectSplitHeader(row, { identity: ["Alice", "v2"], spacer: true });
+    expectSplitHeader(row, {
+      identity: ["Alice", "v2"],
+      spacer: true,
+      anchor: true,
+    });
     expectOnTextLine(row, "resolved");
   });
 
@@ -455,10 +460,14 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
       .parentElement as HTMLElement;
     const row = headerRowOf(strip);
     expectSplitHeader(row, {
-      identity: ["Alice", "v1", "outdated"],
+      identity: ["Alice", "v1"],
       actions: [row.querySelector("button")],
       spacer: true,
+      anchor: true,
     });
+    // Beside the author's group, not in it: one word that cannot shrink
+    // would take its width from the anchor (T-826).
+    expectOnTextLine(row, "outdated");
   });
 
   it("splits the rendered document's published bubble", async () => {
@@ -481,6 +490,7 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
         ),
       ],
       spacer: true,
+      anchor: true,
     });
 
     fireEvent.keyDown(popover, { key: "Escape" });
@@ -502,10 +512,10 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
       return els[0] as HTMLElement;
     });
     // Here `resolved` is a mark beside the author rather than a control, so
-    // it belongs to the first line and the second column collapses.
-    expectSplitHeader(headerRowOf(card), {
-      identity: ["Alice", "v2", "resolved"],
-    });
+    // it belongs to the text line and the second column collapses.
+    const row = headerRowOf(card);
+    expectSplitHeader(row, { identity: ["Alice", "v2"], anchor: true });
+    expectOnTextLine(row, "resolved");
   });
 
   it("splits a single version's source annotation the same way", async () => {
@@ -521,7 +531,10 @@ describe("spec annotation headers split in two below sm (T-445)", () => {
       expect(els.length).toBeGreaterThan(0);
       return els[0] as HTMLElement;
     });
-    expectSplitHeader(headerRowOf(card), { identity: ["Alice", "v1"] });
+    expectSplitHeader(headerRowOf(card), {
+      identity: ["Alice", "v1"],
+      anchor: true,
+    });
   });
 });
 

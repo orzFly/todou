@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import {
   COMMENT_HEADER_ACTION,
+  COMMENT_HEADER_ANCHOR,
   COMMENT_HEADER_IDENTITY,
   COMMENT_HEADER_LINE,
   COMMENT_HEADER_ROW,
@@ -137,6 +138,8 @@ export function expectSplitHeader(
     actions?: Array<Element | null | undefined>;
     /** Whether this row is one of the two carrying a spacer span. */
     spacer?: boolean;
+    /** Whether the identity group holds a spec annotation's anchor. */
+    anchor?: true;
   },
 ) {
   expectClasses(row, COMMENT_HEADER_ROW, "the header row");
@@ -151,8 +154,19 @@ export function expectSplitHeader(
     expect(group.textContent).toContain(text);
   }
   // The meta is what wraps when the author and the time do not fit side by
-  // side, so it is the one thing that must stay out of the author's group.
+  // side, so it stays out of the author's group. A state mark stays out too,
+  // which the suites check with `expectOnTextLine`.
   expect(group.querySelector("[data-testid='comment-header-meta']")).toBeNull();
+
+  if (expected.anchor) {
+    const anchors = [...group.children].filter((child) =>
+      /· v\d/.test(child.textContent ?? ""),
+    );
+    expect(anchors, "expected exactly one anchor in the group").toHaveLength(1);
+    // What keeps the anchor on one line while the name still has letters to
+    // give (T-826).
+    expectClasses(anchors[0] as Element, COMMENT_HEADER_ANCHOR, "the anchor");
+  }
 
   for (const action of expected.actions ?? []) {
     expect(action, "an expected action is not rendered").toBeTruthy();

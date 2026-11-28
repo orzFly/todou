@@ -78,6 +78,7 @@ import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
 import {
   COMMENT_HEADER_ACTION,
+  COMMENT_HEADER_ANCHOR,
   COMMENT_HEADER_ROW,
   COMMENT_SURFACE,
   CommentHeaderIdentity,
@@ -2317,15 +2318,15 @@ function UnplacedComment({
         <CommentHeaderLine>
           <CommentHeaderIdentity>
             <UserChip user={item.author} />
-            <span>
+            <span className={COMMENT_HEADER_ANCHOR}>
               {formatAnchorRange(item.anchor)} · v{item.anchor.version}
             </span>
-            {item.outdated && (
-              <span className="self-center rounded-full border px-1.5 text-muted-foreground">
-                outdated
-              </span>
-            )}
           </CommentHeaderIdentity>
+          {item.outdated && (
+            <span className="self-center rounded-full border px-1.5 text-muted-foreground">
+              outdated
+            </span>
+          )}
           {/* Stays, against every instinct to sweep it up: it is what pushes
               the meta right on the desktop row, and replacing it with an
               `ml-auto` on the meta itself would cost the row one `gap-2` and
@@ -2986,13 +2987,13 @@ function DiffAnnotation({
         <CommentHeaderLine>
           <CommentHeaderIdentity>
             <UserChip user={item.author} />
-            <span>
+            <span className={COMMENT_HEADER_ANCHOR}>
               {formatAnchorRange(item.anchor)} · v{item.anchor.version}
             </span>
-            {item.resolved !== null && (
-              <span className="text-success">resolved</span>
-            )}
           </CommentHeaderIdentity>
+          {item.resolved !== null && (
+            <span className="text-success">resolved</span>
+          )}
           <CommentHeaderMeta
             className="ml-auto"
             slug={slug}

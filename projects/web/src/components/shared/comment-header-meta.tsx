@@ -53,10 +53,34 @@ export const COMMENT_HEADER_ACTION =
  * the author and the time fit side by side — and move only the time when
  * they do not (T-696). It does not wrap inside: what runs out of room is the
  * badge and the name, which truncate, so the author never takes two lines
- * and pushes the time to a third.
+ * and pushes the time to a third. An anchor holds its line by
+ * `COMMENT_HEADER_ANCHOR`.
+ *
+ * A state mark — `outdated`, `resolved` — sits beside the group, never in
+ * it. It is one word that cannot shrink, so inside the group it would take
+ * its width from the anchor, and an `outdated` comment at 320px would run
+ * the header 12px into its Resolve button (T-826). Beside the group it
+ * wraps the way the time does.
  */
 export const COMMENT_HEADER_IDENTITY =
   "contents max-sm:flex max-sm:min-w-0 max-sm:items-baseline max-sm:gap-x-2";
+
+/**
+ * A spec annotation's anchor — `file · v1`, `L3–8 · v2` — inside the
+ * identity group.
+ *
+ * Unshrinkable, so the author's name is what gives way: an ordinary flex
+ * item is squeezed in proportion to its width, and an anchor allowed to
+ * wrap at its spaces stood `file`, `·` and `v1` on three lines of their own
+ * while the name beside it still had letters to spare (T-826).
+ *
+ * The cap is the last resort, for when the name is down to its avatar and
+ * the anchor still does not fit: it wraps in the width that is left instead
+ * of running over the Resolve button. 1.75rem is that avatar — the chip's
+ * `min-w-5` — plus the group's `gap-x-2`, and has to move with either.
+ */
+export const COMMENT_HEADER_ANCHOR =
+  "max-sm:shrink-0 max-sm:max-w-[calc(100%-1.75rem)]";
 
 export function CommentHeaderIdentity({ children }: { children: ReactNode }) {
   return <span className={COMMENT_HEADER_IDENTITY}>{children}</span>;

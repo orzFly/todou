@@ -416,6 +416,17 @@ export async function probeSplitHeader(options = {}) {
     const timeRect = time?.getBoundingClientRect() ?? null;
     const identityRect =
       identity && visible(identity) ? identity.getBoundingClientRect() : null;
+    // What the line lays out between the author's group and the meta — a
+    // spec annotation's `outdated` mark (T-826) — comes before the time on
+    // the author's line, so it is part of what has to fit.
+    let between = 0;
+    for (
+      let el = identity?.nextElementSibling ?? null;
+      el && el !== meta;
+      el = el.nextElementSibling
+    ) {
+      if (visible(el)) between += 8 + el.getBoundingClientRect().width;
+    }
     // Whatever shares the time's line inside the line box — the meta itself,
     // and a `resolved` or `sending…` mark after it — so "right-aligned" is
     // read off the last of them rather than off the time alone.
@@ -468,6 +479,7 @@ export async function probeSplitHeader(options = {}) {
       lineWidth: round(lineBox.right - lineBox.left),
       lineRight: round(lineBox.right),
       identityWidth: identityRect ? round(identityRect.width) : null,
+      betweenWidth: round(between),
       metaWidth: round(metaNeeds),
       idShown: idRect !== null,
       idText: token?.textContent ?? null,
@@ -752,12 +764,15 @@ export function assessSplitHeaders(measured, width, baseline = null) {
       // Strict by an epsilon: the engine wraps a pair that misses by a
       // fraction of a pixel, and so must this.
       row.wrapped &&
-      row.identityWidth + COLUMN_GAP + row.metaWidth <= row.lineWidth - EPSILON
+      row.identityWidth + row.betweenWidth + COLUMN_GAP + row.metaWidth <=
+        row.lineWidth - EPSILON
     ) {
       note(
         3,
         row.id,
-        `time wrapped though ${row.identityWidth} + ${COLUMN_GAP} + ${row.metaWidth} fits ${row.lineWidth}`,
+        `time wrapped though ${row.identityWidth}` +
+          (row.betweenWidth > 0 ? ` + ${row.betweenWidth}` : "") +
+          ` + ${COLUMN_GAP} + ${row.metaWidth} fits ${row.lineWidth}`,
       );
     }
 
