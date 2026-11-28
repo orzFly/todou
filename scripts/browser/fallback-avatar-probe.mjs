@@ -7,6 +7,10 @@
  * the requirement is that the letters scale with the icon, so a glyph that
  * only fits at the size its surface happens to draw it has not met it. Each
  * fallback is then graded as the `generator` the account is set to.
+ *
+ * The fallback is `AvatarFallback` itself, carrying the generator, and the
+ * letters are its glyph, which @orz/ui fits and centres (UI-276); a colorful
+ * fallback's gradient is the element's own background.
  */
 export async function probeFallbacks({
   shape,
@@ -31,44 +35,39 @@ export async function probeFallbacks({
   ].filter((avatar) =>
     avatar.querySelector(':scope > [data-slot="avatar-fallback"]'),
   );
+  const GLYPH = '[data-slot="avatar-fallback-glyph"]';
+  const fallbackOf = (avatar) =>
+    avatar.querySelector(':scope > [data-slot="avatar-fallback"]');
   const glyphs = () =>
-    avatars.flatMap((avatar) => [
-      ...avatar.querySelectorAll(
-        '[data-slot="avatar-fallback"] [data-glyph-text]',
-      ),
-    ]);
+    avatars.flatMap((avatar) => [...avatar.querySelectorAll(GLYPH)]);
+  const paint = (avatar, colour) => {
+    const fallback = fallbackOf(avatar);
+    if (fallback?.style.backgroundImage) {
+      fallback.style.backgroundImage = `linear-gradient(to bottom right, ${colour}, ${colour})`;
+    }
+  };
 
   if (faults.unfit) {
     // A stylesheet rather than the element's own style: the glyph refits
     // whenever its box resizes, which the forced sizes below make it do.
     const style = document.createElement("style");
-    style.textContent =
-      "[data-generator] > :has(> [data-glyph-text]) { transform: none !important; }";
+    style.textContent = `${GLYPH} { scale: none !important; }`;
     document.head.append(style);
   }
   if (faults.lightTint) {
-    for (const avatar of avatars) {
-      for (const stop of avatar.querySelectorAll("stop")) {
-        stop.setAttribute("stop-color", "#8ec9ff");
-      }
-    }
+    for (const avatar of avatars) paint(avatar, "#8ec9ff");
   }
-  if (faults.driftOne) {
-    for (const stop of avatars[0]?.querySelectorAll("stop") ?? []) {
-      stop.setAttribute("stop-color", "#2f3a4f");
-    }
-  }
+  if (faults.driftOne && avatars[0]) paint(avatars[0], "#2f3a4f");
   if (faults.inheritCentre) {
+    // A pixel off the centre: still inside the box, which is the case the
+    // centring check exists for, and still wrong.
     const style = document.createElement("style");
-    style.textContent =
-      "[data-generator] > :has(> [data-glyph-text]) { text-align: center !important; }";
+    style.textContent = `${GLYPH} { translate: calc(-50% + 1px) -50% !important; }`;
     document.head.append(style);
   }
   if (faults.relabel) {
     for (const avatar of avatars) {
-      avatar
-        .querySelector("[data-generator]")
-        ?.setAttribute("data-generator", "relabelled");
+      fallbackOf(avatar)?.setAttribute("data-generator", "relabelled");
     }
   }
   if (faults.whiteText) {
@@ -110,21 +109,21 @@ export async function probeFallbacks({
    */
   const glyphRect = (fallback) => {
     const range = document.createRange();
-    range.selectNodeContents(
-      fallback.querySelector("[data-glyph-text]") ?? fallback,
-    );
+    range.selectNodeContents(fallback.querySelector(GLYPH) ?? fallback);
     return range.getBoundingClientRect();
   };
 
   for (const avatar of avatars) {
-    const fallback = avatar.querySelector(
-      ':scope > [data-slot="avatar-fallback"]',
-    );
-    // A card or a breadcrumb links to its project; the settings editor sits
-    // on that project's own page. People are keyed by what they draw.
-    const href =
-      avatar.closest("a[href^='/projects/']")?.getAttribute("href") ??
-      location.pathname;
+    const fallback = fallbackOf(avatar);
+    // A breadcrumb links to its project around the icon, a card from its
+    // title beside it; the settings editor sits on that project's own page.
+    // People are keyed by what they draw.
+    const link =
+      avatar.closest("a[href^='/projects/']") ??
+      avatar
+        .closest('[data-slot="card"]')
+        ?.querySelector("a[href^='/projects/']");
+    const href = link?.getAttribute("href") ?? location.pathname;
     const slug =
       shape === "square"
         ? (/^\/projects\/([^/?#]+)/.exec(href)?.[1] ?? null)
@@ -138,10 +137,7 @@ export async function probeFallbacks({
       slug,
       key,
       glyph: fallback.textContent,
-      generator:
-        fallback
-          .querySelector("[data-generator]")
-          ?.getAttribute("data-generator") ?? null,
+      generator: fallback.getAttribute("data-generator"),
       drawnAt: avatar.getBoundingClientRect().width,
       sizes: [],
       tint: null,
@@ -191,9 +187,7 @@ export async function probeFallbacks({
             glyph.width,
             glyph.height,
           ].map((v) => +v.toFixed(2)),
-          fit:
-            fallback.querySelector("[data-glyph-text]")?.parentElement?.style
-              .transform ?? null,
+          fit: fallback.querySelector(GLYPH)?.style.scale ?? null,
         });
       }
       // Inside the box is not enough: a glyph pushed against one side by the
@@ -219,10 +213,11 @@ export async function probeFallbacks({
         seen: entry.generator,
       });
     }
-    const stops = [...fallback.querySelectorAll("stop")].map((stop) =>
-      parseRgb(getComputedStyle(stop).stopColor),
-    );
-    const text = fallback.querySelector("[data-glyph-text]");
+    // The gradient's two ends, as the browser resolves the background.
+    const stops = [
+      ...getComputedStyle(fallback).backgroundImage.matchAll(/rgba?\([^)]*\)/g),
+    ].map(([colour]) => parseRgb(colour));
+    const text = fallback.querySelector(GLYPH);
     const fill = text ? getComputedStyle(text).color : null;
     if (generator === "colorful_text") {
       const rgb = fill ? parseRgb(fill) : null;
@@ -245,7 +240,6 @@ export async function probeFallbacks({
       const background = getComputedStyle(fallback).backgroundColor;
       if (
         stops.length > 0 ||
-        fallback.querySelector("svg rect") ||
         fill !== mutedForeground ||
         background !== muted
       ) {

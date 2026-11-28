@@ -1,5 +1,5 @@
 import { cn } from "@orz/ui";
-import { Avatar, AvatarFallback, AvatarImage } from "@orz/ui/components/avatar";
+import { Avatar, AvatarImage } from "@orz/ui/components/avatar";
 import { Button } from "@orz/ui/components/button";
 import {
   AVATAR_CONTENT_TYPES,
@@ -164,13 +164,9 @@ export function AvatarEditor({
         if (file) void handleFile(file);
       }}
     >
-      {/* `overflow-hidden` rounds a square gradient to the box's corners;
-          the text on it fits itself to the box. */}
-      <Avatar size="lg" shape={shape} className="overflow-hidden">
+      <Avatar size="lg" shape={shape}>
         {subject.imageUrl && <AvatarImage src={subject.imageUrl} alt="" />}
-        <AvatarFallback>
-          {fallback ?? userAvatarFallback(subject.name)}
-        </AvatarFallback>
+        {fallback ?? userAvatarFallback(subject.name)}
       </Avatar>
       <div className="flex flex-col gap-1">
         <div className="flex gap-2">

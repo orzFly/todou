@@ -1,4 +1,4 @@
-import { Avatar, AvatarFallback } from "@orz/ui/components/avatar";
+import { Avatar } from "@orz/ui/components/avatar";
 import { Button } from "@orz/ui/components/button";
 import { Input } from "@orz/ui/components/input";
 import { Label } from "@orz/ui/components/label";
@@ -383,11 +383,9 @@ function GeneratorSample({
       aria-hidden="true"
       data-generator-sample={generator}
       shape={shape}
-      className="inline-flex size-5 overflow-hidden align-middle"
+      className="inline-flex size-5 align-middle"
     >
-      <AvatarFallback>
-        <FallbackGlyph text={text} generator={generator} seed={seed} />
-      </AvatarFallback>
+      <FallbackGlyph text={text} generator={generator} seed={seed} />
     </Avatar>
   );
 }

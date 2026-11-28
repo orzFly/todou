@@ -19,6 +19,11 @@ import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => vi.restoreAllMocks());
 
+/** Whether a fallback is drawn on a gradient rather than the theme's square. */
+const tinted = (glyph: Element | null | undefined): boolean =>
+  glyph instanceof HTMLElement &&
+  glyph.style.backgroundImage.includes("linear-gradient");
+
 const me: Me = {
   id: 1,
   login: "user",
@@ -366,7 +371,7 @@ describe("preview under icons without an image (T-558)", () => {
         return {
           shape: avatar.getAttribute("data-shape"),
           generator: glyph?.getAttribute("data-generator"),
-          gradient: (glyph?.querySelectorAll("stop").length ?? 0) > 0,
+          gradient: tinted(glyph),
         };
       },
     );
@@ -444,7 +449,7 @@ describe("samples inside the generator dropdowns (T-558)", () => {
         label: spokenText(option),
         shape: sample?.getAttribute("data-shape"),
         generator: glyph?.getAttribute("data-generator"),
-        gradient: (glyph?.querySelectorAll("stop").length ?? 0) > 0,
+        gradient: tinted(glyph),
       };
     });
   }

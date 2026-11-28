@@ -18,7 +18,7 @@ describe("ProjectCard accessible name", () => {
     expect(link.querySelector(".sr-only")?.textContent).toBe("XYZ");
     const card = link.closest<HTMLElement>('[data-slot="card"]') as HTMLElement;
     const fallback = within(card).getByText("XYZ", {
-      selector: '[data-slot="avatar-fallback"] [data-glyph-text]',
+      selector: '[data-slot="avatar-fallback-glyph"]',
     });
     expectVisible(fallback);
     expect(link.getAttribute("href")).toBe("/projects/atlas");
@@ -47,7 +47,7 @@ describe("ProjectCard accessible name", () => {
       expectVisible(image as HTMLImageElement);
       expect(
         within(card).queryByText("XYZ", {
-          selector: '[data-slot="avatar-fallback"] [data-glyph-text]',
+          selector: '[data-slot="avatar-fallback-glyph"]',
         }),
       ).toBeNull();
     });

@@ -1,3 +1,4 @@
+import { Avatar } from "@orz/ui/components/avatar";
 import { describe, expect, it } from "vitest";
 import {
   ProjectIcon,
@@ -13,6 +14,12 @@ const draw = (project: {
   icon_url?: string | null;
 }) =>
   render(<ProjectIcon project={{ slug: "homelab", ...project }} />).container;
+
+/** The two colours a fallback's gradient runs between, as written. */
+const tintOf = (container: HTMLElement) =>
+  container
+    .querySelector<HTMLElement>('[data-slot="avatar-fallback"]')
+    ?.style.backgroundImage.match(/#[0-9a-f]{6}/gi) ?? [];
 
 describe("what a project icon draws", () => {
   // The loaded-image path is not assertable here: Radix mounts the <img>
@@ -38,10 +45,9 @@ describe("what a project icon draws", () => {
     // A 20-character prefix drew 192px of ink in a 40px box and ran straight
     // through the project's title.
     const container = draw({ name: "Pathological", prefix: "W".repeat(20) });
+    // Three characters at most; fitting those into the box is
+    // AvatarFallback's, graded in a browser by fallback-avatar-smoke.
     expect(container.textContent).toBe("WWW");
-    expect(
-      container.querySelector('[data-slot="avatar"]')?.className,
-    ).toContain("overflow-hidden");
   });
 
   it("leaves a REF that already fits alone", () => {
@@ -58,7 +64,8 @@ describe("what a project icon draws", () => {
       name: "Pathological",
       prefix: "W".repeat(20),
     });
-    expect(render(glyph).container.textContent).toBe("WWW");
+    // It is the box's fallback, so it is drawn inside an avatar.
+    expect(render(<Avatar>{glyph}</Avatar>).container.textContent).toBe("WWW");
   });
 
   it("falls back to initials when called with no REF", () => {
@@ -67,7 +74,7 @@ describe("what a project icon draws", () => {
       name: "Home Lab",
       prefix: null,
     });
-    expect(render(glyph).container.textContent).toBe("HL");
+    expect(render(<Avatar>{glyph}</Avatar>).container.textContent).toBe("HL");
   });
 
   it("is square, so a project never reads as a person", () => {
@@ -81,31 +88,28 @@ describe("what a project icon draws", () => {
 
   it("paints the fallback in the tint hashed from the slug", () => {
     const container = draw({ slug: "todou", name: "todou", prefix: "T" });
-    const stops = [...container.querySelectorAll("stop")].map((stop) =>
-      stop.getAttribute("stop-color"),
-    );
     const { from, to } = projectTint("todou");
-    expect(stops).toEqual([from, to]);
+    expect(tintOf(container)).toEqual([from, to]);
   });
 
-  it("gives every icon on a page its own gradient", () => {
-    // Two rows naming the same project is the ordinary case (a search list);
-    // with one id between them, either could paint from the other.
+  it("draws every copy of one project in that project's gradient", () => {
+    // Two rows naming the same project is the ordinary case (a search list),
+    // and each box carries its own background, not a reference to another's.
     const { container } = render(
       <>
         <ProjectIcon project={{ slug: "todou", name: "todou", prefix: "T" }} />
         <ProjectIcon project={{ slug: "todou", name: "todou", prefix: "T" }} />
       </>,
     );
-    const ids = [...container.querySelectorAll("linearGradient")].map(
-      (gradient) => gradient.id,
-    );
-    expect(ids).toHaveLength(2);
-    expect(new Set(ids).size).toBe(2);
-    for (const [index, rect] of [
-      ...container.querySelectorAll("rect"),
-    ].entries()) {
-      expect(rect.getAttribute("fill")).toBe(`url(#${ids[index]})`);
-    }
+    const { from, to } = projectTint("todou");
+    const tints = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-slot="avatar-fallback"]',
+      ),
+    ].map((fallback) => fallback.style.backgroundImage.match(/#[0-9a-f]{6}/gi));
+    expect(tints).toEqual([
+      [from, to],
+      [from, to],
+    ]);
   });
 });

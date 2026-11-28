@@ -80,15 +80,12 @@ describe("the project icon editor", () => {
       ],
       contested: [],
     });
-    const zone = await waitFor(() => {
-      const found = iconZone();
+    // Three characters; AvatarFallback fits them into the box, which
+    // fallback-avatar-smoke grades in a browser.
+    await waitFor(() =>
       expect(
-        found?.querySelector('[data-slot="avatar-fallback"]')?.textContent,
-      ).toBe("WWW");
-      return found as HTMLElement;
-    });
-    expect(zone.querySelector('[data-slot="avatar"]')?.className).toContain(
-      "overflow-hidden",
+        iconZone()?.querySelector('[data-slot="avatar-fallback"]')?.textContent,
+      ).toBe("WWW"),
     );
   });
 
