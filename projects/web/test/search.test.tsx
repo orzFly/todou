@@ -25,7 +25,7 @@ import type {
   SearchItem,
   SearchPage,
 } from "@todou/shared";
-import { SEARCH_QUALIFIERS, SEARCH_SCHEMA } from "@todou/shared";
+import { SEARCH_SCHEMA } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import {
@@ -530,7 +530,7 @@ describe("SearchBox", () => {
       expect(rows[0]?.getAttribute("href")).toBe("/projects/todou/search");
       expect(
         rows.slice(1).map((row) => row.textContent?.split(":")[0]),
-      ).toEqual(Object.keys(SEARCH_QUALIFIERS));
+      ).toEqual([...SEARCH_SCHEMA.keys]);
       expect(utils.container.textContent).not.toContain("Search for");
       fireEvent.keyDown(input, { key: "Escape" });
       expect(listboxOf(utils.container)).toBeNull();

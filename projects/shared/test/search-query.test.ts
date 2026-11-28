@@ -1,19 +1,22 @@
-import { parseQuery, queryFilters } from "@orz/query";
-import { describe, expect, it } from "vitest";
 import {
-  canonicalQualifierValue,
-  isSpecialQualifierValue,
-  parseSearchQuery,
-  SEARCH_SCHEMA,
-  type SearchFilter,
-  searchFiltersOf,
-  searchIsDomains,
-  searchTermsOf,
-} from "../src/search-query.ts";
+  canonicalValue,
+  parseQuery,
+  type QueryFilter,
+  queryFilters,
+  queryTerms,
+  specialValue,
+} from "@orz/query";
+import { describe, expect, it } from "vitest";
+import { SEARCH_SCHEMA, type SearchQualifier } from "../src/search-query.ts";
 
-const terms = (q: string): string[] => searchTermsOf(parseSearchQuery(q));
-const filters = (q: string): SearchFilter[] =>
-  searchFiltersOf(parseSearchQuery(q));
+const parse = (q: string) => parseQuery(SEARCH_SCHEMA, q);
+const terms = (q: string): string[] => queryTerms(parse(q));
+const filters = (q: string): QueryFilter<SearchQualifier>[] =>
+  queryFilters(parse(q));
+const canonical = (key: SearchQualifier, v: string): string | null =>
+  canonicalValue(SEARCH_SCHEMA.qualifiers[key].value, v);
+const isSpecial = (key: SearchQualifier, v: string): boolean =>
+  specialValue(SEARCH_SCHEMA.qualifiers[key].value, v) !== null;
 
 /**
  * The exact cases `parseSearchTerms` carried in the server before the parser
@@ -156,7 +159,7 @@ describe("part offsets", () => {
 
   it("tiles the whole query with parts that slice back to their source", () => {
     for (const q of cases) {
-      const parts = parseSearchQuery(q);
+      const parts = parse(q);
       let at = 0;
       for (const part of parts) {
         expect(part.start).toBe(at);
@@ -169,7 +172,7 @@ describe("part offsets", () => {
   });
 
   it("points keyStart/keyEnd at the key as typed", () => {
-    const [part] = parseSearchQuery("-Label:a");
+    const [part] = parse("-Label:a");
     if (part?.kind !== "filter") throw new Error("expected a filter");
     expect("-Label:a".slice(part.keyStart, part.keyEnd)).toBe("Label");
     expect(part.key).toBe("label");
@@ -195,7 +198,7 @@ describe("part offsets", () => {
 
   it("points each value span at its own source slice, quotes included", () => {
     const q = '-label:"kind:bug",area:web';
-    const [part] = parseSearchQuery(q);
+    const [part] = parse(q);
     if (part?.kind !== "filter") throw new Error("expected a filter");
     expect(part.values.map((v) => q.slice(v.start, v.end))).toEqual([
       '"kind:bug"',
@@ -207,28 +210,28 @@ describe("part offsets", () => {
 
 describe("closed-set values", () => {
   it("folds the plural spellings `--in` uses onto the canonical ones", () => {
-    expect(canonicalQualifierValue("is", "issues")).toBe("body");
-    expect(canonicalQualifierValue("is", "Issue")).toBe("body");
-    expect(canonicalQualifierValue("is", "comments")).toBe("comment");
-    expect(canonicalQualifierValue("is", "SPECS")).toBe("spec");
-    expect(canonicalQualifierValue("is", "pr")).toBeNull();
+    expect(canonical("is", "issues")).toBe("body");
+    expect(canonical("is", "Issue")).toBe("body");
+    expect(canonical("is", "comments")).toBe("comment");
+    expect(canonical("is", "SPECS")).toBe("spec");
+    expect(canonical("is", "pr")).toBeNull();
   });
 
   it("resolves states and rejects anything else", () => {
-    expect(canonicalQualifierValue("state", "OPEN")).toBe("open");
-    expect(canonicalQualifierValue("state", "opne")).toBeNull();
+    expect(canonical("state", "OPEN")).toBe("open");
+    expect(canonical("state", "opne")).toBeNull();
   });
 
   it("answers null for keys whose values live in the project", () => {
-    expect(canonicalQualifierValue("label", "area:web")).toBeNull();
-    expect(canonicalQualifierValue("harness", "codex")).toBeNull();
+    expect(canonical("label", "area:web")).toBeNull();
+    expect(canonical("harness", "codex")).toBeNull();
   });
 
   it("knows the values that stand for themselves", () => {
-    expect(isSpecialQualifierValue("assignee", "@me")).toBe(true);
-    expect(isSpecialQualifierValue("harness", "None")).toBe(true);
-    expect(isSpecialQualifierValue("harness", "codex")).toBe(false);
-    expect(isSpecialQualifierValue("label", "none")).toBe(false);
+    expect(isSpecial("assignee", "@me")).toBe(true);
+    expect(isSpecial("harness", "None")).toBe(true);
+    expect(isSpecial("harness", "codex")).toBe(false);
+    expect(isSpecial("label", "none")).toBe(false);
   });
 });
 
@@ -260,20 +263,5 @@ describe("SEARCH_SCHEMA", () => {
       comments: "comment",
       specs: "spec",
     });
-  });
-
-  it("gives searchIsDomains what the old parser gave it", () => {
-    for (const q of [
-      "is:comment -is:spec",
-      "is:issues,specs",
-      "-is:body",
-      "is:pr is:Comments",
-      "is: label:a",
-      "words only",
-    ]) {
-      expect(
-        searchIsDomains(queryFilters(parseQuery(SEARCH_SCHEMA, q))),
-      ).toEqual(searchIsDomains(searchFiltersOf(parseSearchQuery(q))));
-    }
   });
 });

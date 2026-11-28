@@ -322,27 +322,7 @@
       "guarded": true
     },
     {
-      "id": "projects/shared/src/search-query.ts :: mapping SEARCH_QUALIFIER_KEYS #1",
-      "guarded": true
-    },
-    {
-      "id": "projects/shared/src/search-query.ts :: mapping SEARCH_QUALIFIERS #1",
-      "guarded": true
-    },
-    {
       "id": "projects/shared/src/search-query.ts :: read SEARCH_IS_DOMAIN[canonical] #1",
-      "guarded": false
-    },
-    {
-      "id": "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIER_KEYS[typed] #1",
-      "guarded": true
-    },
-    {
-      "id": "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #1",
-      "guarded": false
-    },
-    {
-      "id": "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #2",
       "guarded": false
     },
     {
@@ -712,8 +692,6 @@
     "projects/shared/src/client.ts :: mapping headers #1",
     "projects/shared/src/permissions.ts :: read ROLE_RANK[min] #1",
     "projects/shared/src/search-query.ts :: read SEARCH_IS_DOMAIN[canonical] #1",
-    "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #1",
-    "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #2",
     "projects/web/src/api/search.ts :: read SEARCH_DOMAIN_IS[d] #1",
     "projects/web/src/api/useUserEvents.ts :: switch event.entity #1",
     "projects/web/src/api/useUserEvents.ts :: switch event.entity #2",

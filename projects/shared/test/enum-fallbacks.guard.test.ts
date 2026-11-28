@@ -111,7 +111,7 @@ const DECLARED: Readonly<Record<string, string>> = {
   "projects/server/src/services/members.ts :: read ROLE_RANK[role] #1":
     "Same-version server role invariant: roles combine MemberSetInput parsed at routes/projects.ts with project_members rows written by this server. DB reads are not parsed; mixed-version DB writers/manual corruption are outside this exception.",
   "projects/server/src/services/search.ts :: switch filter.key #1":
-    "Parsed search query: parseSearchQuery resolves filter.key only after Object.hasOwn(SEARCH_QUALIFIER_KEYS, typed); server planQualifiers gets the resulting closed qualifier set.",
+    "Parsed search query: parseQuery(SEARCH_SCHEMA, q) gives filter.key only as a canonical key, looked up in the compiled schema's spellings Map; server planQualifiers gets the resulting closed qualifier set.",
   "projects/server/src/services/users.ts :: read ROLE_RANK[a.role] #1":
     "Same-version server DB role: projectMembers rows are written from parsed MemberRole inputs by this server; list sorting trusts the internal invariant, not a DB CHECK.",
   "projects/server/src/services/users.ts :: read ROLE_RANK[b.role] #1":
@@ -121,13 +121,9 @@ const DECLARED: Readonly<Record<string, string>> = {
   "projects/shared/src/permissions.ts :: read ROLE_RANK[min] #1":
     "Validated local capability catalog: can obtains min from minRoleOf, which validates CAPABILITIES minimum against ROLE_RANK before this lookup.",
   "projects/shared/src/search-query.ts :: read SEARCH_IS_DOMAIN[canonical] #1":
-    "Validated local value: canonicalQualifierValue(is, value) returns only SEARCH_QUALIFIERS.is accepted values or null; null is continued before indexing.",
-  "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #1":
-    "Closed qualifier producer: parseSearchQuery maps typed input through Object.hasOwn(SEARCH_QUALIFIER_KEYS, typed); canonical/verdict helpers receive that registry key.",
-  "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #2":
-    "Closed qualifier producer: parseSearchQuery maps typed input through Object.hasOwn(SEARCH_QUALIFIER_KEYS, typed); canonical/verdict helpers receive that registry key.",
+    "Validated local value: canonicalValue(SEARCH_SCHEMA.qualifiers.is.value, value) returns only a SEARCH_IS_VALUES entry (directly or through an own-key alias) or null; null is continued before indexing.",
   "projects/web/src/api/search.ts :: read SEARCH_DOMAIN_IS[d] #1":
-    "Closed domain selection: caller domains originate from SEARCH_DOMAINS options or searchDomainsOf parseSearchQuery; SEARCH_DOMAIN_IS maps that local domain union.",
+    "Closed domain selection: caller domains originate from SEARCH_DOMAINS options or from searchIsDomains over parseQuery(SEARCH_SCHEMA, q); SEARCH_DOMAIN_IS maps that local domain union.",
   "projects/web/src/api/useUserEvents.ts :: switch event.entity #1":
     "Parsed SSE boundary: invalidationsFor receives onChangeFrame's CrossChangeEventSchema.parse result; shared events.ts defines entity with the closed ChangeEntity enum. Direct SSE and forwarded BroadcastChannel frames use this same parser before the activity switch.",
   "projects/web/src/api/useUserEvents.ts :: switch event.entity #2":
@@ -359,19 +355,20 @@ describe("repository enum fallback source guard", () => {
     ]);
   });
 
-  it("preserves the measured 5db8c5c sites and 81 provenance declarations", () => {
+  it("preserves the measured 5db8c5c sites and 79 provenance declarations", () => {
     // The previously quoted 85 was not the current baseline. Freeze identities,
     // not the final total: new audited sites may be added without hiding losses.
     // One site fewer than the census recorded because T-512 deleted
     // refs-migrate.ts outright, not because the census missed it, and one
     // more because T-704 deleted the ROLE_DOT mapping with the role dots.
-    // Eight sites and five declarations fewer because T-796 deleted the web
-    // search box's own highlighter and completion sources, whose job
-    // @orz/ui's QueryBox took over. The revision stays at the commit the
-    // census was measured on.
+    // Thirteen sites and seven declarations fewer because T-796 moved the
+    // search syntax to @orz/query: the hand-written parser's key and value
+    // tables went from shared, and the web box's own highlighter and
+    // completion sources went with QueryBox taking their place. The revision
+    // stays at the commit the census was measured on.
     expect(baseline.revision).toBe("5db8c5c");
-    expect(baseline.sites).toHaveLength(167);
-    expect(baseline.declared).toHaveLength(81);
+    expect(baseline.sites).toHaveLength(162);
+    expect(baseline.declared).toHaveLength(79);
     const sites = new Map(scanSources(sources).map((site) => [site.id, site]));
     expect(
       baseline.sites.map(({ id }) => {
