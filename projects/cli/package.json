@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@decimalturn/toml-patch": "^3.3.1",
+    "@orz/query": "0.1.2-master.20261127155246.ge1ab406",
     "@todou/shared": "workspace:*",
     "buffer": "^6.0.3",
     "clipanion": "4.0.0-rc.4",

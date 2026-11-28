@@ -222,6 +222,9 @@ importers:
       '@decimalturn/toml-patch':
         specifier: ^3.3.1
         version: 3.3.1
+      '@orz/query':
+        specifier: 0.1.2-master.20261127155246.ge1ab406
+        version: 0.1.2-master.20261127155246.ge1ab406
       '@todou/shared':
         specifier: workspace:*
         version: link:../shared
@@ -274,6 +277,9 @@ importers:
       '@hono/zod-openapi':
         specifier: ^1.5.2
         version: 1.5.2(hono@4.13.1)(zod@4.4.3)
+      '@orz/query':
+        specifier: 0.1.2-master.20261127155246.ge1ab406
+        version: 0.1.2-master.20261127155246.ge1ab406
       '@todou/shared':
         specifier: workspace:*
         version: link:../shared
@@ -320,6 +326,9 @@ importers:
 
   projects/shared:
     dependencies:
+      '@orz/query':
+        specifier: 0.1.2-master.20261127155246.ge1ab406
+        version: 0.1.2-master.20261127155246.ge1ab406
       diff:
         specifier: ^9.0.0
         version: 9.0.0
@@ -390,6 +399,9 @@ importers:
       '@lobehub/icons-static-svg':
         specifier: ^1.94.0
         version: 1.94.0
+      '@orz/query':
+        specifier: 0.1.2-master.20261127155246.ge1ab406
+        version: 0.1.2-master.20261127155246.ge1ab406
       '@orz/themes':
         specifier: 0.1.2-master.20261127155246.ge1ab406
         version: 0.1.2-master.20261127155246.ge1ab406

@@ -22,6 +22,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@orz/query": "0.1.2-master.20261127155246.ge1ab406",
     "diff": "^9.0.0",
     "smol-toml": "^1.7.1",
     "zod": "^4.4.3"
