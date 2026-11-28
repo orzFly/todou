@@ -1,8 +1,13 @@
 import { Button } from "@orz/ui/components/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@orz/ui/components/tooltip";
 import { useSlashShortcut } from "@orz/ui/hooks/use-slash-shortcut";
 import { useRouterState } from "@tanstack/react-router";
 import { SearchIcon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { SearchBox } from "@/components/search-box.tsx";
 
 /**
@@ -23,6 +28,22 @@ export function SearchToggle({ slug }: { slug: string }) {
   const [open, setOpen] = useState(false);
   useSlashShortcut(() => setOpen(true));
 
+  // Closing from inside (Escape, the close button) unmounts the control that
+  // had focus, which would drop it on `<body>`; it goes back to the icon the
+  // overlay grew out of. Focus that left on its own is where the reader sent
+  // it, and stays there.
+  const trigger = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  const close = () => {
+    refocus.current = true;
+    setOpen(false);
+  };
+  useLayoutEffect(() => {
+    if (open || !refocus.current) return;
+    refocus.current = false;
+    trigger.current?.focus();
+  }, [open]);
+
   // Following an offer navigates without unmounting the header, and the
   // pointer never left the overlay to blur it. Closed during render rather
   // than from an effect, so the overlay never paints over the page it just
@@ -36,15 +57,21 @@ export function SearchToggle({ slug }: { slug: string }) {
 
   if (!open) {
     return (
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Search"
-        aria-expanded={false}
-        onClick={() => setOpen(true)}
-      >
-        <SearchIcon />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            ref={trigger}
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Search"
+            aria-expanded={false}
+            onClick={() => setOpen(true)}
+          >
+            <SearchIcon />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Search</TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -69,16 +96,21 @@ export function SearchToggle({ slug }: { slug: string }) {
         className="flex-1"
         listAlign="start"
         autoFocus
-        onEscape={() => setOpen(false)}
+        onEscape={close}
       />
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Close search"
-        onClick={() => setOpen(false)}
-      >
-        <XIcon />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Close search"
+            onClick={close}
+          >
+            <XIcon />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Close search</TooltipContent>
+      </Tooltip>
     </fieldset>
   );
 }

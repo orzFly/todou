@@ -380,6 +380,67 @@ describe("the header's search, narrow", () => {
     await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
     expect(toggle(view.container)).not.toBeNull();
   });
+
+  it("hands focus back to the icon once Escape closes the overlay", async () => {
+    const view = renderShellAt(390);
+    await view.findAllByRole("link", { name: "List" });
+    fireEvent.click(toggle(view.container) as Element);
+    const input = await view.findByLabelText("Search this project");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+
+    // The first press is the panel's, the second the overlay's.
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() =>
+      expect(view.container.querySelector('[role="listbox"]')).toBeNull(),
+    );
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
+    expect(document.activeElement).toBe(toggle(view.container));
+  });
+
+  it("hands focus back to the icon from the close button too", async () => {
+    const view = renderShellAt(390);
+    await view.findAllByRole("link", { name: "List" });
+    fireEvent.click(toggle(view.container) as Element);
+    await view.findByLabelText("Search this project");
+    const close = view.container.querySelector(
+      'button[aria-label="Close search"]',
+    ) as HTMLButtonElement;
+    close.focus();
+    fireEvent.click(close);
+    await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
+    expect(document.activeElement).toBe(toggle(view.container));
+  });
+
+  it("leaves focus where Tab sent it out of the overlay", async () => {
+    const view = renderShellAt(390);
+    await view.findAllByRole("link", { name: "List" });
+    fireEvent.click(toggle(view.container) as Element);
+    await view.findByLabelText("Search this project");
+    const close = view.container.querySelector(
+      'button[aria-label="Close search"]',
+    ) as HTMLButtonElement;
+    close.focus();
+    // The next stop after the close button, outside the overlay.
+    const next = view.container.querySelector(
+      'header a[href="/projects/todou/issues/new"]',
+    ) as HTMLAnchorElement;
+    next.focus();
+    await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
+    expect(document.activeElement).toBe(next);
+  });
+
+  it("names both icons in a tooltip as well as to a screen reader", async () => {
+    const view = renderShellAt(390);
+    await view.findAllByRole("link", { name: "List" });
+    const icon = toggle(view.container) as HTMLButtonElement;
+    fireEvent.focus(icon);
+    await waitFor(() =>
+      expect(
+        view.getAllByRole("tooltip").map((tip) => tip.textContent),
+      ).toEqual(["Search"]),
+    );
+  });
 });
 
 /**
