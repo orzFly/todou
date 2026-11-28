@@ -222,6 +222,8 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Parsed BurnQuery grain/local autoGrain: earlier grain===1d/1w branches handle calendar units; the remaining grain is locally resolved 1h/6h/12h.",
   "projects/web/src/pages/insights.tsx :: read GRAIN_LABELS[grain] #1":
     "Closed options: Grain.options.map((grain) => ...) supplies this key; URL search grain is separately validated with Grain.safeParse/BurnQuery.safeParse.",
+  "projects/web/src/pages/search.tsx :: read SYNTAX[key] #1":
+    "Closed local keys: SyntaxHelp maps SEARCH_SCHEMA.keys, the schema's own literal key list, and SYNTAX is a total Record<SearchQualifier, …> over exactly those keys (search.test.tsx asserts the two lists are equal). No query or wire value indexes it.",
   "projects/web/src/pages/project-settings.tsx :: read ROLE_RANK[role] #1":
     "Closed UI options: role comes from ROLES = MemberRole.options and its filtered choices; API current role and owner ceiling are separately recognized with roleRankOf.",
   "projects/web/src/pages/project-settings.tsx :: read ROLE_RANK[role] #2":

@@ -40,6 +40,7 @@ import {
 import { searchIssueRefQuery as issueRefQuery } from "../src/api/search-refs.ts";
 import { AppShell } from "../src/components/shell.tsx";
 import { historyKey, readHistory } from "../src/lib/search-history.ts";
+import { SearchResults } from "../src/pages/search.tsx";
 import { testQueryClient } from "./render.tsx";
 import {
   COMMENT_SPELLED,
@@ -143,13 +144,19 @@ function seeded(): QueryClient {
   return client;
 }
 
-function renderShellAt(width: number) {
+function renderShellAt(
+  width: number,
+  {
+    at = "/projects/todou",
+    page = "x",
+  }: { at?: string; page?: React.ReactNode } = {},
+) {
   happyDom.happyDOM.setViewport({ width });
   const client = seeded();
   const rootRoute = createRootRoute();
   const Shell = () => (
     <QueryClientProvider client={client}>
-      <AppShell me={me}>x</AppShell>
+      <AppShell me={me}>{page}</AppShell>
     </QueryClientProvider>
   );
   const projectRoute = createRoute({
@@ -176,7 +183,7 @@ function renderShellAt(width: number) {
   );
   const router = createRouter({
     routeTree: rootRoute.addChildren([projectRoute.addChildren(children)]),
-    history: createMemoryHistory({ initialEntries: ["/projects/todou"] }),
+    history: createMemoryHistory({ initialEntries: [at] }),
   });
   return { ...render(<RouterProvider router={router} />), client, router };
 }
@@ -222,6 +229,30 @@ describe("the header's search, wide", () => {
 
     expect(toggle(view.container)).toBeNull();
     expect(boxes(view.container)).toHaveLength(1);
+  });
+});
+
+describe("the header's search, on the search page", () => {
+  it.each([1280, 390])(
+    "stands aside at %dpx for the page's own box",
+    async (width) => {
+      const view = renderShellAt(width, { at: "/projects/todou/search" });
+      await view.findAllByRole("link", { name: "List" });
+      expect(boxes(view.container)).toHaveLength(0);
+      expect(toggle(view.container)).toBeNull();
+    },
+  );
+
+  it("sends `/` to the page's box, the only one there is", async () => {
+    const view = renderShellAt(1280, {
+      at: "/projects/todou/search",
+      page: <SearchResults slug="todou" search={{}} />,
+    });
+    const input = await view.findByLabelText("Search this project");
+    expect(boxes(view.container)).toHaveLength(1);
+    expect(input.closest("header")).toBeNull();
+    fireEvent.keyDown(window, { key: "/" });
+    await waitFor(() => expect(document.activeElement).toBe(input));
   });
 });
 

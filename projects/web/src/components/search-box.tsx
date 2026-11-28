@@ -2,7 +2,7 @@ import { cn } from "@orz/ui";
 import { Skeleton } from "@orz/ui/components/skeleton";
 import { useSlashShortcut } from "@orz/ui/hooks/use-slash-shortcut";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { parseSearchQuery } from "@todou/shared";
 import {
   ArrowRightIcon,
@@ -154,6 +154,9 @@ export function SearchBox({
   listAlign = "centered",
   autoFocus = false,
   onEscape,
+  query: shown = "",
+  invalid = false,
+  describedBy,
 }: {
   slug: string;
   className?: string;
@@ -177,6 +180,15 @@ export function SearchBox({
    * box's own; where the second one goes is the host's to decide.
    */
   onEscape?: () => void;
+  /**
+   * The query a page is showing, which the box takes up whenever it changes
+   * (a shared link, the back button) and otherwise leaves to the reader.
+   * Omitted, the box starts empty.
+   */
+  query?: string;
+  /** The query has errors, which `describedBy` names. */
+  invalid?: boolean;
+  describedBy?: string;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -184,15 +196,7 @@ export function SearchBox({
   // outlives the page under it, and the origin a card is opened with is the
   // one that was on screen when the reader asked for it (T-407).
   const returnState = useReturnLinkState();
-  // Seeded from the URL so landing on /search with ?q= shows the query back,
-  // and reseeded whenever it changes underneath (a shared link, the back
-  // button) — but left alone while the user types.
-  const urlQuery = useRouterState({
-    select: (s) =>
-      s.location.pathname.endsWith("/search")
-        ? ((s.location.search as { q?: string }).q ?? "")
-        : "",
-  });
+  const urlQuery = shown;
   const [value, setValue] = useState(urlQuery);
   const [focused, setFocused] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -579,6 +583,8 @@ export function SearchBox({
             }
             aria-autocomplete="list"
             aria-busy={waiting || undefined}
+            aria-invalid={invalid || undefined}
+            aria-describedby={describedBy}
             value={value}
             onValueChange={(next) => {
               setValue(next);

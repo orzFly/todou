@@ -28,8 +28,11 @@
 export async function probeRefRowWidth(options = {}, fault = {}) {
   // Each probe is serialized on its own and runs with nothing else in scope,
   // so the pre-fix classes are spelled out in both. Changing either copy
-  // changes what this file means by "unchanged".
-  const WAS = { ref: "shrink-0 font-mono text-xs text-muted-foreground" };
+  // changes what this file means by "unchanged". The face is the List page's
+  // since T-796; what stays pre-fix is the rigid `shrink-0`.
+  const WAS = {
+    ref: "shrink-0 text-[13px] tabular-nums text-muted-foreground",
+  };
   const { surface = null, spelled = null, minimumRows = 1 } = options;
   if (surface !== "banner" && surface !== "panel") {
     throw new Error('surface must be "banner" or "panel"');
@@ -234,7 +237,7 @@ export async function probeRefRowWidth(options = {}, fault = {}) {
 export async function probeShortRowParity(options = {}, fault = {}) {
   // Its own copy; see the note in probeRefRowWidth.
   const WAS = {
-    ref: "shrink-0 font-mono text-xs text-muted-foreground",
+    ref: "shrink-0 text-[13px] tabular-nums text-muted-foreground",
     author: "shrink-0 text-muted-foreground",
     pill: "ml-auto",
   };

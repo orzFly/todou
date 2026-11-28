@@ -300,12 +300,12 @@ describe("SearchResults hit identity", () => {
         suggestion: null,
       })),
     );
-    expect((await screen.findByText("Diagnostic error")).className).toContain(
-      "var(--warning)",
-    );
+    expect(
+      (await screen.findByText("Diagnostic error")).getAttribute("data-slot"),
+    ).toBe("field-error");
     for (const severity of ["note", "future-severity"]) {
       const diagnostic = screen.getByText(`Diagnostic ${severity}`);
-      expect(diagnostic.className).toBe("text-muted-foreground");
+      expect(diagnostic.getAttribute("data-slot")).toBe("field-description");
       expect(diagnostic.textContent).toBe(`Diagnostic ${severity}`);
     }
   });

@@ -1,3 +1,4 @@
+import { diagnoseQuery, parseQuery } from "@orz/query";
 import type { QueryClient } from "@tanstack/react-query";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -24,7 +25,7 @@ import type {
   SearchItem,
   SearchPage,
 } from "@todou/shared";
-import { SEARCH_QUALIFIERS } from "@todou/shared";
+import { SEARCH_QUALIFIERS, SEARCH_SCHEMA } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import {
@@ -41,6 +42,7 @@ import {
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
 import {
+  correctedQuery,
   domainsOf,
   type SearchPageSearch,
   searchFacetsQuery,
@@ -66,6 +68,7 @@ import {
   resultsStickyTop,
   SearchPage as SearchPageComponent,
   SearchResults,
+  SYNTAX,
 } from "../src/pages/search.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 import {
@@ -266,15 +269,17 @@ describe("search results", () => {
       issueRefQuery("todou", 141).queryKey,
       refItem(141, "全文搜索"),
     );
-    const { findByText } = renderWithProviders(
+    const { findByTitle } = renderWithProviders(
       <SearchResults slug="todou" search={{ q: "T-141" }} />,
       client,
     );
-    const link = (await findByText("T-141")).closest("a");
+    const link = (await findByTitle("T-141")).closest("a");
     expect(link?.getAttribute("href")).toBe("/projects/todou/issues/141");
     expect(link?.textContent).toContain("全文搜索");
     expect(link?.textContent).toContain("Next");
-    expect(link?.querySelector(".font-mono")?.textContent).toBe("T-141");
+    expect(link?.querySelector("[data-jump-part][title]")?.textContent).toBe(
+      "T-141",
+    );
     expect(link?.textContent).not.toMatch(/#comment-|· by|comment by/);
   });
 
@@ -283,12 +288,12 @@ describe("search results", () => {
     // like — the reader learns nothing either way (T-150).
     const { client } = seeded({ items: [], has_more: false }, { q: "T-141" });
     client.setQueryData(issueRefQuery("todou", 141).queryKey, null);
-    const { findByText, queryByText } = renderWithProviders(
+    const { findByText, queryByTitle } = renderWithProviders(
       <SearchResults slug="todou" search={{ q: "T-141" }} />,
       client,
     );
     await findByText(/Nothing matched/);
-    expect(queryByText("T-141")).toBeNull();
+    expect(queryByTitle("T-141")).toBeNull();
   });
 
   it("spells a jump across projects so it cannot read as one of ours", async () => {
@@ -300,11 +305,11 @@ describe("search results", () => {
       issueRefQuery("mirror", 3).queryKey,
       refItem(3, "Theirs"),
     );
-    const { findByText } = renderWithProviders(
+    const { findByTitle } = renderWithProviders(
       <SearchResults slug="todou" search={{ q: "mirror#3" }} />,
       client,
     );
-    const link = (await findByText("mirror/M-3")).closest("a");
+    const link = (await findByTitle("mirror/M-3")).closest("a");
     expect(link?.getAttribute("href")).toBe("/projects/mirror/issues/3");
   });
 
@@ -317,14 +322,16 @@ describe("search results", () => {
         url_template: "https://github.com/o/r/issues/<num>",
       },
     ]);
-    const { findByText } = renderWithProviders(
+    const { findByTitle } = renderWithProviders(
       <SearchResults slug="todou" search={{ q: "GH-76" }} />,
       client,
     );
-    const link = (await findByText("GH-76")).closest("a");
+    const link = (await findByTitle("GH-76")).closest("a");
     expect(link?.getAttribute("href")).toBe("https://github.com/o/r/issues/76");
     expect(link?.getAttribute("target")).toBe("_blank");
-    expect(link?.querySelector(".font-mono")?.textContent).toBe("GH-76");
+    expect(link?.querySelector("[data-jump-part][title]")?.textContent).toBe(
+      "GH-76",
+    );
     expect(link?.textContent).not.toMatch(/#comment-|· by|comment by/);
   });
 
@@ -332,14 +339,16 @@ describe("search results", () => {
     // `?q=M-` is where the box's own offer lands when it is shared, so the
     // page has to make the same offer (T-215's rule, one rung further).
     const { client } = seeded({ items: [], has_more: false }, { q: "M-" });
-    const { findByText } = renderWithProviders(
+    const { findByTitle } = renderWithProviders(
       <SearchResults slug="todou" search={{ q: "M-" }} />,
       client,
     );
-    const link = (await findByText("M-")).closest("a");
+    const link = (await findByTitle("M-")).closest("a");
     expect(link?.getAttribute("href")).toBe("/projects/mirror");
     expect(link?.textContent).toContain("Mirror");
-    expect(link?.querySelector(".font-mono")?.textContent).toBe("M-");
+    expect(link?.querySelector("[data-jump-part][title]")?.textContent).toBe(
+      "M-",
+    );
     expect(link?.textContent).not.toMatch(/#comment-|· by|comment by/);
   });
 
@@ -591,7 +600,9 @@ describe("SearchBox · the jump offer", () => {
     expect(card?.textContent).toContain("T-141");
     expect(card?.textContent).toContain("全文搜索");
     expect(card?.textContent).toContain("Next");
-    expect(card?.querySelector(".font-mono")?.textContent).toBe("T-141");
+    expect(card?.querySelector("[data-jump-part][title]")?.textContent).toBe(
+      "T-141",
+    );
     expect(card?.textContent).not.toMatch(/#comment-|· by|comment by/);
     expect(search?.textContent).toBe("Search for “T-141”");
     // Offered, not chosen: nothing is preselected (T-262), and Enter reaches
@@ -842,7 +853,9 @@ describe("SearchBox · the jump offer", () => {
     );
     expect(external?.getAttribute("target")).toBe("_blank");
     expect(external?.getAttribute("rel")).toBe("noreferrer");
-    expect(external?.querySelector(".font-mono")?.textContent).toBe("GH-76");
+    expect(
+      external?.querySelector("[data-jump-part][title]")?.textContent,
+    ).toBe("GH-76");
     expect(external?.textContent).not.toMatch(/#comment-|· by|comment by/);
 
     submit(utils.container);
@@ -974,28 +987,35 @@ describe("SearchHighlight", () => {
   });
 });
 
-describe("the pinned results heading (T-454)", () => {
-  it("pins the query, and nothing else on the page, under the header", async () => {
+describe("the pinned query box (T-454)", () => {
+  it("pins the box, and nothing else on the page, under the header", async () => {
     const { client, params } = seeded({ items: [hit()], has_more: false });
-    const { container, findByText } = renderWithProviders(
+    const { container, findByLabelText, getByRole } = renderWithProviders(
       <SearchResults slug="todou" search={params} />,
       client,
     );
-    const heading = (await findByText("Results for “全文搜索”"))
-      .parentElement as HTMLElement;
+    const input = (await findByLabelText(
+      "Search this project",
+    )) as HTMLInputElement;
+    const row = input.closest(".sm\\:sticky") as HTMLElement;
     // The breakpoint `resultsStickyTop` is told about below.
-    expect(heading.className).toContain("sm:sticky");
+    expect(row).not.toBeNull();
     // Measured, because the header is two rows tall below `sm`.
-    expect(heading.style.top).toBe("55px");
-    // The chips scroll away with the results; only the heading pins.
-    const chips = container.querySelector(
-      "button[aria-pressed]",
-    ) as HTMLElement;
-    expect(chips.closest(".sm\\:sticky")).toBeNull();
+    expect(row.style.top).toBe("55px");
+    // The heading, the toggles and the count scroll away with the results.
+    expect(getByRole("heading", { level: 1 }).closest(".sm\\:sticky")).toBe(
+      null,
+    );
+    await waitFor(() =>
+      expect(container.querySelector("button[aria-pressed]")).not.toBeNull(),
+    );
+    expect(
+      container.querySelector("button[aria-pressed]")?.closest(".sm\\:sticky"),
+    ).toBeNull();
   });
 
-  it("counts the heading into the restore offset only where it pins", () => {
-    // A restore that ignored a pinned heading would land its row behind it,
+  it("counts the box's row into the restore offset only where it pins", () => {
+    // A restore that ignored a pinned row would land its target behind it,
     // which is the bug the measured offset exists to prevent (T-407).
     expect(resultsStickyTop(57, 36, true)).toBe(93);
     expect(resultsStickyTop(97, 36, false)).toBe(97);
@@ -1161,6 +1181,7 @@ function renderPage(
   return {
     ...utils,
     client,
+    router,
     where: () => ({
       pathname: router.state.location.pathname,
       search: router.state.location.search as SearchPageSearch,
@@ -1208,7 +1229,7 @@ describe("the results page · qualifiers", () => {
 
   it("writes a chip into the query rather than into `?in=`", async () => {
     const utils = renderPage({ items: [], has_more: false }, { q: "部署" });
-    await utils.findByText(/Results for/);
+    await utils.findByRole("group", { name: "Search in" });
     fireEvent.click(chip(utils.container, "Comments"));
     await waitFor(() =>
       expect(utils.where().search).toEqual({ q: "部署 is:comment" }),
@@ -1435,7 +1456,11 @@ describe("the results page · saved data (T-415)", () => {
     await act(async () => {
       await router.navigate({ to: "/", search: { q: "beta" } });
     });
-    await view.findByText("Results for “beta”");
+    await waitFor(() =>
+      expect(
+        (view.getByLabelText("Search this project") as HTMLInputElement).value,
+      ).toBe("beta"),
+    );
     await waitFor(() => expect(search).toHaveBeenCalledTimes(2));
     expect(
       client.getQueryState(searchQuery("todou", { q: "beta" }).queryKey)
@@ -1681,7 +1706,9 @@ describe("SearchBox · qualifier completion", () => {
     const [home] = optionsOf(utils.container);
     expect(home?.getAttribute("href")).toBe("/projects/mirror");
     expect(home?.textContent).toContain("M-");
-    expect(home?.querySelector(".font-mono")?.textContent).toBe("M-");
+    expect(home?.querySelector("[data-jump-part][title]")?.textContent).toBe(
+      "M-",
+    );
     expect(home?.textContent).not.toMatch(/#comment-|· by|comment by/);
     expect(home?.querySelector("img")?.getAttribute("src")).toBe(
       "/api/projects/2/icon?v=search-jump",
@@ -2310,5 +2337,311 @@ describe("search hits · comment identity (T-434)", () => {
         },
       },
     });
+  });
+});
+
+describe("correctedQuery", () => {
+  it("puts the suggestion where the diagnosed value was", () => {
+    expect(
+      correctedQuery("deploy state:opne", {
+        key: "state",
+        value: "opne",
+        suggestion: "open",
+      }),
+    ).toBe("deploy state:open");
+  });
+
+  it("has nothing to correct in a diagnostic about a whole expression", () => {
+    expect(
+      correctedQuery("label:a", {
+        key: "label",
+        value: null,
+        suggestion: "kind:bug",
+      }),
+    ).toBeNull();
+  });
+
+  it("has nothing to correct when the query does not spell the value", () => {
+    expect(
+      correctedQuery("state:closed", {
+        key: "state",
+        value: "opne",
+        suggestion: "open",
+      }),
+    ).toBeNull();
+    // The right value under another key is not the one diagnosed.
+    expect(
+      correctedQuery("label:opne", {
+        key: "state",
+        value: "opne",
+        suggestion: "open",
+      }),
+    ).toBeNull();
+  });
+
+  it("quotes a suggestion that would otherwise split", () => {
+    expect(
+      correctedQuery("status:Progres 慢", {
+        key: "status",
+        value: "Progres",
+        suggestion: "In Progress",
+      }),
+    ).toBe('status:"In Progress" 慢');
+    expect(
+      correctedQuery('-status:"In Progres",Next', {
+        key: "status",
+        value: "In Progres",
+        suggestion: "In Progress",
+      }),
+    ).toBe('-status:"In Progress",Next');
+  });
+});
+
+describe("the results page · layout (T-796)", () => {
+  it("is headed Search and holds the query in its own box", async () => {
+    const utils = renderPage(
+      { items: [hit()], has_more: false },
+      { q: "全文" },
+    );
+    const heading = await utils.findByRole("heading", { level: 1 });
+    expect(heading.textContent).toBe("Search");
+    const input = utils.getByLabelText(
+      "Search this project",
+    ) as HTMLInputElement;
+    expect(input.value).toBe("全文");
+  });
+
+  it("takes the box up when `?q=` changes underneath it", async () => {
+    const utils = renderPage({ items: [], has_more: false }, { q: "alpha" });
+    const input = (await utils.findByLabelText(
+      "Search this project",
+    )) as HTMLInputElement;
+    expect(input.value).toBe("alpha");
+    await act(async () => {
+      await utils.router.navigate({
+        to: "/projects/$slug/search",
+        params: { slug: "todou" },
+        search: { q: "beta" },
+      });
+    });
+    await waitFor(() => expect(input.value).toBe("beta"));
+  });
+
+  it("links a suggestion to the corrected query, and leaves one it cannot place as text", async () => {
+    const utils = renderPage(
+      {
+        items: [],
+        has_more: false,
+        diagnostics: [
+          {
+            severity: "error",
+            key: "state",
+            value: "opne",
+            message: '"opne" is not a state (open, closed)',
+            suggestion: "open",
+          },
+          {
+            severity: "error",
+            key: "label",
+            value: null,
+            message: "too many labels",
+            suggestion: "kind:bug",
+          },
+        ],
+      },
+      { q: "部署 state:opne", in: "comments" },
+    );
+    const open = await utils.findByText("open", { selector: "code" });
+    const link = open.closest("a") as HTMLAnchorElement;
+    expect(link).not.toBeNull();
+    expect(utils.getByText("kind:bug", { selector: "code" }).closest("a")).toBe(
+      null,
+    );
+    fireEvent.click(link);
+    // The same page, every other parameter as it was.
+    await waitFor(() =>
+      expect(utils.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "部署 state:open", in: "comments" },
+      }),
+    );
+  });
+
+  it("marks the box invalid and lets an error say why nothing matched", async () => {
+    const utils = renderPage(
+      {
+        items: [],
+        has_more: false,
+        diagnostics: [
+          {
+            severity: "error",
+            key: "state",
+            value: "opne",
+            message: '"opne" is not a state (open, closed)',
+            suggestion: "open",
+          },
+        ],
+      },
+      { q: "state:opne" },
+    );
+    const message = await utils.findByText(/is not a state/);
+    const input = utils.getByLabelText("Search this project");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    const describedBy = document.getElementById(
+      input.getAttribute("aria-describedby") ?? "",
+    );
+    expect(describedBy?.contains(message)).toBe(true);
+    await utils.findByText("Nothing matched");
+    expect(utils.queryByText(/not searchable/)).toBeNull();
+  });
+
+  it("says what is never searchable when a clean query matches nothing", async () => {
+    const utils = renderPage({ items: [], has_more: false }, { q: "部署" });
+    await utils.findByText("Nothing matched");
+    utils.getByText(
+      "Trashed cards, and every spec version but the newest, are not searchable.",
+    );
+    expect(
+      utils.getByLabelText("Search this project").hasAttribute("aria-invalid"),
+    ).toBe(false);
+  });
+
+  it("draws no empty state under a jump to the card the query names", async () => {
+    const utils = renderPage({ items: [], has_more: false }, { q: "T-141" });
+    utils.client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    await utils.findByTitle("T-141");
+    expect(utils.queryByText("Nothing matched")).toBeNull();
+  });
+
+  it("offers no range before anything is asked", async () => {
+    const utils = renderPage({ items: [], has_more: false }, { q: "" });
+    await utils.findByText("harness:codex");
+    expect(utils.queryByRole("group", { name: "Search in" })).toBeNull();
+  });
+
+  it("presses no toggle for all three, and only the one asked for", async () => {
+    const all = renderPage({ items: [hit()], has_more: false }, { q: "部署" });
+    const group = await all.findByRole("group", { name: "Search in" });
+    expect(
+      within(group)
+        .getAllByRole("button")
+        .map((b) => [b.textContent, b.getAttribute("aria-pressed")]),
+    ).toEqual([
+      ["Issues", "false"],
+      ["Comments", "false"],
+      ["Specs", "false"],
+    ]);
+    all.unmount();
+
+    const one = renderPage(
+      { items: [hit()], has_more: false },
+      { q: "部署 is:comment" },
+    );
+    const narrowed = await one.findByRole("group", { name: "Search in" });
+    expect(
+      within(narrowed)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-pressed")),
+    ).toEqual(["false", "true", "false"]);
+  });
+
+  it("counts hits beside the range, and says nothing of none", async () => {
+    const some = renderPage({ items: [hit()], has_more: true }, { q: "部署" });
+    const count = await some.findByText("1+ hits");
+    const group = some.getByRole("group", { name: "Search in" });
+    expect(count.parentElement).toBe(group.parentElement);
+    some.unmount();
+
+    const none = renderPage({ items: [], has_more: false }, { q: "部署" });
+    await none.findByText("Nothing matched");
+    expect(none.queryByText(/\bhits?\b/)).toBeNull();
+  });
+
+  it("marks a title hit in the card's own row, which keeps its place", async () => {
+    const title = "全文  搜索功能";
+    const { client, params } = seeded({
+      items: [
+        hit({
+          issue: { number: 141, title, body_preview: null, status },
+          snippet: { text: "全文 搜索功能", ranges: [[3, 5]] },
+        }),
+        hit({
+          issue: { number: 141, title, body_preview: null, status },
+          kind: "comment",
+          comment_id: 88,
+          field: "body",
+          snippet: { text: "实测搜索", ranges: [[2, 4]] },
+        }),
+      ],
+      has_more: false,
+    });
+    const { container, findByText } = renderWithProviders(
+      <SearchResults slug="todou" search={params} />,
+      client,
+    );
+    await findByText("#comment-88");
+    const first = container.querySelector(
+      'li > a[href="/projects/todou/issues/141"]',
+    ) as HTMLElement;
+    expect(first.querySelector("mark")?.textContent).toBe("搜索");
+    expect(first.textContent).toContain("全文 搜索功能");
+    // The id the title hit's own row had (T-407), on the row it now lives in.
+    expect(first.parentElement?.getAttribute("data-return-id")).toBe(
+      "141:issue:title",
+    );
+    // One row for the card, one for the comment; no row repeats the title.
+    expect(container.querySelectorAll("[data-return-id]")).toHaveLength(2);
+    expect(
+      [...container.querySelectorAll("li > a")].map(
+        (a) => a.querySelector(".font-mono")?.textContent ?? null,
+      ),
+    ).toEqual([null, "#comment-88"]);
+  });
+
+  it("keeps a windowed title hit on a row of its own", async () => {
+    const title = `${"长".repeat(100)} 搜索 ${"尾".repeat(40)}`;
+    const { client, params } = seeded({
+      items: [
+        hit({
+          issue: { number: 141, title, body_preview: null, status },
+          snippet: {
+            text: `…${"长".repeat(60)} 搜索 ${"尾".repeat(40)}`,
+            ranges: [[62, 64]],
+          },
+        }),
+      ],
+      has_more: false,
+    });
+    const { container, findByText } = renderWithProviders(
+      <SearchResults slug="todou" search={params} />,
+      client,
+    );
+    await findByText("title");
+    const first = container.querySelector(
+      'li > a[href="/projects/todou/issues/141"]',
+    ) as HTMLElement;
+    expect(first.textContent).toContain(title);
+    expect(first.querySelector("mark")).toBeNull();
+    expect(first.parentElement?.hasAttribute("data-return-id")).toBe(false);
+    expect(
+      container.querySelector('[data-return-id="141:issue:title"] mark')
+        ?.textContent,
+    ).toBe("搜索");
+  });
+});
+
+describe("the syntax help", () => {
+  it("gives every key an example that parses as one qualifier of it, with nothing to diagnose", () => {
+    expect(Object.keys(SYNTAX)).toEqual([...SEARCH_SCHEMA.keys]);
+    for (const key of SEARCH_SCHEMA.keys) {
+      const [example] = SYNTAX[key];
+      const parts = parseQuery(SEARCH_SCHEMA, example);
+      expect(parts, example).toHaveLength(1);
+      expect(parts[0], example).toMatchObject({ kind: "filter", key });
+      expect(diagnoseQuery(SEARCH_SCHEMA, parts), example).toEqual([]);
+    }
   });
 });

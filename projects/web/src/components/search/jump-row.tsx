@@ -227,7 +227,9 @@ export function JumpRowBody({
           data-jump-part
           title={spelled}
           className={cn(
-            "font-mono text-xs",
+            // The List page's ref face (T-757), so a ref reads the same
+            // wherever it is offered.
+            "text-[13px] tabular-nums",
             // What `shrink-0` used to buy, without refusing to shrink: a ref
             // is full of hyphens and slashes, every one of them a break
             // opportunity, so a token that may shrink breaks itself across two

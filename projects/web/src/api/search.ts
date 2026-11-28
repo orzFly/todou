@@ -1,10 +1,10 @@
+import { parseQuery, queryFilters, quoteQueryValue } from "@orz/query";
 import { queryOptions } from "@tanstack/react-query";
-import type { SearchDomain } from "@todou/shared";
+import type { SearchDiagnostic, SearchDomain } from "@todou/shared";
 import {
-  parseSearchQuery,
   SEARCH_DOMAIN_IS,
   SEARCH_DOMAINS,
-  searchFiltersOf,
+  SEARCH_SCHEMA,
   searchIsDomains,
 } from "@todou/shared";
 import { z } from "zod";
@@ -30,7 +30,7 @@ export type SearchPageSearch = z.infer<typeof searchPageSchema>;
  */
 export function domainsOf(search: SearchPageSearch): SearchDomain[] {
   const { domains } = searchIsDomains(
-    searchFiltersOf(parseSearchQuery(search.q ?? "")),
+    queryFilters(parseQuery(SEARCH_SCHEMA, search.q ?? "")),
   );
   if (domains !== null) return domains;
   return search.in ? (search.in.split(",") as SearchDomain[]) : [];
@@ -43,7 +43,7 @@ export function domainsOf(search: SearchPageSearch): SearchDomain[] {
  * people share.
  */
 export function withDomains(q: string, domains: SearchDomain[]): string {
-  const rest = parseSearchQuery(q)
+  const rest = parseQuery(SEARCH_SCHEMA, q)
     .filter((part) => part.kind !== "filter" || part.key !== "is")
     .map((part) => (part.kind === "space" ? " " : part.raw))
     .join("")
@@ -54,6 +54,31 @@ export function withDomains(q: string, domains: SearchDomain[]): string {
   }
   const is = `is:${domains.map((d) => SEARCH_DOMAIN_IS[d]).join(",")}`;
   return rest === "" ? is : `${rest} ${is}`;
+}
+
+/**
+ * `q` with the value a diagnostic names replaced by its suggestion, or null
+ * when there is nothing to put where: no suggestion, a diagnostic about a
+ * whole expression, or a value the query no longer spells. The first match
+ * is the one replaced, which is the one the server read first.
+ */
+export function correctedQuery(
+  q: string,
+  diagnostic: Pick<SearchDiagnostic, "key" | "value" | "suggestion">,
+): string | null {
+  const { key, value, suggestion } = diagnostic;
+  if (value === null || suggestion === null) return null;
+  for (const part of parseQuery(SEARCH_SCHEMA, q)) {
+    if (part.kind !== "filter" || part.key !== key) continue;
+    const at = part.values.find((v) => v.value === value);
+    if (at === undefined) continue;
+    return (
+      q.slice(0, at.start) +
+      quoteQueryValue(SEARCH_SCHEMA, suggestion) +
+      q.slice(at.end)
+    );
+  }
+  return null;
 }
 
 /**

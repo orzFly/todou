@@ -23,6 +23,7 @@ import {
   useLinkProps,
   useLocation,
   useMatches,
+  useMatchRoute,
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
@@ -135,7 +136,15 @@ export function AppShell({
   // Unknown until the project answers — and on a server predating the field —
   // which shows everything rather than blinking it in for everyone.
   const viewerRole = project.data?.viewer_role;
-  const maySearch = viewerRole === undefined || can(viewerRole, "search.run");
+  // The search page holds a box of its own, wide enough for a real query, so
+  // the header's would be a second one and `/` would have two places to land.
+  const matchRoute = useMatchRoute();
+  const onSearchPage =
+    matchRoute({ to: "/projects/$slug/search", includeSearch: false }) !==
+    false;
+  const maySearch =
+    (viewerRole === undefined || can(viewerRole, "search.run")) &&
+    !onSearchPage;
   const searchBox = wide && slug != null && maySearch;
 
   return (
