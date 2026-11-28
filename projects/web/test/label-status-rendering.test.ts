@@ -295,8 +295,13 @@ describe("labels and statuses are drawn only by their components (T-715)", () =>
  * - A picker is a `.tsx` that draws a `StatusPill` and holds a row. A status
  *   held in some other element than a pill — a bare `<option>` — is not seen,
  *   though the T-715 scan above flags its name printed as text.
- * - Rows are told apart from other tags by name or by `role="option"`. A
+ * - Rows are told apart from other tags by name, by `role="option"`, or by
+ *   spreading the search box's `QueryBox` row props (`{...option}`). A
  *   hand-built `<div onClick>` list is not a row to this scan.
+ * - In the search box a row's height is `QueryBox`'s, not `PICKER_ROW`: its
+ *   rows pad 6px where the pickers pad 4px. What holds a status row there to
+ *   30px is the pill pulled into the pad by `IN_ROW`, which is asserted by
+ *   text, not measured; `IN_ROW` changed to some other pull is not seen.
  * - A row is recognised as narrow by naming `PICKER_ROW` in its opening tag.
  *   A class placed after it in `cn()` that overrides the height is not seen;
  *   `picker-row-geometry.test.tsx` covers that for the rendered pickers.
@@ -346,21 +351,17 @@ function rows(file: string, source: string): Hit[] {
     .filter(
       ({ text }) =>
         ROW_TAG.test(text.split(" ")[0] as string) ||
-        /role="option"|\.\.\.optionProps\(/.test(text),
+        /role="option"|\.\.\.optionProps\(|\{\.\.\.option\}/.test(text),
     )
     .map(({ line, text }) => ({ file, line, text: text.trim() }));
 }
 
 /**
- * A row is narrow if its opening tag names `PICKER_ROW`, or takes the header
- * search's `OPTION` — directly, by spreading `optionProps`, or through the
- * `props.className` that spread produced. `OPTION` is built from `PICKER_ROW`,
- * which is asserted below rather than trusted.
+ * A row is narrow if its opening tag names `PICKER_ROW`, or is one of the
+ * search box's `QueryBox` rows, whose pills and chips `IN_ROW` holds to the
+ * same 30px — asserted below rather than trusted.
  */
-const narrow = (row: Hit) =>
-  /PICKER_ROW|\bOPTION\b|\.\.\.optionProps\(|\bprops\.className\b/.test(
-    row.text,
-  );
+const narrow = (row: Hit) => /PICKER_ROW|\{\.\.\.option\}/.test(row.text);
 
 const isStatusPicker = (file: string, source: string) =>
   /<StatusPill\b/.test(source) && rows(file, source).length > 0;
@@ -451,8 +452,18 @@ describe("one status picker, one row height (T-739)", () => {
     expect(countBy(found), JSON.stringify(found, null, 1)).toEqual(
       expectedCounts(WIDE_ROW_EXCEPTIONS),
     );
+    // A 22px pill pulled 2px into each of the box's 6px pads makes a 30px
+    // row, and every pill and chip the box draws sits in that pull.
     const search = all.find((s) => s.file === "components/search-box.tsx");
-    expect(search?.source).toMatch(/const OPTION = cn\([^)]*PICKER_ROW/);
+    const source = search?.source ?? "";
+    expect(source).toMatch(/const IN_ROW = "-my-0\.5 /);
+    const drawn = source.match(/<(StatusPill|LabelChip)\b/g) ?? [];
+    const pulled =
+      source.match(
+        /<span className=\{IN_ROW\}>\s*<(StatusPill|LabelChip)\b/g,
+      ) ?? [];
+    expect(drawn.length).toBeGreaterThan(0);
+    expect(pulled).toHaveLength(drawn.length);
   });
 
   it("keeps PICKER_ROW the narrow row the user chose", () => {

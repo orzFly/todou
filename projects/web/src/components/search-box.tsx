@@ -94,6 +94,15 @@ const ICON = "size-3.5 shrink-0 text-muted-foreground";
 const NO_ICON = <span />;
 
 /**
+ * Around a pill or a chip in a row, so the row stays the 30px every status
+ * picker is (T-739). The box's rows pad 6px above and below where the
+ * pickers pad 4px, which put a 22px pill in a 34px row; pulling it 2px into
+ * each pad gives the pickers' 30px back and leaves the pill where it sits.
+ * `label-status-rendering.test.ts` holds every pill and chip here to it.
+ */
+const IN_ROW = "-my-0.5 flex shrink-0";
+
+/**
  * A value drawn as the rest of the app draws it. A chip or a pill stands in
  * the value's words; a person keeps their login and takes the icon's place
  * with their avatar, login first because it is the value being completed
@@ -107,13 +116,21 @@ function renderValue({
   if (spec.source === "label" && "label" in option) {
     return {
       leading: NO_ICON,
-      body: <LabelChip label={(option as LabelOption).label} />,
+      body: (
+        <span className={IN_ROW}>
+          <LabelChip label={(option as LabelOption).label} />
+        </span>
+      ),
     };
   }
   if (spec.source === "status" && "status" in option) {
     return {
       leading: NO_ICON,
-      body: <StatusPill status={(option as StatusOption).status} />,
+      body: (
+        <span className={IN_ROW}>
+          <StatusPill status={(option as StatusOption).status} />
+        </span>
+      ),
     };
   }
   if (spec.source === "member" && "user" in option) {
@@ -501,7 +518,11 @@ export function SearchBox({
               identity={null}
               refClassName="text-muted-foreground"
               text={<IssueTitle item={row.item} />}
-              trailing={<StatusPill status={row.item.status} />}
+              trailing={
+                <span className={IN_ROW}>
+                  <StatusPill status={row.item.status} />
+                </span>
+              }
             />
           </Link>
         );
@@ -575,7 +596,11 @@ export function SearchBox({
             refClassName="text-muted-foreground"
             text={<IssueTitle item={row.item} />}
             author={row.commentBy}
-            trailing={<StatusPill status={row.item.status} />}
+            trailing={
+              <span className={IN_ROW}>
+                <StatusPill status={row.item.status} />
+              </span>
+            }
           />
         </Link>
       );
