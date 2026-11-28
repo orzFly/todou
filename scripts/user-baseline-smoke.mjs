@@ -165,10 +165,21 @@ const SPLIT_FAULTS = [
  * Where the scope faults recreate a header that cannot wrap. 390 was narrow
  * enough while every header carried its id; since T-696 a header below `sm`
  * shows only the time, which fits on one line there, so a fault that forbids
- * wrapping has nothing left to break. At 320 the same content still does not
- * fit, which is the condition those faults need to prove anything.
+ * wrapping has nothing left to break.
+ *
+ * At 320 the seeded spec annotation's header is still wider than its row, but
+ * only by a few pixels, and they land in the annotation's own right padding
+ * without crossing the frame. How many there are is up to the clock: each
+ * digit the time gains (ten o'clock, the tenth of the month) adds about 7px,
+ * and the same tree read NOT PROVEN at 7:46 and RED at 11:53 (T-825). So the
+ * two nowrap faults lengthen the author's name, on the faulted page and the
+ * restored one alike: forbidding the wrap stays the only difference between
+ * the two, and the overflow it causes is far past anything the clock moves.
  */
 const SCOPE_NARROW = { name: "320-mobile", width: 320, height: 844 };
+
+/** Stubbed rather than seeded, so every other sample keeps the seeded name. */
+const SCOPE_STUB_NAME = "Alice Stubbed-Display-Name-Wider-Than-A-Phone-Row";
 
 const SCOPE_FAULTS = [
   "nowrap-diff-annotation",
@@ -1435,6 +1446,7 @@ async function specRouteRun(
   viewport,
   kind,
   fault = null,
+  { stubName = null } = {},
 ) {
   const route = ROUTE_URLS[kind];
   const url = `${base}/projects/${seeded.slug}/issues/${seeded.number}/spec${route.search}`;
@@ -1446,7 +1458,14 @@ async function specRouteRun(
     while (Date.now() < deadline) {
       state = await evaluate(
         page,
-        async ([caseId, toggleToSource, faultKind]) => {
+        async ([
+          caseId,
+          toggleToSource,
+          faultKind,
+          stub,
+          nameFinderSource,
+          seededName,
+        ]) => {
           if (toggleToSource) {
             // The page's own control, not a rewritten URL: reading one
             // version's source is session state with no address to link to.
@@ -1528,6 +1547,24 @@ async function specRouteRun(
           peer.dataset.baselineParticipant = "peer";
           idPart.dataset.baselineParticipant = "id";
           timePart.dataset.baselineParticipant = "time";
+          if (stub) {
+            // Through the chip's own lookup, which fails closed: a chip whose
+            // markup has moved is a fixture failure here, where a miss would
+            // quietly measure the seeded short name and prove nothing again.
+            const findName = new Function(`return (${nameFinderSource})`)();
+            const name = findName(author, seededName);
+            const text = [...(name?.childNodes ?? [])].find(
+              (node) =>
+                node.nodeType === Node.TEXT_NODE && node.textContent.trim(),
+            );
+            if (!text) {
+              return {
+                ready: true,
+                error: `${caseId} author name not found to stub`,
+              };
+            }
+            text.data = stub;
+          }
           if (faultKind === "nowrap") {
             // At the breakpoint the repaired row is a grid, so flexWrap on
             // the row is inert. Recreate the pre-fix single-line shape on the
@@ -1612,7 +1649,15 @@ async function specRouteRun(
             },
           };
         },
-        [kind, route.toggleToSource === true, fault?.kind ?? null],
+        [
+          kind,
+          route.toggleToSource === true,
+          fault?.kind ?? null,
+          stubName,
+          findUserChipName.toString(),
+          // The seed's value, independent of the DOM lookup it checks.
+          "Alice",
+        ],
       );
       if (state?.ready) break;
       await sleep(150);
@@ -2609,11 +2654,25 @@ try {
           options.selfTestCase === `nowrap-${id}`,
       )) {
         const narrow = SCOPE_NARROW;
-        const broken = await specRouteRun(browser, base, seeded, narrow, id, {
+        const stub = { stubName: SCOPE_STUB_NAME };
+        const broken = await specRouteRun(
+          browser,
+          base,
+          seeded,
+          narrow,
           id,
-          kind: "nowrap",
-        });
-        const restored = await specRouteRun(browser, base, seeded, narrow, id);
+          { id, kind: "nowrap" },
+          stub,
+        );
+        const restored = await specRouteRun(
+          browser,
+          base,
+          seeded,
+          narrow,
+          id,
+          null,
+          stub,
+        );
         const brokenFailures = routeFailures(broken);
         const restoredFailures = routeFailures(restored);
         const detected =
@@ -2625,7 +2684,7 @@ try {
           restoredFailures.length === 0 &&
           !restored.fixtureErrors.length;
         console.log(
-          `  nowrap-${id} @${narrow.name}: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
+          `  nowrap-${id} @${narrow.name} [stubbed name]: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
             `fault=${JSON.stringify(routeGeometry(broken))} failures=${brokenFailures.join(";") || "none"} ` +
             `fixtureErrors=${JSON.stringify(broken.fixtureErrors)} ` +
             `restore=${JSON.stringify(routeGeometry(restored))} failures=${restoredFailures.join(";") || "none"} ` +
