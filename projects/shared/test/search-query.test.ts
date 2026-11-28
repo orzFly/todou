@@ -1,10 +1,13 @@
+import { parseQuery, queryFilters } from "@orz/query";
 import { describe, expect, it } from "vitest";
 import {
   canonicalQualifierValue,
   isSpecialQualifierValue,
   parseSearchQuery,
+  SEARCH_SCHEMA,
   type SearchFilter,
   searchFiltersOf,
+  searchIsDomains,
   searchTermsOf,
 } from "../src/search-query.ts";
 
@@ -226,5 +229,51 @@ describe("closed-set values", () => {
     expect(isSpecialQualifierValue("harness", "None")).toBe(true);
     expect(isSpecialQualifierValue("harness", "codex")).toBe(false);
     expect(isSpecialQualifierValue("label", "none")).toBe(false);
+  });
+});
+
+describe("SEARCH_SCHEMA", () => {
+  it("lists the keys in the order completion offers them", () => {
+    expect(SEARCH_SCHEMA.keys).toEqual([
+      "is",
+      "state",
+      "status",
+      "label",
+      "assignee",
+      "harness",
+      "session",
+      "metadata",
+    ]);
+  });
+
+  it("reads `meta:` as `metadata:`", () => {
+    expect(queryFilters(parseQuery(SEARCH_SCHEMA, "-Meta:orch"))).toEqual([
+      { key: "metadata", negated: true, values: ["orch"] },
+    ]);
+  });
+
+  it("folds every spelling `--in` and `?in=` use onto an `is:` value", () => {
+    const spec = SEARCH_SCHEMA.qualifiers.is.value;
+    expect(spec.kind === "enum" && spec.aliases).toEqual({
+      issue: "body",
+      issues: "body",
+      comments: "comment",
+      specs: "spec",
+    });
+  });
+
+  it("gives searchIsDomains what the old parser gave it", () => {
+    for (const q of [
+      "is:comment -is:spec",
+      "is:issues,specs",
+      "-is:body",
+      "is:pr is:Comments",
+      "is: label:a",
+      "words only",
+    ]) {
+      expect(
+        searchIsDomains(queryFilters(parseQuery(SEARCH_SCHEMA, q))),
+      ).toEqual(searchIsDomains(searchFiltersOf(parseSearchQuery(q))));
+    }
   });
 });
