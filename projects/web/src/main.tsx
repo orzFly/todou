@@ -7,8 +7,11 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { queryClient } from "@/api/queries.ts";
+import { trackPageScrollbarWidth } from "@/lib/page-scrollbar.ts";
 import { themeStore } from "@/lib/theme-store.ts";
 import { router } from "@/router.tsx";
+
+trackPageScrollbarWidth();
 
 const root = document.getElementById("root");
 if (root) {

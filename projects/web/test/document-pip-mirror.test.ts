@@ -68,4 +68,34 @@ describe("mirrorDocument", () => {
       1,
     );
   });
+
+  // The page's scrollbar gutter lives in the root's inline style so that it
+  // stays out of the window (T-821).
+  it("copies the root's attributes but not its inline style", async () => {
+    const root = document.documentElement;
+    root.setAttribute("data-mirror-probe", "a");
+    root.style.setProperty("scrollbar-gutter", "stable");
+    root.style.setProperty("--page-scrollbar-width", "15px");
+    try {
+      const target = document.implementation.createHTMLDocument("pip");
+      stop = mirrorDocument(target);
+      expect(target.documentElement.getAttribute("data-mirror-probe")).toBe(
+        "a",
+      );
+      expect(target.documentElement.hasAttribute("style")).toBe(false);
+
+      // Written again later, as the width is on every resize.
+      root.style.setProperty("--page-scrollbar-width", "8px");
+      root.setAttribute("data-mirror-probe", "b");
+      await settle();
+      expect(target.documentElement.getAttribute("data-mirror-probe")).toBe(
+        "b",
+      );
+      expect(target.documentElement.hasAttribute("style")).toBe(false);
+    } finally {
+      root.removeAttribute("data-mirror-probe");
+      root.style.removeProperty("scrollbar-gutter");
+      root.style.removeProperty("--page-scrollbar-width");
+    }
+  });
 });

@@ -6,6 +6,23 @@
 @import "@orz/ui/styles.css";
 @import "@orz/ui/fonts.css";
 
+/* While a menu or dialog locks scrolling (Radix, through
+   react-remove-scroll-bar, marks the body), the scrollbar gutter that
+   `trackPageScrollbarWidth` reserves on the root goes back to the page: left
+   in place it is a strip outside the initial containing block, which a fixed
+   scrim cannot reach. `!important` to outrank that inline style (T-821). */
+html:has(body[data-scroll-locked]) {
+    scrollbar-gutter: auto !important;
+}
+/* The body takes the gutter's width as a right margin instead, so nothing
+   behind the scrim moves. The lock writes a margin of its own, measured as
+   `innerWidth - clientWidth`: 0 on a page that does not scroll while a gutter
+   is reserved, and the gutter again on top of itself on one that does. One
+   more type selector outranks it, both being `!important`. */
+html body[data-scroll-locked] {
+    margin-right: var(--page-scrollbar-width, 0px) !important;
+}
+
 /* Every pierre code surface renders in a shadow root and resolves its
    palette with light-dark(); declarations from the outer tree win over
    shadow :host rules, which is what lets these lines keep pierre in step

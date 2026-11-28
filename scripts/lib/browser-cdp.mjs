@@ -490,10 +490,16 @@ async function defaultStopChild(child) {
   }
 }
 
+/**
+ * `hideScrollbars: false` keeps Chromium's classic scrollbars, for a case about
+ * what their width does to the layout (T-821). Every other smoke was written
+ * against hidden ones, so hidden stays the default.
+ */
 export async function startBrowser({
   dir,
   chromium = process.env.CHROMIUM ?? "/usr/bin/chromium",
   registerChild,
+  hideScrollbars = true,
 } = {}) {
   if (!dir) throw new Error("startBrowser requires dir");
   const child = spawn(
@@ -504,7 +510,7 @@ export async function startBrowser({
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-gpu",
-      "--hide-scrollbars",
+      ...(hideScrollbars ? ["--hide-scrollbars"] : []),
       `--user-data-dir=${join(dir, "chrome")}`,
       "about:blank",
     ],
