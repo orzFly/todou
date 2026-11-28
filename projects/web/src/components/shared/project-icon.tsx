@@ -1,5 +1,5 @@
 import { cn } from "@orz/ui";
-import { Avatar, AvatarFallback, AvatarImage } from "@orz/ui/components/avatar";
+import { Avatar, AvatarImage } from "@orz/ui/components/avatar";
 import { useProjectIconFallback } from "@/api/prefs.ts";
 import { FallbackGlyph } from "@/components/shared/fallback-glyph.tsx";
 import { initialsOf } from "@/components/shared/user-chip.tsx";
@@ -55,20 +55,13 @@ export function ProjectIcon({
   return (
     <Avatar
       shape="square"
-      // Clipped here rather than on `Avatar` itself: only this caller can
-      // fill the fallback with a square gradient that has to take the box's
-      // rounded corners, and a shared component should not carry one
-      // caller's constraint.
-      className={cn(
-        "inline-flex size-5 overflow-hidden align-middle",
-        className,
-      )}
+      className={cn("inline-flex size-5 align-middle", className)}
       {...props}
     >
       {/* Absent rather than empty: an <AvatarImage> with no src would cost a
           404 on every project that has no icon, which is most of them. */}
       {project.icon_url && <AvatarImage src={project.icon_url} alt="" />}
-      <AvatarFallback>{projectIconFallback(project)}</AvatarFallback>
+      {projectIconFallback(project)}
     </Avatar>
   );
 }

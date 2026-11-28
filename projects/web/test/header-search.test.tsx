@@ -24,7 +24,7 @@ import type {
   Project,
   ReferenceDirectory,
 } from "@todou/shared";
-import { SEARCH_QUALIFIERS } from "@todou/shared";
+import { SEARCH_SCHEMA } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   api,
@@ -38,8 +38,9 @@ import {
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
 import { searchIssueRefQuery as issueRefQuery } from "../src/api/search-refs.ts";
+import { historyKey } from "../src/components/search-box.tsx";
 import { AppShell } from "../src/components/shell.tsx";
-import { historyKey, readHistory } from "../src/lib/search-history.ts";
+import { SearchResults } from "../src/pages/search.tsx";
 import { testQueryClient } from "./render.tsx";
 import {
   COMMENT_SPELLED,
@@ -143,13 +144,19 @@ function seeded(): QueryClient {
   return client;
 }
 
-function renderShellAt(width: number) {
+function renderShellAt(
+  width: number,
+  {
+    at = "/projects/todou",
+    page = "x",
+  }: { at?: string; page?: React.ReactNode } = {},
+) {
   happyDom.happyDOM.setViewport({ width });
   const client = seeded();
   const rootRoute = createRootRoute();
   const Shell = () => (
     <QueryClientProvider client={client}>
-      <AppShell me={me}>x</AppShell>
+      <AppShell me={me}>{page}</AppShell>
     </QueryClientProvider>
   );
   const projectRoute = createRoute({
@@ -176,7 +183,7 @@ function renderShellAt(width: number) {
   );
   const router = createRouter({
     routeTree: rootRoute.addChildren([projectRoute.addChildren(children)]),
-    history: createMemoryHistory({ initialEntries: ["/projects/todou"] }),
+    history: createMemoryHistory({ initialEntries: [at] }),
   });
   return { ...render(<RouterProvider router={router} />), client, router };
 }
@@ -206,7 +213,9 @@ describe("the header's search, wide", () => {
     await view.findByLabelText("Search this project");
 
     const row = rows(view).first;
-    const search = row.querySelector("search") as Element;
+    // The box's slot: the element the row lays out, the box floating in it.
+    const search = (row.querySelector("search") as Element)
+      .parentElement as Element;
     // A sibling of the tabs, which is what lets the row's flex give way in
     // order: the box grows into what the tabs leave.
     expect(search.parentElement).toBe(row);
@@ -222,6 +231,30 @@ describe("the header's search, wide", () => {
 
     expect(toggle(view.container)).toBeNull();
     expect(boxes(view.container)).toHaveLength(1);
+  });
+});
+
+describe("the header's search, on the search page", () => {
+  it.each([1280, 390])(
+    "stands aside at %dpx for the page's own box",
+    async (width) => {
+      const view = renderShellAt(width, { at: "/projects/todou/search" });
+      await view.findAllByRole("link", { name: "List" });
+      expect(boxes(view.container)).toHaveLength(0);
+      expect(toggle(view.container)).toBeNull();
+    },
+  );
+
+  it("sends `/` to the page's box, the only one there is", async () => {
+    const view = renderShellAt(1280, {
+      at: "/projects/todou/search",
+      page: <SearchResults slug="todou" search={{}} />,
+    });
+    const input = await view.findByLabelText("Search this project");
+    expect(boxes(view.container)).toHaveLength(1);
+    expect(input.closest("header")).toBeNull();
+    fireEvent.keyDown(window, { key: "/" });
+    await waitFor(() => expect(document.activeElement).toBe(input));
   });
 });
 
@@ -349,6 +382,67 @@ describe("the header's search, narrow", () => {
     await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
     expect(toggle(view.container)).not.toBeNull();
   });
+
+  it("hands focus back to the icon once Escape closes the overlay", async () => {
+    const view = renderShellAt(390);
+    await view.findAllByRole("link", { name: "List" });
+    fireEvent.click(toggle(view.container) as Element);
+    const input = await view.findByLabelText("Search this project");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+
+    // The first press is the panel's, the second the overlay's.
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() =>
+      expect(view.container.querySelector('[role="listbox"]')).toBeNull(),
+    );
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
+    expect(document.activeElement).toBe(toggle(view.container));
+  });
+
+  it("hands focus back to the icon from the close button too", async () => {
+    const view = renderShellAt(390);
+    await view.findAllByRole("link", { name: "List" });
+    fireEvent.click(toggle(view.container) as Element);
+    await view.findByLabelText("Search this project");
+    const close = view.container.querySelector(
+      'button[aria-label="Close search"]',
+    ) as HTMLButtonElement;
+    close.focus();
+    fireEvent.click(close);
+    await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
+    expect(document.activeElement).toBe(toggle(view.container));
+  });
+
+  it("leaves focus where Tab sent it out of the overlay", async () => {
+    const view = renderShellAt(390);
+    await view.findAllByRole("link", { name: "List" });
+    fireEvent.click(toggle(view.container) as Element);
+    await view.findByLabelText("Search this project");
+    const close = view.container.querySelector(
+      'button[aria-label="Close search"]',
+    ) as HTMLButtonElement;
+    close.focus();
+    // The next stop after the close button, outside the overlay.
+    const next = view.container.querySelector(
+      'header a[href="/projects/todou/issues/new"]',
+    ) as HTMLAnchorElement;
+    next.focus();
+    await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
+    expect(document.activeElement).toBe(next);
+  });
+
+  it("names both icons in a tooltip as well as to a screen reader", async () => {
+    const view = renderShellAt(390);
+    await view.findAllByRole("link", { name: "List" });
+    const icon = toggle(view.container) as HTMLButtonElement;
+    fireEvent.focus(icon);
+    await waitFor(() =>
+      expect(
+        view.getAllByRole("tooltip").map((tip) => tip.textContent),
+      ).toEqual(["Search"]),
+    );
+  });
 });
 
 /**
@@ -436,11 +530,10 @@ describe("the header's search, a migrated comment (T-434)", () => {
 });
 
 /**
- * The control inside the box's slot — the element that floats. Tailwind is not
- * loaded here, so the width is only readable as a class name.
+ * The box inside its slot — the element that floats. Tailwind is not loaded
+ * here, so the width is only readable as a class name.
  */
-const control = (input: Element) =>
-  input.closest("search")?.firstElementChild as HTMLElement;
+const control = (input: Element) => input.closest("search") as HTMLElement;
 
 describe("the search box's focus float (T-454)", () => {
   it("borrows the nav's width while it is being typed into, and gives it back", async () => {
@@ -520,22 +613,30 @@ describe("the header's project row", () => {
   });
 });
 
-const NOW = Date.parse("2026-09-05T12:00:00Z");
-
+/**
+ * Seeded relative to now: the history keeps 90 days, and a fixed date would
+ * age out of it and leave every case below with nothing to offer.
+ */
 function seedHistory(entries: string[], slug = "todou") {
+  const now = Date.now();
   localStorage.setItem(
     historyKey(me.id),
     JSON.stringify({
-      [slug]: entries.map((q, i) => ({ q, t: NOW - i * 1000 })),
+      [slug]: entries.map((q, i) => ({ q, t: now - i * 1000 })),
     }),
   );
+}
+
+/** Every project's history as stored, in the format the box writes. */
+function readHistory(userId: number): Record<string, { q: string }[]> {
+  return JSON.parse(localStorage.getItem(historyKey(userId)) ?? "{}");
 }
 
 const remembered = (slug = "todou") =>
   (readHistory(me.id)[slug] ?? []).map((e) => e.q);
 
 /** The qualifier keys the box always offers, and `orderRows`' own limit. */
-const KEY_COUNT = Object.keys(SEARCH_QUALIFIERS).length;
+const KEY_COUNT = SEARCH_SCHEMA.keys.length;
 const ROW_BUDGET = 20;
 
 type View = { container: HTMLElement };
@@ -544,7 +645,9 @@ const options = (view: View) => [
   ...(panel(view)?.querySelectorAll('[role="option"]') ?? []),
 ];
 const historyRows = (view: View) =>
-  options(view).filter((o) => o.querySelector('button[aria-label^="Forget"]'));
+  options(view).filter((o) =>
+    o.querySelector('[data-slot="query-history-remove"]'),
+  );
 
 async function openedOn(entries: string[]) {
   seedHistory(entries);
@@ -620,7 +723,9 @@ describe("the search box's own history", () => {
   it("runs the remembered search, and moves that entry back to the front", async () => {
     const { view } = await openedOn(["bug", "spec"]);
 
-    const link = historyRows(view)[1]?.querySelector("a") as HTMLAnchorElement;
+    // The row is the link, so a modified click opens the results elsewhere.
+    const link = historyRows(view)[1] as HTMLAnchorElement;
+    expect(link.tagName).toBe("A");
     expect(link.getAttribute("href")).toBe("/projects/todou/search?q=spec");
     expect(link.textContent).toBe("spec");
     expect(link.textContent).not.toMatch(/#comment-|· by|comment by/);
@@ -660,8 +765,8 @@ describe("the search box's own history", () => {
     const { view } = await openedOn(["bug", "spec"]);
 
     const button = historyRows(view)[0]?.querySelector(
-      "button",
-    ) as HTMLButtonElement;
+      '[data-slot="query-history-remove"]',
+    ) as HTMLElement;
     fireEvent.click(button);
 
     await waitFor(() => expect(historyRows(view)).toHaveLength(1));
@@ -674,7 +779,7 @@ describe("the search box's own history", () => {
     const input = await view.findByLabelText("Search this project");
     fireEvent.focusIn(input);
     fireEvent.change(input, { target: { value: "全文搜索" } });
-    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(remembered()).toEqual(["全文搜索"]));
   });
@@ -686,7 +791,7 @@ describe("the search box's own history", () => {
     const input = await view.findByLabelText("Search this project");
     fireEvent.focusIn(input);
     fireEvent.change(input, { target: { value: "T-141" } });
-    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() =>
       expect(view.router.state.location.pathname).toBe(

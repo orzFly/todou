@@ -172,7 +172,7 @@ async function openPage(context, fixture, url, { square, circle }) {
           Object.entries(counts).every(
             ([shape, count]) =>
               document.querySelectorAll(
-                `[data-slot="avatar"][data-shape="${shape}"] > [data-slot="avatar-fallback"] [data-generator]`,
+                `[data-slot="avatar"][data-shape="${shape}"] > [data-slot="avatar-fallback"][data-generator]`,
               ).length >= count,
           ),
         { square, circle },
@@ -212,7 +212,7 @@ const squareGenerators = (page) =>
   evaluate(page, () =>
     [
       ...document.querySelectorAll(
-        '[data-slot="avatar"][data-shape="square"] [data-slot="avatar-fallback"] [data-generator]',
+        '[data-slot="avatar"][data-shape="square"] [data-slot="avatar-fallback"][data-generator]',
       ),
     ].map((glyph) => glyph.getAttribute("data-generator")),
   );

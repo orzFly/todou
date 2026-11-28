@@ -1,5 +1,5 @@
 import { cn } from "@orz/ui";
-import { Avatar, AvatarFallback, AvatarImage } from "@orz/ui/components/avatar";
+import { Avatar, AvatarImage } from "@orz/ui/components/avatar";
 import {
   Tooltip,
   TooltipContent,
@@ -41,9 +41,9 @@ function UserGlyph({ name }: { name: string }) {
 }
 
 /**
- * What an avatar box draws for a person who has not uploaded one. Exported for
- * the same reason as `projectIconFallback`: `AvatarEditor` draws the same box
- * without going through `UserAvatar`.
+ * What an avatar box draws for a person who has not uploaded one: its
+ * `AvatarFallback`. Exported for the same reason as `projectIconFallback`:
+ * `AvatarEditor` draws the same box without going through `UserAvatar`.
  */
 export function userAvatarFallback(displayName: string) {
   return <UserGlyph name={displayName} />;
@@ -104,7 +104,7 @@ export function UserAvatar({
       {...props}
     >
       {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
-      <AvatarFallback>{userAvatarFallback(displayNameOf(user))}</AvatarFallback>
+      {userAvatarFallback(displayNameOf(user))}
     </Avatar>
   );
 

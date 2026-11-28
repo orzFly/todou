@@ -146,10 +146,18 @@ The web client is built from `@orz/ui`: its components, hooks, theme store and s
 - Before changing web UI, read `projects/web/node_modules/@orz/ui/skills/orz-ui/SKILL.md` and do
   what it says. It and the guidelines under `projects/web/node_modules/@orz/ui/docs/` ship inside the
   package, so they match the version installed.
-- Upgrade with `pnpm --filter @todou/web add @orz/ui@master @orz/themes@master`, naming every
-  `@orz/*` package the web client depends on. They must all be one exact version:
-  `@orz/ui` pins its siblings exactly, and a second version installs a second copy whose theme data
-  the store does not recognise. `projects/web/test/orz-versions.test.ts` fails otherwise.
+- Upgrade by resolving `@orz/ui@master` once and installing every `@orz/*` package at that exact
+  version, in every package that depends on one:
+  ```bash
+  V=$(pnpm view @orz/ui@master version)
+  pnpm --filter @todou/web add @orz/ui@$V @orz/themes@$V @orz/query@$V
+  pnpm --filter @todou/shared --filter @todou/server --filter @todou/cli add @orz/query@$V
+  ```
+  A card that adds another `@orz/*` package adds it to the matching line. They must all be one
+  exact version: `@orz/ui` pins its siblings exactly, and a second version installs a second copy
+  whose theme data the store does not recognise. Naming `@master` per package is not enough — just
+  after a release one sibling's tag can still point at the previous version.
+  `projects/web/test/orz-versions.test.ts` fails otherwise.
 - A component `@orz/ui` lacks, or a bug in one, is a card on the orzui project (`-p orzui`, its
   cards read `UI-<n>`), linked from the todou card with blocked-by. Do not draw a local copy in the
   meantime.

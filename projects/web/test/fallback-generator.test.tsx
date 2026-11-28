@@ -36,20 +36,16 @@ function drawn(container: HTMLElement) {
   const fallback = container.querySelector<HTMLElement>(
     '[data-slot="avatar-fallback"]',
   );
-  const glyph = fallback?.querySelector("[data-generator]");
-  const text = glyph?.querySelector("[data-glyph-text]");
-  const textClass = text?.parentElement?.className ?? "";
+  const text = fallback?.querySelector('[data-slot="avatar-fallback-glyph"]');
+  const fallbackClass = fallback?.className ?? "";
   return {
-    generator: glyph?.getAttribute("data-generator"),
-    label: glyph?.getAttribute("aria-label"),
+    generator: fallback?.getAttribute("data-generator"),
+    label: fallback?.getAttribute("aria-label"),
     text: text?.textContent,
-    white: textClass.includes("text-white"),
-    weight: textClass.match(/\bfont-(medium|semibold)\b/)?.[1],
-    stops: [...(glyph?.querySelectorAll("stop") ?? [])].map((stop) =>
-      stop.getAttribute("stop-color"),
-    ),
-    rects: glyph?.querySelectorAll("rect").length,
-    fallbackClass: fallback?.className ?? "",
+    white: fallbackClass.includes("text-white"),
+    weight: fallbackClass.match(/\bfont-(medium|semibold)\b/)?.[1],
+    stops: fallback?.style.backgroundImage.match(/#[0-9a-f]{6}/gi) ?? [],
+    fallbackClass,
   };
 }
 
@@ -61,7 +57,6 @@ function expectMonochrome(glyph: ReturnType<typeof drawn>, text: string) {
     white: false,
     weight: "medium",
     stops: [],
-    rects: 0,
   });
   // The theme's square or circle is the box's own, under a background-free
   // glyph that takes the box's colour: the pre-T-544 scheme.
@@ -81,7 +76,6 @@ describe("project icon generators (T-555)", () => {
       white: true,
       weight: "semibold",
       stops: [from, to],
-      rects: 1,
     });
   });
 
@@ -129,20 +123,24 @@ describe("project icon generators (T-555)", () => {
       [...container.querySelectorAll("[data-generator]")].map((glyph) =>
         glyph.getAttribute("data-generator"),
       );
+    const gradients = () =>
+      [...container.querySelectorAll<HTMLElement>("[data-generator]")].filter(
+        (glyph) => glyph.style.backgroundImage.includes("gradient"),
+      ).length;
     expect(generators()).toEqual(["colorful_text", "colorful_text"]);
-    expect(container.querySelectorAll("stop")).toHaveLength(4);
+    expect(gradients()).toBe(2);
 
     await set({ project_icon_fallback: "monochrome_text" });
     await waitFor(() =>
       expect(generators()).toEqual(["monochrome_text", "monochrome_text"]),
     );
-    expect(container.querySelectorAll("stop, rect")).toHaveLength(0);
+    expect(gradients()).toBe(0);
 
     await set({ project_icon_fallback: "colorful_text" });
     await waitFor(() =>
       expect(generators()).toEqual(["colorful_text", "colorful_text"]),
     );
-    expect(container.querySelectorAll("stop")).toHaveLength(4);
+    expect(gradients()).toBe(2);
   });
 });
 
